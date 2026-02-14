@@ -2,6 +2,8 @@ package types
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
+	"fmt"
 	"time"
 )
 
@@ -15,6 +17,24 @@ const (
 type ConversationID [16]byte
 type MessageID [16]byte
 type KeyID [16]byte
+
+// MarshalText implements encoding.TextMarshaler for KeyID.
+func (k KeyID) MarshalText() ([]byte, error) {
+	return []byte(base64.RawURLEncoding.EncodeToString(k[:])), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler for KeyID.
+func (k *KeyID) UnmarshalText(text []byte) error {
+	b, err := base64.RawURLEncoding.DecodeString(string(text))
+	if err != nil {
+		return fmt.Errorf("invalid KeyID encoding: %w", err)
+	}
+	if len(b) != 16 {
+		return fmt.Errorf("invalid KeyID length: got %d, want 16", len(b))
+	}
+	copy(k[:], b)
+	return nil
+}
 
 // Identity represents an agent's identity key pair
 type Identity struct {
