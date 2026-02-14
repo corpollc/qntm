@@ -46,9 +46,12 @@ type AuthRequest struct {
 }
 
 // ExecutionResult holds the result of forwarding the request.
+// By default, the response body is NOT included (credential reflection risk).
+// Set Verbose=true on the server to include the body for debugging.
 type ExecutionResult struct {
-	StatusCode int             `json:"status_code"`
-	Body       json.RawMessage `json:"body,omitempty"`
+	StatusCode    int    `json:"status_code"`
+	ContentType   string `json:"content_type,omitempty"`
+	ContentLength int64  `json:"content_length"`
 }
 
 // SubmitRequestBody is the JSON body for submitting a new request.
@@ -334,14 +337,17 @@ func (s *AuthStore) Execute(orgID, requestID string) (*AuthRequest, error) {
 	}
 	defer resp.Body.Close()
 
+	// Drain response body to get content length but do NOT return it
+	// (prevents credential reflection from echo-style services)
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	authReq.ExecutionResult = &ExecutionResult{
-		StatusCode: resp.StatusCode,
-		Body:       json.RawMessage(respBody),
+		StatusCode:    resp.StatusCode,
+		ContentType:   resp.Header.Get("Content-Type"),
+		ContentLength: int64(len(respBody)),
 	}
 
 	log.Printf("[AUDIT] EXECUTION org=%s req=%s service=%s status=%d (no credentials logged)",

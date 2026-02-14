@@ -46,8 +46,9 @@ func init() {
 	rootCmd.AddCommand(identityCmd)
 	identityCmd.AddCommand(identityGenerateCmd)
 	identityCmd.AddCommand(identityShowCmd)
-	identityCmd.AddCommand(identityImportCmd)
-	identityCmd.AddCommand(identityExportCmd)
+	// TODO: identity import/export not yet implemented (qntm-xrc)
+	// identityCmd.AddCommand(identityImportCmd)
+	// identityCmd.AddCommand(identityExportCmd)
 	
 	// Invite commands
 	rootCmd.AddCommand(inviteCmd)
@@ -66,7 +67,8 @@ func init() {
 	groupCmd.AddCommand(groupCreateCmd)
 	groupCmd.AddCommand(groupJoinCmd)
 	groupCmd.AddCommand(groupAddCmd)
-	groupCmd.AddCommand(groupRemoveCmd)
+	// TODO: group remove not yet implemented (qntm-xrc)
+	// groupCmd.AddCommand(groupRemoveCmd)
 	groupCmd.AddCommand(groupListCmd)
 	
 	// Unsafe development commands

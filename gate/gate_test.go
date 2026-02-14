@@ -162,12 +162,15 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 	}
 
 	execResult := resp["execution_result"].(map[string]interface{})
-	body := execResult["body"].(map[string]interface{})
-	if body["had_auth"] != true {
-		t.Fatal("echo didn't receive auth")
+	if execResult["status_code"].(float64) != 200 {
+		t.Fatalf("expected status 200, got %v", execResult["status_code"])
 	}
-	if body["auth_header"] != "Bearer test_key_123" {
-		t.Fatalf("wrong auth: %v", body["auth_header"])
+	if execResult["content_type"].(string) != "application/json" {
+		t.Fatalf("expected application/json, got %v", execResult["content_type"])
+	}
+	// Body should NOT be present (redacted for security)
+	if _, hasBody := execResult["body"]; hasBody {
+		t.Fatal("execution_result should not contain body (credential reflection risk)")
 	}
 	t.Log("✅ 2-of-3 echo integration passed")
 }
@@ -209,6 +212,10 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 
 	if s := resp["status"]; s != "executed" {
 		t.Fatalf("expected auto-executed, got %v", s)
+	}
+	execResult := resp["execution_result"].(map[string]interface{})
+	if _, hasBody := execResult["body"]; hasBody {
+		t.Fatal("execution_result should not contain body")
 	}
 	t.Log("✅ 1-of-2 auto-execute passed")
 }

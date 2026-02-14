@@ -2,6 +2,7 @@ package dropbox
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -149,16 +150,22 @@ func (m *Manager) SendACK(
 	ackedMsgID types.MessageID,
 	status string,
 ) error {
-	// TODO: Implement proper ACK serialization
-	// For now, just create a simple ACK message
-	ackText := fmt.Sprintf("ack:%s:%s", hex.EncodeToString(ackedMsgID[:]), status)
-	
-	// Create ACK message
+	// Structured ACK payload
+	ackPayload, err := json.Marshal(map[string]interface{}{
+		"msg_id":    hex.EncodeToString(ackedMsgID[:]),
+		"status":    status,
+		"timestamp": time.Now().Unix(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal ACK payload: %w", err)
+	}
+
+	// Create ACK message with structured body
 	envelope, err := m.messageMgr.CreateMessage(
 		senderIdentity,
 		conversation,
 		"ack",
-		[]byte(ackText),
+		ackPayload,
 		nil,
 		300, // 5 minute TTL for ACKs
 	)

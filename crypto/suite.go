@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -115,10 +116,9 @@ func (s *QSP1Suite) DeriveNonce(nonceKey, msgID []byte) ([24]byte, error) {
 	}
 	
 	// nonce = Trunc24(HMAC-SHA-256(k_nonce, msg_id))
-	h := sha256.New()
-	h.Write(nonceKey)
-	h.Write(msgID)
-	hash := h.Sum(nil)
+	mac := hmac.New(sha256.New, nonceKey)
+	mac.Write(msgID)
+	hash := mac.Sum(nil)
 	
 	var nonce [24]byte
 	copy(nonce[:], hash[:24])
