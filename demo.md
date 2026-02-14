@@ -67,7 +67,7 @@ $ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox invite create --
 Created direct invite:
 Name: Alice-Bob Encrypted Chat
 Conversation ID: 9f30225e23d446a2e29ed29dce59142e
-Invite URL: https://qntm.example.com/join#p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1At...
+Invite Token: p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1At...
 ```
 
 ## Section 5: Accept Invite 🟢

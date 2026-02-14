@@ -19,6 +19,7 @@ import (
 var gateURL string
 var gatePort int
 var gateAdminToken string
+var gateDevMode bool
 
 func init() {
 	// Gate parent command
@@ -27,6 +28,7 @@ func init() {
 	// Serve
 	gateServeCmd.Flags().IntVar(&gatePort, "port", 8080, "Gate server port")
 	gateServeCmd.Flags().StringVar(&gateAdminToken, "admin-token", "", "Admin bearer token for org/credential endpoints (env: QNTM_GATE_TOKEN)")
+	gateServeCmd.Flags().BoolVar(&gateDevMode, "dev", false, "Development mode: allow running without admin token (WARNING: insecure)")
 	gateCmd.AddCommand(gateServeCmd)
 
 	// Echo
@@ -71,12 +73,16 @@ var gateServeCmd = &cobra.Command{
 		if token == "" {
 			token = os.Getenv("QNTM_GATE_TOKEN")
 		}
+		if token == "" && !gateDevMode {
+			return fmt.Errorf("qntm gate serve requires --admin-token or QNTM_GATE_TOKEN\n  Use --dev to run without authentication (local testing only)")
+		}
 		srv := gate.NewServerWithToken(token)
 		addr := fmt.Sprintf(":%d", gatePort)
 		if token != "" {
 			fmt.Printf("qntm-gate server starting on %s (admin auth enabled, stateless)\n", addr)
 		} else {
-			fmt.Printf("qntm-gate server starting on %s (WARNING: no admin token set, stateless)\n", addr)
+			fmt.Fprintf(os.Stderr, "WARNING: running in --dev mode without admin token. Do NOT use in production.\n")
+			fmt.Printf("qntm-gate server starting on %s (dev mode, no auth, stateless)\n", addr)
 		}
 		return http.ListenAndServe(addr, srv)
 	},

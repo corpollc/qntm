@@ -18,13 +18,25 @@ type ThresholdRule struct {
 }
 
 // Credential stores an API credential for a target service.
+// TODO(v1): integrate Vault encryption at rest per qntm-gate-spec.md §3.
 type Credential struct {
 	ID          string `json:"id"`
 	Service     string `json:"service"`
-	Value       string `json:"value"`        // plaintext for v1
+	Value       string `json:"value"`        // plaintext for v0.1; see Scrub()
 	HeaderName  string `json:"header_name"`  // e.g. "Authorization"
 	HeaderValue string `json:"header_value"` // template: {value} gets replaced
 	Description string `json:"description"`
+}
+
+// Scrub zeros the credential Value in memory after use.
+// This is a best-effort defense for v0.1; Go strings are immutable so the
+// original backing bytes may still exist until GC. v1 will use Vault / memguard.
+func (c *Credential) Scrub() {
+	if c == nil {
+		return
+	}
+	c.Value = ""
+	c.HeaderValue = ""
 }
 
 // Signer represents a member of the org's signer set.

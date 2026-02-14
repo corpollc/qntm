@@ -46,9 +46,7 @@ func init() {
 	rootCmd.AddCommand(identityCmd)
 	identityCmd.AddCommand(identityGenerateCmd)
 	identityCmd.AddCommand(identityShowCmd)
-	// TODO: identity import/export not yet implemented (qntm-xrc)
-	// identityCmd.AddCommand(identityImportCmd)
-	// identityCmd.AddCommand(identityExportCmd)
+	// identity import/export tracked by qntm-ty5
 	
 	// Invite commands
 	rootCmd.AddCommand(inviteCmd)
@@ -132,25 +130,7 @@ var identityShowCmd = &cobra.Command{
 	},
 }
 
-var identityImportCmd = &cobra.Command{
-	Use:   "import <file>",
-	Short: "Import identity from file",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Implementation would import from file
-		return fmt.Errorf("import not implemented yet")
-	},
-}
 
-var identityExportCmd = &cobra.Command{
-	Use:   "export <file>",
-	Short: "Export identity to file",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Implementation would export to file
-		return fmt.Errorf("export not implemented yet")
-	},
-}
 
 // Invite Commands
 var inviteCmd = &cobra.Command{
@@ -182,11 +162,11 @@ var inviteCreateCmd = &cobra.Command{
 			return fmt.Errorf("failed to create invite: %w", err)
 		}
 		
-		// Generate invite URL (using placeholder base URL)
-		baseURL := "https://qntm.example.com/join"
-		inviteURL, err := inviteMgr.InviteToURL(newInvite, baseURL)
+		// Encode invite data as base64 token (no URL wrapping — there's no
+		// real endpoint yet). Users can construct join URLs once a dropbox is deployed.
+		inviteToken, err := inviteMgr.InviteToToken(newInvite)
 		if err != nil {
-			return fmt.Errorf("failed to generate invite URL: %w", err)
+			return fmt.Errorf("failed to encode invite: %w", err)
 		}
 		
 		fmt.Printf("Created %s invite:\n", convType)
@@ -194,7 +174,7 @@ var inviteCreateCmd = &cobra.Command{
 			fmt.Printf("Name: %s\n", name)
 		}
 		fmt.Printf("Conversation ID: %s\n", hex.EncodeToString(newInvite.ConvID[:]))
-		fmt.Printf("Invite URL: %s\n", inviteURL)
+		fmt.Printf("Invite Token: %s\n", inviteToken)
 		
 		return nil
 	},

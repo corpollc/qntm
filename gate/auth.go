@@ -242,6 +242,7 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 		result.Status = StatusApproved
 		return result, fmt.Errorf("get credential: %w", err)
 	}
+	defer cred.Scrub() // zero credential material after use
 
 	var bodyReader io.Reader
 	if len(reqMsg.Payload) > 0 {

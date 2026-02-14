@@ -49,7 +49,10 @@ type Server struct {
 	mux        *http.ServeMux
 }
 
-// NewServer creates a new gate server.
+// NewServer creates a new gate server that requires an admin token.
+// For production use, call NewServerWithToken(token) or set QNTM_GATE_TOKEN.
+// This zero-arg constructor is kept for tests only — it starts with no auth
+// (equivalent to --dev mode).
 func NewServer() *Server {
 	return NewServerWithToken("")
 }

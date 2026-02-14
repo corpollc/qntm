@@ -93,7 +93,7 @@ func TestMultiAccountMessaging(t *testing.T) {
 	}
 	
 	// Generate invite URL
-	inviteURL, err := inviteMgr.InviteToURL(directInvite, "https://qntm.example.com/join")
+	inviteURL, err := inviteMgr.InviteToURL(directInvite, "https://test.local/join")
 	if err != nil {
 		t.Fatalf("Failed to generate invite URL: %v", err)
 	}

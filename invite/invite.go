@@ -122,6 +122,15 @@ func (m *Manager) ValidateInvite(invite *types.InvitePayload) error {
 	return nil
 }
 
+// InviteToToken encodes an invite as a base64url token string (no URL wrapping).
+func (m *Manager) InviteToToken(invite *types.InvitePayload) (string, error) {
+	inviteData, err := m.SerializeInvite(invite)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize invite: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(inviteData), nil
+}
+
 // InviteToURL encodes an invite as a URL with the invite data in the fragment
 func (m *Manager) InviteToURL(invite *types.InvitePayload, baseURL string) (string, error) {
 	// Serialize the invite
