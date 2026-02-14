@@ -641,3 +641,143 @@ ok  	github.com/corpo/qntm/security 0.002s
 $ pkill -f echo-server; pkill -f "qntm gate serve"
 $ rm -rf /tmp/gate-alice /tmp/gate-bob /tmp/gate-carol
 ```
+
+---
+
+## Section 31: Group Rekey — Member Addition with Epoch Tracking 🟢
+
+When a member is added, a rekey is issued advancing the epoch. New members can only decrypt from their join epoch onward.
+
+```bash
+$ rm -rf /tmp/alice /tmp/bob /tmp/charlie /tmp/qntm-dropbox
+$ mkdir -p /tmp/alice /tmp/bob /tmp/charlie /tmp/qntm-dropbox
+$ /tmp/qntm --config-dir /tmp/alice identity generate
+```
+
+```output
+Generated new identity:
+Key ID: tk3JLdXmDSXfmL7dwSDKVA
+Public Key: ydiiX-M0Qd2iAEOKzmaHiUUG7EMdGLKxqpVGWTWK130
+Saved to: /tmp/alice/identity.json
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/bob identity generate
+$ /tmp/qntm --config-dir /tmp/charlie identity generate
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox group create "rekey-demo" "Testing group rekey"
+```
+
+```output
+Created group 'rekey-demo':
+Conversation ID: fc029f20ffc8ec6cd6839bacad58329c
+Members: 1
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox group add fc029f20ffc8ec6cd6839bacad58329c ntnDISBZOo-FgMzYK2yWClEOOmNCW9Rt2u9KfoakM8Q
+```
+
+```output
+Added member to group fc029f20ffc8ec6cd6839bacad58329c
+Group rekeyed to epoch 1
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox group add fc029f20ffc8ec6cd6839bacad58329c HE3Qv2d8UVez95ICkCjqcBt9jMFh201bv03cLIw62MY
+```
+
+```output
+Added member to group fc029f20ffc8ec6cd6839bacad58329c
+Group rekeyed to epoch 2
+```
+
+> Each member addition advances the epoch. The new group key is wrapped per-recipient using Ed25519→X25519 + ephemeral DH + XChaCha20-Poly1305 (~80 bytes per recipient).
+
+## Section 32: Group Rekey — Member Removal (Cryptographic Exclusion) 🟢
+
+When a member is removed, a rekey excludes their `kid` from `wrapped_keys`. They can read the rekey message (encrypted under the old epoch) but cannot derive the new key.
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox message send fc029f20ffc8ec6cd6839bacad58329c "Hello everyone at epoch 2!"
+```
+
+```output
+Message sent to conversation fc029f20ffc8ec6cd6839bacad58329c
+Message ID: 3a8dbf75461e417de10aa0bdf4dbe1bb
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox group remove fc029f20ffc8ec6cd6839bacad58329c -- fCswEC4yB0_PmIelrWItiw
+```
+
+```output
+Removed member fCswEC4yB0_PmIelrWItiw from group fc029f20ffc8ec6cd6839bacad58329c
+Group rekeyed to epoch 3
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox message send fc029f20ffc8ec6cd6839bacad58329c "Secret: Charlie can't see this"
+```
+
+```output
+Message sent to conversation fc029f20ffc8ec6cd6839bacad58329c
+Message ID: 20c8bd524fc0a2c5f913b785f90ded33
+```
+
+> Charlie is cryptographically excluded. The rekey message is encrypted under epoch 2 (readable by all). But the new group key for epoch 3 is only wrapped for Alice and Bob. Charlie cannot derive `k_group_new` and therefore cannot decrypt any epoch 3+ messages.
+
+## Section 33: Epoch Tracking in Messages 🟢
+
+Every outer envelope carries `conv_epoch`, binding the message to the epoch key used for encryption. The AAD includes `conv_epoch` to prevent epoch-confusion attacks.
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice --storage /tmp/qntm-dropbox group rekey fc029f20ffc8ec6cd6839bacad58329c
+```
+
+```output
+Group fc029f20ffc8ec6cd6839bacad58329c rekeyed to epoch 4
+```
+
+> Manual rekey rotates the group key without changing membership — useful for periodic key rotation or after suspected compromise.
+
+## Section 34: Group Rekey — Unit Tests 🟢
+
+```bash
+$ cd ~/src/corpo/qntm && go test ./crypto/... -v -run "Epoch|Wrap|X25519" 2>&1 | head -20
+```
+
+```output
+=== RUN   TestDeriveEpochKeys_Epoch0_BackwardCompat
+--- PASS: TestDeriveEpochKeys_Epoch0_BackwardCompat (0.00s)
+=== RUN   TestDeriveEpochKeys_DifferentEpochs
+--- PASS: TestDeriveEpochKeys_DifferentEpochs (0.00s)
+=== RUN   TestDeriveEpochKeys_Deterministic
+--- PASS: TestDeriveEpochKeys_Deterministic (0.00s)
+=== RUN   TestWrapUnwrapKey
+--- PASS: TestWrapUnwrapKey (0.00s)
+=== RUN   TestWrapKey_DifferentRecipients
+--- PASS: TestWrapKey_DifferentRecipients (0.00s)
+=== RUN   TestWrapKey_WrongKID
+--- PASS: TestWrapKey_WrongKID (0.00s)
+=== RUN   TestX25519Conversion
+--- PASS: TestX25519Conversion (0.00s)
+PASS
+```
+
+```bash
+$ go test ./group/... -v -run "Rekey|Apply" 2>&1 | head -20
+```
+
+```output
+=== RUN   TestRekey_FullFlow
+--- PASS: TestRekey_FullFlow (0.00s)
+=== RUN   TestRekey_ConflictResolution
+--- PASS: TestRekey_ConflictResolution (0.00s)
+=== RUN   TestApplyRekey_GracePeriod
+--- PASS: TestApplyRekey_GracePeriod (0.00s)
+=== RUN   TestRekey_RekeyBodySerialization
+--- PASS: TestRekey_RekeyBodySerialization (0.00s)
+PASS
+```
+
+> The full rekey flow test creates a 3-member group, issues a rekey excluding one member, verifies the excluded member cannot unwrap the new key, and confirms the remaining members can encrypt/decrypt under the new epoch.
