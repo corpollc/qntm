@@ -67,8 +67,8 @@ func init() {
 	groupCmd.AddCommand(groupCreateCmd)
 	groupCmd.AddCommand(groupJoinCmd)
 	groupCmd.AddCommand(groupAddCmd)
-	// TODO: group remove not yet implemented (qntm-xrc)
-	// groupCmd.AddCommand(groupRemoveCmd)
+	groupCmd.AddCommand(groupRemoveCmd)
+	groupCmd.AddCommand(groupRekeyCmd)
 	groupCmd.AddCommand(groupListCmd)
 	
 	// Unsafe development commands
@@ -551,8 +551,8 @@ var groupAddCmd = &cobra.Command{
 		storage := getStorageProvider()
 		groupMgr := group.NewManager()
 		
-		// Add member
-		err = groupMgr.AddMembers(
+		// Add member with rekey
+		err = groupMgr.AddMembersWithRekey(
 			currentIdentity,
 			conversation,
 			groupState,
@@ -563,12 +563,16 @@ var groupAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to add member: %w", err)
 		}
 		
-		// Save updated group state
+		// Save updated state
+		if err := saveConversation(conversation); err != nil {
+			return fmt.Errorf("failed to save conversation: %w", err)
+		}
 		if err := saveGroupState(convID, groupState); err != nil {
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
 		
 		fmt.Printf("Added member to group %s\n", convIDHex)
+		fmt.Printf("Group rekeyed to epoch %d\n", conversation.CurrentEpoch)
 		
 		return nil
 	},
@@ -576,11 +580,145 @@ var groupAddCmd = &cobra.Command{
 
 var groupRemoveCmd = &cobra.Command{
 	Use:   "remove <conversation-id> <key-id>",
-	Short: "Remove member from group",
+	Short: "Remove member from group (with rekey)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Implementation similar to group add
-		return fmt.Errorf("group remove not implemented yet")
+		currentIdentity, err := loadIdentity()
+		if err != nil {
+			return fmt.Errorf("failed to load identity: %w", err)
+		}
+
+		convIDHex := args[0]
+		kidStr := args[1]
+
+		// Parse conversation ID
+		convIDBytes, err := hex.DecodeString(convIDHex)
+		if err != nil || len(convIDBytes) != 16 {
+			return fmt.Errorf("invalid conversation ID format")
+		}
+
+		var convID types.ConversationID
+		copy(convID[:], convIDBytes)
+
+		// Parse key ID
+		identityMgr := identity.NewManager()
+		memberKID, err := identityMgr.KeyIDFromString(kidStr)
+		if err != nil {
+			return fmt.Errorf("invalid key ID: %w", err)
+		}
+
+		// Find conversation and group state
+		conversation, err := findConversation(convID)
+		if err != nil {
+			return fmt.Errorf("conversation not found: %w", err)
+		}
+
+		groupState, err := loadGroupState(convID)
+		if err != nil {
+			return fmt.Errorf("failed to load group state: %w", err)
+		}
+
+		storage := getStorageProvider()
+		groupMgr := group.NewManager()
+
+		// Remove with rekey
+		err = groupMgr.RemoveMembersWithRekey(
+			currentIdentity,
+			conversation,
+			groupState,
+			[]types.KeyID{memberKID},
+			"removed by admin",
+			storage,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to remove member: %w", err)
+		}
+
+		// Save updated state
+		if err := saveConversation(conversation); err != nil {
+			return fmt.Errorf("failed to save conversation: %w", err)
+		}
+		if err := saveGroupState(convID, groupState); err != nil {
+			return fmt.Errorf("failed to save group state: %w", err)
+		}
+
+		fmt.Printf("Removed member %s from group %s\n", kidStr, convIDHex)
+		fmt.Printf("Group rekeyed to epoch %d\n", conversation.CurrentEpoch)
+
+		return nil
+	},
+}
+
+var groupRekeyCmd = &cobra.Command{
+	Use:   "rekey <conversation-id>",
+	Short: "Manually trigger a group rekey (key rotation)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		currentIdentity, err := loadIdentity()
+		if err != nil {
+			return fmt.Errorf("failed to load identity: %w", err)
+		}
+
+		convIDHex := args[0]
+
+		// Parse conversation ID
+		convIDBytes, err := hex.DecodeString(convIDHex)
+		if err != nil || len(convIDBytes) != 16 {
+			return fmt.Errorf("invalid conversation ID format")
+		}
+
+		var convID types.ConversationID
+		copy(convID[:], convIDBytes)
+
+		// Find conversation and group state
+		conversation, err := findConversation(convID)
+		if err != nil {
+			return fmt.Errorf("conversation not found: %w", err)
+		}
+
+		groupState, err := loadGroupState(convID)
+		if err != nil {
+			return fmt.Errorf("failed to load group state: %w", err)
+		}
+
+		storage := getStorageProvider()
+		groupMgr := group.NewManager()
+
+		// Build full member list
+		var allMembers []group.RekeyMemberInfo
+		for kid, member := range groupState.Members {
+			allMembers = append(allMembers, group.RekeyMemberInfo{
+				KeyID:     kid,
+				PublicKey: member.PublicKey,
+			})
+			_ = kid
+		}
+
+		// Create rekey
+		_, newGroupKey, err := groupMgr.CreateRekey(
+			currentIdentity,
+			conversation,
+			groupState,
+			allMembers,
+			storage,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create rekey: %w", err)
+		}
+
+		// Apply locally
+		if err := groupMgr.ApplyRekey(conversation, newGroupKey, conversation.CurrentEpoch+1); err != nil {
+			return fmt.Errorf("failed to apply rekey: %w", err)
+		}
+
+		// Save updated state
+		if err := saveConversation(conversation); err != nil {
+			return fmt.Errorf("failed to save conversation: %w", err)
+		}
+
+		fmt.Printf("Group %s rekeyed to epoch %d\n", convIDHex, conversation.CurrentEpoch)
+
+		return nil
 	},
 }
 

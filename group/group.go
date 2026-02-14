@@ -382,6 +382,9 @@ func (m *Manager) ProcessGroupMessage(
 		return m.processAddMessage(message, groupState)
 	case "group_remove":
 		return m.processRemoveMessage(message, groupState)
+	case "group_rekey":
+		// Rekey is processed separately via ProcessRekeyMessage
+		return nil
 	default:
 		// Not a group management message, ignore
 		return nil
