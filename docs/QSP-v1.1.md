@@ -113,41 +113,60 @@ If multiple rekey messages target the same epoch N+1:
 
 ### 2.1 Overview
 
-An encrypted handle is a pseudonymous identifier bound to an agent's identity key, encrypted by default and selectively revealable per conversation.
+An encrypted handle is a globally unique pseudonymous identifier bound to an agent's identity key. Handles are registered through a central registry that enforces uniqueness and provides brute-force resistance via a server-generated salt. Handles are hidden by default and selectively revealable per conversation.
 
-### 2.2 Handle Registration
+**Authentication for all account operations (handle changes, identity updates, deletion) MUST use Ed25519 signatures from the identity key. The salt is NOT used for authentication — it exists solely for commitment blinding.**
+
+### 2.2 Handle Registry
+
+The qntm handle registry is a server-side service that:
+
+1. **Enforces uniqueness:** no two identity keys may claim the same handle.
+2. **Generates salts:** provides brute-force resistance for the public commitment.
+3. **Stores two tables:**
+
+**Table 1 — Public commitments** (published, queryable by `kid`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kid` | bytes(16) | Key identifier |
+| `handle_commitment` | bytes(32) | Salted commitment (see §2.3) |
+
+**Table 2 — Uniqueness index** (internal, not published):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `handle` | string | Plaintext handle (for uniqueness check only) |
+| `kid` | bytes(16) | Owning key identifier |
+
+The registry **discards the salt** after sending it to the client. It retains the plaintext handle only for uniqueness enforcement.
+
+### 2.3 Handle Registration
 
 An agent with identity key `(IK_sk, IK_pk)` and chosen handle `handle` (UTF-8 string, max 64 bytes):
 
-1. Derive the handle encryption key:
+1. Agent submits registration request to the registry: `{kid, ik_pk, handle}`, signed with `IK_sk`.
+2. Registry checks Table 2 for uniqueness. If `handle` is taken, reject.
+3. Registry generates `handle_salt`: 32 random bytes.
+4. Registry computes:
    ```
-   PRK_handle = HKDF-Extract(salt="qntm/qsp/v1.1/handle", IKM=IK_sk)
-   handle_secret = HKDF-Expand(PRK_handle, info="qntm/qsp/v1.1/handle/encrypt", L=32)
+   handle_commitment = H(CBOR({handle: handle, ik_pk: IK_pk, salt: handle_salt}))
    ```
+5. Registry stores `{kid, handle_commitment}` in Table 1 and `{handle, kid}` in Table 2.
+6. Registry returns `handle_salt` to the agent. **The registry then discards the salt.**
+7. Agent stores `{handle, handle_salt}` locally in their keystore. These are the reveal credentials.
 
-2. Generate `handle_nonce`: 24 random bytes (stored permanently with the identity).
-
-3. Encrypt:
-   ```
-   encrypted_handle = XChaCha20-Poly1305(key=handle_secret, nonce=handle_nonce, plaintext=handle)
-   ```
-
-4. Compute commitment:
-   ```
-   handle_commitment = H(CBOR({handle: handle, ik_pk: IK_pk}))
-   ```
-
-The agent's published identity becomes:
+The agent's published identity includes:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `ik_pk` | bytes(32) | Ed25519 public key |
 | `kid` | bytes(16) | Key identifier (per v1.0 §6) |
-| `encrypted_handle` | bytes | XChaCha20-Poly1305 ciphertext of handle |
-| `handle_nonce` | bytes(24) | Nonce used for encryption |
-| `handle_commitment` | bytes(32) | SHA-256 commitment binding handle to identity |
+| `handle_commitment` | bytes(32) | Salted SHA-256 commitment (from registry) |
 
-### 2.3 Handle Reveal
+Note: `encrypted_handle` and `handle_nonce` are no longer published. The handle is protected by the salted commitment alone.
+
+### 2.4 Handle Reveal
 
 To reveal a handle in a conversation, the agent sends an inner payload with `body_type="handle_reveal"`:
 
@@ -155,23 +174,28 @@ To reveal a handle in a conversation, the agent sends an inner payload with `bod
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `handle_secret` | bytes(32) | The handle encryption key |
+| `handle` | string | Plaintext handle |
+| `handle_salt` | bytes(32) | Salt provided by registry at registration |
 
 On receiving a `handle_reveal`:
 
-1. Decrypt `encrypted_handle` using the provided `handle_secret` and the sender's published `handle_nonce`.
-2. Verify: `H(CBOR({handle: decrypted_handle, ik_pk: sender_ik_pk})) == sender.handle_commitment`.
-3. If verification succeeds, associate the decrypted handle with `sender_kid` for this conversation.
+1. Verify: `H(CBOR({handle: received_handle, ik_pk: sender_ik_pk, salt: received_salt})) == sender.handle_commitment`.
+2. If verification succeeds, associate the handle with `sender_kid` for this conversation.
 
-A reveal is **irreversible** within a conversation — once the secret is disclosed, all recipients possess it.
+A reveal is **irreversible** within a conversation — once the plaintext and salt are disclosed, all recipients possess them.
 
-### 2.4 Consistency Properties
+### 2.5 Brute-Force Resistance
 
-- `handle_commitment` is bound to `IK_pk`: an agent cannot claim different handles under the same identity key.
-- Revealing in multiple conversations yields the same handle (same `handle_secret` decrypts the same `encrypted_handle`).
+Without the salt, an attacker who knows the public `handle_commitment` and `ik_pk` cannot efficiently brute-force the handle. They would need to guess both the handle and the 32-byte salt, which is computationally infeasible. The registry discards the salt, so even a registry compromise does not enable offline brute-forcing of commitments.
+
+### 2.6 Consistency Properties
+
+- `handle_commitment` is bound to both `IK_pk` and the salt: an agent cannot claim different handles under the same identity key (enforced cryptographically by the commitment and administratively by the registry).
+- Revealing in multiple conversations yields the same handle (same plaintext and salt).
 - To use a different persona, create a new identity (new Ed25519 keypair, new handle, new `kid`).
+- Handle changes require a new registration (new salt, new commitment) signed with the identity key. The old handle is released in Table 2.
 
-### 2.5 Display Rules
+### 2.7 Display Rules
 
 | State | Display identifier |
 |-------|-------------------|
@@ -229,13 +253,17 @@ In addition to v1.0 §14:
 
 3. **Ephemeral key reuse in wrapping:** each wrapped key blob MUST use a fresh ephemeral X25519 keypair. Reusing `ek_sk` across recipients would allow cross-recipient key recovery.
 
-4. **Handle oracle:** the `handle_commitment` is public. An attacker who can guess the handle can verify their guess by checking `H(CBOR({handle: guess, ik_pk: target_ik_pk})) == handle_commitment`. Short or predictable handles are therefore linkable. Agents SHOULD choose handles with sufficient entropy or accept the linkability trade-off.
+4. **Handle brute-force resistance:** the 32-byte server-generated salt makes offline brute-forcing of `handle_commitment` computationally infeasible, even for short or common handles. The registry discards the salt after delivery to the client — a registry database compromise does not enable commitment reversal.
 
-5. **Handle secret scope:** `handle_secret` is derived deterministically from `IK_sk`. Revealing it in a conversation exposes only the handle — it does not leak `IK_sk` (HKDF is one-way). However, `handle_secret` is the same across all conversations; a recipient who learns it can decrypt the handle from any context where the `encrypted_handle` and `handle_nonce` are visible.
+5. **Handle reveal scope:** revealing a handle in one conversation discloses the plaintext and salt to all members of that conversation. Those members could verify the same commitment in other contexts where the agent's `handle_commitment` is visible. This is by design — the handle is a consistent identity, not a per-conversation secret.
 
-6. **Ed25519→X25519 conversion:** implementations MUST use the standard birational map (RFC 7748 / libsodium `crypto_sign_ed25519_pk_to_curve25519`). Incorrect conversion is a total break of key wrapping.
+6. **Registry trust:** the registry enforces uniqueness and generates salts. It does NOT authenticate account operations — all mutations (handle changes, deletion) require Ed25519 signatures from the identity key. A compromised registry could register fraudulent handles but cannot impersonate existing agents or modify their registrations without their private key.
 
-7. **Group size and rekey cost:** at 128 members, a rekey is ~10 KB. Implementations MAY reject groups exceeding 128 members. Frequent membership churn in large groups will generate proportional rekey traffic.
+7. **Salt as non-secret after reveal:** once revealed in a conversation, the salt is known to recipients. It is not used for any authentication purpose. All account operations rely on Ed25519 signatures from the identity key.
+
+8. **Ed25519→X25519 conversion:** implementations MUST use the standard birational map (RFC 7748 / libsodium `crypto_sign_ed25519_pk_to_curve25519`). Incorrect conversion is a total break of key wrapping.
+
+9. **Group size and rekey cost:** at 128 members, a rekey is ~10 KB. Implementations MAY reject groups exceeding 128 members. Frequent membership churn in large groups will generate proportional rekey traffic.
 
 ---
 
