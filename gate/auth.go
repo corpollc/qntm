@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -22,293 +21,237 @@ const (
 	StatusExpired  RequestStatus = "expired"
 )
 
-// AuthRequest represents a submitted authorization request.
-type AuthRequest struct {
-	OrgID           string            `json:"org_id"`
-	RequestID       string            `json:"request_id"`
-	Verb            string            `json:"verb"`
-	TargetEndpoint  string            `json:"target_endpoint"`
-	TargetService   string            `json:"target_service"`
-	TargetURL       string            `json:"target_url"`
-	Payload         json.RawMessage   `json:"payload,omitempty"`
-	RequesterKID    string            `json:"requester_kid"`
-	ExpiresAt       time.Time         `json:"expires_at"`
-	Status          RequestStatus     `json:"status"`
-	SignatureCount  int               `json:"signature_count"`
-	SignerKIDs      []string          `json:"signer_kids"`
-	Threshold       int               `json:"threshold"`
-	CreatedAt       time.Time         `json:"created_at"`
-	ExecutionResult *ExecutionResult  `json:"execution_result,omitempty"`
+// GateMessageType distinguishes request vs approval messages in a conversation.
+type GateMessageType string
 
-	// Internal fields
-	signature  []byte
-	signatures map[string][]byte // kid -> sig
+const (
+	GateMessageRequest  GateMessageType = "gate.request"
+	GateMessageApproval GateMessageType = "gate.approval"
+)
+
+// GateConversationMessage represents a parsed gate message from the qntm conversation.
+// The gate server works with these — it never stores them. The conversation IS the state.
+type GateConversationMessage struct {
+	Type      GateMessageType `json:"type"`
+	OrgID     string          `json:"org_id"`
+	RequestID string          `json:"request_id"`
+
+	// Request fields (only for GateMessageRequest)
+	Verb           string          `json:"verb,omitempty"`
+	TargetEndpoint string          `json:"target_endpoint,omitempty"`
+	TargetService  string          `json:"target_service,omitempty"`
+	TargetURL      string          `json:"target_url,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	ExpiresAt      time.Time       `json:"expires_at,omitempty"`
+
+	// Common fields
+	SignerKID string `json:"signer_kid"`
+	Signature string `json:"signature"` // base64url
+}
+
+// ScanResult is the result of scanning a conversation for a request.
+type ScanResult struct {
+	Found        bool          `json:"found"`
+	ThresholdMet bool          `json:"threshold_met"`
+	Expired      bool          `json:"expired"`
+	SignerKIDs   []string      `json:"signer_kids"`
+	Threshold    int           `json:"threshold"`
+	Request      *GateConversationMessage `json:"request,omitempty"`
+	Status       RequestStatus `json:"status"`
 }
 
 // ExecutionResult holds the result of forwarding the request.
-// By default, the response body is NOT included (credential reflection risk).
-// Set Verbose=true on the server to include the body for debugging.
 type ExecutionResult struct {
 	StatusCode    int    `json:"status_code"`
 	ContentType   string `json:"content_type,omitempty"`
 	ContentLength int64  `json:"content_length"`
 }
 
-// SubmitRequestBody is the JSON body for submitting a new request.
-type SubmitRequestBody struct {
-	RequestID      string          `json:"request_id"`
-	Verb           string          `json:"verb"`
-	TargetEndpoint string          `json:"target_endpoint"`
-	TargetService  string          `json:"target_service"`
-	TargetURL      string          `json:"target_url"`
-	Payload        json.RawMessage `json:"payload,omitempty"`
-	RequesterKID   string          `json:"requester_kid"`
-	Signature      string          `json:"signature"` // base64url
-	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+// ExecuteResult is the full result returned from ExecuteIfReady.
+type ExecuteResult struct {
+	OrgID           string           `json:"org_id"`
+	RequestID       string           `json:"request_id"`
+	Verb            string           `json:"verb"`
+	TargetEndpoint  string           `json:"target_endpoint"`
+	TargetService   string           `json:"target_service"`
+	Status          RequestStatus    `json:"status"`
+	SignatureCount  int              `json:"signature_count"`
+	SignerKIDs      []string         `json:"signer_kids"`
+	Threshold       int              `json:"threshold"`
+	ExpiresAt       time.Time        `json:"expires_at"`
+	ExecutionResult *ExecutionResult  `json:"execution_result,omitempty"`
 }
 
-// ApproveRequestBody is the JSON body for approving a request.
-type ApproveRequestBody struct {
-	SignerKID string `json:"signer_kid"`
-	Signature string `json:"signature"` // base64url
+// ConversationReader provides gate messages from a qntm conversation.
+// Implementations read from local storage, dropbox, or any message source.
+type ConversationReader interface {
+	// ReadGateMessages returns all gate messages for the given org's conversation.
+	ReadGateMessages(orgID string) ([]GateConversationMessage, error)
 }
 
-// AuthStore manages authorization requests.
-type AuthStore struct {
-	mu       sync.RWMutex
-	requests map[string]map[string]*AuthRequest // org_id -> request_id -> request
-	orgStore *OrgStore
+// ConversationWriter posts gate messages to a qntm conversation.
+type ConversationWriter interface {
+	// WriteGateMessage posts a gate message to the org's conversation.
+	WriteGateMessage(orgID string, msg *GateConversationMessage) error
 }
 
-// NewAuthStore creates a new auth store.
-func NewAuthStore(orgStore *OrgStore) *AuthStore {
-	return &AuthStore{
-		requests: make(map[string]map[string]*AuthRequest),
-		orgStore: orgStore,
+// ScanConversation scans conversation messages for a specific request,
+// verifies signatures, checks expiration, and returns the authorization state.
+// This is the core stateless function — no server-side state needed.
+func ScanConversation(messages []GateConversationMessage, requestID string, org *Org) (*ScanResult, error) {
+	result := &ScanResult{Status: StatusPending}
+
+	// Find the original request
+	var reqMsg *GateConversationMessage
+	for i := range messages {
+		if messages[i].Type == GateMessageRequest && messages[i].RequestID == requestID {
+			reqMsg = &messages[i]
+			break
+		}
 	}
-}
 
-func (r *AuthRequest) updatePublicFields() {
-	r.SignatureCount = len(r.signatures)
-	r.SignerKIDs = make([]string, 0, len(r.signatures))
-	for kid := range r.signatures {
-		r.SignerKIDs = append(r.SignerKIDs, kid)
+	if reqMsg == nil {
+		return &ScanResult{Found: false, Status: StatusPending}, nil
 	}
-}
 
-// Submit submits a new authorization request.
-func (s *AuthStore) Submit(orgID string, req *SubmitRequestBody) (*AuthRequest, error) {
-	o, err := s.orgStore.Get(orgID)
+	result.Found = true
+	result.Request = reqMsg
+
+	// Check expiration
+	if time.Now().After(reqMsg.ExpiresAt) {
+		result.Expired = true
+		result.Status = StatusExpired
+		return result, nil
+	}
+
+	// Look up threshold
+	threshold, err := org.LookupThreshold(reqMsg.TargetService, reqMsg.TargetEndpoint, reqMsg.Verb)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup threshold: %w", err)
 	}
+	result.Threshold = threshold
 
-	signer := o.FindSignerByKID(req.RequesterKID)
-	if signer == nil {
-		return nil, fmt.Errorf("unknown signer %q in org %q", req.RequesterKID, orgID)
-	}
-
-	payloadHash := ComputePayloadHash(req.Payload)
+	// Build signable for verification
+	payloadHash := ComputePayloadHash(reqMsg.Payload)
 	signable := &GateSignable{
-		OrgID: orgID, RequestID: req.RequestID, Verb: req.Verb,
-		TargetEndpoint: req.TargetEndpoint, TargetService: req.TargetService,
+		OrgID: reqMsg.OrgID, RequestID: requestID, Verb: reqMsg.Verb,
+		TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
 		PayloadHash: payloadHash,
 	}
 
-	sigBytes, err := decodeBase64Flex(req.Signature)
-	if err != nil {
-		return nil, fmt.Errorf("invalid signature encoding: %w", err)
+	// Collect valid, unique signatures
+	validSigners := make(map[string]bool)
+
+	// Verify the request submitter's signature
+	reqSigner := org.FindSignerByKID(reqMsg.SignerKID)
+	if reqSigner != nil {
+		sigBytes, err := decodeBase64Flex(reqMsg.Signature)
+		if err == nil {
+			if VerifyRequest(reqSigner.PublicKey, signable, sigBytes) == nil {
+				validSigners[reqMsg.SignerKID] = true
+			}
+		}
 	}
 
-	if err := VerifyRequest(signer.PublicKey, signable, sigBytes); err != nil {
-		return nil, fmt.Errorf("signature verification failed: %w", err)
-	}
-
-	threshold, err := o.LookupThreshold(req.TargetService, req.TargetEndpoint, req.Verb)
-	if err != nil {
-		return nil, err
-	}
-
-	expiresAt := time.Now().Add(1 * time.Hour) // default: 1 hour
-	if req.ExpiresAt != nil {
-		expiresAt = *req.ExpiresAt
-	}
-	if expiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("expires_at is in the past")
-	}
-
-	authReq := &AuthRequest{
-		OrgID: orgID, RequestID: req.RequestID, Verb: req.Verb,
-		TargetEndpoint: req.TargetEndpoint, TargetService: req.TargetService,
-		TargetURL: req.TargetURL, Payload: req.Payload,
-		RequesterKID: req.RequesterKID, ExpiresAt: expiresAt,
-		Status: StatusPending, Threshold: threshold, CreatedAt: time.Now(),
-		signature:  sigBytes,
-		signatures: map[string][]byte{req.RequesterKID: sigBytes},
-	}
-
-	s.mu.Lock()
-	if s.requests[orgID] == nil {
-		s.requests[orgID] = make(map[string]*AuthRequest)
-	}
-	if _, exists := s.requests[orgID][req.RequestID]; exists {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("request %q already exists (replay protection)", req.RequestID)
-	}
-	s.requests[orgID][req.RequestID] = authReq
-	s.mu.Unlock()
-
-	log.Printf("[AUDIT] REQUEST org=%s req=%s verb=%s service=%s endpoint=%s by=%s threshold=%d",
-		orgID, req.RequestID, req.Verb, req.TargetService, req.TargetEndpoint, req.RequesterKID, threshold)
-
-	if len(authReq.signatures) >= authReq.Threshold {
-		authReq.Status = StatusApproved
-	}
-
-	authReq.updatePublicFields()
-	return authReq, nil
-}
-
-// Approve adds an approval signature to a request.
-func (s *AuthStore) Approve(orgID, requestID string, approval *ApproveRequestBody) (*AuthRequest, error) {
-	o, err := s.orgStore.Get(orgID)
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	reqs := s.requests[orgID]
-	if reqs == nil {
-		return nil, fmt.Errorf("no requests for org %q", orgID)
-	}
-	authReq := reqs[requestID]
-	if authReq == nil {
-		return nil, fmt.Errorf("request %q not found", requestID)
-	}
-
-	if time.Now().After(authReq.ExpiresAt) {
-		authReq.Status = StatusExpired
-		return nil, fmt.Errorf("request %q has expired", requestID)
-	}
-	if authReq.Status == StatusExecuted {
-		return nil, fmt.Errorf("request %q already executed", requestID)
-	}
-
-	signer := o.FindSignerByKID(approval.SignerKID)
-	if signer == nil {
-		return nil, fmt.Errorf("unknown signer %q", approval.SignerKID)
-	}
-	if _, exists := authReq.signatures[approval.SignerKID]; exists {
-		return nil, fmt.Errorf("signer %q already approved", approval.SignerKID)
-	}
-
-	// Rebuild signable to compute request hash
-	payloadHash := ComputePayloadHash(authReq.Payload)
-	signable := &GateSignable{
-		OrgID: orgID, RequestID: requestID, Verb: authReq.Verb,
-		TargetEndpoint: authReq.TargetEndpoint, TargetService: authReq.TargetService,
-		PayloadHash: payloadHash,
-	}
-	requestHash, err := HashRequest(signable)
+	// Verify approval signatures
+	reqHash, err := HashRequest(signable)
 	if err != nil {
 		return nil, fmt.Errorf("hash request: %w", err)
 	}
-
 	approvalSignable := &ApprovalSignable{
-		OrgID: orgID, RequestID: requestID, RequestHash: requestHash,
+		OrgID: reqMsg.OrgID, RequestID: requestID, RequestHash: reqHash,
 	}
 
-	sigBytes, err := decodeBase64Flex(approval.Signature)
-	if err != nil {
-		return nil, fmt.Errorf("invalid signature encoding: %w", err)
+	for i := range messages {
+		msg := &messages[i]
+		if msg.Type != GateMessageApproval || msg.RequestID != requestID {
+			continue
+		}
+		if validSigners[msg.SignerKID] {
+			continue // duplicate signer
+		}
+		signer := org.FindSignerByKID(msg.SignerKID)
+		if signer == nil {
+			continue // unknown signer
+		}
+		sigBytes, err := decodeBase64Flex(msg.Signature)
+		if err != nil {
+			continue
+		}
+		if VerifyApproval(signer.PublicKey, approvalSignable, sigBytes) == nil {
+			validSigners[msg.SignerKID] = true
+		}
 	}
 
-	if err := VerifyApproval(signer.PublicKey, approvalSignable, sigBytes); err != nil {
-		return nil, fmt.Errorf("approval signature verification failed: %w", err)
+	result.SignerKIDs = make([]string, 0, len(validSigners))
+	for kid := range validSigners {
+		result.SignerKIDs = append(result.SignerKIDs, kid)
 	}
 
-	authReq.signatures[approval.SignerKID] = sigBytes
-	log.Printf("[AUDIT] APPROVAL org=%s req=%s by=%s (%d/%d)",
-		orgID, requestID, approval.SignerKID, len(authReq.signatures), authReq.Threshold)
-
-	if len(authReq.signatures) >= authReq.Threshold {
-		authReq.Status = StatusApproved
+	if len(validSigners) >= threshold {
+		result.ThresholdMet = true
+		result.Status = StatusApproved
 	}
 
-	authReq.updatePublicFields()
-	return authReq, nil
+	return result, nil
 }
 
-// Get returns a request by ID, updating expiration status.
-func (s *AuthStore) Get(orgID, requestID string) (*AuthRequest, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	reqs := s.requests[orgID]
-	if reqs == nil {
-		return nil, fmt.Errorf("no requests for org %q", orgID)
-	}
-	authReq := reqs[requestID]
-	if authReq == nil {
-		return nil, fmt.Errorf("request %q not found", requestID)
-	}
-
-	if authReq.Status == StatusPending && time.Now().After(authReq.ExpiresAt) {
-		authReq.Status = StatusExpired
-	}
-
-	authReq.updatePublicFields()
-	return authReq, nil
-}
-
-// Execute forwards an approved request to the target service, injecting credentials.
-func (s *AuthStore) Execute(orgID, requestID string) (*AuthRequest, error) {
-	s.mu.Lock()
-	reqs := s.requests[orgID]
-	if reqs == nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("request %q not found", requestID)
-	}
-	authReq := reqs[requestID]
-	if authReq == nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("request %q not found", requestID)
-	}
-
-	if time.Now().After(authReq.ExpiresAt) {
-		authReq.Status = StatusExpired
-		s.mu.Unlock()
-		return nil, fmt.Errorf("request %q has expired", requestID)
-	}
-	if authReq.Status != StatusApproved {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("request %q not approved (status: %s)", requestID, authReq.Status)
-	}
-
-	authReq.Status = StatusExecuted // prevent double execution
-	s.mu.Unlock()
-
-	cred, err := s.orgStore.GetCredentialByService(orgID, authReq.TargetService)
+// ExecuteIfReady scans the conversation, checks threshold, and executes if ready.
+// Returns the result without storing any state.
+func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore *OrgStore) (*ExecuteResult, error) {
+	messages, err := reader.ReadGateMessages(org.ID)
 	if err != nil {
-		s.mu.Lock()
-		authReq.Status = StatusApproved
-		s.mu.Unlock()
-		return nil, fmt.Errorf("get credential: %w", err)
+		return nil, fmt.Errorf("read conversation: %w", err)
+	}
+
+	scan, err := ScanConversation(messages, requestID, org)
+	if err != nil {
+		return nil, err
+	}
+
+	if !scan.Found {
+		return nil, fmt.Errorf("request %q not found in conversation", requestID)
+	}
+
+	reqMsg := scan.Request
+	result := &ExecuteResult{
+		OrgID:          reqMsg.OrgID,
+		RequestID:      requestID,
+		Verb:           reqMsg.Verb,
+		TargetEndpoint: reqMsg.TargetEndpoint,
+		TargetService:  reqMsg.TargetService,
+		SignatureCount: len(scan.SignerKIDs),
+		SignerKIDs:     scan.SignerKIDs,
+		Threshold:      scan.Threshold,
+		ExpiresAt:      reqMsg.ExpiresAt,
+	}
+
+	if scan.Expired {
+		result.Status = StatusExpired
+		return result, fmt.Errorf("request %q has expired", requestID)
+	}
+
+	if !scan.ThresholdMet {
+		result.Status = StatusPending
+		return result, nil
+	}
+
+	// Threshold met — execute
+	cred, err := orgStore.GetCredentialByService(org.ID, reqMsg.TargetService)
+	if err != nil {
+		result.Status = StatusApproved
+		return result, fmt.Errorf("get credential: %w", err)
 	}
 
 	var bodyReader io.Reader
-	if len(authReq.Payload) > 0 {
-		bodyReader = strings.NewReader(string(authReq.Payload))
+	if len(reqMsg.Payload) > 0 {
+		bodyReader = strings.NewReader(string(reqMsg.Payload))
 	}
 
-	httpReq, err := http.NewRequest(authReq.Verb, authReq.TargetURL, bodyReader)
+	httpReq, err := http.NewRequest(reqMsg.Verb, reqMsg.TargetURL, bodyReader)
 	if err != nil {
-		s.mu.Lock()
-		authReq.Status = StatusApproved
-		s.mu.Unlock()
-		return nil, fmt.Errorf("create http request: %w", err)
+		result.Status = StatusApproved
+		return result, fmt.Errorf("create http request: %w", err)
 	}
 
 	// Inject credential
@@ -323,38 +266,34 @@ func (s *AuthStore) Execute(orgID, requestID string) (*AuthRequest, error) {
 		headerValue = cred.Value
 	}
 	httpReq.Header.Set(headerName, headerValue)
-	if len(authReq.Payload) > 0 {
+	if len(reqMsg.Payload) > 0 {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		s.mu.Lock()
-		authReq.Status = StatusApproved
-		s.mu.Unlock()
-		return nil, fmt.Errorf("execute request: %w", err)
+		result.Status = StatusApproved
+		return result, fmt.Errorf("execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Drain response body to get content length but do NOT return it
-	// (prevents credential reflection from echo-style services)
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	authReq.ExecutionResult = &ExecutionResult{
+	result.Status = StatusExecuted
+	result.ExecutionResult = &ExecutionResult{
 		StatusCode:    resp.StatusCode,
 		ContentType:   resp.Header.Get("Content-Type"),
 		ContentLength: int64(len(respBody)),
 	}
 
-	log.Printf("[AUDIT] EXECUTION org=%s req=%s service=%s status=%d (no credentials logged)",
-		orgID, requestID, authReq.TargetService, resp.StatusCode)
+	log.Printf("[AUDIT] EXECUTION org=%s req=%s service=%s status=%d signers=%v (no credentials logged)",
+		org.ID, requestID, reqMsg.TargetService, resp.StatusCode, scan.SignerKIDs)
 
-	authReq.updatePublicFields()
-	return authReq, nil
+	return result, nil
 }
 
 func decodeBase64Flex(s string) ([]byte, error) {

@@ -348,11 +348,11 @@ $ rm -rf /tmp/alice /tmp/bob /tmp/charlie /tmp/qntm-dropbox
 
 ---
 
-# qntm-gate — Multisig API Gateway
+# qntm-gate — Stateless Multisig API Gateway
 
-*2026-02-14T15:44:00Z*
+*2026-02-14T19:27:00Z*
 
-Three signers (Alice, Bob, Carol) govern API access through threshold authorization. The gate server verifies Ed25519 signatures over CBOR-encoded requests, collects approvals, and only injects API credentials when the threshold is met.
+Three signers (Alice, Bob, Carol) govern API access through threshold authorization. The gate server is **stateless** — it stores no pending requests or collected signatures. Authorization state lives in the qntm group conversation. On each execution trigger, the gate scans the conversation, verifies Ed25519 signatures, and executes if the threshold is met.
 
 Build: `go build -o /tmp/qntm ./cmd/qntm/ && go build -o /tmp/echo-server ./cmd/echo-server/`
 
@@ -444,7 +444,7 @@ $ curl -s -X POST http://localhost:18080/v1/orgs/demo-org/credentials -H 'Conten
 
 ## Section 24: Gate — 1-of-3 Authorization (GET balance) 🟢
 
-Alice alone can check a balance — GET requires only 1 signer. The request is signed with CBOR-encoded Ed25519, verified, and auto-executed.
+Alice alone can check a balance — GET requires only 1 signer. The request is posted as a `gate.request` message to the org's conversation. The gate scans, verifies the signature, and auto-executes since the threshold (1-of-3) is met immediately.
 
 ```bash
 $ echo '{"request_id":"demo-get-1","verb":"GET","target_endpoint":"/balance","target_service":"echo","target_url":"http://localhost:19090/balance","payload":null}' | \
@@ -458,8 +458,6 @@ $ echo '{"request_id":"demo-get-1","verb":"GET","target_endpoint":"/balance","ta
   "verb": "GET",
   "target_endpoint": "/balance",
   "target_service": "echo",
-  "target_url": "http://localhost:19090/balance",
-  "requester_kid": "vDRFeIKZGW41eObhBkRe8Q",
   "status": "executed",
   "signature_count": 1,
   "signer_kids": ["vDRFeIKZGW41eObhBkRe8Q"],
@@ -472,11 +470,11 @@ $ echo '{"request_id":"demo-get-1","verb":"GET","target_endpoint":"/balance","ta
 }
 ```
 
-> **Key point:** Alice submitted → threshold met (1/1) → gate injected the API credential → echo received the auth header. The response body is **redacted** from `execution_result` to prevent credential reflection. Alice sees only status code, content type, and content length — never the raw response (which may contain reflected credentials from echo-style services).
+> **Key point:** Alice's request message was posted to the conversation → gate scanned → threshold met (1/1) → gate injected the API credential → echo received the auth header. The response body is **redacted** from `execution_result` to prevent credential reflection. No server-side state was stored — the conversation message IS the record.
 
 ## Section 25: Gate — 2-of-3 Authorization (POST transfer) 🟢
 
-Alice submits a wire transfer. The gate holds it pending — POST requires 2-of-3.
+Alice submits a wire transfer as a `gate.request` message. The gate scans and returns pending — POST requires 2-of-3.
 
 ```bash
 $ echo '{"request_id":"demo-post-1","verb":"POST","target_endpoint":"/transfer","target_service":"echo","target_url":"http://localhost:19090/transfer","payload":{"amount":5000,"recipient":"acme-corp"}}' | \
@@ -494,7 +492,7 @@ $ echo '{"request_id":"demo-post-1","verb":"POST","target_endpoint":"/transfer",
 }
 ```
 
-Bob reviews and approves:
+Bob reviews and posts a `gate.approval` message:
 
 ```bash
 $ echo '{"verb":"POST","target_endpoint":"/transfer","target_service":"echo","payload":{"amount":5000,"recipient":"acme-corp"}}' | \
@@ -517,11 +515,19 @@ $ echo '{"verb":"POST","target_endpoint":"/transfer","target_service":"echo","pa
 }
 ```
 
-> **Key point:** Alice (1/2) → pending. Bob approves (2/2) → threshold met → gate injects credential → POST forwarded with auth. The response body is redacted — callers see only HTTP status, content type, and length. The echo server *received* the credential (it was injected by gate), but that raw response is never exposed to the caller.
+> **Key point:** Alice's request message (1/2) → gate scans conversation → pending. Bob's approval message (2/2) → gate re-scans → threshold met → credential injected → POST forwarded. The gate stored nothing — both messages live in the conversation. The response body is redacted to prevent credential reflection.
+
+Alternatively, execution can be triggered explicitly:
+
+```bash
+$ /tmp/qntm gate execute demo-org demo-post-1 --gate-url http://localhost:18080
+```
+
+> This calls `POST /v1/orgs/demo-org/execute/demo-post-1`, which scans the conversation and executes if the threshold is met. Useful for polling or agent-triggered execution.
 
 ## Section 26: Gate — Expiration (5s TTL) 🟢
 
-Submit a request with a 5-second TTL. Wait for it to expire. Approval after expiry is rejected.
+Submit a request with a 5-second TTL. Wait for it to expire. Approval after expiry is rejected — the gate scans the conversation and checks `expires_at` from the original request message.
 
 ```bash
 $ EXPIRES=$(date -u -v+5S +"%Y-%m-%dT%H:%M:%SZ")
@@ -553,10 +559,10 @@ $ /tmp/qntm gate request status demo-org demo-expire-1 --gate-url http://localho
 ```
 
 ```output
-{"request_id":"demo-expire-1","status":"expired"}
+{"status":"expired","found":true,"expired":true}
 ```
 
-> **Key point:** The request expired after 5 seconds. Bob's approval was cryptographically valid but the gate rejected it due to expiration. Even if the threshold had been met before expiry, execution after expiry would also be rejected.
+> **Key point:** The request message in the conversation has `expires_at`. The gate checks this on every scan — no timers, no cleanup. Bob's approval was cryptographically valid but the gate rejected it because the request message's expiration had passed.
 
 ## Section 27: Gate — Bad Signature Rejection 🟢
 
@@ -602,19 +608,33 @@ $ go test ./gate/ -v 2>&1 | grep -E "(PASS|FAIL|✅)"
 --- PASS: TestSignVerifyApproval (0.00s)
 --- PASS: TestLookupThreshold (0.00s)
 --- PASS: TestOrgStore (0.00s)
-    gate_test.go:163: ✅ 2-of-3 echo integration passed
---- PASS: TestIntegration_2of3_Echo (0.00s)
-    gate_test.go:213: ✅ 1-of-2 auto-execute passed
+    gate_test.go:145: ✅ ScanConversation threshold met
+--- PASS: TestScanConversation_ThresholdMet (0.00s)
+    gate_test.go:182: ✅ ScanConversation threshold not met (1/2)
+--- PASS: TestScanConversation_ThresholdNotMet (0.00s)
+    gate_test.go:219: ✅ ScanConversation expired request
+--- PASS: TestScanConversation_Expired (0.00s)
+    gate_test.go:257: ✅ ScanConversation bad signature rejected
+--- PASS: TestScanConversation_BadSignature (0.00s)
+    gate_test.go:300: ✅ ScanConversation duplicate signer counted once
+--- PASS: TestScanConversation_DuplicateSigner (0.00s)
+    gate_test.go:316: ✅ ScanConversation request not found
+--- PASS: TestScanConversation_NotFound (0.00s)
+    gate_test.go:390: ✅ 2-of-3 echo integration passed (stateless)
+--- PASS: TestIntegration_2of3_Echo (0.01s)
+    gate_test.go:437: ✅ 1-of-2 auto-execute passed (stateless)
 --- PASS: TestIntegration_1of2_AutoExecute (0.00s)
-    gate_test.go:278: ✅ Expiration test passed (2s TTL)
+    gate_test.go:504: ✅ Expiration test passed (2s TTL, stateless)
 --- PASS: TestIntegration_Expiration (3.01s)
-    gate_test.go:315: ✅ Bad signature rejected
+    gate_test.go:543: ✅ Bad signature rejected (stateless)
 --- PASS: TestIntegration_BadSignature (0.00s)
-    gate_test.go:326: ✅ Unknown org returns 404
+    gate_test.go:554: ✅ Unknown org returns 404
 --- PASS: TestIntegration_UnknownOrg (0.00s)
-    gate_test.go:364: ✅ Duplicate request rejected (replay protection)
+    gate_test.go:594: ✅ Duplicate request rejected (replay protection, stateless)
 --- PASS: TestIntegration_DuplicateRequest (0.00s)
-ok  	github.com/corpo/qntm/gate	3.370s
+    gate_test.go:659: ✅ Explicit execute endpoint passed (stateless)
+--- PASS: TestIntegration_ExplicitExecute (0.00s)
+ok  	github.com/corpo/qntm/gate	3.438s
 ```
 
 ```bash
@@ -622,18 +642,22 @@ $ go test ./... 2>&1 | grep -E "(ok|FAIL)"
 ```
 
 ```output
-ok  	github.com/corpo/qntm          0.012s
-ok  	github.com/corpo/qntm/crypto   0.004s
-ok  	github.com/corpo/qntm/dropbox  0.930s
-ok  	github.com/corpo/qntm/gate     3.286s
-ok  	github.com/corpo/qntm/group    0.662s
-ok  	github.com/corpo/qntm/identity 0.005s
-ok  	github.com/corpo/qntm/invite   0.003s
-ok  	github.com/corpo/qntm/message  0.003s
-ok  	github.com/corpo/qntm/security 0.002s
+ok  	github.com/corpo/qntm          0.342s
+ok  	github.com/corpo/qntm/crypto   0.454s
+ok  	github.com/corpo/qntm/dropbox  0.714s
+ok  	github.com/corpo/qntm/gate     3.846s
+ok  	github.com/corpo/qntm/group    1.381s
+ok  	github.com/corpo/qntm/handle   1.525s
+ok  	github.com/corpo/qntm/identity 1.041s
+ok  	github.com/corpo/qntm/invite   1.705s
+ok  	github.com/corpo/qntm/message  1.771s
+ok  	github.com/corpo/qntm/naming   1.824s
+ok  	github.com/corpo/qntm/registry 1.833s
+ok  	github.com/corpo/qntm/security 1.654s
+ok  	github.com/corpo/qntm/shortref 1.526s
 ```
 
-> All 9 packages pass (gate is new). Gate tests include 7 integration tests covering 2-of-3 auth, 1-of-2 auto-execute, expiration (2s TTL), bad signatures, unknown orgs, and replay protection.
+> All 13 packages pass. Gate tests include 6 ScanConversation unit tests (threshold met/not met, expired, bad sig, duplicate signer, not found) + 7 HTTP integration tests (2-of-3, 1-of-2 auto-execute, expiration, bad sig, unknown org, replay protection, explicit execute endpoint). The gate server is fully stateless — no pending requests map, no mutex for request state, no cleanup timers.
 
 ## Section 30: Gate — Cleanup
 

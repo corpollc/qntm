@@ -6,29 +6,59 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
+
+// MemoryConversationStore implements ConversationReader and ConversationWriter
+// using in-memory storage. For production, this would read from qntm group conversations.
+type MemoryConversationStore struct {
+	mu       sync.RWMutex
+	messages map[string][]GateConversationMessage // org_id -> messages
+}
+
+// NewMemoryConversationStore creates a new in-memory conversation store.
+func NewMemoryConversationStore() *MemoryConversationStore {
+	return &MemoryConversationStore{
+		messages: make(map[string][]GateConversationMessage),
+	}
+}
+
+func (s *MemoryConversationStore) ReadGateMessages(orgID string) ([]GateConversationMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	msgs := s.messages[orgID]
+	// Return a copy
+	result := make([]GateConversationMessage, len(msgs))
+	copy(result, msgs)
+	return result, nil
+}
+
+func (s *MemoryConversationStore) WriteGateMessage(orgID string, msg *GateConversationMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages[orgID] = append(s.messages[orgID], *msg)
+	return nil
+}
 
 // Server is the qntm-gate HTTP server.
 type Server struct {
 	OrgStore   *OrgStore
-	AuthStore  *AuthStore
-	AdminToken string // required for admin endpoints; empty = no auth (testing only)
+	ConvStore  *MemoryConversationStore
+	AdminToken string
 	mux        *http.ServeMux
 }
 
-// NewServer creates a new gate server with in-memory stores.
+// NewServer creates a new gate server.
 func NewServer() *Server {
 	return NewServerWithToken("")
 }
 
 // NewServerWithToken creates a gate server requiring the given admin token for admin endpoints.
 func NewServerWithToken(adminToken string) *Server {
-	orgStore := NewOrgStore()
-	authStore := NewAuthStore(orgStore)
-
 	s := &Server{
-		OrgStore:   orgStore,
-		AuthStore:  authStore,
+		OrgStore:   NewOrgStore(),
+		ConvStore:  NewMemoryConversationStore(),
 		AdminToken: adminToken,
 		mux:        http.NewServeMux(),
 	}
@@ -36,11 +66,9 @@ func NewServerWithToken(adminToken string) *Server {
 	return s
 }
 
-// requireAdmin checks the Authorization header for a valid admin bearer token.
-// Returns true if authorized, false if rejected (and writes the error response).
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if s.AdminToken == "" {
-		return true // no token configured (testing mode)
+		return true
 	}
 	auth := r.Header.Get("Authorization")
 	expected := "Bearer " + s.AdminToken
@@ -108,21 +136,23 @@ func (s *Server) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) >= 2 && parts[1] == "requests" {
-		if len(parts) == 2 {
-			s.handleSubmitRequest(w, r, orgID)
-			return
-		}
+	// POST /v1/orgs/{org_id}/messages — post a gate message to the conversation
+	if len(parts) >= 2 && parts[1] == "messages" {
+		s.handlePostMessage(w, r, orgID)
+		return
+	}
+
+	// POST /v1/orgs/{org_id}/execute/{request_id} — scan conversation and execute if threshold met
+	if len(parts) >= 3 && parts[1] == "execute" {
 		requestID := parts[2]
-		if len(parts) == 4 && parts[3] == "approve" {
-			s.handleApprove(w, r, orgID, requestID)
-			return
-		}
-		if len(parts) == 4 && parts[3] == "execute" {
-			s.handleExecute(w, r, orgID, requestID)
-			return
-		}
-		s.handleGetRequest(w, r, orgID, requestID)
+		s.handleExecute(w, r, orgID, requestID)
+		return
+	}
+
+	// GET /v1/orgs/{org_id}/scan/{request_id} — scan conversation without executing
+	if len(parts) >= 3 && parts[1] == "scan" {
+		requestID := parts[2]
+		s.handleScan(w, r, orgID, requestID)
 		return
 	}
 
@@ -159,90 +189,208 @@ func (s *Server) handleCredentials(w http.ResponseWriter, r *http.Request, orgID
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "credential added", "id": cred.ID})
 }
 
-func (s *Server) handleSubmitRequest(w http.ResponseWriter, r *http.Request, orgID string) {
+// handlePostMessage accepts a gate message (request or approval) and stores it in the conversation.
+// In production, this would be posted to the qntm group directly. The HTTP endpoint
+// provides a convenient way to feed messages into the conversation for the gate to scan.
+func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID string) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	var req SubmitRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+
+	// Verify org exists
+	org, err := s.OrgStore.Get(orgID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	var msg GateConversationMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	authReq, err := s.AuthStore.Submit(orgID, &req)
+	msg.OrgID = orgID
+
+	// Validate the message
+	if msg.Type == GateMessageRequest {
+		// Verify request signature
+		signer := org.FindSignerByKID(msg.SignerKID)
+		if signer == nil {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown signer %q in org %q", msg.SignerKID, orgID))
+			return
+		}
+		payloadHash := ComputePayloadHash(msg.Payload)
+		signable := &GateSignable{
+			OrgID: orgID, RequestID: msg.RequestID, Verb: msg.Verb,
+			TargetEndpoint: msg.TargetEndpoint, TargetService: msg.TargetService,
+			PayloadHash: payloadHash,
+		}
+		sigBytes, err := decodeBase64Flex(msg.Signature)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid signature encoding")
+			return
+		}
+		if err := VerifyRequest(signer.PublicKey, signable, sigBytes); err != nil {
+			writeErr(w, http.StatusBadRequest, "signature verification failed: "+err.Error())
+			return
+		}
+
+		// Check for duplicate request ID
+		existing, _ := s.ConvStore.ReadGateMessages(orgID)
+		for _, m := range existing {
+			if m.Type == GateMessageRequest && m.RequestID == msg.RequestID {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("request %q already exists (replay protection)", msg.RequestID))
+				return
+			}
+		}
+
+		log.Printf("[AUDIT] REQUEST org=%s req=%s verb=%s service=%s endpoint=%s by=%s",
+			orgID, msg.RequestID, msg.Verb, msg.TargetService, msg.TargetEndpoint, msg.SignerKID)
+	} else if msg.Type == GateMessageApproval {
+		// Verify approval signature
+		signer := org.FindSignerByKID(msg.SignerKID)
+		if signer == nil {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown signer %q", msg.SignerKID))
+			return
+		}
+		// We need the original request to verify the approval
+		existing, _ := s.ConvStore.ReadGateMessages(orgID)
+		var reqMsg *GateConversationMessage
+		for i := range existing {
+			if existing[i].Type == GateMessageRequest && existing[i].RequestID == msg.RequestID {
+				reqMsg = &existing[i]
+				break
+			}
+		}
+		if reqMsg == nil {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("request %q not found", msg.RequestID))
+			return
+		}
+
+		// Check expiration
+		if reqMsg.ExpiresAt.Before(time.Now()) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("request %q has expired", msg.RequestID))
+			return
+		}
+
+		payloadHash := ComputePayloadHash(reqMsg.Payload)
+		signable := &GateSignable{
+			OrgID: orgID, RequestID: msg.RequestID, Verb: reqMsg.Verb,
+			TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
+			PayloadHash: payloadHash,
+		}
+		reqHash, err := HashRequest(signable)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "hash request: "+err.Error())
+			return
+		}
+		approvalSignable := &ApprovalSignable{
+			OrgID: orgID, RequestID: msg.RequestID, RequestHash: reqHash,
+		}
+		sigBytes, err := decodeBase64Flex(msg.Signature)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid signature encoding")
+			return
+		}
+		if err := VerifyApproval(signer.PublicKey, approvalSignable, sigBytes); err != nil {
+			writeErr(w, http.StatusBadRequest, "approval signature verification failed: "+err.Error())
+			return
+		}
+
+		log.Printf("[AUDIT] APPROVAL org=%s req=%s by=%s", orgID, msg.RequestID, msg.SignerKID)
+	} else {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown message type %q", msg.Type))
+		return
+	}
+
+	// Store in conversation
+	if err := s.ConvStore.WriteGateMessage(orgID, &msg); err != nil {
+		writeErr(w, http.StatusInternalServerError, "store message: "+err.Error())
+		return
+	}
+
+	// Auto-execute: scan the conversation and execute if threshold met
+	org2, _ := s.OrgStore.Get(orgID)
+	result, err := ExecuteIfReady(msg.RequestID, org2, s.ConvStore, s.OrgStore)
 	if err != nil {
+		// Not an error if just pending or expired — return the scan result
+		if result != nil {
+			writeJSON(w, http.StatusAccepted, result)
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Auto-execute if threshold met (e.g. 1-of-N)
-	if authReq.Status == StatusApproved {
-		executed, err := s.AuthStore.Execute(orgID, authReq.RequestID)
-		if err != nil {
-			writeJSON(w, http.StatusOK, authReq)
-			return
-		}
-		writeJSON(w, http.StatusOK, executed)
-		return
+	if result.Status == StatusExecuted {
+		writeJSON(w, http.StatusOK, result)
+	} else {
+		writeJSON(w, http.StatusAccepted, result)
 	}
-
-	writeJSON(w, http.StatusAccepted, authReq)
 }
 
-func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request, orgID, requestID string) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req ApproveRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	authReq, err := s.AuthStore.Approve(orgID, requestID, &req)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Auto-execute if threshold now met
-	if authReq.Status == StatusApproved {
-		executed, err := s.AuthStore.Execute(orgID, requestID)
-		if err != nil {
-			writeJSON(w, http.StatusOK, authReq)
-			return
-		}
-		writeJSON(w, http.StatusOK, executed)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, authReq)
-}
-
+// handleExecute scans the conversation for a request and executes if threshold met.
 func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request, orgID, requestID string) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	authReq, err := s.AuthStore.Execute(orgID, requestID)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, authReq)
-}
 
-func (s *Server) handleGetRequest(w http.ResponseWriter, r *http.Request, orgID, requestID string) {
-	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	authReq, err := s.AuthStore.Get(orgID, requestID)
+	org, err := s.OrgStore.Get(orgID)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, authReq)
+
+	result, err := ExecuteIfReady(requestID, org, s.ConvStore, s.OrgStore)
+	if err != nil {
+		if result != nil {
+			writeJSON(w, http.StatusBadRequest, result)
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if result.Status == StatusExecuted {
+		writeJSON(w, http.StatusOK, result)
+	} else {
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
+// handleScan scans the conversation for a request without executing.
+func (s *Server) handleScan(w http.ResponseWriter, r *http.Request, orgID, requestID string) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	org, err := s.OrgStore.Get(orgID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	messages, err := s.ConvStore.ReadGateMessages(orgID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	scan, err := ScanConversation(messages, requestID, org)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if !scan.Found {
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("request %q not found in conversation", requestID))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, scan)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
