@@ -21,7 +21,7 @@ type HTTPStorageProvider struct {
 // NewHTTPStorageProvider creates a new HTTP-backed storage provider.
 func NewHTTPStorageProvider(baseURL string) *HTTPStorageProvider {
 	if baseURL == "" {
-		baseURL = "https://qntm.s6.xyz"
+		baseURL = "https://inbox.qntm.corpo.llc"
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &HTTPStorageProvider{

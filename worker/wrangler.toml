@@ -3,12 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2024-02-08"
 
 routes = [
-  { pattern = "qntm.s6.xyz", custom_domain = true }
+  { pattern = "inbox.qntm.corpo.llc", custom_domain = true }
 ]
 
 [[kv_namespaces]]
 binding = "QNTM_KV"
-id = "PLACEHOLDER_KV_ID"
+id = "3a542ff3af7c466aba9cb401bc8a07e1"
 
 [vars]
 ENVELOPE_TTL_SECONDS = "2592000"  # 30 days

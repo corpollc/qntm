@@ -38,7 +38,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", defaultConfigDir, "Configuration directory")
 	rootCmd.PersistentFlags().StringVar(&identityFile, "identity", "", "Identity file path (default: config-dir/identity.json)")
 	rootCmd.PersistentFlags().StringVar(&storageDir, "storage", "", "Storage directory for local provider (e.g. local:/path)")
-	rootCmd.PersistentFlags().StringVar(&dropboxURL, "dropbox-url", "", "HTTP drop box endpoint (default: https://qntm.s6.xyz)")
+	rootCmd.PersistentFlags().StringVar(&dropboxURL, "dropbox-url", "", "HTTP drop box endpoint (default: https://inbox.qntm.corpo.llc)")
 	rootCmd.PersistentFlags().BoolVar(&unsafeMode, "unsafe", false, "Enable unsafe development features")
 	rootCmd.PersistentFlags().BoolVar(&verboseMode, "verbose", false, "Enable verbose output")
 	
