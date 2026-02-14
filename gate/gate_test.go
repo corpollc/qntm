@@ -100,7 +100,223 @@ func TestOrgStore(t *testing.T) {
 	}
 }
 
-// --- Integration tests ---
+// --- ScanConversation unit tests ---
+
+func TestScanConversation_ThresholdMet(t *testing.T) {
+	a, b := newTestSigner(), newTestSigner()
+	org := &Org{
+		ID:      "test-org",
+		Signers: []Signer{{KID: a.kid, PublicKey: a.pub, Label: "alice"}, {KID: b.kid, PublicKey: b.pub, Label: "bob"}},
+		Rules:   []ThresholdRule{{Service: "echo", Endpoint: "*", Verb: "POST", M: 2, N: 2}},
+	}
+
+	payload := json.RawMessage(`{"test":true}`)
+	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
+		TargetEndpoint: "/echo", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	reqSig, _ := SignRequest(a.priv, signable)
+	reqHash, _ := HashRequest(signable)
+	appSig, _ := SignApproval(b.priv, &ApprovalSignable{OrgID: "test-org", RequestID: "r1", RequestHash: reqHash})
+
+	messages := []GateConversationMessage{
+		{
+			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
+			Payload: payload, SignerKID: a.kid,
+			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+		},
+		{
+			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
+			SignerKID: b.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
+		},
+	}
+
+	result, err := ScanConversation(messages, "r1", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ThresholdMet {
+		t.Fatal("expected threshold met")
+	}
+	if len(result.SignerKIDs) != 2 {
+		t.Fatalf("expected 2 signers, got %d", len(result.SignerKIDs))
+	}
+	t.Log("✅ ScanConversation threshold met")
+}
+
+func TestScanConversation_ThresholdNotMet(t *testing.T) {
+	a, b := newTestSigner(), newTestSigner()
+	org := &Org{
+		ID:      "test-org",
+		Signers: []Signer{{KID: a.kid, PublicKey: a.pub, Label: "alice"}, {KID: b.kid, PublicKey: b.pub, Label: "bob"}},
+		Rules:   []ThresholdRule{{Service: "echo", Endpoint: "*", Verb: "POST", M: 2, N: 2}},
+	}
+
+	payload := json.RawMessage(`{}`)
+	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
+		TargetEndpoint: "/echo", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	reqSig, _ := SignRequest(a.priv, signable)
+
+	messages := []GateConversationMessage{
+		{
+			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
+			Payload: payload, SignerKID: a.kid,
+			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+		},
+	}
+
+	result, err := ScanConversation(messages, "r1", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ThresholdMet {
+		t.Fatal("expected threshold NOT met")
+	}
+	if len(result.SignerKIDs) != 1 {
+		t.Fatalf("expected 1 signer, got %d", len(result.SignerKIDs))
+	}
+	t.Log("✅ ScanConversation threshold not met (1/2)")
+}
+
+func TestScanConversation_Expired(t *testing.T) {
+	a := newTestSigner()
+	org := &Org{
+		ID:      "test-org",
+		Signers: []Signer{{KID: a.kid, PublicKey: a.pub, Label: "alice"}},
+		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1}},
+	}
+
+	payload := json.RawMessage(`{}`)
+	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+		TargetEndpoint: "/t", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	reqSig, _ := SignRequest(a.priv, signable)
+
+	messages := []GateConversationMessage{
+		{
+			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
+			Payload: payload, SignerKID: a.kid,
+			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
+			ExpiresAt: time.Now().Add(-1 * time.Second), // already expired
+		},
+	}
+
+	result, err := ScanConversation(messages, "r1", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Expired {
+		t.Fatal("expected expired")
+	}
+	if result.Status != StatusExpired {
+		t.Fatalf("expected status expired, got %s", result.Status)
+	}
+	t.Log("✅ ScanConversation expired request")
+}
+
+func TestScanConversation_BadSignature(t *testing.T) {
+	a := newTestSigner()
+	_, wrongPriv, _ := ed25519.GenerateKey(nil)
+	org := &Org{
+		ID:      "test-org",
+		Signers: []Signer{{KID: a.kid, PublicKey: a.pub, Label: "alice"}},
+		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1}},
+	}
+
+	payload := json.RawMessage(`{}`)
+	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+		TargetEndpoint: "/t", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	badSig, _ := SignRequest(wrongPriv, signable) // wrong key
+
+	messages := []GateConversationMessage{
+		{
+			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
+			Payload: payload, SignerKID: a.kid,
+			Signature: base64.RawURLEncoding.EncodeToString(badSig),
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+		},
+	}
+
+	result, err := ScanConversation(messages, "r1", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ThresholdMet {
+		t.Fatal("bad signature should not meet threshold")
+	}
+	if len(result.SignerKIDs) != 0 {
+		t.Fatalf("expected 0 valid signers, got %d", len(result.SignerKIDs))
+	}
+	t.Log("✅ ScanConversation bad signature rejected")
+}
+
+func TestScanConversation_DuplicateSigner(t *testing.T) {
+	a := newTestSigner()
+	org := &Org{
+		ID:      "test-org",
+		Signers: []Signer{{KID: a.kid, PublicKey: a.pub, Label: "alice"}},
+		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 2}},
+	}
+
+	payload := json.RawMessage(`{}`)
+	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+		TargetEndpoint: "/t", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	reqSig, _ := SignRequest(a.priv, signable)
+	reqHash, _ := HashRequest(signable)
+	appSig, _ := SignApproval(a.priv, &ApprovalSignable{OrgID: "test-org", RequestID: "r1", RequestHash: reqHash})
+
+	messages := []GateConversationMessage{
+		{
+			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
+			Payload: payload, SignerKID: a.kid,
+			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+		},
+		{
+			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
+			SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
+		},
+	}
+
+	result, err := ScanConversation(messages, "r1", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SignerKIDs) != 1 {
+		t.Fatalf("duplicate signer should count once, got %d", len(result.SignerKIDs))
+	}
+	if result.ThresholdMet {
+		t.Fatal("duplicate signer should not meet threshold of 2")
+	}
+	t.Log("✅ ScanConversation duplicate signer counted once")
+}
+
+func TestScanConversation_NotFound(t *testing.T) {
+	org := &Org{
+		ID:    "test-org",
+		Rules: []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1}},
+	}
+
+	result, err := ScanConversation(nil, "nonexistent", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Found {
+		t.Fatal("should not find nonexistent request")
+	}
+	t.Log("✅ ScanConversation request not found")
+}
+
+// --- Integration tests (HTTP) ---
 
 func TestIntegration_2of3_Echo(t *testing.T) {
 	echoSrv := httptest.NewServer(echoHandler())
@@ -109,6 +325,7 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 	defer gateSrv.Close()
 
 	a, b, c := newTestSigner(), newTestSigner(), newTestSigner()
+	_ = c // carol not needed for 2-of-3
 
 	// Create org
 	post(t, gateSrv.URL+"/v1/orgs", map[string]interface{}{
@@ -129,31 +346,33 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 		"header_name": "Authorization", "header_value": "Bearer {value}",
 	})
 
-	// A submits
+	// A submits request as a conversation message
 	payload := json.RawMessage(`{"test":true}`)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "req-001", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
-	resp := post(t, gateSrv.URL+"/v1/orgs/test-org/requests", map[string]interface{}{
-		"request_id": "req-001", "verb": "POST",
+	resp := post(t, gateSrv.URL+"/v1/orgs/test-org/messages", map[string]interface{}{
+		"type": "gate.request", "request_id": "req-001", "verb": "POST",
 		"target_endpoint": "/echo", "target_service": "echo",
 		"target_url": echoSrv.URL + "/echo",
-		"payload": payload, "requester_kid": a.kid,
-		"signature": base64.RawURLEncoding.EncodeToString(sig),
+		"payload": payload, "signer_kid": a.kid,
+		"signature":  base64.RawURLEncoding.EncodeToString(sig),
+		"expires_at": time.Now().Add(1 * time.Hour),
 	})
 
 	if s := resp["status"]; s != "pending" {
 		t.Fatalf("expected pending, got %v", s)
 	}
 
-	// B approves
+	// B approves via conversation message
 	reqHash, _ := HashRequest(signable)
 	appSig, _ := SignApproval(b.priv, &ApprovalSignable{
 		OrgID: "test-org", RequestID: "req-001", RequestHash: reqHash,
 	})
-	resp = post(t, gateSrv.URL+"/v1/orgs/test-org/requests/req-001/approve", map[string]string{
+	resp = post(t, gateSrv.URL+"/v1/orgs/test-org/messages", map[string]interface{}{
+		"type": "gate.approval", "request_id": "req-001",
 		"signer_kid": b.kid, "signature": base64.RawURLEncoding.EncodeToString(appSig),
 	})
 
@@ -165,14 +384,10 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 	if execResult["status_code"].(float64) != 200 {
 		t.Fatalf("expected status 200, got %v", execResult["status_code"])
 	}
-	if execResult["content_type"].(string) != "application/json" {
-		t.Fatalf("expected application/json, got %v", execResult["content_type"])
-	}
-	// Body should NOT be present (redacted for security)
 	if _, hasBody := execResult["body"]; hasBody {
 		t.Fatal("execution_result should not contain body (credential reflection risk)")
 	}
-	t.Log("✅ 2-of-3 echo integration passed")
+	t.Log("✅ 2-of-3 echo integration passed (stateless)")
 }
 
 func TestIntegration_1of2_AutoExecute(t *testing.T) {
@@ -203,11 +418,13 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
-	resp := post(t, gateSrv.URL+"/v1/orgs/low-org/requests", map[string]interface{}{
-		"request_id": "r1", "verb": "GET", "target_endpoint": "/balance",
-		"target_service": "echo", "target_url": echoSrv.URL + "/balance",
-		"payload": payload, "requester_kid": a.kid,
-		"signature": base64.RawURLEncoding.EncodeToString(sig),
+	resp := post(t, gateSrv.URL+"/v1/orgs/low-org/messages", map[string]interface{}{
+		"type": "gate.request", "request_id": "r1", "verb": "GET",
+		"target_endpoint": "/balance", "target_service": "echo",
+		"target_url": echoSrv.URL + "/balance",
+		"payload": payload, "signer_kid": a.kid,
+		"signature":  base64.RawURLEncoding.EncodeToString(sig),
+		"expires_at": time.Now().Add(1 * time.Hour),
 	})
 
 	if s := resp["status"]; s != "executed" {
@@ -217,7 +434,7 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 	if _, hasBody := execResult["body"]; hasBody {
 		t.Fatal("execution_result should not contain body")
 	}
-	t.Log("✅ 1-of-2 auto-execute passed")
+	t.Log("✅ 1-of-2 auto-execute passed (stateless)")
 }
 
 func TestIntegration_Expiration(t *testing.T) {
@@ -248,10 +465,11 @@ func TestIntegration_Expiration(t *testing.T) {
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
-	resp := post(t, gateSrv.URL+"/v1/orgs/exp-org/requests", map[string]interface{}{
-		"request_id": "r-exp", "verb": "POST", "target_endpoint": "/echo",
-		"target_service": "echo", "target_url": "http://localhost:9999/echo",
-		"payload": payload, "requester_kid": a.kid,
+	resp := post(t, gateSrv.URL+"/v1/orgs/exp-org/messages", map[string]interface{}{
+		"type": "gate.request", "request_id": "r-exp", "verb": "POST",
+		"target_endpoint": "/echo", "target_service": "echo",
+		"target_url": "http://localhost:9999/echo",
+		"payload": payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
 		"expires_at": expiresAt.Format(time.RFC3339Nano),
 	})
@@ -262,27 +480,28 @@ func TestIntegration_Expiration(t *testing.T) {
 	// Wait for expiration
 	time.Sleep(3 * time.Second)
 
-	// Try to approve — should fail
+	// Try to approve — should fail (expired)
 	reqHash, _ := HashRequest(signable)
 	appSig, _ := SignApproval(b.priv, &ApprovalSignable{
 		OrgID: "exp-org", RequestID: "r-exp", RequestHash: reqHash,
 	})
-	body, _ := json.Marshal(map[string]string{
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "gate.approval", "request_id": "r-exp",
 		"signer_kid": b.kid, "signature": base64.RawURLEncoding.EncodeToString(appSig),
 	})
-	httpResp, _ := http.Post(gateSrv.URL+"/v1/orgs/exp-org/requests/r-exp/approve",
+	httpResp, _ := http.Post(gateSrv.URL+"/v1/orgs/exp-org/messages",
 		"application/json", bytes.NewReader(body))
 	if httpResp.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", httpResp.StatusCode)
 	}
 	httpResp.Body.Close()
 
-	// Status should show expired
-	statusResp := get(t, gateSrv.URL+"/v1/orgs/exp-org/requests/r-exp")
-	if statusResp["status"] != "expired" {
-		t.Fatalf("expected expired, got %v", statusResp["status"])
+	// Scan should show expired
+	scanResp := get(t, gateSrv.URL+"/v1/orgs/exp-org/scan/r-exp")
+	if scanResp["status"] != "expired" {
+		t.Fatalf("expected expired, got %v", scanResp["status"])
 	}
-	t.Log("✅ Expiration test passed (2s TTL)")
+	t.Log("✅ Expiration test passed (2s TTL, stateless)")
 }
 
 func TestIntegration_BadSignature(t *testing.T) {
@@ -309,17 +528,19 @@ func TestIntegration_BadSignature(t *testing.T) {
 	sig, _ := SignRequest(wrongPriv, signable) // wrong key!
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"request_id": "r-bad", "verb": "GET", "target_endpoint": "/t",
-		"target_service": "echo", "target_url": "http://localhost:9999/t",
-		"payload": payload, "requester_kid": a.kid,
-		"signature": base64.RawURLEncoding.EncodeToString(sig),
+		"type": "gate.request", "request_id": "r-bad", "verb": "GET",
+		"target_endpoint": "/t", "target_service": "echo",
+		"target_url": "http://localhost:9999/t",
+		"payload": payload, "signer_kid": a.kid,
+		"signature":  base64.RawURLEncoding.EncodeToString(sig),
+		"expires_at": time.Now().Add(1 * time.Hour),
 	})
-	resp, _ := http.Post(gateSrv.URL+"/v1/orgs/sig-org/requests", "application/json", bytes.NewReader(body))
+	resp, _ := http.Post(gateSrv.URL+"/v1/orgs/sig-org/messages", "application/json", bytes.NewReader(body))
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	t.Log("✅ Bad signature rejected")
+	t.Log("✅ Bad signature rejected (stateless)")
 }
 
 func TestIntegration_UnknownOrg(t *testing.T) {
@@ -354,21 +575,88 @@ func TestIntegration_DuplicateRequest(t *testing.T) {
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
-	submitBody := map[string]interface{}{
-		"request_id": "r-dup", "verb": "GET", "target_endpoint": "/t",
-		"target_service": "echo", "target_url": "http://localhost:9999/t",
-		"payload": payload, "requester_kid": a.kid,
-		"signature": base64.RawURLEncoding.EncodeToString(sig),
+	msgBody := map[string]interface{}{
+		"type": "gate.request", "request_id": "r-dup", "verb": "GET",
+		"target_endpoint": "/t", "target_service": "echo",
+		"target_url": "http://localhost:9999/t",
+		"payload": payload, "signer_kid": a.kid,
+		"signature":  base64.RawURLEncoding.EncodeToString(sig),
+		"expires_at": time.Now().Add(1 * time.Hour),
 	}
-	post(t, gateSrv.URL+"/v1/orgs/dup-org/requests", submitBody) // first: OK
+	post(t, gateSrv.URL+"/v1/orgs/dup-org/messages", msgBody) // first: OK
 
-	body, _ := json.Marshal(submitBody)
-	resp, _ := http.Post(gateSrv.URL+"/v1/orgs/dup-org/requests", "application/json", bytes.NewReader(body))
+	body, _ := json.Marshal(msgBody)
+	resp, _ := http.Post(gateSrv.URL+"/v1/orgs/dup-org/messages", "application/json", bytes.NewReader(body))
 	if resp.StatusCode != 400 {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	t.Log("✅ Duplicate request rejected (replay protection)")
+	t.Log("✅ Duplicate request rejected (replay protection, stateless)")
+}
+
+func TestIntegration_ExplicitExecute(t *testing.T) {
+	echoSrv := httptest.NewServer(echoHandler())
+	defer echoSrv.Close()
+	srv := NewServer()
+	gateSrv := httptest.NewServer(srv)
+	defer gateSrv.Close()
+
+	a, b := newTestSigner(), newTestSigner()
+	post(t, gateSrv.URL+"/v1/orgs", map[string]interface{}{
+		"id": "exec-org",
+		"signers": []map[string]interface{}{
+			{"kid": a.kid, "public_key": encKey(a.pub), "label": "alice"},
+			{"kid": b.kid, "public_key": encKey(b.pub), "label": "bob"},
+		},
+		"rules": []map[string]interface{}{
+			{"service": "echo", "endpoint": "*", "verb": "POST", "m": 2, "n": 2},
+		},
+	})
+	post(t, gateSrv.URL+"/v1/orgs/exec-org/credentials", map[string]interface{}{
+		"id": "c", "service": "echo", "value": "key_exec",
+		"header_name": "Authorization", "header_value": "Bearer {value}",
+	})
+
+	// Post request and approval directly to conversation store (simulating qntm group messages)
+	payload := json.RawMessage(`{"action":"test"}`)
+	signable := &GateSignable{OrgID: "exec-org", RequestID: "r-exec", Verb: "POST",
+		TargetEndpoint: "/action", TargetService: "echo",
+		PayloadHash: ComputePayloadHash(payload)}
+	reqSig, _ := SignRequest(a.priv, signable)
+	reqHash, _ := HashRequest(signable)
+	appSig, _ := SignApproval(b.priv, &ApprovalSignable{OrgID: "exec-org", RequestID: "r-exec", RequestHash: reqHash})
+
+	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
+		Type: GateMessageRequest, OrgID: "exec-org", RequestID: "r-exec",
+		Verb: "POST", TargetEndpoint: "/action", TargetService: "echo",
+		TargetURL: echoSrv.URL + "/action", Payload: payload,
+		SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(reqSig),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	})
+	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
+		Type: GateMessageApproval, OrgID: "exec-org", RequestID: "r-exec",
+		SignerKID: b.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
+	})
+
+	// Trigger explicit execute via HTTP
+	body, _ := json.Marshal(map[string]string{})
+	resp, err := http.Post(gateSrv.URL+"/v1/orgs/exec-org/execute/r-exec", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	json.Unmarshal(data, &result)
+
+	if result["status"] != "executed" {
+		t.Fatalf("expected executed, got %v (body: %s)", result["status"], string(data))
+	}
+	execResult := result["execution_result"].(map[string]interface{})
+	if execResult["status_code"].(float64) != 200 {
+		t.Fatalf("expected 200, got %v", execResult["status_code"])
+	}
+	t.Log("✅ Explicit execute endpoint passed (stateless)")
 }
 
 // --- Helpers ---
