@@ -784,7 +784,7 @@ PASS
 
 ---
 
-## Section 8: Handle Registry 🟢
+## Section 35: Handle Registry 🟢
 
 Start the registry server, register handles, and look up commitments.
 
@@ -838,7 +838,7 @@ Handle: bob
 
 > Registry enforces uniqueness, generates 32-byte salts for brute-force resistance, computes `H(CBOR({handle, ik_pk, salt}))` commitments, and discards the salt after returning it to the client. All mutations require Ed25519 signatures.
 
-## Section 9: Local Naming 🟢
+## Section 36: Local Naming 🟢
 
 Assign local nicknames to identities and conversations. Names are never transmitted.
 
@@ -865,7 +865,40 @@ No names set
 
 > Display priority: local name > revealed handle > short ref > full kid. Names stored in `names.json`, never shared.
 
-## Section 10: Short References 🟢
+## Section 37: Handle Reveal 🟢
+
+Reveal your handle to conversation participants. Sends a signed reveal message containing handle + salt so recipients can verify against the registry commitment.
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h --storage /tmp/qntm-dropbox handle reveal 6a3ba7badd1620f6321b0ade9b6a480c
+```
+
+```output
+Handle revealed in conversation 6a3ba7ba...
+```
+
+## Section 38: Name Conversations 🟢
+
+Assign local nicknames to conversations (never transmitted).
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h --storage /tmp/qntm-dropbox name conv 6a3ba7badd1620f6321b0ade9b6a480c "Handle Test Group"
+```
+
+```output
+Named conversation 6a3ba7ba... → Handle Test Group
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h --storage /tmp/qntm-dropbox name list
+```
+
+```output
+Conversations:
+  6a3ba7ba... → Handle Test Group
+```
+
+## Section 39: Short References 🟢
 
 Use shortest unique hex prefix (minimum 3 chars) to refer to any known ID.
 
@@ -879,7 +912,7 @@ $ /tmp/qntm --config-dir /tmp/alice-h ref 3a0
 
 > Trie-based resolution over all known kids and conversation IDs. Ambiguous prefixes prompt for more characters.
 
-## Section 11: Unit Tests 🟢
+## Section 40: Unit Tests (Handles/Naming/Shortref) 🟢
 
 ```bash
 $ cd ~/src/corpo/qntm && go test ./shortref/... ./registry/... ./handle/... ./naming/... -v 2>&1 | tail -30

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -386,10 +387,15 @@ func buildTrie() *shortref.Trie {
 }
 
 func resolveKID(input string) (string, error) {
+	// Accept 32-char hex KIDs directly
 	if len(input) == 32 {
 		if _, err := hex.DecodeString(input); err == nil {
 			return input, nil
 		}
+	}
+	// Accept base64url-encoded KIDs (22 chars for 16-byte KID)
+	if b, err := base64.RawURLEncoding.DecodeString(input); err == nil && len(b) == 16 {
+		return hex.EncodeToString(b), nil
 	}
 	// Try name resolution
 	store, err := naming.NewStore(configDir)
