@@ -781,3 +781,145 @@ PASS
 ```
 
 > The full rekey flow test creates a 3-member group, issues a rekey excluding one member, verifies the excluded member cannot unwrap the new key, and confirms the remaining members can encrypt/decrypt under the new epoch.
+
+---
+
+## Section 8: Handle Registry 🟢
+
+Start the registry server, register handles, and look up commitments.
+
+```bash
+$ rm -rf /tmp/alice-h /tmp/bob-h /tmp/qntm-dropbox-h /tmp/registry-data
+$ mkdir -p /tmp/alice-h /tmp/bob-h /tmp/qntm-dropbox-h /tmp/registry-data
+$ /tmp/qntm --config-dir /tmp/registry-data registry serve --addr :8420 &
+```
+
+```output
+Registry server listening on :8420
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h identity generate
+$ /tmp/qntm --config-dir /tmp/alice-h registry register alice --registry-url http://localhost:8420
+```
+
+```output
+Generated new identity:
+Key ID: Og0kfUm1eyjnatobxCb5xw
+Public Key: TfnkgUi31u_Se9nDcJ4Ue8_V9VoxQHUYC8DJB8t14jY
+Saved to: /tmp/alice-h/identity.json
+Handle registered: alice
+Salt (stored locally): d101dd9e42937bd8...
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/bob-h identity generate
+$ /tmp/qntm --config-dir /tmp/bob-h registry register bob --registry-url http://localhost:8420
+```
+
+```output
+Generated new identity:
+Key ID: o_hy0WLWKoynOxlawZAccA
+Public Key: 0luJVAYk7QxT3YeS5_WIs1cWWmkicdR-vzd1Nxtl7uA
+Saved to: /tmp/bob-h/identity.json
+Handle registered: bob
+Salt (stored locally): 10ea1b7a1aa9b9e0...
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h handle show
+$ /tmp/qntm --config-dir /tmp/bob-h handle show
+```
+
+```output
+Handle: alice
+Handle: bob
+```
+
+> Registry enforces uniqueness, generates 32-byte salts for brute-force resistance, computes `H(CBOR({handle, ik_pk, salt}))` commitments, and discards the salt after returning it to the client. All mutations require Ed25519 signatures.
+
+## Section 9: Local Naming 🟢
+
+Assign local nicknames to identities and conversations. Names are never transmitted.
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h name set 3a0d247d49b57b28e76ada1bc426f9c7 "My Identity"
+$ /tmp/qntm --config-dir /tmp/alice-h name list
+```
+
+```output
+Named 3a0d247d... → My Identity
+Identities:
+  3a0d247d... → My Identity
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h name remove "My Identity"
+$ /tmp/qntm --config-dir /tmp/alice-h name list
+```
+
+```output
+Removed identity name: My Identity
+No names set
+```
+
+> Display priority: local name > revealed handle > short ref > full kid. Names stored in `names.json`, never shared.
+
+## Section 10: Short References 🟢
+
+Use shortest unique hex prefix (minimum 3 chars) to refer to any known ID.
+
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h ref 3a0
+```
+
+```output
+3a0d247d49b57b28e76ada1bc426f9c7
+```
+
+> Trie-based resolution over all known kids and conversation IDs. Ambiguous prefixes prompt for more characters.
+
+## Section 11: Unit Tests 🟢
+
+```bash
+$ cd ~/src/corpo/qntm && go test ./shortref/... ./registry/... ./handle/... ./naming/... -v 2>&1 | tail -30
+```
+
+```output
+--- PASS: TestTrieBasic (0.00s)
+--- PASS: TestTrieMinPrefix (0.00s)
+--- PASS: TestTrieAmbiguity (0.00s)
+--- PASS: TestResolveExact (0.00s)
+--- PASS: TestResolveAmbiguous (0.00s)
+--- PASS: TestRemove (0.00s)
+--- PASS: TestCaseInsensitive (0.00s)
+PASS
+ok  	github.com/corpo/qntm/shortref
+--- PASS: TestRegisterAndLookup (0.00s)
+--- PASS: TestUniqueness (0.00s)
+--- PASS: TestBadSignature (0.00s)
+--- PASS: TestChange (0.00s)
+--- PASS: TestDelete (0.00s)
+--- PASS: TestCommitmentScheme (0.00s)
+--- PASS: TestNotFound (0.00s)
+PASS
+ok  	github.com/corpo/qntm/registry
+--- PASS: TestVerifyReveal (0.00s)
+--- PASS: TestStoreReveal (0.00s)
+--- PASS: TestStoreMyHandle (0.00s)
+--- PASS: TestStoreCommitment (0.00s)
+PASS
+ok  	github.com/corpo/qntm/handle
+--- PASS: TestSetAndGet (0.00s)
+--- PASS: TestNameCollision (0.00s)
+--- PASS: TestRemove (0.00s)
+--- PASS: TestRemoveNotFound (0.00s)
+--- PASS: TestConversationNames (0.00s)
+--- PASS: TestListIdentities (0.00s)
+--- PASS: TestResolveByName (0.00s)
+--- PASS: TestNewStoreCreatesDir (0.00s)
+PASS
+ok  	github.com/corpo/qntm/naming
+```
+
+> All 19 tests pass across 4 new packages: shortref, registry, handle, naming.
