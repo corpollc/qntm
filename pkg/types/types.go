@@ -62,6 +62,7 @@ type OuterEnvelope struct {
 	MsgID      MessageID       `cbor:"msg_id"`
 	CreatedTS  int64           `cbor:"created_ts"`
 	ExpiryTS   int64           `cbor:"expiry_ts"`
+	ConvEpoch  uint            `cbor:"conv_epoch"`
 	Ciphertext []byte          `cbor:"ciphertext"`
 	AADHash    []byte          `cbor:"aad_hash,omitempty"`
 }
@@ -85,6 +86,7 @@ type AADStruct struct {
 	MsgID     MessageID      `cbor:"msg_id"`
 	CreatedTS int64          `cbor:"created_ts"`
 	ExpiryTS  int64          `cbor:"expiry_ts"`
+	ConvEpoch uint           `cbor:"conv_epoch"`
 }
 
 // Signable represents the structure that gets signed
@@ -104,6 +106,15 @@ type ConversationKeys struct {
 	Root     []byte `json:"root"`
 	AEADKey  []byte `json:"aead_key"`
 	NonceKey []byte `json:"nonce_key"`
+}
+
+// EpochKeys represents keys for a specific epoch in a group conversation
+type EpochKeys struct {
+	Epoch    uint   `json:"epoch"`
+	GroupKey []byte `json:"group_key"` // k_group for this epoch
+	AEADKey  []byte `json:"aead_key"`
+	NonceKey []byte `json:"nonce_key"`
+	ExpiresAt int64 `json:"expires_at,omitempty"` // When old epoch keys should be discarded
 }
 
 // Message represents a complete decrypted message
@@ -128,4 +139,12 @@ type Conversation struct {
 	Keys         ConversationKeys `json:"keys"`
 	Participants []KeyID          `json:"participants"`
 	CreatedAt    time.Time        `json:"created_at"`
+	CurrentEpoch uint             `json:"current_epoch"`
+	EpochKeys    []EpochKeys      `json:"epoch_keys,omitempty"` // Historical epoch keys (for grace period)
 }
+
+// MaxGroupSize is the maximum number of members in a group (§1.9)
+const MaxGroupSize = 128
+
+// EpochGracePeriod is how long to retain old epoch keys (24 hours, §1.5)
+const EpochGracePeriodSeconds int64 = 24 * 60 * 60

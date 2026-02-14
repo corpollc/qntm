@@ -113,6 +113,7 @@ func (m *Manager) CreateMessage(
 		MsgID:     msgID,
 		CreatedTS: now,
 		ExpiryTS:  expiryTS,
+		ConvEpoch: conversation.CurrentEpoch,
 	}
 	
 	aadBytes, err := cbor.MarshalCanonical(aadStruct)
@@ -143,6 +144,7 @@ func (m *Manager) CreateMessage(
 		MsgID:      msgID,
 		CreatedTS:  now,
 		ExpiryTS:   expiryTS,
+		ConvEpoch:  conversation.CurrentEpoch,
 		Ciphertext: ciphertext,
 		AADHash:    aadHash,
 	}
@@ -177,6 +179,7 @@ func (m *Manager) DecryptMessage(
 		MsgID:     envelope.MsgID,
 		CreatedTS: envelope.CreatedTS,
 		ExpiryTS:  envelope.ExpiryTS,
+		ConvEpoch: envelope.ConvEpoch,
 	}
 	
 	aadBytes, err := cbor.MarshalCanonical(aadStruct)
