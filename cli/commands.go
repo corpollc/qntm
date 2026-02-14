@@ -120,8 +120,12 @@ var identityShowCmd = &cobra.Command{
 		}
 		
 		identityMgr := identity.NewManager()
+		dc := NewDisplayContext()
+		kidHex := hex.EncodeToString(currentIdentity.KeyID[:])
+		displayKID := dc.FormatKIDHex(kidHex, "")
+		
 		fmt.Printf("Current identity:\n")
-		fmt.Printf("Key ID: %s\n", identityMgr.KeyIDToString(currentIdentity.KeyID))
+		fmt.Printf("Key ID: %s\n", displayKID)
 		fmt.Printf("Public Key: %s\n", identityMgr.PublicKeyToString(currentIdentity.PublicKey))
 		
 		return nil
@@ -260,10 +264,11 @@ var inviteListCmd = &cobra.Command{
 			return nil
 		}
 		
+		dc := NewDisplayContext()
 		fmt.Printf("Conversations (%d):\n", len(conversations))
 		for _, conv := range conversations {
 			fmt.Printf("  %s (%s) - %d participants\n", 
-				hex.EncodeToString(conv.ID[:]), 
+				dc.FormatConvID(conv.ID), 
 				conv.Type, 
 				len(conv.Participants))
 		}
@@ -280,8 +285,8 @@ var messageCmd = &cobra.Command{
 }
 
 var messageSendCmd = &cobra.Command{
-	Use:   "send <conversation-id> <message>",
-	Short: "Send a message to a conversation",
+	Use:   "send <conversation> <message>",
+	Short: "Send a message to a conversation (accepts name, short ref, or hex ID)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		currentIdentity, err := loadIdentity()
@@ -289,7 +294,10 @@ var messageSendCmd = &cobra.Command{
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
 		
-		convIDHex := args[0]
+		convIDHex, err := resolveConvID(args[0])
+		if err != nil {
+			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+		}
 		messageText := args[1]
 		
 		// Parse conversation ID
@@ -328,7 +336,8 @@ var messageSendCmd = &cobra.Command{
 			return fmt.Errorf("failed to send message: %w", err)
 		}
 		
-		fmt.Printf("Message sent to conversation %s\n", convIDHex)
+		dc := NewDisplayContext()
+		fmt.Printf("Message sent to %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Message ID: %s\n", hex.EncodeToString(envelope.MsgID[:]))
 		
 		return nil
@@ -336,8 +345,8 @@ var messageSendCmd = &cobra.Command{
 }
 
 var messageReceiveCmd = &cobra.Command{
-	Use:   "receive [conversation-id]",
-	Short: "Receive messages from conversations",
+	Use:   "receive [conversation]",
+	Short: "Receive messages (accepts name, short ref, or hex ID)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversations, err := loadConversations()
 		if err != nil {
@@ -346,7 +355,10 @@ var messageReceiveCmd = &cobra.Command{
 		
 		// Filter to specific conversation if provided
 		if len(args) > 0 {
-			convIDHex := args[0]
+			convIDHex, err := resolveConvID(args[0])
+			if err != nil {
+				return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+			}
 			convIDBytes, err := hex.DecodeString(convIDHex)
 			if err != nil || len(convIDBytes) != 16 {
 				return fmt.Errorf("invalid conversation ID format")
@@ -365,11 +377,14 @@ var messageReceiveCmd = &cobra.Command{
 		
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
+		dc := NewDisplayContext()
 		
 		totalMessages := 0
 		allSeenMessages := loadSeenMessages()
 		
 		for _, conversation := range conversations {
+			convIDHex := hex.EncodeToString(conversation.ID[:])
+			
 			// Get seen messages for this conversation
 			conversationSeenMessages := allSeenMessages[conversation.ID]
 			if conversationSeenMessages == nil {
@@ -379,18 +394,19 @@ var messageReceiveCmd = &cobra.Command{
 			
 			messages, err := dropboxMgr.ReceiveMessages(conversation, conversationSeenMessages)
 			if err != nil {
-				fmt.Printf("Error receiving from conversation %s: %v\n", 
-					hex.EncodeToString(conversation.ID[:]), err)
+				fmt.Printf("Error receiving from %s: %v\n", 
+					dc.FormatConvIDHex(convIDHex), err)
 				continue
 			}
 			
 			if len(messages) > 0 {
-				fmt.Printf("\nConversation %s (%d new messages):\n", 
-					hex.EncodeToString(conversation.ID[:]), len(messages))
+				fmt.Printf("\n%s (%d new messages):\n", 
+					dc.FormatConvIDHex(convIDHex), len(messages))
 				
 				for _, msg := range messages {
+					senderDisplay := dc.FormatKID(msg.Inner.SenderKID, convIDHex)
 					fmt.Printf("  [%s] %s: %s\n",
-						hex.EncodeToString(msg.Inner.SenderKID[:8]), // First 8 bytes of sender
+						senderDisplay,
 						msg.Inner.BodyType,
 						string(msg.Inner.Body))
 				}
@@ -413,11 +429,14 @@ var messageReceiveCmd = &cobra.Command{
 }
 
 var messageListCmd = &cobra.Command{
-	Use:   "list <conversation-id>",
-	Short: "List messages in storage",
+	Use:   "list <conversation>",
+	Short: "List messages in storage (accepts name, short ref, or hex ID)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		convIDHex := args[0]
+		convIDHex, err := resolveConvID(args[0])
+		if err != nil {
+			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+		}
 		convIDBytes, err := hex.DecodeString(convIDHex)
 		if err != nil || len(convIDBytes) != 16 {
 			return fmt.Errorf("invalid conversation ID format")
@@ -428,13 +447,14 @@ var messageListCmd = &cobra.Command{
 		
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
+		dc := NewDisplayContext()
 		
 		stats, err := dropboxMgr.GetStorageStats(convID)
 		if err != nil {
 			return fmt.Errorf("failed to get storage stats: %w", err)
 		}
 		
-		fmt.Printf("Conversation %s storage stats:\n", convIDHex)
+		fmt.Printf("%s storage stats:\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("  Messages: %d\n", stats.MessageCount)
 		fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
 		fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
@@ -490,8 +510,9 @@ var groupCreateCmd = &cobra.Command{
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
 		
+		dc := NewDisplayContext()
 		fmt.Printf("Created group '%s':\n", groupName)
-		fmt.Printf("Conversation ID: %s\n", hex.EncodeToString(conversation.ID[:]))
+		fmt.Printf("Conversation ID: %s\n", dc.FormatConvID(conversation.ID))
 		fmt.Printf("Members: %d\n", groupMgr.GetMemberCount(groupState))
 		
 		return nil
@@ -509,8 +530,8 @@ var groupJoinCmd = &cobra.Command{
 }
 
 var groupAddCmd = &cobra.Command{
-	Use:   "add <conversation-id> <public-key>",
-	Short: "Add member to group",
+	Use:   "add <conversation> <public-key>",
+	Short: "Add member to group (accepts name, short ref, or hex ID for conversation)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		currentIdentity, err := loadIdentity()
@@ -518,7 +539,10 @@ var groupAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
 		
-		convIDHex := args[0]
+		convIDHex, err := resolveConvID(args[0])
+		if err != nil {
+			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+		}
 		pubkeyStr := args[1]
 		
 		// Parse conversation ID
@@ -571,7 +595,8 @@ var groupAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
 		
-		fmt.Printf("Added member to group %s\n", convIDHex)
+		dc := NewDisplayContext()
+		fmt.Printf("Added member to %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Group rekeyed to epoch %d\n", conversation.CurrentEpoch)
 		
 		return nil
@@ -579,8 +604,8 @@ var groupAddCmd = &cobra.Command{
 }
 
 var groupRemoveCmd = &cobra.Command{
-	Use:   "remove <conversation-id> <key-id>",
-	Short: "Remove member from group (with rekey)",
+	Use:   "remove <conversation> <key-id>",
+	Short: "Remove member from group (accepts name, short ref, or hex ID)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		currentIdentity, err := loadIdentity()
@@ -588,8 +613,14 @@ var groupRemoveCmd = &cobra.Command{
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
 
-		convIDHex := args[0]
-		kidStr := args[1]
+		convIDHex, err := resolveConvID(args[0])
+		if err != nil {
+			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+		}
+		kidHex, err := resolveKID(args[1])
+		if err != nil {
+			return fmt.Errorf("could not resolve member %q: %w", args[1], err)
+		}
 
 		// Parse conversation ID
 		convIDBytes, err := hex.DecodeString(convIDHex)
@@ -600,12 +631,13 @@ var groupRemoveCmd = &cobra.Command{
 		var convID types.ConversationID
 		copy(convID[:], convIDBytes)
 
-		// Parse key ID
-		identityMgr := identity.NewManager()
-		memberKID, err := identityMgr.KeyIDFromString(kidStr)
-		if err != nil {
-			return fmt.Errorf("invalid key ID: %w", err)
+		// Parse key ID from resolved hex
+		kidBytes, err := hex.DecodeString(kidHex)
+		if err != nil || len(kidBytes) != 16 {
+			return fmt.Errorf("invalid key ID format")
 		}
+		var memberKID types.KeyID
+		copy(memberKID[:], kidBytes)
 
 		// Find conversation and group state
 		conversation, err := findConversation(convID)
@@ -642,7 +674,8 @@ var groupRemoveCmd = &cobra.Command{
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
 
-		fmt.Printf("Removed member %s from group %s\n", kidStr, convIDHex)
+		dc := NewDisplayContext()
+		fmt.Printf("Removed %s from %s\n", dc.FormatKIDHex(kidHex, convIDHex), dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Group rekeyed to epoch %d\n", conversation.CurrentEpoch)
 
 		return nil
@@ -650,8 +683,8 @@ var groupRemoveCmd = &cobra.Command{
 }
 
 var groupRekeyCmd = &cobra.Command{
-	Use:   "rekey <conversation-id>",
-	Short: "Manually trigger a group rekey (key rotation)",
+	Use:   "rekey <conversation>",
+	Short: "Manually trigger a group rekey (accepts name, short ref, or hex ID)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		currentIdentity, err := loadIdentity()
@@ -659,7 +692,10 @@ var groupRekeyCmd = &cobra.Command{
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
 
-		convIDHex := args[0]
+		convIDHex, err := resolveConvID(args[0])
+		if err != nil {
+			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+		}
 
 		// Parse conversation ID
 		convIDBytes, err := hex.DecodeString(convIDHex)
@@ -716,7 +752,8 @@ var groupRekeyCmd = &cobra.Command{
 			return fmt.Errorf("failed to save conversation: %w", err)
 		}
 
-		fmt.Printf("Group %s rekeyed to epoch %d\n", convIDHex, conversation.CurrentEpoch)
+		dc := NewDisplayContext()
+		fmt.Printf("%s rekeyed to epoch %d\n", dc.FormatConvIDHex(convIDHex), conversation.CurrentEpoch)
 
 		return nil
 	},
@@ -743,19 +780,28 @@ var groupListCmd = &cobra.Command{
 			return nil
 		}
 		
+		dc := NewDisplayContext()
 		fmt.Printf("Group conversations (%d):\n", len(groupConversations))
 		for _, conv := range groupConversations {
 			groupState, err := loadGroupState(conv.ID)
 			if err != nil {
 				fmt.Printf("  %s (failed to load group state)\n", 
-					hex.EncodeToString(conv.ID[:]))
+					dc.FormatConvID(conv.ID))
 				continue
 			}
 			
+			convIDHex := hex.EncodeToString(conv.ID[:])
 			fmt.Printf("  %s: %s (%d members)\n", 
-				hex.EncodeToString(conv.ID[:]), 
+				dc.FormatConvIDHex(convIDHex), 
 				groupState.GroupName,
 				len(groupState.Members))
+			
+			// Show members with names
+			if verboseMode {
+				for kid := range groupState.Members {
+					fmt.Printf("    - %s\n", dc.FormatKID(kid, convIDHex))
+				}
+			}
 		}
 		
 		return nil
