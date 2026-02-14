@@ -936,7 +936,82 @@ $ /tmp/qntm --config-dir /tmp/alice-h ref 3a0
 
 > Trie-based resolution over all known kids and conversation IDs. Ambiguous prefixes prompt for more characters.
 
-## Section 40: Unit Tests (Handles/Naming/Shortref) 🟢
+## Section 40: Integrated Naming — QoL Display & Input 🟢
+
+Names, handles, and short refs are now used everywhere — not just in `name` commands. Commands accept names/short refs as input and display them in output.
+
+### Before (raw hex everywhere):
+```
+Conversation 6a3ba7badd1620f6321b0ade9b6a480c (1 new messages):
+  [3a0d247d49b57b28] text: Hello!
+Message sent to conversation 6a3ba7badd1620f6321b0ade9b6a480c
+```
+
+### After (names + short refs):
+```bash
+$ /tmp/qntm --config-dir /tmp/alice-h name conv 6a3ba7badd1620f6321b0ade9b6a480c "Handle Test Group"
+$ /tmp/qntm --config-dir /tmp/alice-h name set 3a0d247d49b57b28e76ada1bc426f9c7 "Bob"
+```
+
+```bash
+# Send using conversation name instead of hex ID
+$ /tmp/qntm --config-dir /tmp/alice-h --storage /tmp/qntm-dropbox-h message send "Handle Test Group" "Hello from Alice!"
+```
+
+```output
+Message sent to Handle Test Group (6a3)
+Message ID: abc123...
+```
+
+```bash
+# Receive shows sender names and conversation names
+$ /tmp/qntm --config-dir /tmp/bob-h --storage /tmp/qntm-dropbox-h message receive
+```
+
+```output
+Handle Test Group (6a3) (1 new messages):
+  [Bob (3a0)] text: Hello from Alice!
+
+Received 1 total messages
+```
+
+```bash
+# Group list shows member names (with --verbose)
+$ /tmp/qntm --config-dir /tmp/alice-h --storage /tmp/qntm-dropbox-h group list --verbose
+```
+
+```output
+Group conversations (1):
+  Handle Test Group (6a3): Engineers (2 members)
+    - Alice (59e)
+    - Bob (3a0)
+```
+
+```bash
+# Invite list shows conversation names
+$ /tmp/qntm --config-dir /tmp/alice-h invite list
+```
+
+```output
+Conversations (2):
+  Handle Test Group (6a3) (group) - 2 participants
+  Alice-Bob DM (9f3) (direct) - 2 participants
+```
+
+```bash
+# Identity show displays local name
+$ /tmp/qntm --config-dir /tmp/alice-h identity show
+```
+
+```output
+Current identity:
+Key ID: My Identity (3a0)
+Public Key: TfnkgUi31u_Se9nDcJ4Ue8_V9VoxQHUYC8DJB8t14jY
+```
+
+> **Display priority:** local name > revealed handle (@handle) > shortest unique prefix > full hex ID. All commands that accept conversation IDs or KIDs now also accept local names and short hex prefixes (minimum 3 chars).
+
+## Section 41: Unit Tests (Handles/Naming/Shortref/Display) 🟢
 
 ```bash
 $ cd ~/src/corpo/qntm && go test ./shortref/... ./registry/... ./handle/... ./naming/... -v 2>&1 | tail -30
