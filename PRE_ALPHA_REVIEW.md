@@ -2,56 +2,62 @@
 
 ## Scope checked
 - Security flaws
-- Cryptographic correctness
-- Dead code / stubs
-- Missing / mocked features
-- demo.md accuracy
+- Cryptographic errors
+- Dead code
+- Missing / faked / mocked code
+- `demo.md` accuracy
 - Accidental key inclusion
 - Feature completeness against QSP v1.1
 
-## Critical findings
+## What I ran
+- `go test ./...`
+- `uvx showboat --help`
+- Static scans (`rg`) for: v1.1 fields, TODO/not-implemented markers, and secret-like strings.
 
-1. **QSP v1.1 features are not implemented in runtime code.**
-   - The v1.1 spec requires `conv_epoch`, `group_rekey`, and `handle_reveal`, plus related key schedule and verification rules.
-   - The protocol data structures and message flow still only implement v1.0-era fields and types.
+## Environment limitations
+1. **Automated test execution is blocked by network policy in this environment.**
+   - `go test ./...` fails while downloading modules from `proxy.golang.org` (HTTP Forbidden).
+2. **Demo regeneration could not be executed.**
+   - `uvx showboat --help` fails because PyPI fetch to `https://pypi.org/simple/showboat/` cannot connect through the environment tunnel.
 
-2. **Nonce derivation does not match spec intent.**
-   - `DeriveNonce` comment claims `HMAC-SHA-256(k_nonce, msg_id)` but implementation is plain `SHA256(k_nonce || msg_id)`.
-   - This is a cryptographic mismatch and should be corrected or documented as intentional with test vectors.
+## Findings
 
-3. **Gate service has no authentication/authorization on admin APIs.**
-   - Org creation, credential insertion, and request submission endpoints are open HTTP handlers.
-   - Any caller can create orgs and attach credentials in the current process.
+### High
+1. **Gate admin protection is optional and defaults to disabled.**
+   - `gate.NewServer()` calls `NewServerWithToken("")` and `requireAdmin` allows all admin operations when no token is set.
+   - Impact: org creation and credential insertion are unauthenticated by default unless operators explicitly pass `--admin-token` / `QNTM_GATE_TOKEN`.
 
-## High findings
+### Medium
+2. **Credentials are stored in plaintext in memory.**
+   - `Credential.Value` is stored as a raw string in the in-memory org store.
+   - Impact: practical pre-alpha tradeoff, but still sensitive material handling risk.
 
-4. **Credential handling contradicts stated secrecy claims.**
-   - Credentials are stored in plaintext in memory (`Credential.Value`).
-   - Forwarded target response body is returned verbatim in `execution_result`, so reflected credentials can leak to callers.
+3. **Unwired command implementations remain in tree (dead code / partial feature).**
+   - `identity import` and `identity export` command handlers exist but are not registered in CLI init and return `not implemented yet`.
 
-5. **go test cannot run due to dependency hygiene issue.**
-   - Test run fails with missing `go.sum` entry for `golang.org/x/sys/cpu` required by `x/crypto/chacha20poly1305`.
+4. **A placeholder URL is still baked into invite creation output.**
+   - `invite create` formats links using `https://qntm.example.com/join`.
+   - Impact: demo/developer convenience, but inaccurate for production guidance unless explicitly overridden/documented.
 
-## Medium findings
+### Pass / verified
+5. **Core v1.1 artifacts appear implemented in code paths and tests.**
+   - `conv_epoch` is present in envelope/AAD types and set during message creation.
+   - Group rekey message handling (`group_rekey`) and handle reveal (`handle_reveal`) code paths are present.
+   - Epoch-key derivation tests exist for v1.0 compatibility at epoch 0 and epoch separation.
 
-6. **Stubbed / not implemented functionality exists in shipped CLI paths.**
-   - `identity import`, `identity export`, and `group remove` are present but return explicit `not implemented` errors.
+6. **Nonce derivation matches the stated HMAC construction.**
+   - `DeriveNonce` uses `HMAC-SHA-256(k_nonce, msg_id)` and truncates to 24 bytes.
 
-7. **ACK serialization path is explicitly TODO / placeholder.**
-   - `SendACK` currently sends formatted text (`ack:<msgid>:<status>`) rather than structured protocol object.
+7. **Credential reflection mitigation is present in gate execution results and demo output.**
+   - Execution results return metadata (status/content type/content length) without response body.
+   - Demo sections for gate execution also show redacted body behavior.
 
-8. **Demo output has drift / self-contradictions.**
-   - Demo claims credentials never appear in responses, but later output includes `Bearer sk_live_demo_key_2026` in the body.
-   - Demo also documents commands that return stubs, which is acceptable for transparency but not production-ready behavior.
+8. **No obvious real secrets were found in repo text.**
+   - Pattern scan found only the demo string `sk_live_demo_key_2026` in documentation context.
 
-## Key leakage check
-- No obvious private-key PEM or cloud provider key format strings were found in repository sources.
-- `demo.md` contains a clearly synthetic token-like value (`sk_live_demo_key_2026`), used as documentation data.
-
-## Recommended immediate actions
-1. Implement v1.1 wire/data model (`conv_epoch`, new body types, epoch key derivation).
-2. Fix nonce derivation to actual HMAC-SHA-256 (or update spec/comments and test vectors if intentional).
-3. Add authn/authz on gate management and signing endpoints.
-4. Redact/guard execution response bodies or introduce allowlist filtering.
-5. Resolve module checksum issues and gate CI on `go test ./...`.
-6. Remove/feature-flag stub CLI commands until implemented.
+## Recommended next actions
+1. Make admin auth **secure-by-default** for gate (`--admin-token` required in non-dev mode).
+2. Add optional at-rest/in-memory credential hardening strategy (KMS, envelope encryption, or external secret source).
+3. Either implement or remove/unexpose identity import/export stubs.
+4. Replace placeholder invite base URL with config-derived value and document clearly in `demo.md`.
+5. Re-run full quality gates and regenerate demos in a network-enabled CI environment.
