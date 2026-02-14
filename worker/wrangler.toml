@@ -1,0 +1,16 @@
+name = "qntm-dropbox"
+main = "src/index.ts"
+compatibility_date = "2024-02-08"
+
+routes = [
+  { pattern = "qntm.s6.xyz", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "QNTM_KV"
+id = "PLACEHOLDER_KV_ID"
+
+[vars]
+ENVELOPE_TTL_SECONDS = "2592000"  # 30 days
+MAX_ENVELOPE_SIZE = "65536"       # 64KB
+RATE_LIMIT_PER_MIN = "100"

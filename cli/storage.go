@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/corpo/qntm/dropbox"
 	"github.com/corpo/qntm/group"
@@ -282,15 +283,27 @@ func loadSeenMessages() map[types.ConversationID]map[types.MessageID]bool {
 // Storage provider
 
 func getStorageProvider() dropbox.StorageProvider {
-	// For now, use file-based storage
-	// In production, this would connect to actual storage backends
-	storageDir := getStorageDir()
-	if err := os.MkdirAll(storageDir, 0700); err != nil {
-		// Fallback to memory storage
-		return dropbox.NewMemoryStorageProvider()
+	// If --storage local:/path is set, use filesystem provider
+	if strings.HasPrefix(storageDir, "local:") {
+		dir := strings.TrimPrefix(storageDir, "local:")
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create storage dir, falling back to memory: %v\n", err)
+			return dropbox.NewMemoryStorageProvider()
+		}
+		return NewFileStorageProvider(dir)
 	}
-	
-	return NewFileStorageProvider(storageDir)
+
+	// If --storage is a plain path (no prefix), use filesystem provider (backward compat)
+	if storageDir != "" {
+		dir := storageDir
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return dropbox.NewMemoryStorageProvider()
+		}
+		return NewFileStorageProvider(dir)
+	}
+
+	// Default: HTTP provider
+	return dropbox.NewHTTPStorageProvider(dropboxURL)
 }
 
 // Simple file-based storage provider for CLI
