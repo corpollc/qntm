@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python build tools
+        run: pip install build twine
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile Go binaries
+        run: |
+          chmod +x python-dist/scripts/build-binaries.sh
+          python-dist/scripts/build-binaries.sh "${{ steps.version.outputs.version }}"
+
+      - name: Update Python package version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${VERSION#v}"  # strip leading v
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" python-dist/pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" python-dist/src/qntm/__init__.py
+
+      - name: Build Python package
+        run: python -m build python-dist/
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: twine upload python-dist/dist/*
+        continue-on-error: true  # Don't fail release if PyPI token not set yet
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: python-dist/src/qntm/bin/qntm-*
+          generate_release_notes: true

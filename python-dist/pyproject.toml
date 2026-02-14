@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qntm"
+version = "0.0.0"
+description = "qntm secure messaging protocol CLI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "Corpo LLC", email = "hello@corpo.llc" },
+]
+keywords = ["messaging", "encryption", "security", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications",
+    "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://qntm.corpo.llc"
+Repository = "https://github.com/corpollc/qntm"
+
+[project.scripts]
+qntm = "qntm:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qntm"]
+
+[tool.hatch.build.targets.wheel.shared-data]
