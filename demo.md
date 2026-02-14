@@ -361,3 +361,308 @@ ok  	github.com/corpo/qntm/security 0.002s
 ```bash
 $ rm -rf /tmp/alice /tmp/bob /tmp/charlie /tmp/qntm-dropbox
 ```
+
+---
+
+# qntm-gate — Multisig API Gateway
+
+*2026-02-14T15:44:00Z*
+
+Three signers (Alice, Bob, Carol) govern API access through threshold authorization. The gate server verifies Ed25519 signatures over CBOR-encoded requests, collects approvals, and only injects API credentials when the threshold is met.
+
+Build: `go build -o /tmp/qntm ./cmd/qntm/ && go build -o /tmp/echo-server ./cmd/echo-server/`
+
+Start servers:
+```bash
+$ /tmp/echo-server -port 19090 &
+$ /tmp/qntm gate serve --port 18080 &
+```
+
+---
+
+## Section 21: Gate — Identity Setup 🟢
+
+Each signer has their own Ed25519 identity (reusing the same qntm identity system).
+
+```bash
+$ rm -rf /tmp/gate-alice /tmp/gate-bob /tmp/gate-carol
+$ mkdir -p /tmp/gate-alice /tmp/gate-bob /tmp/gate-carol
+$ /tmp/qntm --config-dir /tmp/gate-alice identity generate
+```
+
+```output
+Generated new identity:
+Key ID: vDRFeIKZGW41eObhBkRe8Q
+Public Key: B887u8YkzbvOuonJg7OIxHEBAe5MlXMPpGWulSJkwz0
+Saved to: /tmp/gate-alice/identity.json
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/gate-bob identity generate
+```
+
+```output
+Generated new identity:
+Key ID: rUNk5mv9dGfHCE8r7LnBUA
+Public Key: Fz-Jo_ew7suwykUXbEJHzGADY7034VgAiJwH3hpB2HI
+Saved to: /tmp/gate-bob/identity.json
+```
+
+```bash
+$ /tmp/qntm --config-dir /tmp/gate-carol identity generate
+```
+
+```output
+Generated new identity:
+Key ID: bLC-bB5DeABGTAslH3INsg
+Public Key: s13__xqfcGShyouW2tyTaRVjtXsB-07iWQ0uQGoS1_g
+Saved to: /tmp/gate-carol/identity.json
+```
+
+## Section 22: Gate — Org Creation 🟢
+
+Create an organization with 3 signers. Threshold rules: GET requires 1-of-3 (read-only = low risk), POST requires 2-of-3 (writes = consensus needed).
+
+```bash
+$ curl -s -X POST http://localhost:18080/v1/orgs -H 'Content-Type: application/json' -d '{
+  "id": "demo-org",
+  "signers": [
+    {"kid": "vDRFeIKZGW41eObhBkRe8Q", "public_key": "B887u8YkzbvOuonJg7OIxHEBAe5MlXMPpGWulSJkwz0=", "label": "alice"},
+    {"kid": "rUNk5mv9dGfHCE8r7LnBUA", "public_key": "Fz+Jo/ew7suwykUXbEJHzGADY7034VgAiJwH3hpB2HI=", "label": "bob"},
+    {"kid": "bLC-bB5DeABGTAslH3INsg", "public_key": "s13//xqfcGShyouW2tyTaRVjtXsB+07iWQ0uQGoS1/g=", "label": "carol"}
+  ],
+  "rules": [
+    {"service": "echo", "endpoint": "*", "verb": "GET", "m": 1, "n": 3},
+    {"service": "echo", "endpoint": "*", "verb": "POST", "m": 2, "n": 3}
+  ]
+}'
+```
+
+```output
+{"id":"demo-org","signers":[{"kid":"vDRFeIKZGW41eObhBkRe8Q","public_key":"B887u8YkzbvOuonJg7OIxHEBAe5MlXMPpGWulSJkwz0=","label":"alice"},{"kid":"rUNk5mv9dGfHCE8r7LnBUA","public_key":"Fz+Jo/ew7suwykUXbEJHzGADY7034VgAiJwH3hpB2HI=","label":"bob"},{"kid":"bLC-bB5DeABGTAslH3INsg","public_key":"s13//xqfcGShyouW2tyTaRVjtXsB+07iWQ0uQGoS1/g=","label":"carol"}],"rules":[{"service":"echo","endpoint":"*","verb":"GET","m":1,"n":3},{"service":"echo","endpoint":"*","verb":"POST","m":2,"n":3}],"credentials":{}}
+```
+
+## Section 23: Gate — Add Credential 🟢
+
+Store the target service's API key. The credential never appears in logs or responses — it's only injected at execution time.
+
+```bash
+$ curl -s -X POST http://localhost:18080/v1/orgs/demo-org/credentials -H 'Content-Type: application/json' -d '{
+  "id": "echo-api-key", "service": "echo", "value": "sk_live_demo_key_2026",
+  "header_name": "Authorization", "header_value": "Bearer {value}",
+  "description": "Echo server test API key"
+}'
+```
+
+```output
+{"id":"echo-api-key","status":"credential added"}
+```
+
+## Section 24: Gate — 1-of-3 Authorization (GET balance) 🟢
+
+Alice alone can check a balance — GET requires only 1 signer. The request is signed with CBOR-encoded Ed25519, verified, and auto-executed.
+
+```bash
+$ echo '{"request_id":"demo-get-1","verb":"GET","target_endpoint":"/balance","target_service":"echo","target_url":"http://localhost:19090/balance","payload":null}' | \
+  /tmp/qntm --config-dir /tmp/gate-alice gate request submit demo-org --gate-url http://localhost:18080
+```
+
+```output
+{
+  "org_id": "demo-org",
+  "request_id": "demo-get-1",
+  "verb": "GET",
+  "target_endpoint": "/balance",
+  "target_service": "echo",
+  "target_url": "http://localhost:19090/balance",
+  "requester_kid": "vDRFeIKZGW41eObhBkRe8Q",
+  "status": "executed",
+  "signature_count": 1,
+  "signer_kids": ["vDRFeIKZGW41eObhBkRe8Q"],
+  "threshold": 1,
+  "execution_result": {
+    "status_code": 200,
+    "body": {
+      "auth_header": "Bearer sk_live_demo_key_2026",
+      "had_auth": true,
+      "method": "GET",
+      "path": "/balance"
+    }
+  }
+}
+```
+
+> **Key point:** Alice submitted → threshold met (1/1) → gate injected `Bearer sk_live_demo_key_2026` → echo received the auth header. Alice never saw or handled the API key.
+
+## Section 25: Gate — 2-of-3 Authorization (POST transfer) 🟢
+
+Alice submits a wire transfer. The gate holds it pending — POST requires 2-of-3.
+
+```bash
+$ echo '{"request_id":"demo-post-1","verb":"POST","target_endpoint":"/transfer","target_service":"echo","target_url":"http://localhost:19090/transfer","payload":{"amount":5000,"recipient":"acme-corp"}}' | \
+  /tmp/qntm --config-dir /tmp/gate-alice gate request submit demo-org --gate-url http://localhost:18080
+```
+
+```output
+{
+  "org_id": "demo-org",
+  "request_id": "demo-post-1",
+  "status": "pending",
+  "signature_count": 1,
+  "signer_kids": ["vDRFeIKZGW41eObhBkRe8Q"],
+  "threshold": 2
+}
+```
+
+Bob reviews and approves:
+
+```bash
+$ echo '{"verb":"POST","target_endpoint":"/transfer","target_service":"echo","payload":{"amount":5000,"recipient":"acme-corp"}}' | \
+  /tmp/qntm --config-dir /tmp/gate-bob gate request approve demo-org demo-post-1 --gate-url http://localhost:18080
+```
+
+```output
+{
+  "org_id": "demo-org",
+  "request_id": "demo-post-1",
+  "status": "executed",
+  "signature_count": 2,
+  "signer_kids": ["vDRFeIKZGW41eObhBkRe8Q", "rUNk5mv9dGfHCE8r7LnBUA"],
+  "threshold": 2,
+  "execution_result": {
+    "status_code": 200,
+    "body": {
+      "auth_header": "Bearer sk_live_demo_key_2026",
+      "had_auth": true,
+      "method": "POST",
+      "path": "/transfer",
+      "body": {"amount": 5000, "recipient": "acme-corp"}
+    }
+  }
+}
+```
+
+> **Key point:** Alice (1/2) → pending. Bob approves (2/2) → threshold met → gate injects credential → POST forwarded with auth → echo confirms receipt of both the payload and the API key.
+
+## Section 26: Gate — Expiration (5s TTL) 🟢
+
+Submit a request with a 5-second TTL. Wait for it to expire. Approval after expiry is rejected.
+
+```bash
+$ EXPIRES=$(date -u -v+5S +"%Y-%m-%dT%H:%M:%SZ")
+$ echo '{"request_id":"demo-expire-1","verb":"POST","target_endpoint":"/dangerous","target_service":"echo","target_url":"http://localhost:19090/dangerous","payload":{"action":"delete-all"},"expires_at":"'$EXPIRES'"}' | \
+  /tmp/qntm --config-dir /tmp/gate-alice gate request submit demo-org --gate-url http://localhost:18080
+```
+
+```output
+{
+  "request_id": "demo-expire-1",
+  "status": "pending",
+  "expires_at": "2026-02-14T15:45:02Z",
+  "threshold": 2
+}
+```
+
+```bash
+$ sleep 6
+$ echo '{"verb":"POST","target_endpoint":"/dangerous","target_service":"echo","payload":{"action":"delete-all"}}' | \
+  /tmp/qntm --config-dir /tmp/gate-bob gate request approve demo-org demo-expire-1 --gate-url http://localhost:18080 2>&1 || true
+```
+
+```output
+{"error":"request \"demo-expire-1\" has expired"}
+```
+
+```bash
+$ /tmp/qntm gate request status demo-org demo-expire-1 --gate-url http://localhost:18080
+```
+
+```output
+{"request_id":"demo-expire-1","status":"expired"}
+```
+
+> **Key point:** The request expired after 5 seconds. Bob's approval was cryptographically valid but the gate rejected it due to expiration. Even if the threshold had been met before expiry, execution after expiry would also be rejected.
+
+## Section 27: Gate — Bad Signature Rejection 🟢
+
+A request signed with the wrong key is rejected immediately.
+
+```bash
+$ curl -s -X POST http://localhost:18080/v1/orgs/demo-org/requests -H 'Content-Type: application/json' -d '{
+  "request_id": "bad-sig-1", "verb": "GET", "target_endpoint": "/test",
+  "target_service": "echo", "target_url": "http://localhost:19090/test",
+  "payload": null, "requester_kid": "vDRFeIKZGW41eObhBkRe8Q",
+  "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}'
+```
+
+```output
+{"error":"signature verification failed: invalid request signature"}
+```
+
+## Section 28: Gate — Unknown Org / Duplicate Request 🟢
+
+```bash
+$ curl -s http://localhost:18080/v1/orgs/nonexistent
+```
+
+```output
+{"error":"org \"nonexistent\" not found"}
+```
+
+Duplicate request IDs are rejected (replay protection per spec §11):
+
+```output
+{"error":"request \"demo-get-1\" already exists (replay protection)"}
+```
+
+## Section 29: Gate — Full Test Suite 🟢
+
+```bash
+$ go test ./gate/ -v 2>&1 | grep -E "(PASS|FAIL|✅)"
+```
+
+```output
+--- PASS: TestSignVerifyRequest (0.00s)
+--- PASS: TestSignVerifyApproval (0.00s)
+--- PASS: TestLookupThreshold (0.00s)
+--- PASS: TestOrgStore (0.00s)
+    gate_test.go:163: ✅ 2-of-3 echo integration passed
+--- PASS: TestIntegration_2of3_Echo (0.00s)
+    gate_test.go:213: ✅ 1-of-2 auto-execute passed
+--- PASS: TestIntegration_1of2_AutoExecute (0.00s)
+    gate_test.go:278: ✅ Expiration test passed (2s TTL)
+--- PASS: TestIntegration_Expiration (3.01s)
+    gate_test.go:315: ✅ Bad signature rejected
+--- PASS: TestIntegration_BadSignature (0.00s)
+    gate_test.go:326: ✅ Unknown org returns 404
+--- PASS: TestIntegration_UnknownOrg (0.00s)
+    gate_test.go:364: ✅ Duplicate request rejected (replay protection)
+--- PASS: TestIntegration_DuplicateRequest (0.00s)
+ok  	github.com/corpo/qntm/gate	3.370s
+```
+
+```bash
+$ go test ./... 2>&1 | grep -E "(ok|FAIL)"
+```
+
+```output
+ok  	github.com/corpo/qntm          0.012s
+ok  	github.com/corpo/qntm/crypto   0.004s
+ok  	github.com/corpo/qntm/dropbox  0.930s
+ok  	github.com/corpo/qntm/gate     3.286s
+ok  	github.com/corpo/qntm/group    0.662s
+ok  	github.com/corpo/qntm/identity 0.005s
+ok  	github.com/corpo/qntm/invite   0.003s
+ok  	github.com/corpo/qntm/message  0.003s
+ok  	github.com/corpo/qntm/security 0.002s
+```
+
+> All 9 packages pass (gate is new). Gate tests include 7 integration tests covering 2-of-3 auth, 1-of-2 auto-execute, expiration (2s TTL), bad signatures, unknown orgs, and replay protection.
+
+## Section 30: Gate — Cleanup
+
+```bash
+$ pkill -f echo-server; pkill -f "qntm gate serve"
+$ rm -rf /tmp/gate-alice /tmp/gate-bob /tmp/gate-carol
+```

@@ -1,0 +1,292 @@
+package cli
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/corpo/qntm/gate"
+)
+
+var gateURL string
+var gatePort int
+
+func init() {
+	// Gate parent command
+	rootCmd.AddCommand(gateCmd)
+
+	// Serve
+	gateServeCmd.Flags().IntVar(&gatePort, "port", 8080, "Gate server port")
+	gateCmd.AddCommand(gateServeCmd)
+
+	// Echo
+	echoPort := 9090
+	gateEchoCmd.Flags().IntVar(&echoPort, "port", 9090, "Echo server port")
+	gateCmd.AddCommand(gateEchoCmd)
+
+	// Org
+	gateCmd.AddCommand(gateOrgCmd)
+	gateOrgCmd.AddCommand(gateOrgCreateCmd)
+
+	// Credential
+	gateCmd.AddCommand(gateCredCmd)
+	gateCredCmd.AddCommand(gateCredAddCmd)
+
+	// Request
+	gateCmd.AddCommand(gateRequestCmd)
+	gateRequestCmd.AddCommand(gateRequestSubmitCmd)
+	gateRequestCmd.AddCommand(gateRequestApproveCmd)
+	gateRequestCmd.AddCommand(gateRequestStatusCmd)
+
+	// Persistent flag for gate URL
+	gateCmd.PersistentFlags().StringVar(&gateURL, "gate-url", "http://localhost:8080", "Gate server URL")
+}
+
+var gateCmd = &cobra.Command{
+	Use:           "gate",
+	Short:         "qntm-gate multisig API gateway",
+	Long:          "Multisig authorization gateway for real-world API access. Threshold rules control which signers can authorize HTTP requests.",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+}
+
+var gateServeCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start the gate server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		srv := gate.NewServer()
+		addr := fmt.Sprintf(":%d", gatePort)
+		fmt.Printf("qntm-gate server starting on %s\n", addr)
+		return http.ListenAndServe(addr, srv)
+	},
+}
+
+var gateEchoCmd = &cobra.Command{
+	Use:   "echo",
+	Short: "Start the echo test server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		port, _ := cmd.Flags().GetInt("port")
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			auth := r.Header.Get("Authorization")
+			resp := map[string]interface{}{
+				"method":      r.Method,
+				"path":        r.URL.Path,
+				"had_auth":    auth != "",
+				"auth_header": auth,
+			}
+			if len(body) > 0 && json.Valid(body) {
+				resp["body"] = json.RawMessage(body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+		})
+		addr := fmt.Sprintf(":%d", port)
+		fmt.Printf("qntm echo server on %s\n", addr)
+		return http.ListenAndServe(addr, mux)
+	},
+}
+
+// --- Org commands ---
+
+var gateOrgCmd = &cobra.Command{
+	Use:   "org",
+	Short: "Manage gate organizations",
+}
+
+var gateOrgCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create an org (reads JSON from stdin)",
+	Long:  `Reads JSON from stdin with fields: id, signers, rules. Signers need kid, public_key (base64url), label.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+		return gatePost("/v1/orgs", body)
+	},
+}
+
+// --- Credential commands ---
+
+var gateCredCmd = &cobra.Command{
+	Use:   "credential",
+	Short: "Manage gate credentials",
+}
+
+var gateCredAddCmd = &cobra.Command{
+	Use:   "add <org_id>",
+	Short: "Add a credential (reads JSON from stdin)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		orgID := args[0]
+		body, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+		return gatePost(fmt.Sprintf("/v1/orgs/%s/credentials", orgID), body)
+	},
+}
+
+// --- Request commands ---
+
+var gateRequestCmd = &cobra.Command{
+	Use:   "request",
+	Short: "Manage gate authorization requests",
+}
+
+var gateRequestSubmitCmd = &cobra.Command{
+	Use:   "submit <org_id>",
+	Short: "Submit a signed request (reads JSON from stdin)",
+	Long: `Reads JSON from stdin: request_id, verb, target_endpoint, target_service, target_url, payload, expires_at (optional).
+Signs with the current identity key. Uses the qntm identity from --config-dir.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		orgID := args[0]
+
+		currentIdentity, err := loadIdentity()
+		if err != nil {
+			return fmt.Errorf("load identity: %w", err)
+		}
+
+		var input struct {
+			RequestID      string          `json:"request_id"`
+			Verb           string          `json:"verb"`
+			TargetEndpoint string          `json:"target_endpoint"`
+			TargetService  string          `json:"target_service"`
+			TargetURL      string          `json:"target_url"`
+			Payload        json.RawMessage `json:"payload,omitempty"`
+			ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+		}
+		if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+			return fmt.Errorf("invalid JSON: %w", err)
+		}
+
+		kid := gate.KIDFromPublicKey(currentIdentity.PublicKey)
+		payloadHash := gate.ComputePayloadHash(input.Payload)
+		signable := &gate.GateSignable{
+			OrgID: orgID, RequestID: input.RequestID, Verb: input.Verb,
+			TargetEndpoint: input.TargetEndpoint, TargetService: input.TargetService,
+			PayloadHash: payloadHash,
+		}
+		sig, err := gate.SignRequest(ed25519.PrivateKey(currentIdentity.PrivateKey), signable)
+		if err != nil {
+			return fmt.Errorf("sign: %w", err)
+		}
+
+		submitReq := map[string]interface{}{
+			"request_id":      input.RequestID,
+			"verb":            input.Verb,
+			"target_endpoint": input.TargetEndpoint,
+			"target_service":  input.TargetService,
+			"target_url":      input.TargetURL,
+			"payload":         input.Payload,
+			"requester_kid":   kid,
+			"signature":       base64.RawURLEncoding.EncodeToString(sig),
+		}
+		if input.ExpiresAt != nil {
+			submitReq["expires_at"] = input.ExpiresAt
+		}
+
+		body, _ := json.Marshal(submitReq)
+		return gatePost(fmt.Sprintf("/v1/orgs/%s/requests", orgID), body)
+	},
+}
+
+var gateRequestApproveCmd = &cobra.Command{
+	Use:   "approve <org_id> <request_id>",
+	Short: "Approve a request (reads request details JSON from stdin)",
+	Long: `Reads JSON from stdin: verb, target_endpoint, target_service, payload.
+These must match the original request. Signs approval with the current identity key.`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		orgID, requestID := args[0], args[1]
+
+		currentIdentity, err := loadIdentity()
+		if err != nil {
+			return fmt.Errorf("load identity: %w", err)
+		}
+
+		var input struct {
+			Verb           string          `json:"verb"`
+			TargetEndpoint string          `json:"target_endpoint"`
+			TargetService  string          `json:"target_service"`
+			Payload        json.RawMessage `json:"payload,omitempty"`
+		}
+		if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
+			return fmt.Errorf("invalid JSON: %w", err)
+		}
+
+		kid := gate.KIDFromPublicKey(currentIdentity.PublicKey)
+		payloadHash := gate.ComputePayloadHash(input.Payload)
+		signable := &gate.GateSignable{
+			OrgID: orgID, RequestID: requestID, Verb: input.Verb,
+			TargetEndpoint: input.TargetEndpoint, TargetService: input.TargetService,
+			PayloadHash: payloadHash,
+		}
+		reqHash, err := gate.HashRequest(signable)
+		if err != nil {
+			return fmt.Errorf("hash: %w", err)
+		}
+		appSig, err := gate.SignApproval(ed25519.PrivateKey(currentIdentity.PrivateKey),
+			&gate.ApprovalSignable{OrgID: orgID, RequestID: requestID, RequestHash: reqHash})
+		if err != nil {
+			return fmt.Errorf("sign approval: %w", err)
+		}
+
+		body, _ := json.Marshal(map[string]string{
+			"signer_kid": kid,
+			"signature":  base64.RawURLEncoding.EncodeToString(appSig),
+		})
+		return gatePost(fmt.Sprintf("/v1/orgs/%s/requests/%s/approve", orgID, requestID), body)
+	},
+}
+
+var gateRequestStatusCmd = &cobra.Command{
+	Use:   "status <org_id> <request_id>",
+	Short: "Check request status",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		resp, err := http.Get(gateURL + fmt.Sprintf("/v1/orgs/%s/requests/%s", args[0], args[1]))
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(data))
+		return nil
+	},
+}
+
+// --- Helpers ---
+
+func gatePost(path string, body []byte) error {
+	resp, err := http.Post(gateURL+path, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+
+	// Pretty print
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, data, "", "  ") == nil {
+		fmt.Println(pretty.String())
+	} else {
+		fmt.Println(string(data))
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+	return nil
+}
