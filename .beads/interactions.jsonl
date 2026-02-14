@@ -1,0 +1,1 @@
+{"type":"issue","id":"qntm-h1","title":"Implement QSP v1.1 Encrypted Handles + Local Naming + Short Refs","status":"done","created":"2026-02-14T19:01:00Z","labels":["feature","v1.1"],"description":"Part A: Handle registry server, Part B: Handle reveal, Part C: Local naming, Part D: Short references. All tests pass, demo verified."}
