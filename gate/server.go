@@ -10,23 +10,45 @@ import (
 
 // Server is the qntm-gate HTTP server.
 type Server struct {
-	OrgStore  *OrgStore
-	AuthStore *AuthStore
-	mux       *http.ServeMux
+	OrgStore   *OrgStore
+	AuthStore  *AuthStore
+	AdminToken string // required for admin endpoints; empty = no auth (testing only)
+	mux        *http.ServeMux
 }
 
 // NewServer creates a new gate server with in-memory stores.
 func NewServer() *Server {
+	return NewServerWithToken("")
+}
+
+// NewServerWithToken creates a gate server requiring the given admin token for admin endpoints.
+func NewServerWithToken(adminToken string) *Server {
 	orgStore := NewOrgStore()
 	authStore := NewAuthStore(orgStore)
 
 	s := &Server{
-		OrgStore:  orgStore,
-		AuthStore: authStore,
-		mux:       http.NewServeMux(),
+		OrgStore:   orgStore,
+		AuthStore:  authStore,
+		AdminToken: adminToken,
+		mux:        http.NewServeMux(),
 	}
 	s.routes()
 	return s
+}
+
+// requireAdmin checks the Authorization header for a valid admin bearer token.
+// Returns true if authorized, false if rejected (and writes the error response).
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if s.AdminToken == "" {
+		return true // no token configured (testing mode)
+	}
+	auth := r.Header.Get("Authorization")
+	expected := "Bearer " + s.AdminToken
+	if auth != expected {
+		writeErr(w, http.StatusUnauthorized, "admin token required")
+		return false
+	}
+	return true
 }
 
 func (s *Server) routes() {
@@ -45,6 +67,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.requireAdmin(w, r) {
 		return
 	}
 
@@ -117,6 +142,9 @@ func (s *Server) handleOrgs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCredentials(w http.ResponseWriter, r *http.Request, orgID string) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.requireAdmin(w, r) {
 		return
 	}
 	var cred Credential

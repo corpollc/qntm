@@ -18,6 +18,7 @@ import (
 
 var gateURL string
 var gatePort int
+var gateAdminToken string
 
 func init() {
 	// Gate parent command
@@ -25,6 +26,7 @@ func init() {
 
 	// Serve
 	gateServeCmd.Flags().IntVar(&gatePort, "port", 8080, "Gate server port")
+	gateServeCmd.Flags().StringVar(&gateAdminToken, "admin-token", "", "Admin bearer token for org/credential endpoints (env: QNTM_GATE_TOKEN)")
 	gateCmd.AddCommand(gateServeCmd)
 
 	// Echo
@@ -62,9 +64,17 @@ var gateServeCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the gate server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		srv := gate.NewServer()
+		token := gateAdminToken
+		if token == "" {
+			token = os.Getenv("QNTM_GATE_TOKEN")
+		}
+		srv := gate.NewServerWithToken(token)
 		addr := fmt.Sprintf(":%d", gatePort)
-		fmt.Printf("qntm-gate server starting on %s\n", addr)
+		if token != "" {
+			fmt.Printf("qntm-gate server starting on %s (admin auth enabled)\n", addr)
+		} else {
+			fmt.Printf("qntm-gate server starting on %s (WARNING: no admin token set)\n", addr)
+		}
 		return http.ListenAndServe(addr, srv)
 	},
 }

@@ -248,7 +248,7 @@ Message sent to conversation 15860f5d5e9576eaf9d162b420f134e7
 Message ID: 7d86f670f5aa3ca7b2c61f999f428fd1
 ```
 
-> Note: `group remove` is not yet implemented (qntm-3cl). `group join` requires an invite URL flow.
+> Note: `group remove` is not yet implemented (qntm-3cl) and has been removed from the CLI (qntm-xrc). `group join` requires an invite URL flow.
 
 ## Section 15: Error Handling 🟢
 
@@ -315,23 +315,7 @@ All unsafe development tests passed!
 
 ## Section 17: Identity Import/Export 🔴
 
-> **Not implemented (qntm-ty5).** Commands exist but return stubs.
-
-```bash
-$ /tmp/qntm --config-dir /tmp/alice identity import /tmp/test 2>&1 || true
-```
-
-```output
-Error: import not implemented yet
-```
-
-```bash
-$ /tmp/qntm --config-dir /tmp/alice identity export /tmp/test 2>&1 || true
-```
-
-```output
-Error: export not implemented yet
-```
+> **Not implemented (qntm-ty5).** Commands removed from CLI until implemented. Previously returned stub errors; now hidden from help output to avoid confusion (qntm-xrc).
 
 ## Section 18: Full Test Suite 🟢
 
@@ -482,17 +466,13 @@ $ echo '{"request_id":"demo-get-1","verb":"GET","target_endpoint":"/balance","ta
   "threshold": 1,
   "execution_result": {
     "status_code": 200,
-    "body": {
-      "auth_header": "Bearer sk_live_demo_key_2026",
-      "had_auth": true,
-      "method": "GET",
-      "path": "/balance"
-    }
+    "content_type": "application/json",
+    "content_length": 95
   }
 }
 ```
 
-> **Key point:** Alice submitted → threshold met (1/1) → gate injected `Bearer sk_live_demo_key_2026` → echo received the auth header. Alice never saw or handled the API key.
+> **Key point:** Alice submitted → threshold met (1/1) → gate injected the API credential → echo received the auth header. The response body is **redacted** from `execution_result` to prevent credential reflection. Alice sees only status code, content type, and content length — never the raw response (which may contain reflected credentials from echo-style services).
 
 ## Section 25: Gate — 2-of-3 Authorization (POST transfer) 🟢
 
@@ -531,18 +511,13 @@ $ echo '{"verb":"POST","target_endpoint":"/transfer","target_service":"echo","pa
   "threshold": 2,
   "execution_result": {
     "status_code": 200,
-    "body": {
-      "auth_header": "Bearer sk_live_demo_key_2026",
-      "had_auth": true,
-      "method": "POST",
-      "path": "/transfer",
-      "body": {"amount": 5000, "recipient": "acme-corp"}
-    }
+    "content_type": "application/json",
+    "content_length": 142
   }
 }
 ```
 
-> **Key point:** Alice (1/2) → pending. Bob approves (2/2) → threshold met → gate injects credential → POST forwarded with auth → echo confirms receipt of both the payload and the API key.
+> **Key point:** Alice (1/2) → pending. Bob approves (2/2) → threshold met → gate injects credential → POST forwarded with auth. The response body is redacted — callers see only HTTP status, content type, and length. The echo server *received* the credential (it was injected by gate), but that raw response is never exposed to the caller.
 
 ## Section 26: Gate — Expiration (5s TTL) 🟢
 
