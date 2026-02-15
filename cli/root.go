@@ -14,6 +14,18 @@ Supports key management, 1:1 and group messaging via untrusted drop boxes.
 
 ` + demoContent + `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Start background update check for commands that benefit from it.
+		// Skip for the "version" command (it does its own synchronous check).
+		if cmd.Name() != "version" {
+			startBackgroundUpdateCheck()
+		}
+	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		if cmd.Name() != "version" {
+			waitAndPrintUpdateHint()
+		}
+	},
 }
 
 const demoContent = `# qntm — End-to-End Encrypted Agent Messaging

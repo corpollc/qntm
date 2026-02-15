@@ -6,12 +6,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
 var cliVersion = "dev"
+
+// updateMessage is set by the background version check goroutine.
+var updateMessage string
+var updateOnce sync.Once
+var updateDone = make(chan struct{})
 
 // SetVersion sets the CLI version (called from main with build-time value).
 func SetVersion(v string) {
@@ -28,7 +34,8 @@ var versionCmd = &cobra.Command{
 	Short: "Print version and check for updates",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("qntm %s\n", cliVersion)
-		checkForUpdate()
+		// For the version command, run synchronously so the user sees the result.
+		checkForUpdate(true)
 	},
 }
 
@@ -46,16 +53,40 @@ func getVersionCachePath() string {
 	return filepath.Join(home, ".qntm", "version-check.json")
 }
 
-func checkForUpdate() {
+// startBackgroundUpdateCheck kicks off a non-blocking version check.
+// Call this from PersistentPostRun. The result is printed after the command.
+func startBackgroundUpdateCheck() {
+	updateOnce.Do(func() {
+		go func() {
+			defer close(updateDone)
+			checkForUpdate(false)
+		}()
+	})
+}
+
+// waitAndPrintUpdateHint waits for the background check and prints if needed.
+func waitAndPrintUpdateHint() {
+	<-updateDone
+	if updateMessage != "" {
+		fmt.Fprintln(os.Stderr, updateMessage)
+	}
+}
+
+func checkForUpdate(synchronous bool) {
 	cachePath := getVersionCachePath()
 
 	// Check cache first
 	if data, err := os.ReadFile(cachePath); err == nil {
 		var cached versionCheck
 		if json.Unmarshal(data, &cached) == nil {
+			// If cached says we're out of date, just print — no need to re-fetch.
+			if cached.Version != "" && cached.Version != cliVersion && cliVersion != "dev" {
+				setUpgradeHint(cached.Version, synchronous)
+				return
+			}
+			// Versions matched last check — only re-fetch if cache is stale.
 			if t, err := time.Parse(time.RFC3339, cached.CheckedAt); err == nil {
 				if time.Since(t) < 24*time.Hour {
-					printUpgradeHint(cached.Version)
 					return
 				}
 			}
@@ -85,12 +116,17 @@ func checkForUpdate() {
 		os.WriteFile(cachePath, data, 0o644)
 	}
 
-	printUpgradeHint(remote.Version)
+	setUpgradeHint(remote.Version, synchronous)
 }
 
-func printUpgradeHint(latest string) {
+func setUpgradeHint(latest string, printNow bool) {
 	if latest == "" || latest == cliVersion || cliVersion == "dev" {
 		return
 	}
-	fmt.Printf("\nqntm %s is available (you have %s). Run: uvx qntm --upgrade\n", latest, cliVersion)
+	msg := fmt.Sprintf("\nUpdate available: qntm %s → %s. Run: uvx qntm@latest --version", cliVersion, latest)
+	if printNow {
+		fmt.Fprintln(os.Stderr, msg)
+	} else {
+		updateMessage = msg
+	}
 }
