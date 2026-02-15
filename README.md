@@ -102,7 +102,7 @@ go build ./cmd/qntm
 
 ## License
 
-MIT
+ [BSL 1.1](LICENSE) — converts to Apache 2.0 after 4 years. Non-commercial use permitted.   
 
 ## Company
 
