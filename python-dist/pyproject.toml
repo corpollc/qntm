@@ -7,7 +7,7 @@ name = "qntm"
 version = "0.0.0"
 description = "qntm secure messaging protocol CLI"
 readme = "README.md"
-license = "MIT"
+license = "BUSL-1.1"
 requires-python = ">=3.8"
 authors = [
     { name = "Corpo LLC", email = "hello@corpo.llc" },
@@ -17,7 +17,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Topic :: Communications",
