@@ -153,11 +153,16 @@ func (m *Manager) InviteToURL(invite *types.InvitePayload, baseURL string) (stri
 	return parsedURL.String(), nil
 }
 
-// InviteFromURL extracts an invite from a URL fragment
+// InviteFromURL extracts an invite from a URL fragment or bare token
 func (m *Manager) InviteFromURL(inviteURL string) (*types.InvitePayload, error) {
+	// Try as URL first
 	parsedURL, err := url.Parse(inviteURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid invite URL: %w", err)
+	if err != nil || parsedURL.Fragment == "" {
+		// Treat as bare token — wrap in a dummy URL with fragment
+		parsedURL, err = url.Parse("qntm://invite#" + inviteURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid invite token: %w", err)
+		}
 	}
 	
 	if parsedURL.Fragment == "" {
