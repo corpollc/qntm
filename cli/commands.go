@@ -52,7 +52,24 @@ func init() {
 	rootCmd.AddCommand(inviteCmd)
 	inviteCmd.AddCommand(inviteCreateCmd)
 	inviteCmd.AddCommand(inviteAcceptCmd)
+	inviteAcceptCmd.Flags().String("name", "", "Name for this conversation")
 	inviteCmd.AddCommand(inviteListCmd)
+	
+	// Top-level accept alias: "qntm accept <token>" → "qntm invite accept <token>"
+	var acceptCmd = &cobra.Command{
+		Use:   "accept <invite-token>",
+		Short: "Accept a conversation invite (alias for 'invite accept')",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, _ := cmd.Flags().GetString("name")
+			if name != "" {
+				inviteAcceptCmd.Flags().Set("name", name)
+			}
+			return inviteAcceptCmd.RunE(inviteAcceptCmd, args)
+		},
+	}
+	acceptCmd.Flags().String("name", "", "Name for this conversation")
+	rootCmd.AddCommand(acceptCmd)
 	
 	// Message commands
 	rootCmd.AddCommand(messageCmd)
@@ -134,9 +151,18 @@ var identityShowCmd = &cobra.Command{
 
 // Invite Commands
 var inviteCmd = &cobra.Command{
-	Use:   "invite",
+	Use:   "invite [name]",
 	Short: "Manage conversation invites",
-	Long:  "Create, accept, and manage conversation invites.",
+	Long:  "Create, accept, and manage conversation invites.\n\nIf a name is given as a positional argument, creates an invite with that name.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			// Route "qntm invite <name>" to "qntm invite create --name <name>"
+			inviteCreateCmd.Flags().Set("name", args[0])
+			return inviteCreateCmd.RunE(inviteCreateCmd, nil)
+		}
+		return cmd.Help()
+	},
 }
 
 var inviteCreateCmd = &cobra.Command{
@@ -175,6 +201,9 @@ var inviteCreateCmd = &cobra.Command{
 		}
 		fmt.Printf("Conversation ID: %s\n", hex.EncodeToString(newInvite.ConvID[:]))
 		fmt.Printf("Invite Token: %s\n", inviteToken)
+		fmt.Println()
+		fmt.Println("Tell your recipient to run:")
+		fmt.Printf("  uvx qntm invite accept %s\n", inviteToken)
 		
 		return nil
 	},
@@ -217,6 +246,12 @@ var inviteAcceptCmd = &cobra.Command{
 		// Add ourselves to the conversation
 		inviteMgr.AddParticipant(conversation, currentIdentity.PublicKey)
 		
+		// Set conversation name if provided
+		name, _ := cmd.Flags().GetString("name")
+		if name != "" {
+			conversation.Name = name
+		}
+		
 		// Save conversation
 		if err := saveConversation(conversation); err != nil {
 			return fmt.Errorf("failed to save conversation: %w", err)
@@ -224,6 +259,9 @@ var inviteAcceptCmd = &cobra.Command{
 		
 		fmt.Printf("Accepted %s invite:\n", conversation.Type)
 		fmt.Printf("Conversation ID: %s\n", hex.EncodeToString(conversation.ID[:]))
+		if name != "" {
+			fmt.Printf("Name: %s\n", name)
+		}
 		fmt.Printf("Participants: %d\n", len(conversation.Participants))
 		
 		return nil

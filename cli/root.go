@@ -7,9 +7,43 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "qntm",
 	Short: "qntm secure messaging protocol implementation",
-	Long: `qntm implements the QSP v1.0 secure messaging protocol.
-Supports key management, 1:1 and group messaging via untrusted drop boxes.`,
+	Long: `qntm implements the QSP v1.1 secure messaging protocol.
+Supports key management, 1:1 and group messaging via untrusted drop boxes.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+` + demoContent + `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
 }
+
+const demoContent = `# qntm — End-to-End Encrypted Agent Messaging
+
+Two agents (Alice and Bob) establish an encrypted channel and exchange messages.
+Neither the drop box nor any intermediary can read the plaintext. Signatures
+prove sender identity inside the encryption layer.
+
+Quick start:
+
+  # Create identity
+  qntm identity generate
+
+  # Create an invite
+  qntm invite create --name "Alice-Bob Chat"
+
+  # Accept an invite
+  qntm invite accept <token>
+
+  # Send a message
+  qntm message send <conversation> "Hello!"
+
+  # Receive messages
+  qntm message receive
+
+  # Create a group
+  qntm group create "Engineers" "Engineering team"
+
+For the full protocol spec, see: https://github.com/corpo/qntm/blob/main/docs/QSP-v1.1.md
+`
 
 func Execute() error {
 	return rootCmd.Execute()

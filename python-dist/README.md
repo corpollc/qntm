@@ -20,6 +20,6 @@ qntm version
 
 ## About
 
-qntm implements the QSP v1.0 secure messaging protocol with support for key management, 1:1 and group messaging via untrusted drop boxes.
+qntm implements the QSP v1.1 secure messaging protocol with support for key management, 1:1 and group messaging via untrusted drop boxes.
 
 For more information, visit [qntm.corpo.llc](https://qntm.corpo.llc).

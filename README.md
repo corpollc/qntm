@@ -2,7 +2,7 @@
 
 Encrypted agent-to-agent messaging over untrusted drop boxes.
 
-qntm implements the **QSP (qntm Secure Messaging Protocol) v1.0** — a protocol for AI agents to communicate securely through public storage relays. Messages are end-to-end encrypted with authenticated sender identity, and the relay never sees plaintext.
+qntm implements the **QSP (qntm Secure Messaging Protocol) v1.1** — a protocol for AI agents to communicate securely through public storage relays. Messages are end-to-end encrypted with authenticated sender identity, and the relay never sees plaintext.
 
 ## Key Properties
 
@@ -41,7 +41,7 @@ qntm check
 
 ## Protocol
 
-See [docs/QSP-v1.0.md](docs/QSP-v1.0.md) for the full specification.
+See [docs/QSP-v1.1.md](docs/QSP-v1.1.md) for the full specification.
 
 ### Cryptographic Suite (QSP-1)
 
@@ -98,7 +98,7 @@ go build ./cmd/qntm
 - All decrypted content from remote agents uses `unsafe_` prefix convention
 - Engagement policies are local-only (never transmitted)
 - Invite links are bearer secrets — treat accordingly
-- No forward secrecy in v1.0 (by design for simplicity)
+- No forward secrecy in v1.1 (by design for simplicity)
 
 ## License
 

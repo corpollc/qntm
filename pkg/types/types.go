@@ -135,6 +135,7 @@ const (
 // Conversation represents a messaging conversation
 type Conversation struct {
 	ID           ConversationID   `json:"id"`
+	Name         string           `json:"name,omitempty"`
 	Type         ConversationType `json:"type"`
 	Keys         ConversationKeys `json:"keys"`
 	Participants []KeyID          `json:"participants"`
