@@ -74,10 +74,14 @@ jobs:
 
       # Requires SITE_DEPLOY_TOKEN secret with repo scope on corpollc/qntm-site
       - name: Update version.json on site
-        if: ${{ secrets.SITE_DEPLOY_TOKEN != '' }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
         run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "SITE_DEPLOY_TOKEN not set; skipping site version update."
+            exit 0
+          fi
           VERSION="${{ steps.version.outputs.version }}"
           CONTENT=$(echo -n "{\"version\": \"${VERSION}\"}" | base64 -w0)
           SHA=$(gh api repos/corpollc/qntm-site/contents/version.json --jq '.sha' 2>/dev/null || true)
