@@ -41,9 +41,9 @@ func (c *Credential) Scrub() {
 
 // Signer represents a member of the org's signer set.
 type Signer struct {
-	KID       string           `json:"kid"`
+	KID       string            `json:"kid"`
 	PublicKey ed25519.PublicKey `json:"public_key"`
-	Label     string           `json:"label"`
+	Label     string            `json:"label"`
 }
 
 // Org represents an organization in qntm-gate.
@@ -112,7 +112,8 @@ func (s *OrgStore) GetCredentialByService(orgID, service string) (*Credential, e
 	}
 	for _, c := range org.Credentials {
 		if c.Service == service {
-			return c, nil
+			cp := *c
+			return &cp, nil
 		}
 	}
 	return nil, fmt.Errorf("no credential for service %q in org %q", service, orgID)

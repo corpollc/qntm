@@ -227,6 +227,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 		signable := &GateSignable{
 			OrgID: orgID, RequestID: msg.RequestID, Verb: msg.Verb,
 			TargetEndpoint: msg.TargetEndpoint, TargetService: msg.TargetService,
+			TargetURL: msg.TargetURL, ExpiresAtUnix: msg.ExpiresAt.Unix(),
 			PayloadHash: payloadHash,
 		}
 		sigBytes, err := decodeBase64Flex(msg.Signature)
@@ -281,6 +282,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 		signable := &GateSignable{
 			OrgID: orgID, RequestID: msg.RequestID, Verb: reqMsg.Verb,
 			TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
+			TargetURL: reqMsg.TargetURL, ExpiresAtUnix: reqMsg.ExpiresAt.Unix(),
 			PayloadHash: payloadHash,
 		}
 		reqHash, err := HashRequest(signable)

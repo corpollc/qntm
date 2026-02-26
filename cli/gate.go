@@ -190,21 +190,22 @@ Signs with the current identity key. Posts as a gate.request message to the org'
 			return fmt.Errorf("invalid JSON: %w", err)
 		}
 
+		expiresAt := time.Now().Add(1 * time.Hour)
+		if input.ExpiresAt != nil {
+			expiresAt = *input.ExpiresAt
+		}
+
 		kid := gate.KIDFromPublicKey(currentIdentity.PublicKey)
 		payloadHash := gate.ComputePayloadHash(input.Payload)
 		signable := &gate.GateSignable{
 			OrgID: orgID, RequestID: input.RequestID, Verb: input.Verb,
 			TargetEndpoint: input.TargetEndpoint, TargetService: input.TargetService,
+			TargetURL: input.TargetURL, ExpiresAtUnix: expiresAt.Unix(),
 			PayloadHash: payloadHash,
 		}
 		sig, err := gate.SignRequest(ed25519.PrivateKey(currentIdentity.PrivateKey), signable)
 		if err != nil {
 			return fmt.Errorf("sign: %w", err)
-		}
-
-		expiresAt := time.Now().Add(1 * time.Hour)
-		if input.ExpiresAt != nil {
-			expiresAt = *input.ExpiresAt
 		}
 
 		// Post as a gate.request conversation message
@@ -229,7 +230,7 @@ Signs with the current identity key. Posts as a gate.request message to the org'
 var gateRequestApproveCmd = &cobra.Command{
 	Use:   "approve <org_id> <request_id>",
 	Short: "Approve a request by posting to the gate conversation",
-	Long: `Reads JSON from stdin: verb, target_endpoint, target_service, payload.
+	Long: `Reads JSON from stdin: verb, target_endpoint, target_service, target_url, expires_at, payload.
 These must match the original request. Signs approval and posts as a gate.approval message.`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -244,10 +245,18 @@ These must match the original request. Signs approval and posts as a gate.approv
 			Verb           string          `json:"verb"`
 			TargetEndpoint string          `json:"target_endpoint"`
 			TargetService  string          `json:"target_service"`
+			TargetURL      string          `json:"target_url"`
+			ExpiresAt      *time.Time      `json:"expires_at"`
 			Payload        json.RawMessage `json:"payload,omitempty"`
 		}
 		if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 			return fmt.Errorf("invalid JSON: %w", err)
+		}
+		if input.TargetURL == "" {
+			return fmt.Errorf("target_url is required for approval signing")
+		}
+		if input.ExpiresAt == nil {
+			return fmt.Errorf("expires_at is required for approval signing")
 		}
 
 		kid := gate.KIDFromPublicKey(currentIdentity.PublicKey)
@@ -255,6 +264,7 @@ These must match the original request. Signs approval and posts as a gate.approv
 		signable := &gate.GateSignable{
 			OrgID: orgID, RequestID: requestID, Verb: input.Verb,
 			TargetEndpoint: input.TargetEndpoint, TargetService: input.TargetService,
+			TargetURL: input.TargetURL, ExpiresAtUnix: input.ExpiresAt.Unix(),
 			PayloadHash: payloadHash,
 		}
 		reqHash, err := gate.HashRequest(signable)

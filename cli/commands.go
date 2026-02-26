@@ -11,19 +11,21 @@ import (
 
 	"github.com/corpo/qntm/dropbox"
 	"github.com/corpo/qntm/group"
+	"github.com/corpo/qntm/handle"
 	"github.com/corpo/qntm/identity"
 	"github.com/corpo/qntm/invite"
 	"github.com/corpo/qntm/message"
+	"github.com/corpo/qntm/pkg/cbor"
 	"github.com/corpo/qntm/pkg/types"
 )
 
 var (
-	configDir      string
-	identityFile   string
-	storageDir     string
-	dropboxURL     string
-	unsafeMode     bool
-	verboseMode    bool
+	configDir    string
+	identityFile string
+	storageDir   string
+	dropboxURL   string
+	unsafeMode   bool
+	verboseMode  bool
 )
 
 func init() {
@@ -32,29 +34,29 @@ func init() {
 	if err != nil {
 		homeDir = "."
 	}
-	
+
 	defaultConfigDir := filepath.Join(homeDir, ".qntm")
-	
+
 	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", defaultConfigDir, "Configuration directory")
 	rootCmd.PersistentFlags().StringVar(&identityFile, "identity", "", "Identity file path (default: config-dir/identity.json)")
 	rootCmd.PersistentFlags().StringVar(&storageDir, "storage", "", "Storage directory for local provider (e.g. local:/path)")
 	rootCmd.PersistentFlags().StringVar(&dropboxURL, "dropbox-url", "", "HTTP drop box endpoint (default: https://inbox.qntm.corpo.llc)")
 	rootCmd.PersistentFlags().BoolVar(&unsafeMode, "unsafe", false, "Enable unsafe development features")
 	rootCmd.PersistentFlags().BoolVar(&verboseMode, "verbose", false, "Enable verbose output")
-	
+
 	// Identity commands
 	rootCmd.AddCommand(identityCmd)
 	identityCmd.AddCommand(identityGenerateCmd)
 	identityCmd.AddCommand(identityShowCmd)
 	// identity import/export tracked by qntm-ty5
-	
+
 	// Invite commands
 	rootCmd.AddCommand(inviteCmd)
 	inviteCmd.AddCommand(inviteCreateCmd)
 	inviteCmd.AddCommand(inviteAcceptCmd)
 	inviteAcceptCmd.Flags().String("name", "", "Name for this conversation")
 	inviteCmd.AddCommand(inviteListCmd)
-	
+
 	// Top-level accept alias: "qntm accept <token>" → "qntm invite accept <token>"
 	var acceptCmd = &cobra.Command{
 		Use:   "accept <invite-token>",
@@ -70,13 +72,13 @@ func init() {
 	}
 	acceptCmd.Flags().String("name", "", "Name for this conversation")
 	rootCmd.AddCommand(acceptCmd)
-	
+
 	// Message commands
 	rootCmd.AddCommand(messageCmd)
 	messageCmd.AddCommand(messageSendCmd)
 	messageCmd.AddCommand(messageReceiveCmd)
 	messageCmd.AddCommand(messageListCmd)
-	
+
 	// Group commands
 	rootCmd.AddCommand(groupCmd)
 	groupCmd.AddCommand(groupCreateCmd)
@@ -85,7 +87,7 @@ func init() {
 	groupCmd.AddCommand(groupRemoveCmd)
 	groupCmd.AddCommand(groupRekeyCmd)
 	groupCmd.AddCommand(groupListCmd)
-	
+
 	// Unsafe development commands
 	rootCmd.AddCommand(unsafeCmd)
 	unsafeCmd.AddCommand(unsafePresetCmd)
@@ -104,23 +106,23 @@ var identityGenerateCmd = &cobra.Command{
 	Short: "Generate a new identity",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ensureConfigDir()
-		
+
 		identityMgr := identity.NewManager()
 		newIdentity, err := identityMgr.GenerateIdentity()
 		if err != nil {
 			return fmt.Errorf("failed to generate identity: %w", err)
 		}
-		
+
 		// Save identity
 		if err := saveIdentity(newIdentity); err != nil {
 			return fmt.Errorf("failed to save identity: %w", err)
 		}
-		
+
 		fmt.Printf("Generated new identity:\n")
 		fmt.Printf("Key ID: %s\n", identityMgr.KeyIDToString(newIdentity.KeyID))
 		fmt.Printf("Public Key: %s\n", identityMgr.PublicKeyToString(newIdentity.PublicKey))
 		fmt.Printf("Saved to: %s\n", getIdentityPath())
-		
+
 		return nil
 	},
 }
@@ -133,21 +135,19 @@ var identityShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		identityMgr := identity.NewManager()
 		dc := NewDisplayContext()
 		kidHex := hex.EncodeToString(currentIdentity.KeyID[:])
 		displayKID := dc.FormatKIDHex(kidHex, "")
-		
+
 		fmt.Printf("Current identity:\n")
 		fmt.Printf("Key ID: %s\n", displayKID)
 		fmt.Printf("Public Key: %s\n", identityMgr.PublicKeyToString(currentIdentity.PublicKey))
-		
+
 		return nil
 	},
 }
-
-
 
 // Invite Commands
 var inviteCmd = &cobra.Command{
@@ -173,28 +173,28 @@ var inviteCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		isGroup, _ := cmd.Flags().GetBool("group")
 		name, _ := cmd.Flags().GetString("name")
-		
+
 		convType := types.ConversationTypeDirect
 		if isGroup {
 			convType = types.ConversationTypeGroup
 		}
-		
+
 		inviteMgr := invite.NewManager()
 		newInvite, err := inviteMgr.CreateInvite(currentIdentity, convType)
 		if err != nil {
 			return fmt.Errorf("failed to create invite: %w", err)
 		}
-		
+
 		// Encode invite data as base64 token (no URL wrapping — there's no
 		// real endpoint yet). Users can construct join URLs once a dropbox is deployed.
 		inviteToken, err := inviteMgr.InviteToToken(newInvite)
 		if err != nil {
 			return fmt.Errorf("failed to encode invite: %w", err)
 		}
-		
+
 		fmt.Printf("Created %s invite:\n", convType)
 		if name != "" {
 			fmt.Printf("Name: %s\n", name)
@@ -204,7 +204,7 @@ var inviteCreateCmd = &cobra.Command{
 		fmt.Println()
 		fmt.Println("Tell your recipient to run:")
 		fmt.Printf("  uvx qntm invite accept %s\n", inviteToken)
-		
+
 		return nil
 	},
 }
@@ -223,47 +223,47 @@ var inviteAcceptCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		inviteURL := args[0]
-		
+
 		inviteMgr := invite.NewManager()
 		receivedInvite, err := inviteMgr.InviteFromURL(inviteURL)
 		if err != nil {
 			return fmt.Errorf("failed to parse invite: %w", err)
 		}
-		
+
 		// Derive keys and create conversation
 		keys, err := inviteMgr.DeriveConversationKeys(receivedInvite)
 		if err != nil {
 			return fmt.Errorf("failed to derive keys: %w", err)
 		}
-		
+
 		conversation, err := inviteMgr.CreateConversation(receivedInvite, keys)
 		if err != nil {
 			return fmt.Errorf("failed to create conversation: %w", err)
 		}
-		
+
 		// Add ourselves to the conversation
 		inviteMgr.AddParticipant(conversation, currentIdentity.PublicKey)
-		
+
 		// Set conversation name if provided
 		name, _ := cmd.Flags().GetString("name")
 		if name != "" {
 			conversation.Name = name
 		}
-		
+
 		// Save conversation
 		if err := saveConversation(conversation); err != nil {
 			return fmt.Errorf("failed to save conversation: %w", err)
 		}
-		
+
 		fmt.Printf("Accepted %s invite:\n", conversation.Type)
 		fmt.Printf("Conversation ID: %s\n", hex.EncodeToString(conversation.ID[:]))
 		if name != "" {
 			fmt.Printf("Name: %s\n", name)
 		}
 		fmt.Printf("Participants: %d\n", len(conversation.Participants))
-		
+
 		return nil
 	},
 }
@@ -276,21 +276,21 @@ var inviteListCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load conversations: %w", err)
 		}
-		
+
 		if len(conversations) == 0 {
 			fmt.Println("No conversations found")
 			return nil
 		}
-		
+
 		dc := NewDisplayContext()
 		fmt.Printf("Conversations (%d):\n", len(conversations))
 		for _, conv := range conversations {
-			fmt.Printf("  %s (%s) - %d participants\n", 
-				dc.FormatConvID(conv.ID), 
-				conv.Type, 
+			fmt.Printf("  %s (%s) - %d participants\n",
+				dc.FormatConvID(conv.ID),
+				conv.Type,
 				len(conv.Participants))
 		}
-		
+
 		return nil
 	},
 }
@@ -311,28 +311,28 @@ var messageSendCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		convIDHex, err := resolveConvID(args[0])
 		if err != nil {
 			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
 		}
 		messageText := args[1]
-		
+
 		// Parse conversation ID
 		convIDBytes, err := hex.DecodeString(convIDHex)
 		if err != nil || len(convIDBytes) != 16 {
 			return fmt.Errorf("invalid conversation ID format")
 		}
-		
+
 		var convID types.ConversationID
 		copy(convID[:], convIDBytes)
-		
+
 		// Find conversation
 		conversation, err := findConversation(convID)
 		if err != nil {
 			return fmt.Errorf("conversation not found: %w", err)
 		}
-		
+
 		// Create message
 		messageMgr := message.NewManager()
 		envelope, err := messageMgr.CreateMessage(
@@ -346,18 +346,18 @@ var messageSendCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to create message: %w", err)
 		}
-		
+
 		// Send via storage
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
 		if err := dropboxMgr.SendMessage(envelope); err != nil {
 			return fmt.Errorf("failed to send message: %w", err)
 		}
-		
+
 		dc := NewDisplayContext()
 		fmt.Printf("Message sent to %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Message ID: %s\n", hex.EncodeToString(envelope.MsgID[:]))
-		
+
 		return nil
 	},
 }
@@ -370,7 +370,7 @@ var messageReceiveCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load conversations: %w", err)
 		}
-		
+
 		// Filter to specific conversation if provided
 		if len(args) > 0 {
 			convIDHex, err := resolveConvID(args[0])
@@ -381,67 +381,171 @@ var messageReceiveCmd = &cobra.Command{
 			if err != nil || len(convIDBytes) != 16 {
 				return fmt.Errorf("invalid conversation ID format")
 			}
-			
+
 			var convID types.ConversationID
 			copy(convID[:], convIDBytes)
-			
+
 			conversation, err := findConversation(convID)
 			if err != nil {
 				return fmt.Errorf("conversation not found: %w", err)
 			}
-			
+
 			conversations = []*types.Conversation{conversation}
 		}
-		
+
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
 		dc := NewDisplayContext()
-		
+		groupMgr := group.NewManager()
+		handleStore := dc.Handles
+		if handleStore == nil {
+			handleStore, _ = handle.NewStore(configDir)
+			dc.Handles = handleStore
+		}
+
+		var currentIdentity *types.Identity
+		var identityErr error
+		identityLoaded := false
+		loadIdentityOnce := func() (*types.Identity, error) {
+			if identityLoaded {
+				return currentIdentity, identityErr
+			}
+			identityLoaded = true
+			currentIdentity, identityErr = loadIdentity()
+			return currentIdentity, identityErr
+		}
+
 		totalMessages := 0
 		allSeenMessages := loadSeenMessages()
-		
+
 		for _, conversation := range conversations {
 			convIDHex := hex.EncodeToString(conversation.ID[:])
-			
+			var groupState *group.GroupState
+			groupStateLoaded := false
+			groupStateDirty := false
+
 			// Get seen messages for this conversation
 			conversationSeenMessages := allSeenMessages[conversation.ID]
 			if conversationSeenMessages == nil {
 				conversationSeenMessages = make(map[types.MessageID]bool)
 				allSeenMessages[conversation.ID] = conversationSeenMessages
 			}
-			
+
 			messages, err := dropboxMgr.ReceiveMessages(conversation, conversationSeenMessages)
 			if err != nil {
-				fmt.Printf("Error receiving from %s: %v\n", 
+				fmt.Printf("Error receiving from %s: %v\n",
 					dc.FormatConvIDHex(convIDHex), err)
 				continue
 			}
-			
+
 			if len(messages) > 0 {
-				fmt.Printf("\n%s (%d new messages):\n", 
+				fmt.Printf("\n%s (%d new messages):\n",
 					dc.FormatConvIDHex(convIDHex), len(messages))
-				
+
 				for _, msg := range messages {
+					bodyDisplay := string(msg.Inner.Body)
+					switch msg.Inner.BodyType {
+					case "group_genesis", "group_add", "group_remove":
+						if conversation.Type == types.ConversationTypeGroup {
+							if !groupStateLoaded {
+								loadedState, err := loadGroupState(conversation.ID)
+								if err != nil {
+									loadedState = &group.GroupState{
+										Members: make(map[types.KeyID]*group.GroupMemberInfo),
+										Admins:  make(map[types.KeyID]bool),
+									}
+								}
+								groupState = loadedState
+								groupStateLoaded = true
+							}
+							if err := groupMgr.ProcessGroupMessage(msg, groupState); err != nil {
+								bodyDisplay = fmt.Sprintf("group update failed: %v", err)
+							} else {
+								groupStateDirty = true
+								switch msg.Inner.BodyType {
+								case "group_genesis":
+									bodyDisplay = "group state initialized"
+								case "group_add":
+									bodyDisplay = "group members updated"
+								case "group_remove":
+									bodyDisplay = "group members removed"
+								}
+							}
+						}
+					case "group_rekey":
+						if conversation.Type == types.ConversationTypeGroup {
+							id, err := loadIdentityOnce()
+							if err != nil {
+								bodyDisplay = fmt.Sprintf("group rekey skipped: %v", err)
+								break
+							}
+							newGroupKey, newEpoch, err := groupMgr.ProcessRekeyMessage(msg, conversation, id)
+							if err != nil {
+								bodyDisplay = fmt.Sprintf("group rekey not applied: %v", err)
+								break
+							}
+							if err := groupMgr.ApplyRekey(conversation, newGroupKey, newEpoch); err != nil {
+								bodyDisplay = fmt.Sprintf("group rekey apply failed: %v", err)
+								break
+							}
+							if err := saveConversation(conversation); err != nil {
+								bodyDisplay = fmt.Sprintf("applied group rekey to epoch %d (save failed: %v)", newEpoch, err)
+							} else {
+								bodyDisplay = fmt.Sprintf("applied group rekey to epoch %d", newEpoch)
+							}
+						}
+					case "handle_reveal":
+						if handleStore != nil {
+							var reveal handle.RevealPayload
+							if err := cbor.UnmarshalCanonical(msg.Inner.Body, &reveal); err != nil {
+								bodyDisplay = fmt.Sprintf("invalid handle reveal payload: %v", err)
+								break
+							}
+							senderKIDHex := hex.EncodeToString(msg.Inner.SenderKID[:])
+							expectedCommitmentHex := handleStore.GetCommitment(senderKIDHex)
+							if expectedCommitmentHex == "" {
+								bodyDisplay = "handle reveal skipped: no cached commitment"
+								break
+							}
+							if err := handle.VerifyReveal(reveal.Handle, msg.Inner.SenderIKPK, reveal.HandleSalt, expectedCommitmentHex); err != nil {
+								bodyDisplay = fmt.Sprintf("handle reveal rejected: %v", err)
+								break
+							}
+							if err := handleStore.StoreReveal(convIDHex, senderKIDHex, reveal.Handle); err != nil {
+								bodyDisplay = fmt.Sprintf("verified handle @%s (store failed: %v)", reveal.Handle, err)
+								break
+							}
+							bodyDisplay = fmt.Sprintf("verified handle reveal @%s", reveal.Handle)
+						}
+					}
+
 					senderDisplay := dc.FormatKID(msg.Inner.SenderKID, convIDHex)
 					fmt.Printf("  [%s] %s: %s\n",
 						senderDisplay,
 						msg.Inner.BodyType,
-						string(msg.Inner.Body))
+						bodyDisplay)
+				}
+
+				if groupStateDirty {
+					if err := saveGroupState(conversation.ID, groupState); err != nil {
+						fmt.Printf("  Warning: failed to save group state for %s: %v\n",
+							dc.FormatConvIDHex(convIDHex), err)
+					}
 				}
 			}
-			
+
 			totalMessages += len(messages)
 		}
-		
+
 		if totalMessages == 0 {
 			fmt.Println("No new messages")
 		} else {
 			fmt.Printf("\nReceived %d total messages\n", totalMessages)
 		}
-		
+
 		// Save updated seen messages
 		saveSeenMessages(allSeenMessages)
-		
+
 		return nil
 	},
 }
@@ -459,24 +563,24 @@ var messageListCmd = &cobra.Command{
 		if err != nil || len(convIDBytes) != 16 {
 			return fmt.Errorf("invalid conversation ID format")
 		}
-		
+
 		var convID types.ConversationID
 		copy(convID[:], convIDBytes)
-		
+
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
 		dc := NewDisplayContext()
-		
+
 		stats, err := dropboxMgr.GetStorageStats(convID)
 		if err != nil {
 			return fmt.Errorf("failed to get storage stats: %w", err)
 		}
-		
+
 		fmt.Printf("%s storage stats:\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("  Messages: %d\n", stats.MessageCount)
 		fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
 		fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
-		
+
 		return nil
 	},
 }
@@ -497,16 +601,16 @@ var groupCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		groupName := args[0]
 		description := ""
 		if len(args) > 1 {
 			description = args[1]
 		}
-		
+
 		storage := getStorageProvider()
 		groupMgr := group.NewManager()
-		
+
 		// Create group with no founding members initially
 		conversation, groupState, err := groupMgr.CreateGroup(
 			currentIdentity,
@@ -518,21 +622,21 @@ var groupCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
 		}
-		
+
 		// Save conversation and group state
 		if err := saveConversation(conversation); err != nil {
 			return fmt.Errorf("failed to save conversation: %w", err)
 		}
-		
+
 		if err := saveGroupState(conversation.ID, groupState); err != nil {
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
-		
+
 		dc := NewDisplayContext()
 		fmt.Printf("Created group '%s':\n", groupName)
 		fmt.Printf("Conversation ID: %s\n", dc.FormatConvID(conversation.ID))
 		fmt.Printf("Members: %d\n", groupMgr.GetMemberCount(groupState))
-		
+
 		return nil
 	},
 }
@@ -556,43 +660,43 @@ var groupAddCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load identity: %w", err)
 		}
-		
+
 		convIDHex, err := resolveConvID(args[0])
 		if err != nil {
 			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
 		}
 		pubkeyStr := args[1]
-		
+
 		// Parse conversation ID
 		convIDBytes, err := hex.DecodeString(convIDHex)
 		if err != nil || len(convIDBytes) != 16 {
 			return fmt.Errorf("invalid conversation ID format")
 		}
-		
+
 		var convID types.ConversationID
 		copy(convID[:], convIDBytes)
-		
+
 		// Parse public key
 		identityMgr := identity.NewManager()
 		newMemberPubkey, err := identityMgr.PublicKeyFromString(pubkeyStr)
 		if err != nil {
 			return fmt.Errorf("invalid public key: %w", err)
 		}
-		
+
 		// Find conversation and group state
 		conversation, err := findConversation(convID)
 		if err != nil {
 			return fmt.Errorf("conversation not found: %w", err)
 		}
-		
+
 		groupState, err := loadGroupState(convID)
 		if err != nil {
 			return fmt.Errorf("failed to load group state: %w", err)
 		}
-		
+
 		storage := getStorageProvider()
 		groupMgr := group.NewManager()
-		
+
 		// Add member with rekey
 		err = groupMgr.AddMembersWithRekey(
 			currentIdentity,
@@ -604,7 +708,7 @@ var groupAddCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to add member: %w", err)
 		}
-		
+
 		// Save updated state
 		if err := saveConversation(conversation); err != nil {
 			return fmt.Errorf("failed to save conversation: %w", err)
@@ -612,11 +716,11 @@ var groupAddCmd = &cobra.Command{
 		if err := saveGroupState(convID, groupState); err != nil {
 			return fmt.Errorf("failed to save group state: %w", err)
 		}
-		
+
 		dc := NewDisplayContext()
 		fmt.Printf("Added member to %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Group rekeyed to epoch %d\n", conversation.CurrentEpoch)
-		
+
 		return nil
 	},
 }
@@ -785,35 +889,35 @@ var groupListCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load conversations: %w", err)
 		}
-		
+
 		groupConversations := make([]*types.Conversation, 0)
 		for _, conv := range conversations {
 			if conv.Type == types.ConversationTypeGroup {
 				groupConversations = append(groupConversations, conv)
 			}
 		}
-		
+
 		if len(groupConversations) == 0 {
 			fmt.Println("No group conversations found")
 			return nil
 		}
-		
+
 		dc := NewDisplayContext()
 		fmt.Printf("Group conversations (%d):\n", len(groupConversations))
 		for _, conv := range groupConversations {
 			groupState, err := loadGroupState(conv.ID)
 			if err != nil {
-				fmt.Printf("  %s (failed to load group state)\n", 
+				fmt.Printf("  %s (failed to load group state)\n",
 					dc.FormatConvID(conv.ID))
 				continue
 			}
-			
+
 			convIDHex := hex.EncodeToString(conv.ID[:])
-			fmt.Printf("  %s: %s (%d members)\n", 
-				dc.FormatConvIDHex(convIDHex), 
+			fmt.Printf("  %s: %s (%d members)\n",
+				dc.FormatConvIDHex(convIDHex),
 				groupState.GroupName,
 				len(groupState.Members))
-			
+
 			// Show members with names
 			if verboseMode {
 				for kid := range groupState.Members {
@@ -821,7 +925,7 @@ var groupListCmd = &cobra.Command{
 				}
 			}
 		}
-		
+
 		return nil
 	},
 }
@@ -845,7 +949,7 @@ var unsafePresetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		presetName := args[0]
-		
+
 		switch presetName {
 		case "unsafe_test_alice":
 			return createTestIdentity("Alice")
@@ -864,38 +968,38 @@ var unsafeTestCmd = &cobra.Command{
 	Short: "Run unsafe development tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Running unsafe development tests...")
-		
+
 		// Test identity generation
 		identityMgr := identity.NewManager()
 		testIdentity, err := identityMgr.GenerateIdentity()
 		if err != nil {
 			return fmt.Errorf("identity test failed: %w", err)
 		}
-		
+
 		fmt.Printf("✓ Identity generation test passed\n")
 		fmt.Printf("  Test Key ID: %s\n", identityMgr.KeyIDToString(testIdentity.KeyID))
-		
+
 		// Test invite creation
 		inviteMgr := invite.NewManager()
 		testInvite, err := inviteMgr.CreateInvite(testIdentity, types.ConversationTypeDirect)
 		if err != nil {
 			return fmt.Errorf("invite test failed: %w", err)
 		}
-		
+
 		fmt.Printf("✓ Invite creation test passed\n")
 		fmt.Printf("  Test Conversation ID: %s\n", hex.EncodeToString(testInvite.ConvID[:]))
-		
+
 		// Test message creation
 		keys, err := inviteMgr.DeriveConversationKeys(testInvite)
 		if err != nil {
 			return fmt.Errorf("key derivation test failed: %w", err)
 		}
-		
+
 		conversation, err := inviteMgr.CreateConversation(testInvite, keys)
 		if err != nil {
 			return fmt.Errorf("conversation test failed: %w", err)
 		}
-		
+
 		messageMgr := message.NewManager()
 		testEnvelope, err := messageMgr.CreateMessage(
 			testIdentity,
@@ -908,12 +1012,12 @@ var unsafeTestCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("message test failed: %w", err)
 		}
-		
+
 		fmt.Printf("✓ Message creation test passed\n")
 		fmt.Printf("  Test Message ID: %s\n", hex.EncodeToString(testEnvelope.MsgID[:]))
-		
+
 		fmt.Println("All unsafe development tests passed!")
-		
+
 		return nil
 	},
 }

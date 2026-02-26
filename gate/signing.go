@@ -14,13 +14,16 @@ import (
 )
 
 // GateSignable is the CBOR structure signed for gate authorization requests.
-// Per the spec: signature covers CBOR({org_id, request_id, verb, target_endpoint, target_service, H(payload)}).
+// Signature binding includes routing and expiry to prevent target substitution
+// or extending execution window after signing.
 type GateSignable struct {
 	OrgID          string `cbor:"org_id"`
 	RequestID      string `cbor:"request_id"`
 	Verb           string `cbor:"verb"`
 	TargetEndpoint string `cbor:"target_endpoint"`
 	TargetService  string `cbor:"target_service"`
+	TargetURL      string `cbor:"target_url"`
+	ExpiresAtUnix  int64  `cbor:"expires_at_unix"`
 	PayloadHash    []byte `cbor:"payload_hash"`
 }
 

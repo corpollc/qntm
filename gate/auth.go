@@ -27,6 +27,7 @@ type GateMessageType string
 const (
 	GateMessageRequest  GateMessageType = "gate.request"
 	GateMessageApproval GateMessageType = "gate.approval"
+	GateMessageExecuted GateMessageType = "gate.executed"
 )
 
 // GateConversationMessage represents a parsed gate message from the qntm conversation.
@@ -37,12 +38,14 @@ type GateConversationMessage struct {
 	RequestID string          `json:"request_id"`
 
 	// Request fields (only for GateMessageRequest)
-	Verb           string          `json:"verb,omitempty"`
-	TargetEndpoint string          `json:"target_endpoint,omitempty"`
-	TargetService  string          `json:"target_service,omitempty"`
-	TargetURL      string          `json:"target_url,omitempty"`
-	Payload        json.RawMessage `json:"payload,omitempty"`
-	ExpiresAt      time.Time       `json:"expires_at,omitempty"`
+	Verb                string          `json:"verb,omitempty"`
+	TargetEndpoint      string          `json:"target_endpoint,omitempty"`
+	TargetService       string          `json:"target_service,omitempty"`
+	TargetURL           string          `json:"target_url,omitempty"`
+	Payload             json.RawMessage `json:"payload,omitempty"`
+	ExpiresAt           time.Time       `json:"expires_at,omitempty"`
+	ExecutedAt          time.Time       `json:"executed_at,omitempty"`
+	ExecutionStatusCode int             `json:"execution_status_code,omitempty"`
 
 	// Common fields
 	SignerKID string `json:"signer_kid"`
@@ -51,13 +54,13 @@ type GateConversationMessage struct {
 
 // ScanResult is the result of scanning a conversation for a request.
 type ScanResult struct {
-	Found        bool          `json:"found"`
-	ThresholdMet bool          `json:"threshold_met"`
-	Expired      bool          `json:"expired"`
-	SignerKIDs   []string      `json:"signer_kids"`
-	Threshold    int           `json:"threshold"`
+	Found        bool                     `json:"found"`
+	ThresholdMet bool                     `json:"threshold_met"`
+	Expired      bool                     `json:"expired"`
+	SignerKIDs   []string                 `json:"signer_kids"`
+	Threshold    int                      `json:"threshold"`
 	Request      *GateConversationMessage `json:"request,omitempty"`
-	Status       RequestStatus `json:"status"`
+	Status       RequestStatus            `json:"status"`
 }
 
 // ExecutionResult holds the result of forwarding the request.
@@ -79,7 +82,7 @@ type ExecuteResult struct {
 	SignerKIDs      []string         `json:"signer_kids"`
 	Threshold       int              `json:"threshold"`
 	ExpiresAt       time.Time        `json:"expires_at"`
-	ExecutionResult *ExecutionResult  `json:"execution_result,omitempty"`
+	ExecutionResult *ExecutionResult `json:"execution_result,omitempty"`
 }
 
 // ConversationReader provides gate messages from a qntm conversation.
@@ -117,6 +120,17 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 	result.Found = true
 	result.Request = reqMsg
 
+	// Already executed? Conversation state is authoritative and should prevent
+	// any additional downstream execution attempts, even after request expiry.
+	for i := range messages {
+		msg := &messages[i]
+		if msg.Type == GateMessageExecuted && msg.RequestID == requestID {
+			result.Status = StatusExecuted
+			result.ThresholdMet = true
+			return result, nil
+		}
+	}
+
 	// Check expiration
 	if time.Now().After(reqMsg.ExpiresAt) {
 		result.Expired = true
@@ -136,6 +150,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 	signable := &GateSignable{
 		OrgID: reqMsg.OrgID, RequestID: requestID, Verb: reqMsg.Verb,
 		TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
+		TargetURL: reqMsg.TargetURL, ExpiresAtUnix: reqMsg.ExpiresAt.Unix(),
 		PayloadHash: payloadHash,
 	}
 
@@ -197,7 +212,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 }
 
 // ExecuteIfReady scans the conversation, checks threshold, and executes if ready.
-// Returns the result without storing any state.
+// Returns the result and records a gate.executed marker when execution occurs.
 func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore *OrgStore) (*ExecuteResult, error) {
 	messages, err := reader.ReadGateMessages(org.ID)
 	if err != nil {
@@ -224,6 +239,11 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 		SignerKIDs:     scan.SignerKIDs,
 		Threshold:      scan.Threshold,
 		ExpiresAt:      reqMsg.ExpiresAt,
+	}
+
+	if scan.Status == StatusExecuted {
+		result.Status = StatusExecuted
+		return result, nil
 	}
 
 	if scan.Expired {
@@ -289,6 +309,18 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 		StatusCode:    resp.StatusCode,
 		ContentType:   resp.Header.Get("Content-Type"),
 		ContentLength: int64(len(respBody)),
+	}
+
+	if writer, ok := reader.(ConversationWriter); ok {
+		if err := writer.WriteGateMessage(org.ID, &GateConversationMessage{
+			Type:                GateMessageExecuted,
+			OrgID:               org.ID,
+			RequestID:           requestID,
+			ExecutedAt:          time.Now().UTC(),
+			ExecutionStatusCode: resp.StatusCode,
+		}); err != nil {
+			return nil, fmt.Errorf("store execution marker: %w", err)
+		}
 	}
 
 	log.Printf("[AUDIT] EXECUTION org=%s req=%s service=%s status=%d signers=%v (no credentials logged)",

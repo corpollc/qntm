@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,6 +30,7 @@ func TestSignVerifyRequest(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	s := &GateSignable{OrgID: "o", RequestID: "r", Verb: "POST",
 		TargetEndpoint: "/e", TargetService: "s",
+		TargetURL: "https://example.com/e", ExpiresAtUnix: 1735689600,
 		PayloadHash: ComputePayloadHash([]byte(`{}`))}
 
 	sig, err := SignRequest(priv, s)
@@ -111,8 +113,11 @@ func TestScanConversation_ThresholdMet(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{"test":true}`)
+	targetURL := "https://example.com/echo"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
@@ -122,9 +127,10 @@ func TestScanConversation_ThresholdMet(t *testing.T) {
 		{
 			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
 			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
-			Payload: payload, SignerKID: a.kid,
+			TargetURL: targetURL,
+			Payload:   payload, SignerKID: a.kid,
 			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
-			ExpiresAt: time.Now().Add(1 * time.Hour),
+			ExpiresAt: expiresAt,
 		},
 		{
 			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
@@ -154,8 +160,11 @@ func TestScanConversation_ThresholdNotMet(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "https://example.com/echo"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 
@@ -163,9 +172,10 @@ func TestScanConversation_ThresholdNotMet(t *testing.T) {
 		{
 			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
 			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
-			Payload: payload, SignerKID: a.kid,
+			TargetURL: targetURL,
+			Payload:   payload, SignerKID: a.kid,
 			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
-			ExpiresAt: time.Now().Add(1 * time.Hour),
+			ExpiresAt: expiresAt,
 		},
 	}
 
@@ -191,8 +201,11 @@ func TestScanConversation_Expired(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "https://example.com/t"
+	expiresAt := time.Now().Add(-1 * time.Second)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 
@@ -200,9 +213,10 @@ func TestScanConversation_Expired(t *testing.T) {
 		{
 			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
-			Payload: payload, SignerKID: a.kid,
+			TargetURL: targetURL,
+			Payload:   payload, SignerKID: a.kid,
 			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
-			ExpiresAt: time.Now().Add(-1 * time.Second), // already expired
+			ExpiresAt: expiresAt, // already expired
 		},
 	}
 
@@ -229,8 +243,11 @@ func TestScanConversation_BadSignature(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "https://example.com/t"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	badSig, _ := SignRequest(wrongPriv, signable) // wrong key
 
@@ -238,9 +255,10 @@ func TestScanConversation_BadSignature(t *testing.T) {
 		{
 			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
-			Payload: payload, SignerKID: a.kid,
+			TargetURL: targetURL,
+			Payload:   payload, SignerKID: a.kid,
 			Signature: base64.RawURLEncoding.EncodeToString(badSig),
-			ExpiresAt: time.Now().Add(1 * time.Hour),
+			ExpiresAt: expiresAt,
 		},
 	}
 
@@ -266,8 +284,11 @@ func TestScanConversation_DuplicateSigner(t *testing.T) {
 	}
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "https://example.com/t"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
@@ -277,9 +298,10 @@ func TestScanConversation_DuplicateSigner(t *testing.T) {
 		{
 			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
-			Payload: payload, SignerKID: a.kid,
+			TargetURL: targetURL,
+			Payload:   payload, SignerKID: a.kid,
 			Signature: base64.RawURLEncoding.EncodeToString(reqSig),
-			ExpiresAt: time.Now().Add(1 * time.Hour),
+			ExpiresAt: expiresAt,
 		},
 		{
 			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
@@ -348,18 +370,21 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 
 	// A submits request as a conversation message
 	payload := json.RawMessage(`{"test":true}`)
+	targetURL := echoSrv.URL + "/echo"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "test-org", RequestID: "req-001", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
 	resp := post(t, gateSrv.URL+"/v1/orgs/test-org/messages", map[string]interface{}{
 		"type": "gate.request", "request_id": "req-001", "verb": "POST",
 		"target_endpoint": "/echo", "target_service": "echo",
-		"target_url": echoSrv.URL + "/echo",
-		"payload": payload, "signer_kid": a.kid,
+		"target_url": targetURL,
+		"payload":    payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
-		"expires_at": time.Now().Add(1 * time.Hour),
+		"expires_at": expiresAt,
 	})
 
 	if s := resp["status"]; s != "pending" {
@@ -413,18 +438,21 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 	})
 
 	payload := json.RawMessage(`null`)
+	targetURL := echoSrv.URL + "/balance"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "low-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/balance", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
 	resp := post(t, gateSrv.URL+"/v1/orgs/low-org/messages", map[string]interface{}{
 		"type": "gate.request", "request_id": "r1", "verb": "GET",
 		"target_endpoint": "/balance", "target_service": "echo",
-		"target_url": echoSrv.URL + "/balance",
-		"payload": payload, "signer_kid": a.kid,
+		"target_url": targetURL,
+		"payload":    payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
-		"expires_at": time.Now().Add(1 * time.Hour),
+		"expires_at": expiresAt,
 	})
 
 	if s := resp["status"]; s != "executed" {
@@ -459,17 +487,19 @@ func TestIntegration_Expiration(t *testing.T) {
 
 	// Submit with 2s expiration
 	expiresAt := time.Now().Add(2 * time.Second)
+	targetURL := "http://localhost:9999/echo"
 	payload := json.RawMessage(`{"x":1}`)
 	signable := &GateSignable{OrgID: "exp-org", RequestID: "r-exp", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
 	resp := post(t, gateSrv.URL+"/v1/orgs/exp-org/messages", map[string]interface{}{
 		"type": "gate.request", "request_id": "r-exp", "verb": "POST",
 		"target_endpoint": "/echo", "target_service": "echo",
-		"target_url": "http://localhost:9999/echo",
-		"payload": payload, "signer_kid": a.kid,
+		"target_url": targetURL,
+		"payload":    payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
 		"expires_at": expiresAt.Format(time.RFC3339Nano),
 	})
@@ -522,18 +552,21 @@ func TestIntegration_BadSignature(t *testing.T) {
 	})
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "http://localhost:9999/t"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "sig-org", RequestID: "r-bad", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(wrongPriv, signable) // wrong key!
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"type": "gate.request", "request_id": "r-bad", "verb": "GET",
 		"target_endpoint": "/t", "target_service": "echo",
-		"target_url": "http://localhost:9999/t",
-		"payload": payload, "signer_kid": a.kid,
+		"target_url": targetURL,
+		"payload":    payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
-		"expires_at": time.Now().Add(1 * time.Hour),
+		"expires_at": expiresAt,
 	})
 	resp, _ := http.Post(gateSrv.URL+"/v1/orgs/sig-org/messages", "application/json", bytes.NewReader(body))
 	if resp.StatusCode != 400 {
@@ -570,18 +603,21 @@ func TestIntegration_DuplicateRequest(t *testing.T) {
 	})
 
 	payload := json.RawMessage(`{}`)
+	targetURL := "http://localhost:9999/t"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "dup-org", RequestID: "r-dup", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
 	msgBody := map[string]interface{}{
 		"type": "gate.request", "request_id": "r-dup", "verb": "GET",
 		"target_endpoint": "/t", "target_service": "echo",
-		"target_url": "http://localhost:9999/t",
-		"payload": payload, "signer_kid": a.kid,
+		"target_url": targetURL,
+		"payload":    payload, "signer_kid": a.kid,
 		"signature":  base64.RawURLEncoding.EncodeToString(sig),
-		"expires_at": time.Now().Add(1 * time.Hour),
+		"expires_at": expiresAt,
 	}
 	post(t, gateSrv.URL+"/v1/orgs/dup-org/messages", msgBody) // first: OK
 
@@ -619,8 +655,11 @@ func TestIntegration_ExplicitExecute(t *testing.T) {
 
 	// Post request and approval directly to conversation store (simulating qntm group messages)
 	payload := json.RawMessage(`{"action":"test"}`)
+	targetURL := echoSrv.URL + "/action"
+	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{OrgID: "exec-org", RequestID: "r-exec", Verb: "POST",
 		TargetEndpoint: "/action", TargetService: "echo",
+		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
@@ -629,9 +668,9 @@ func TestIntegration_ExplicitExecute(t *testing.T) {
 	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
 		Type: GateMessageRequest, OrgID: "exec-org", RequestID: "r-exec",
 		Verb: "POST", TargetEndpoint: "/action", TargetService: "echo",
-		TargetURL: echoSrv.URL + "/action", Payload: payload,
+		TargetURL: targetURL, Payload: payload,
 		SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(reqSig),
-		ExpiresAt: time.Now().Add(1 * time.Hour),
+		ExpiresAt: expiresAt,
 	})
 	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
 		Type: GateMessageApproval, OrgID: "exec-org", RequestID: "r-exec",
@@ -657,6 +696,145 @@ func TestIntegration_ExplicitExecute(t *testing.T) {
 		t.Fatalf("expected 200, got %v", execResult["status_code"])
 	}
 	t.Log("✅ Explicit execute endpoint passed (stateless)")
+}
+
+func TestIntegration_AlreadyExecutedNotReexecuted(t *testing.T) {
+	var hitCount int32
+	echoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hitCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+	}))
+	defer echoSrv.Close()
+
+	gateSrv := httptest.NewServer(NewServer())
+	defer gateSrv.Close()
+
+	a := newTestSigner()
+	post(t, gateSrv.URL+"/v1/orgs", map[string]interface{}{
+		"id": "idempotent-org",
+		"signers": []map[string]interface{}{
+			{"kid": a.kid, "public_key": encKey(a.pub), "label": "alice"},
+		},
+		"rules": []map[string]interface{}{
+			{"service": "echo", "endpoint": "/once", "verb": "POST", "m": 1, "n": 1},
+		},
+	})
+	post(t, gateSrv.URL+"/v1/orgs/idempotent-org/credentials", map[string]interface{}{
+		"id": "c", "service": "echo", "value": "k",
+		"header_name": "Authorization", "header_value": "Bearer {value}",
+	})
+
+	payload := json.RawMessage(`{"run":1}`)
+	targetURL := echoSrv.URL + "/once"
+	expiresAt := time.Now().Add(1 * time.Hour)
+	signable := &GateSignable{
+		OrgID:          "idempotent-org",
+		RequestID:      "once-1",
+		Verb:           "POST",
+		TargetEndpoint: "/once",
+		TargetService:  "echo",
+		TargetURL:      targetURL,
+		ExpiresAtUnix:  expiresAt.Unix(),
+		PayloadHash:    ComputePayloadHash(payload),
+	}
+	sig, _ := SignRequest(a.priv, signable)
+
+	first := post(t, gateSrv.URL+"/v1/orgs/idempotent-org/messages", map[string]interface{}{
+		"type": "gate.request", "request_id": "once-1", "verb": "POST",
+		"target_endpoint": "/once", "target_service": "echo", "target_url": targetURL,
+		"payload": payload, "signer_kid": a.kid,
+		"signature":  base64.RawURLEncoding.EncodeToString(sig),
+		"expires_at": expiresAt,
+	})
+	if first["status"] != "executed" {
+		t.Fatalf("expected first execution to run, got %v", first["status"])
+	}
+
+	second := post(t, gateSrv.URL+"/v1/orgs/idempotent-org/execute/once-1", map[string]string{})
+	if second["status"] != "executed" {
+		t.Fatalf("expected second execution status=executed, got %v", second["status"])
+	}
+
+	if got := atomic.LoadInt32(&hitCount); got != 1 {
+		t.Fatalf("expected exactly one downstream call, got %d", got)
+	}
+}
+
+func TestExecuteIfReady_CredentialStillUsableAcrossRequests(t *testing.T) {
+	echoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer keep_me" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer echoSrv.Close()
+
+	signer := newTestSigner()
+	org := &Org{
+		ID: "cred-org",
+		Signers: []Signer{
+			{KID: signer.kid, PublicKey: signer.pub, Label: "alice"},
+		},
+		Rules: []ThresholdRule{
+			{Service: "echo", Endpoint: "/auth", Verb: "POST", M: 1, N: 1},
+		},
+	}
+	orgStore := NewOrgStore()
+	if err := orgStore.Create(org); err != nil {
+		t.Fatal(err)
+	}
+	if err := orgStore.AddCredential("cred-org", &Credential{
+		ID:          "cred",
+		Service:     "echo",
+		Value:       "keep_me",
+		HeaderName:  "Authorization",
+		HeaderValue: "Bearer {value}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	conv := NewMemoryConversationStore()
+
+	addRequest := func(requestID string) {
+		payload := json.RawMessage(`{"ok":true}`)
+		targetURL := echoSrv.URL + "/auth"
+		expiresAt := time.Now().Add(1 * time.Hour)
+		signable := &GateSignable{
+			OrgID: "cred-org", RequestID: requestID, Verb: "POST",
+			TargetEndpoint: "/auth", TargetService: "echo",
+			TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
+			PayloadHash: ComputePayloadHash(payload),
+		}
+		sig, _ := SignRequest(signer.priv, signable)
+		if err := conv.WriteGateMessage("cred-org", &GateConversationMessage{
+			Type: GateMessageRequest, OrgID: "cred-org", RequestID: requestID,
+			Verb: "POST", TargetEndpoint: "/auth", TargetService: "echo",
+			TargetURL: targetURL, Payload: payload, ExpiresAt: expiresAt,
+			SignerKID: signer.kid, Signature: base64.RawURLEncoding.EncodeToString(sig),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	addRequest("r1")
+	res1, err := ExecuteIfReady("r1", org, conv, orgStore)
+	if err != nil {
+		t.Fatalf("first execute failed: %v", err)
+	}
+	if res1.ExecutionResult == nil || res1.ExecutionResult.StatusCode != 200 {
+		t.Fatalf("first execute status unexpected: %+v", res1.ExecutionResult)
+	}
+
+	addRequest("r2")
+	res2, err := ExecuteIfReady("r2", org, conv, orgStore)
+	if err != nil {
+		t.Fatalf("second execute failed: %v", err)
+	}
+	if res2.ExecutionResult == nil || res2.ExecutionResult.StatusCode != 200 {
+		t.Fatalf("second execute status unexpected: %+v", res2.ExecutionResult)
+	}
 }
 
 // --- Helpers ---

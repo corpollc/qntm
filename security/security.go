@@ -6,22 +6,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/corpo/qntm/crypto"
 	"github.com/corpo/qntm/identity"
+	"github.com/corpo/qntm/pkg/cbor"
 	"github.com/corpo/qntm/pkg/types"
 )
 
 // PolicyEnforcer handles security policy enforcement
 type PolicyEnforcer struct {
 	identityMgr *identity.Manager
-	
+	suite       *crypto.QSP1Suite
+
 	// Replay protection
-	seenMessages   map[types.ConversationID]map[types.MessageID]bool
-	messagesMutex  sync.RWMutex
-	
+	seenMessages  map[types.ConversationID]map[types.MessageID]bool
+	messagesMutex sync.RWMutex
+
 	// Clock skew configuration
-	maxFutureSkew time.Duration
-	maxPastSkew   time.Duration
-	
+	maxFutureSkew          time.Duration
+	maxPastSkew            time.Duration
+	enableReplayProtection bool
+	enableClockSkewCheck   bool
+
 	// Membership policies
 	membershipPolicies map[types.ConversationID]*MembershipPolicy
 	policiesMutex      sync.RWMutex
@@ -29,19 +34,19 @@ type PolicyEnforcer struct {
 
 // MembershipPolicy defines who can participate in a conversation
 type MembershipPolicy struct {
-	AllowedMembers map[types.KeyID]bool      `json:"allowed_members"`
-	Admins         map[types.KeyID]bool      `json:"admins"`
-	RequireAdmin   bool                      `json:"require_admin"`
-	MaxMembers     int                       `json:"max_members"`
-	InviteOnly     bool                      `json:"invite_only"`
+	AllowedMembers map[types.KeyID]bool `json:"allowed_members"`
+	Admins         map[types.KeyID]bool `json:"admins"`
+	RequireAdmin   bool                 `json:"require_admin"`
+	MaxMembers     int                  `json:"max_members"`
+	InviteOnly     bool                 `json:"invite_only"`
 }
 
 // SecurityConfig holds security configuration
 type SecurityConfig struct {
-	MaxFutureSkewSeconds int64 `json:"max_future_skew_seconds"`
-	MaxPastSkewSeconds   int64 `json:"max_past_skew_seconds"`
-	EnableReplayProtection bool `json:"enable_replay_protection"`
-	EnableClockSkewCheck   bool `json:"enable_clock_skew_check"`
+	MaxFutureSkewSeconds   int64 `json:"max_future_skew_seconds"`
+	MaxPastSkewSeconds     int64 `json:"max_past_skew_seconds"`
+	EnableReplayProtection bool  `json:"enable_replay_protection"`
+	EnableClockSkewCheck   bool  `json:"enable_clock_skew_check"`
 }
 
 // NewPolicyEnforcer creates a new security policy enforcer
@@ -49,13 +54,16 @@ func NewPolicyEnforcer(config *SecurityConfig) *PolicyEnforcer {
 	if config == nil {
 		config = DefaultSecurityConfig()
 	}
-	
+
 	return &PolicyEnforcer{
-		identityMgr:        identity.NewManager(),
-		seenMessages:       make(map[types.ConversationID]map[types.MessageID]bool),
-		maxFutureSkew:      time.Duration(config.MaxFutureSkewSeconds) * time.Second,
-		maxPastSkew:        time.Duration(config.MaxPastSkewSeconds) * time.Second,
-		membershipPolicies: make(map[types.ConversationID]*MembershipPolicy),
+		identityMgr:            identity.NewManager(),
+		suite:                  crypto.NewQSP1Suite(),
+		seenMessages:           make(map[types.ConversationID]map[types.MessageID]bool),
+		maxFutureSkew:          time.Duration(config.MaxFutureSkewSeconds) * time.Second,
+		maxPastSkew:            time.Duration(config.MaxPastSkewSeconds) * time.Second,
+		enableReplayProtection: config.EnableReplayProtection,
+		enableClockSkewCheck:   config.EnableClockSkewCheck,
+		membershipPolicies:     make(map[types.ConversationID]*MembershipPolicy),
 	}
 }
 
@@ -76,33 +84,88 @@ func (p *PolicyEnforcer) CheckMessageSecurity(
 	conversation *types.Conversation,
 ) error {
 	// Check replay protection
-	if err := p.CheckReplayProtection(envelope); err != nil {
-		return fmt.Errorf("replay protection failed: %w", err)
+	if p.enableReplayProtection {
+		if err := p.CheckReplayProtection(envelope); err != nil {
+			return fmt.Errorf("replay protection failed: %w", err)
+		}
 	}
-	
+
 	// Check clock skew
-	if err := p.CheckClockSkew(envelope); err != nil {
-		return fmt.Errorf("clock skew check failed: %w", err)
+	if p.enableClockSkewCheck {
+		if err := p.CheckClockSkew(envelope); err != nil {
+			return fmt.Errorf("clock skew check failed: %w", err)
+		}
 	}
-	
+
 	// Check TTL
 	if err := p.CheckTTL(envelope); err != nil {
 		return fmt.Errorf("TTL check failed: %w", err)
 	}
-	
+
+	// Verify message signature before identity/membership processing.
+	if err := p.CheckInnerSignature(envelope, inner); err != nil {
+		return fmt.Errorf("signature check failed: %w", err)
+	}
+
 	// Check sender identity
 	if err := p.CheckSenderIdentity(inner); err != nil {
 		return fmt.Errorf("sender identity check failed: %w", err)
 	}
-	
+
 	// Check membership policy
 	if err := p.CheckMembershipPolicy(inner, conversation); err != nil {
 		return fmt.Errorf("membership policy check failed: %w", err)
 	}
-	
+
 	// Mark message as seen for replay protection
-	p.MarkMessageSeen(envelope.ConvID, envelope.MsgID)
-	
+	if p.enableReplayProtection {
+		p.MarkMessageSeen(envelope.ConvID, envelope.MsgID)
+	}
+
+	return nil
+}
+
+// CheckInnerSignature verifies the Ed25519 signature in an inner payload against
+// the canonical signable structure from the envelope.
+func (p *PolicyEnforcer) CheckInnerSignature(envelope *types.OuterEnvelope, inner *types.InnerPayload) error {
+	if inner.SigAlg != "Ed25519" {
+		return fmt.Errorf("unsupported signature algorithm: %s", inner.SigAlg)
+	}
+
+	bodyStruct := struct {
+		BodyType string        `cbor:"body_type"`
+		Body     []byte        `cbor:"body"`
+		Refs     []interface{} `cbor:"refs,omitempty"`
+	}{
+		BodyType: inner.BodyType,
+		Body:     inner.Body,
+		Refs:     inner.Refs,
+	}
+
+	bodyStructBytes, err := cbor.MarshalCanonical(bodyStruct)
+	if err != nil {
+		return fmt.Errorf("marshal body struct: %w", err)
+	}
+
+	signable := types.Signable{
+		Proto:     crypto.ProtoPrefix,
+		Suite:     envelope.Suite,
+		ConvID:    envelope.ConvID,
+		MsgID:     envelope.MsgID,
+		CreatedTS: envelope.CreatedTS,
+		ExpiryTS:  envelope.ExpiryTS,
+		SenderKID: inner.SenderKID,
+		BodyHash:  p.suite.Hash(bodyStructBytes),
+	}
+
+	signableBytes, err := cbor.MarshalCanonical(signable)
+	if err != nil {
+		return fmt.Errorf("marshal signable: %w", err)
+	}
+
+	if err := p.suite.Verify(inner.SenderIKPK, signableBytes, inner.Signature); err != nil {
+		return fmt.Errorf("invalid signature: %w", err)
+	}
 	return nil
 }
 
@@ -117,7 +180,7 @@ func (p *PolicyEnforcer) CheckReplayProtection(envelope *types.OuterEnvelope) er
 		}
 	}
 	p.messagesMutex.RUnlock()
-	
+
 	return nil
 }
 
@@ -126,19 +189,19 @@ func (p *PolicyEnforcer) CheckClockSkew(envelope *types.OuterEnvelope) error {
 	now := time.Now().Unix()
 	createdTime := time.Unix(envelope.CreatedTS, 0)
 	currentTime := time.Unix(now, 0)
-	
+
 	// Check future skew
 	if createdTime.After(currentTime.Add(p.maxFutureSkew)) {
-		return fmt.Errorf("message timestamp %d is too far in the future (max skew: %v)", 
+		return fmt.Errorf("message timestamp %d is too far in the future (max skew: %v)",
 			envelope.CreatedTS, p.maxFutureSkew)
 	}
-	
-	// Check past skew  
+
+	// Check past skew
 	if createdTime.Before(currentTime.Add(-p.maxPastSkew)) {
-		return fmt.Errorf("message timestamp %d is too old (max age: %v)", 
+		return fmt.Errorf("message timestamp %d is too old (max age: %v)",
 			envelope.CreatedTS, p.maxPastSkew)
 	}
-	
+
 	return nil
 }
 
@@ -148,12 +211,12 @@ func (p *PolicyEnforcer) CheckTTL(envelope *types.OuterEnvelope) error {
 	if now > envelope.ExpiryTS {
 		return fmt.Errorf("message expired at %d (now: %d)", envelope.ExpiryTS, now)
 	}
-	
+
 	// Verify expiry is after created
 	if envelope.ExpiryTS <= envelope.CreatedTS {
 		return fmt.Errorf("invalid TTL: expiry %d <= created %d", envelope.ExpiryTS, envelope.CreatedTS)
 	}
-	
+
 	return nil
 }
 
@@ -163,12 +226,12 @@ func (p *PolicyEnforcer) CheckSenderIdentity(inner *types.InnerPayload) error {
 	if !p.identityMgr.VerifyKeyID(inner.SenderIKPK, inner.SenderKID) {
 		return fmt.Errorf("sender key ID %x does not match public key", inner.SenderKID[:])
 	}
-	
+
 	// Check public key is valid
 	if len(inner.SenderIKPK) != ed25519.PublicKeySize {
 		return fmt.Errorf("invalid sender public key length: %d", len(inner.SenderIKPK))
 	}
-	
+
 	return nil
 }
 
@@ -177,27 +240,27 @@ func (p *PolicyEnforcer) CheckMembershipPolicy(inner *types.InnerPayload, conver
 	p.policiesMutex.RLock()
 	policy, exists := p.membershipPolicies[conversation.ID]
 	p.policiesMutex.RUnlock()
-	
+
 	// No policy set - allow all participants
 	if !exists {
 		// Check basic participation
 		return p.checkBasicParticipation(inner, conversation)
 	}
-	
+
 	// Check allowed members
 	if len(policy.AllowedMembers) > 0 {
 		if !policy.AllowedMembers[inner.SenderKID] {
 			return fmt.Errorf("sender %x not in allowed members list", inner.SenderKID[:])
 		}
 	}
-	
+
 	// Check admin requirement for certain operations
 	if policy.RequireAdmin {
 		if !policy.Admins[inner.SenderKID] {
 			return fmt.Errorf("sender %x is not an admin (admin required)", inner.SenderKID[:])
 		}
 	}
-	
+
 	// Check max members (for add operations)
 	if policy.MaxMembers > 0 && inner.BodyType == "group_add" {
 		currentMemberCount := len(policy.AllowedMembers)
@@ -205,7 +268,7 @@ func (p *PolicyEnforcer) CheckMembershipPolicy(inner *types.InnerPayload, conver
 			return fmt.Errorf("group has reached maximum members (%d)", policy.MaxMembers)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -218,12 +281,12 @@ func (p *PolicyEnforcer) checkBasicParticipation(inner *types.InnerPayload, conv
 			break
 		}
 	}
-	
+
 	if !found {
-		return fmt.Errorf("sender %x is not a participant in conversation %x", 
+		return fmt.Errorf("sender %x is not a participant in conversation %x",
 			inner.SenderKID[:], conversation.ID[:])
 	}
-	
+
 	return nil
 }
 
@@ -231,11 +294,11 @@ func (p *PolicyEnforcer) checkBasicParticipation(inner *types.InnerPayload, conv
 func (p *PolicyEnforcer) MarkMessageSeen(convID types.ConversationID, msgID types.MessageID) {
 	p.messagesMutex.Lock()
 	defer p.messagesMutex.Unlock()
-	
+
 	if p.seenMessages[convID] == nil {
 		p.seenMessages[convID] = make(map[types.MessageID]bool)
 	}
-	
+
 	p.seenMessages[convID][msgID] = true
 }
 
@@ -243,12 +306,12 @@ func (p *PolicyEnforcer) MarkMessageSeen(convID types.ConversationID, msgID type
 func (p *PolicyEnforcer) IsMessageSeen(convID types.ConversationID, msgID types.MessageID) bool {
 	p.messagesMutex.RLock()
 	defer p.messagesMutex.RUnlock()
-	
+
 	convMessages, exists := p.seenMessages[convID]
 	if !exists {
 		return false
 	}
-	
+
 	return convMessages[msgID]
 }
 
@@ -256,7 +319,7 @@ func (p *PolicyEnforcer) IsMessageSeen(convID types.ConversationID, msgID types.
 func (p *PolicyEnforcer) SetMembershipPolicy(convID types.ConversationID, policy *MembershipPolicy) {
 	p.policiesMutex.Lock()
 	defer p.policiesMutex.Unlock()
-	
+
 	p.membershipPolicies[convID] = policy
 }
 
@@ -264,7 +327,7 @@ func (p *PolicyEnforcer) SetMembershipPolicy(convID types.ConversationID, policy
 func (p *PolicyEnforcer) GetMembershipPolicy(convID types.ConversationID) *MembershipPolicy {
 	p.policiesMutex.RLock()
 	defer p.policiesMutex.RUnlock()
-	
+
 	return p.membershipPolicies[convID]
 }
 
@@ -272,7 +335,7 @@ func (p *PolicyEnforcer) GetMembershipPolicy(convID types.ConversationID) *Membe
 func (p *PolicyEnforcer) AddAllowedMember(convID types.ConversationID, keyID types.KeyID, isAdmin bool) {
 	p.policiesMutex.Lock()
 	defer p.policiesMutex.Unlock()
-	
+
 	policy := p.membershipPolicies[convID]
 	if policy == nil {
 		policy = &MembershipPolicy{
@@ -281,7 +344,7 @@ func (p *PolicyEnforcer) AddAllowedMember(convID types.ConversationID, keyID typ
 		}
 		p.membershipPolicies[convID] = policy
 	}
-	
+
 	policy.AllowedMembers[keyID] = true
 	if isAdmin {
 		policy.Admins[keyID] = true
@@ -292,7 +355,7 @@ func (p *PolicyEnforcer) AddAllowedMember(convID types.ConversationID, keyID typ
 func (p *PolicyEnforcer) RemoveAllowedMember(convID types.ConversationID, keyID types.KeyID) {
 	p.policiesMutex.Lock()
 	defer p.policiesMutex.Unlock()
-	
+
 	policy := p.membershipPolicies[convID]
 	if policy != nil {
 		delete(policy.AllowedMembers, keyID)
@@ -304,15 +367,15 @@ func (p *PolicyEnforcer) RemoveAllowedMember(convID types.ConversationID, keyID 
 func (p *PolicyEnforcer) CleanupOldMessages(maxAge time.Duration) int {
 	p.messagesMutex.Lock()
 	defer p.messagesMutex.Unlock()
-	
+
 	cleaned := 0
 	_ = maxAge // For future use when implementing proper time-based cleanup
-	
+
 	// Note: This is a simplified cleanup. In practice, you'd want to store
 	// timestamps with the messages to do proper time-based cleanup.
 	// For now, we just limit the size per conversation.
 	const maxMessagesPerConv = 10000
-	
+
 	for convID, messages := range p.seenMessages {
 		if len(messages) > maxMessagesPerConv {
 			// Keep only the most recent messages (simplified)
@@ -330,7 +393,7 @@ func (p *PolicyEnforcer) CleanupOldMessages(maxAge time.Duration) int {
 			p.seenMessages[convID] = newMessages
 		}
 	}
-	
+
 	return cleaned
 }
 
@@ -338,20 +401,20 @@ func (p *PolicyEnforcer) CleanupOldMessages(maxAge time.Duration) int {
 func (p *PolicyEnforcer) GetSecurityStats() *SecurityStats {
 	p.messagesMutex.RLock()
 	defer p.messagesMutex.RUnlock()
-	
+
 	stats := &SecurityStats{
 		ConversationCount: len(p.seenMessages),
 		TotalSeenMessages: 0,
 	}
-	
+
 	for _, messages := range p.seenMessages {
 		stats.TotalSeenMessages += len(messages)
 	}
-	
+
 	p.policiesMutex.RLock()
 	stats.PoliciesCount = len(p.membershipPolicies)
 	p.policiesMutex.RUnlock()
-	
+
 	return stats
 }
 
@@ -367,22 +430,22 @@ func ValidateSecurityConfig(config *SecurityConfig) error {
 	if config == nil {
 		return fmt.Errorf("config is nil")
 	}
-	
+
 	if config.MaxFutureSkewSeconds < 0 {
 		return fmt.Errorf("max future skew cannot be negative")
 	}
-	
+
 	if config.MaxPastSkewSeconds < 0 {
 		return fmt.Errorf("max past skew cannot be negative")
 	}
-	
+
 	if config.MaxFutureSkewSeconds > 7*24*3600 { // 1 week
 		return fmt.Errorf("max future skew is too large (> 1 week)")
 	}
-	
+
 	if config.MaxPastSkewSeconds > 30*24*3600 { // 30 days
 		return fmt.Errorf("max past skew is too large (> 30 days)")
 	}
-	
+
 	return nil
 }
