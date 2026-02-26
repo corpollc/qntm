@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ var cliVersion = "dev"
 var updateMessage string
 var updateOnce sync.Once
 var updateDone = make(chan struct{})
+var updateMessageMu sync.RWMutex
 
 // SetVersion sets the CLI version (called from main with build-time value).
 func SetVersion(v string) {
@@ -48,13 +50,68 @@ type remoteVersion struct {
 	Version string `json:"version"`
 }
 
-func getVersionCachePath() string {
+type cliConfig struct {
+	IgnoreUpdateCheck bool `json:"ignore_update_check"`
+}
+
+func getStateDir() string {
+	if configDir != "" {
+		return configDir
+	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".qntm", "version-check.json")
+	if home == "" {
+		return ".qntm"
+	}
+	return filepath.Join(home, ".qntm")
+}
+
+func getVersionCachePath() string {
+	return filepath.Join(getStateDir(), "version-check.json")
+}
+
+func getCLIConfigPath() string {
+	return filepath.Join(getStateDir(), "config.json")
+}
+
+func isUpdateCheckDisabled() bool {
+	if parseTruthyEnv(os.Getenv("QNTM_DISABLE_UPDATE_CHECK")) {
+		return true
+	}
+
+	data, err := os.ReadFile(getCLIConfigPath())
+	if err != nil {
+		return false
+	}
+	var cfg cliConfig
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	return cfg.IgnoreUpdateCheck
+}
+
+func parseTruthyEnv(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func setUpdateMessage(msg string) {
+	updateMessageMu.Lock()
+	defer updateMessageMu.Unlock()
+	updateMessage = msg
+}
+
+func getUpdateMessage() string {
+	updateMessageMu.RLock()
+	defer updateMessageMu.RUnlock()
+	return updateMessage
 }
 
 // startBackgroundUpdateCheck kicks off a non-blocking version check.
-// Call this from PersistentPostRun. The result is printed after the command.
+// Call this from PersistentPreRun.
 func startBackgroundUpdateCheck() {
 	updateOnce.Do(func() {
 		go func() {
@@ -64,15 +121,24 @@ func startBackgroundUpdateCheck() {
 	})
 }
 
-// waitAndPrintUpdateHint waits for the background check and prints if needed.
+// waitAndPrintUpdateHint prints the hint if the background check finished quickly.
+// It intentionally avoids waiting on slow or offline networks.
 func waitAndPrintUpdateHint() {
-	<-updateDone
-	if updateMessage != "" {
-		fmt.Fprintln(os.Stderr, updateMessage)
+	select {
+	case <-updateDone:
+	case <-time.After(75 * time.Millisecond):
+		return
+	}
+	if msg := getUpdateMessage(); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
 	}
 }
 
 func checkForUpdate(synchronous bool) {
+	if isUpdateCheckDisabled() {
+		return
+	}
+
 	cachePath := getVersionCachePath()
 
 	// Check cache first
@@ -123,10 +189,15 @@ func setUpgradeHint(latest string, printNow bool) {
 	if latest == "" || latest == cliVersion || cliVersion == "dev" {
 		return
 	}
-	msg := fmt.Sprintf("\nUpdate available: qntm %s → %s. Run: uvx qntm@latest --version", cliVersion, latest)
+	msg := fmt.Sprintf(
+		"\nUpdate available: qntm %s → %s.\nUpgrade: uv tool upgrade qntm\nRun latest once: uvx --refresh qntm@latest <command>\nSilence: set QNTM_DISABLE_UPDATE_CHECK=1 or set {\"ignore_update_check\": true} in %s",
+		cliVersion,
+		latest,
+		getCLIConfigPath(),
+	)
 	if printNow {
 		fmt.Fprintln(os.Stderr, msg)
 	} else {
-		updateMessage = msg
+		setUpdateMessage(msg)
 	}
 }
