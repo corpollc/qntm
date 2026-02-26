@@ -76,7 +76,16 @@ var gateServeCmd = &cobra.Command{
 		if token == "" && !gateDevMode {
 			return fmt.Errorf("qntm gate serve requires --admin-token or QNTM_GATE_TOKEN\n  Use --dev to run without authentication (local testing only)")
 		}
-		srv := gate.NewServerWithToken(token)
+		var srv *gate.Server
+		if token == "" {
+			srv = gate.NewInsecureServerForTests()
+		} else {
+			secureSrv, err := gate.NewServer(token)
+			if err != nil {
+				return err
+			}
+			srv = secureSrv
+		}
 		addr := fmt.Sprintf(":%d", gatePort)
 		if token != "" {
 			fmt.Printf("qntm-gate server starting on %s (admin auth enabled, stateless)\n", addr)

@@ -49,16 +49,20 @@ type Server struct {
 	mux        *http.ServeMux
 }
 
-// NewServer creates a new gate server that requires an admin token.
-// For production use, call NewServerWithToken(token) or set QNTM_GATE_TOKEN.
-// This zero-arg constructor is kept for tests only — it starts with no auth
-// (equivalent to --dev mode).
-func NewServer() *Server {
-	return NewServerWithToken("")
+// NewServer creates a new gate server and requires a non-empty admin token.
+func NewServer(adminToken string) (*Server, error) {
+	if strings.TrimSpace(adminToken) == "" {
+		return nil, fmt.Errorf("admin token is required")
+	}
+	return newServer(adminToken), nil
 }
 
-// NewServerWithToken creates a gate server requiring the given admin token for admin endpoints.
-func NewServerWithToken(adminToken string) *Server {
+// NewInsecureServerForTests creates an unauthenticated server for tests/dev only.
+func NewInsecureServerForTests() *Server {
+	return newServer("")
+}
+
+func newServer(adminToken string) *Server {
 	s := &Server{
 		OrgStore:   NewOrgStore(),
 		ConvStore:  NewMemoryConversationStore(),

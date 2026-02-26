@@ -102,6 +102,33 @@ func TestOrgStore(t *testing.T) {
 	}
 }
 
+func TestNewServer_RequiresAdminToken(t *testing.T) {
+	if _, err := NewServer(""); err == nil {
+		t.Fatal("expected empty admin token to fail")
+	}
+	if _, err := NewServer("   "); err == nil {
+		t.Fatal("expected whitespace admin token to fail")
+	}
+
+	srv, err := NewServer("test-token")
+	if err != nil {
+		t.Fatalf("expected valid token to succeed, got: %v", err)
+	}
+	if srv.AdminToken != "test-token" {
+		t.Fatalf("unexpected token on server: %q", srv.AdminToken)
+	}
+}
+
+func TestNewInsecureServerForTests_AllowsNoToken(t *testing.T) {
+	srv := NewInsecureServerForTests()
+	if srv == nil {
+		t.Fatal("expected server instance")
+	}
+	if srv.AdminToken != "" {
+		t.Fatalf("expected empty admin token for insecure server, got: %q", srv.AdminToken)
+	}
+}
+
 // --- ScanConversation unit tests ---
 
 func TestScanConversation_ThresholdMet(t *testing.T) {
@@ -343,7 +370,7 @@ func TestScanConversation_NotFound(t *testing.T) {
 func TestIntegration_2of3_Echo(t *testing.T) {
 	echoSrv := httptest.NewServer(echoHandler())
 	defer echoSrv.Close()
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a, b, c := newTestSigner(), newTestSigner(), newTestSigner()
@@ -418,7 +445,7 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 func TestIntegration_1of2_AutoExecute(t *testing.T) {
 	echoSrv := httptest.NewServer(echoHandler())
 	defer echoSrv.Close()
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a, b := newTestSigner(), newTestSigner()
@@ -466,7 +493,7 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 }
 
 func TestIntegration_Expiration(t *testing.T) {
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a, b := newTestSigner(), newTestSigner()
@@ -535,7 +562,7 @@ func TestIntegration_Expiration(t *testing.T) {
 }
 
 func TestIntegration_BadSignature(t *testing.T) {
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a := newTestSigner()
@@ -577,7 +604,7 @@ func TestIntegration_BadSignature(t *testing.T) {
 }
 
 func TestIntegration_UnknownOrg(t *testing.T) {
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 	resp, _ := http.Get(gateSrv.URL + "/v1/orgs/nope")
 	if resp.StatusCode != 404 {
@@ -588,7 +615,7 @@ func TestIntegration_UnknownOrg(t *testing.T) {
 }
 
 func TestIntegration_DuplicateRequest(t *testing.T) {
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a := newTestSigner()
@@ -633,7 +660,7 @@ func TestIntegration_DuplicateRequest(t *testing.T) {
 func TestIntegration_ExplicitExecute(t *testing.T) {
 	echoSrv := httptest.NewServer(echoHandler())
 	defer echoSrv.Close()
-	srv := NewServer()
+	srv := NewInsecureServerForTests()
 	gateSrv := httptest.NewServer(srv)
 	defer gateSrv.Close()
 
@@ -707,7 +734,7 @@ func TestIntegration_AlreadyExecutedNotReexecuted(t *testing.T) {
 	}))
 	defer echoSrv.Close()
 
-	gateSrv := httptest.NewServer(NewServer())
+	gateSrv := httptest.NewServer(NewInsecureServerForTests())
 	defer gateSrv.Close()
 
 	a := newTestSigner()
