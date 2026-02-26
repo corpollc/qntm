@@ -74,6 +74,7 @@ jobs:
 
       # Requires SITE_DEPLOY_TOKEN secret with repo scope on corpollc/qntm-site
       - name: Update version.json on site
+        if: ${{ secrets.SITE_DEPLOY_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
         run: |
