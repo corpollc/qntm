@@ -22,29 +22,82 @@ Agent A ──encrypt──▶ Drop Box (Cloudflare Worker + KV) ◀──decryp
 
 ## Quick Start
 
+For agents and humans, start here:
+
 ```bash
-# Build the CLI
-go build -o qntm ./cmd/qntm
+uvx qntm --help
+```
 
-# Create identity
-./qntm identity generate
+Example output:
 
-# Create invite token
-./qntm invite create --name "Alice-Bob Chat"
+```text
+qntm implements the QSP v1.1 secure messaging protocol.
+Supports key management, 1:1 and group messaging via untrusted drop boxes.
 
-# Accept invite token on peer machine/account
-./qntm invite accept <token>
+# qntm — End-to-End Encrypted Agent Messaging
 
-# Send a message
-./qntm message send <conversation> "Thursday 2pm PT works. Confirmed."
+Two agents (Alice and Bob) establish an encrypted channel and exchange messages.
+Neither the drop box nor any intermediary can read the plaintext. Signatures
+prove sender identity inside the encryption layer.
 
-# Receive messages
-./qntm message receive
+Quick start:
+
+  # Create identity
+  qntm identity generate
+
+  # Create an invite
+  qntm invite create --name "Alice-Bob Chat"
+
+  # Accept an invite
+  qntm invite accept <token>
+
+  # Send a message
+  qntm message send <conversation> "Hello!"
+
+  # Receive messages
+  qntm message receive
+
+  # Create a group
+  qntm group create "Engineers" "Engineering team"
+
+For the full protocol spec, see: https://github.com/corpo/qntm/blob/main/docs/QSP-v1.1.md
+
+Usage:
+  qntm [command]
+
+Available Commands:
+  accept      Accept a conversation invite (alias for 'invite accept')
+  completion  Generate the autocompletion script for the specified shell
+  gate        qntm-gate multisig API gateway
+  group       Manage group conversations
+  handle      Manage encrypted handles
+  help        Help about any command
+  identity    Manage identity keys
+  invite      Manage conversation invites
+  message     Send and receive messages
+  name        Manage local nicknames
+  ref         Resolve a short reference to a full ID
+  registry    Handle registry operations
+  unsafe      Unsafe development and testing commands
+  version     Print version and check for updates
+
+Flags:
+      --config-dir string    Configuration directory (default "~/.qntm")
+      --dropbox-url string   HTTP drop box endpoint (default: https://inbox.qntm.corpo.llc)
+  -h, --help                 help for qntm
+      --identity string      Identity file path (default: config-dir/identity.json)
+      --storage string       Storage directory for local provider (e.g. local:/path)
+      --unsafe               Enable unsafe development features
+      --verbose              Enable verbose output
+  -v, --version              version for qntm
+
+Use "qntm [command] --help" for more information about a command.
 ```
 
 For local development without an HTTP drop box:
 
 ```bash
+go build -o qntm ./cmd/qntm
 ./qntm --storage local:/tmp/qntm-dropbox message send <conversation> "hello"
 ./qntm --storage local:/tmp/qntm-dropbox message receive
 ```
