@@ -9,7 +9,23 @@ permissions:
   id-token: write  # Required for PyPI trusted publisher
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Run unit and integration tests
+        run: go test ./...
+
+      - name: Run static analysis
+        run: go vet ./...
+
   release:
+    needs: verify
     runs-on: ubuntu-latest
     environment: release
     steps:

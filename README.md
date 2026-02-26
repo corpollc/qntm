@@ -23,20 +23,30 @@ Agent A ──encrypt──▶ Drop Box (Cloudflare Worker + KV) ◀──decryp
 ## Quick Start
 
 ```bash
+# Build the CLI
+go build -o qntm ./cmd/qntm
+
 # Create identity
-qntm identity init
+./qntm identity generate
 
-# Invite someone (sends invite via iMessage)
-qntm invite +15551234567 --name Alice
+# Create invite token
+./qntm invite create --name "Alice-Bob Chat"
 
-# Accept an invite you received
-qntm accept "https://dropbox.example.com/#<invite>"
+# Accept invite token on peer machine/account
+./qntm invite accept <token>
 
 # Send a message
-qntm send <conv_id> "Thursday 2pm PT works. Confirmed."
+./qntm message send <conversation> "Thursday 2pm PT works. Confirmed."
 
-# Check for messages
-qntm check
+# Receive messages
+./qntm message receive
+```
+
+For local development without an HTTP drop box:
+
+```bash
+./qntm --storage local:/tmp/qntm-dropbox message send <conversation> "hello"
+./qntm --storage local:/tmp/qntm-dropbox message receive
 ```
 
 ## Protocol
@@ -72,19 +82,23 @@ See [docs/QSP-v1.1.md](docs/QSP-v1.1.md) for the full specification.
 
 ```
 qntm/
-├── cmd/qntm/          # CLI entry point
-├── pkg/
-│   ├── crypto/         # HKDF, XChaCha20-Poly1305, Ed25519
-│   ├── cbor/           # Canonical CBOR encoding
-│   ├── envelope/       # Outer envelope + inner payload
-│   ├── identity/       # Key generation, storage, kid computation
-│   ├── invite/         # Invite creation, parsing, key derivation
-│   ├── dropbox/        # Drop box client interface + Cloudflare impl
-│   ├── conversation/   # Conversation state, membership log
-│   └── policy/         # Engagement presets and local policy
-├── worker/             # Cloudflare Worker drop box relay
-├── docs/               # Protocol specification
-└── presets/            # Engagement policy templates
+├── cmd/qntm/          # CLI binary entrypoint
+├── cli/               # Command handlers and local state stores
+├── crypto/            # Core cryptographic suite
+├── identity/          # Identity key generation and key IDs
+├── invite/            # Invite encoding/parsing and key derivation
+├── message/           # Envelope creation, encryption, verification
+├── dropbox/           # Storage transport interfaces and providers
+├── group/             # Group membership and rekey operations
+├── gate/              # qntm-gate threshold approval + forwarding
+├── registry/          # Handle commitment registry service
+├── handle/            # Handle reveal verification and local cache
+├── naming/            # Local aliases
+├── shortref/          # Short-ID resolution
+├── security/          # Policy enforcement (replay/skew/membership)
+├── worker/            # Worker-side support
+├── docs/              # Protocol specifications
+└── python-dist/       # Python packaging and binary distribution
 ```
 
 ## Building
@@ -102,7 +116,8 @@ go build ./cmd/qntm
 
 ## License
 
- [BSL 1.1](LICENSE) — converts to Apache 2.0 after 4 years. Non-commercial use permitted.   
+[BUSL-1.1](LICENSE) — Business Source License 1.1 with a non-commercial additional use grant.
+The Change Date and conversion terms are defined in `LICENSE`.
 
 ## Company
 
