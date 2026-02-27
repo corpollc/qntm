@@ -7,12 +7,25 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/corpo/qntm/identity"
+	"github.com/corpo/qntm/invite"
+	"github.com/corpo/qntm/pkg/types"
 )
 
 func newTestServer() (*httptest.Server, *sync.Map) {
 	store := &sync.Map{}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/receipt", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(405)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		store.Store("/__receipt__", body)
+		w.WriteHeader(200)
+	})
 	mux.HandleFunc("/v1/drop/", func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.Path[len("/v1/drop"):]
 
@@ -155,13 +168,8 @@ func TestHTTPStorageProvider_Delete(t *testing.T) {
 	p := NewHTTPStorageProvider(srv.URL)
 
 	p.Store("/del/key", []byte("bye"))
-	if err := p.Delete("/del/key"); err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-
-	exists, _ := p.Exists("/del/key")
-	if exists {
-		t.Error("key should be deleted")
+	if err := p.Delete("/del/key"); err == nil {
+		t.Fatalf("expected delete to be disabled")
 	}
 }
 
@@ -178,7 +186,54 @@ func TestHTTPStorageProvider_TooLarge(t *testing.T) {
 	}
 }
 
+func TestHTTPStorageProvider_RecordReadReceipt(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	p := NewHTTPStorageProvider(srv.URL)
+
+	identityMgr := identity.NewManager()
+	inviteMgr := invite.NewManager()
+
+	senderIdentity, err := identityMgr.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("failed to generate sender identity: %v", err)
+	}
+	receiverIdentity, err := identityMgr.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("failed to generate receiver identity: %v", err)
+	}
+
+	invitePayload, err := inviteMgr.CreateInvite(senderIdentity, types.ConversationTypeDirect)
+	if err != nil {
+		t.Fatalf("failed to create invite: %v", err)
+	}
+	keys, err := inviteMgr.DeriveConversationKeys(invitePayload)
+	if err != nil {
+		t.Fatalf("failed to derive keys: %v", err)
+	}
+	conversation, err := inviteMgr.CreateConversation(invitePayload, keys)
+	if err != nil {
+		t.Fatalf("failed to create conversation: %v", err)
+	}
+	inviteMgr.AddParticipant(conversation, receiverIdentity.PublicKey)
+
+	msgID, err := identityMgr.GenerateMessageID()
+	if err != nil {
+		t.Fatalf("failed to generate message id: %v", err)
+	}
+
+	if err := p.RecordReadReceipt(receiverIdentity, conversation, msgID); err != nil {
+		t.Fatalf("RecordReadReceipt failed: %v", err)
+	}
+
+	if _, ok := store.Load("/__receipt__"); !ok {
+		t.Fatalf("expected receipt payload to be posted")
+	}
+}
+
 // Verify interface compliance at compile time
 var _ StorageProvider = (*HTTPStorageProvider)(nil)
 var _ StorageProvider = (*MemoryStorageProvider)(nil)
+
 // FileStorageProvider is in cli package, tested separately

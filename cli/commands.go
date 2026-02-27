@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -78,6 +79,9 @@ func init() {
 	messageCmd.AddCommand(messageSendCmd)
 	messageCmd.AddCommand(messageReceiveCmd)
 	messageCmd.AddCommand(messageListCmd)
+	messageCmd.AddCommand(messageHistoryCmd)
+	messageCmd.Flags().BoolP("all", "a", false, "Receive messages across all inboxes")
+	messageCmd.Flags().BoolP("list", "l", false, "List message inbox stats across all conversations")
 
 	// Group commands
 	rootCmd.AddCommand(groupCmd)
@@ -297,9 +301,36 @@ var inviteListCmd = &cobra.Command{
 
 // Message Commands
 var messageCmd = &cobra.Command{
-	Use:   "message",
-	Short: "Send and receive messages",
-	Long:  "Send and receive encrypted messages in conversations.",
+	Use:     "message [conversation]",
+	Aliases: []string{"messages"},
+	Short:   "Send and receive messages",
+	Long:    "Send and receive encrypted messages in conversations.",
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		all, _ := cmd.Flags().GetBool("all")
+		list, _ := cmd.Flags().GetBool("list")
+
+		if all && list {
+			return fmt.Errorf("cannot use --all and --list together")
+		}
+
+		if list {
+			return messageListCmd.RunE(messageListCmd, args)
+		}
+
+		if all {
+			if len(args) > 0 {
+				return fmt.Errorf("--all does not accept a conversation argument")
+			}
+			return messageReceiveCmd.RunE(messageReceiveCmd, nil)
+		}
+
+		if len(args) == 1 {
+			return messageReceiveCmd.RunE(messageReceiveCmd, args)
+		}
+
+		return cmd.Help()
+	},
 }
 
 var messageSendCmd = &cobra.Command{
@@ -357,6 +388,20 @@ var messageSendCmd = &cobra.Command{
 		dc := NewDisplayContext()
 		fmt.Printf("Message sent to %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("Message ID: %s\n", hex.EncodeToString(envelope.MsgID[:]))
+
+		// Persist outgoing chat history locally (encrypted at rest).
+		body, encoding := encodeChatBody([]byte(messageText))
+		if err := appendChatArchiveEntry(conversation, chatArchiveEntry{
+			MessageID:    hex.EncodeToString(envelope.MsgID[:]),
+			Direction:    "outgoing",
+			SenderKIDHex: hex.EncodeToString(currentIdentity.KeyID[:]),
+			BodyType:     "text",
+			Body:         body,
+			BodyEncoding: encoding,
+			CreatedTS:    envelope.CreatedTS,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to store outgoing chat history: %v\n", err)
+		}
 
 		return nil
 	},
@@ -511,6 +556,19 @@ var messageReceiveCmd = &cobra.Command{
 						senderDisplay,
 						msg.Inner.BodyType,
 						bodyDisplay)
+
+					bodyEncoded, bodyEncoding := encodeChatBody(msg.Inner.Body)
+					if err := appendChatArchiveEntry(conversation, chatArchiveEntry{
+						MessageID:    hex.EncodeToString(msg.Envelope.MsgID[:]),
+						Direction:    "incoming",
+						SenderKIDHex: hex.EncodeToString(msg.Inner.SenderKID[:]),
+						BodyType:     msg.Inner.BodyType,
+						Body:         bodyEncoded,
+						BodyEncoding: bodyEncoding,
+						CreatedTS:    msg.Envelope.CreatedTS,
+					}); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: failed to store incoming chat history: %v\n", err)
+					}
 				}
 
 				if groupStateDirty {
@@ -538,10 +596,67 @@ var messageReceiveCmd = &cobra.Command{
 }
 
 var messageListCmd = &cobra.Command{
-	Use:   "list <conversation>",
-	Short: "List messages in storage (accepts name, short ref, or hex ID)",
-	Args:  cobra.ExactArgs(1),
+	Use:   "list [conversation]",
+	Short: "List message storage stats (all inboxes by default)",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		storage := getStorageProvider()
+		dropboxMgr := dropbox.NewManager(storage)
+		dc := NewDisplayContext()
+		allSeenMessages := loadSeenMessages()
+
+		// Show aggregate inbox stats when no specific conversation is requested.
+		if len(args) == 0 {
+			conversations, err := loadConversations()
+			if err != nil {
+				return fmt.Errorf("failed to load conversations: %w", err)
+			}
+
+			if len(conversations) == 0 {
+				fmt.Println("No conversations found")
+				return nil
+			}
+
+			totalMessages := 0
+			totalExpired := 0
+			totalSize := 0
+			totalUnread := 0
+
+			fmt.Printf("Inboxes (%d):\n", len(conversations))
+			for _, conversation := range conversations {
+				convIDHex := hex.EncodeToString(conversation.ID[:])
+				stats, err := dropboxMgr.GetStorageStats(conversation.ID)
+				if err != nil {
+					fmt.Printf("\n%s inbox stats: failed to load (%v)\n",
+						dc.FormatConvIDHex(convIDHex), err)
+					continue
+				}
+				unread, err := dropboxMgr.CountUnreadMessages(conversation.ID, allSeenMessages[conversation.ID])
+				if err != nil {
+					fmt.Printf("  Warning: unread count unavailable (%v)\n", err)
+				}
+
+				fmt.Printf("\n%s inbox stats:\n", dc.FormatConvIDHex(convIDHex))
+				fmt.Printf("  Type: %s\n", conversation.Type)
+				fmt.Printf("  Messages: %d\n", stats.MessageCount)
+				fmt.Printf("  Unread: %d\n", unread)
+				fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
+				fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
+
+				totalMessages += stats.MessageCount
+				totalUnread += unread
+				totalExpired += stats.ExpiredCount
+				totalSize += stats.TotalSize
+			}
+
+			fmt.Printf("\nTotal across inboxes:\n")
+			fmt.Printf("  Messages: %d\n", totalMessages)
+			fmt.Printf("  Unread: %d\n", totalUnread)
+			fmt.Printf("  Expired: %d\n", totalExpired)
+			fmt.Printf("  Total size: %d bytes\n", totalSize)
+			return nil
+		}
+
 		convIDHex, err := resolveConvID(args[0])
 		if err != nil {
 			return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
@@ -553,23 +668,108 @@ var messageListCmd = &cobra.Command{
 
 		var convID types.ConversationID
 		copy(convID[:], convIDBytes)
-
-		storage := getStorageProvider()
-		dropboxMgr := dropbox.NewManager(storage)
-		dc := NewDisplayContext()
+		conversation, err := findConversation(convID)
+		if err != nil {
+			return fmt.Errorf("conversation not found: %w", err)
+		}
 
 		stats, err := dropboxMgr.GetStorageStats(convID)
 		if err != nil {
 			return fmt.Errorf("failed to get storage stats: %w", err)
 		}
+		unread, err := dropboxMgr.CountUnreadMessages(convID, allSeenMessages[convID])
+		if err != nil {
+			return fmt.Errorf("failed to get unread count: %w", err)
+		}
 
 		fmt.Printf("%s storage stats:\n", dc.FormatConvIDHex(convIDHex))
+		fmt.Printf("  Type: %s\n", conversation.Type)
 		fmt.Printf("  Messages: %d\n", stats.MessageCount)
+		fmt.Printf("  Unread: %d\n", unread)
 		fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
 		fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
 
 		return nil
 	},
+}
+
+var messageHistoryCmd = &cobra.Command{
+	Use:   "history [conversation]",
+	Short: "Show local encrypted chat history (all conversations by default)",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		limit, _ := cmd.Flags().GetInt("limit")
+
+		conversations, err := loadConversations()
+		if err != nil {
+			return fmt.Errorf("failed to load conversations: %w", err)
+		}
+
+		if len(conversations) == 0 {
+			fmt.Println("No conversations found")
+			return nil
+		}
+
+		if len(args) == 1 {
+			convIDHex, err := resolveConvID(args[0])
+			if err != nil {
+				return fmt.Errorf("could not resolve conversation %q: %w", args[0], err)
+			}
+			convIDBytes, err := hex.DecodeString(convIDHex)
+			if err != nil || len(convIDBytes) != 16 {
+				return fmt.Errorf("invalid conversation ID format")
+			}
+			var convID types.ConversationID
+			copy(convID[:], convIDBytes)
+			conversation, err := findConversation(convID)
+			if err != nil {
+				return fmt.Errorf("conversation not found: %w", err)
+			}
+			conversations = []*types.Conversation{conversation}
+		}
+
+		dc := NewDisplayContext()
+		totalPrinted := 0
+
+		for _, conversation := range conversations {
+			entries, err := loadChatArchive(conversation)
+			convIDHex := hex.EncodeToString(conversation.ID[:])
+			if err != nil {
+				fmt.Printf("\n%s history: failed to load (%v)\n", dc.FormatConvIDHex(convIDHex), err)
+				continue
+			}
+			if len(entries) == 0 {
+				continue
+			}
+
+			start := 0
+			if limit > 0 && len(entries) > limit {
+				start = len(entries) - limit
+			}
+
+			fmt.Printf("\n%s history (%d):\n", dc.FormatConvIDHex(convIDHex), len(entries))
+			for _, entry := range entries[start:] {
+				ts := time.Unix(entry.CreatedTS, 0).UTC().Format(time.RFC3339)
+				fmt.Printf("  [%s] %s %s: %s\n",
+					ts,
+					entry.Direction,
+					entry.BodyType,
+					decodeChatBody(entry),
+				)
+				totalPrinted++
+			}
+		}
+
+		if totalPrinted == 0 {
+			fmt.Println("No local chat history yet")
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	messageHistoryCmd.Flags().IntP("limit", "n", 50, "Maximum entries to show per conversation (0 = all)")
 }
 
 // Group Commands

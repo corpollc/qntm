@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -120,10 +119,7 @@ func (m *Manager) ReceiveMessages(
 			continue
 		}
 
-		// Ensure we always emit our own ACK if we have already processed this message.
 		if seenMessageIDs[msgID] {
-			_ = m.ensureACK(receiverIdentity, conversation.ID, msgID)
-			_ = m.cleanupIfACKed(conversation, key, msgID)
 			continue
 		}
 
@@ -143,7 +139,6 @@ func (m *Manager) ReceiveMessages(
 
 		// Check if message has expired
 		if m.messageMgr.CheckExpiry(envelope) {
-			_ = m.deleteMessageWithACKs(key, conversation.ID, msgID)
 			continue
 		}
 
@@ -157,8 +152,14 @@ func (m *Manager) ReceiveMessages(
 		// Mark as seen
 		seenMessageIDs[msgID] = true
 		messages = append(messages, msg)
-		_ = m.ensureACK(receiverIdentity, conversation.ID, msgID)
-		_ = m.cleanupIfACKed(conversation, key, msgID)
+
+		// Relay-managed receipt recording (HTTP provider); ignore failures so
+		// message delivery is not blocked by transient receipt issues.
+		if recorder, ok := m.storage.(interface {
+			RecordReadReceipt(*types.Identity, *types.Conversation, types.MessageID) error
+		}); ok {
+			_ = recorder.RecordReadReceipt(receiverIdentity, conversation, msgID)
+		}
 	}
 
 	// Sort messages by creation timestamp
@@ -228,6 +229,13 @@ func (m *Manager) hasAllValidACKs(conversation *types.Conversation, msgID types.
 	required := make(map[types.KeyID]bool, len(conversation.Participants))
 	for _, participant := range conversation.Participants {
 		required[participant] = true
+	}
+
+	// Conversation participant sets can be temporarily incomplete (for example,
+	// when the inviter self-accepts before peers join). Never auto-delete a
+	// message in that state, or a local self-ACK can wipe undelivered messages.
+	if len(required) < 2 {
+		return false, nil
 	}
 
 	ackPrefix := m.GenerateACKPrefix(conversation.ID, msgID)
@@ -306,31 +314,11 @@ func (m *Manager) SendACK(
 	ackedMsgID types.MessageID,
 	status string,
 ) error {
-	// Structured ACK payload
-	ackPayload, err := json.Marshal(map[string]interface{}{
-		"msg_id":    hex.EncodeToString(ackedMsgID[:]),
-		"status":    status,
-		"timestamp": time.Now().Unix(),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal ACK payload: %w", err)
-	}
-
-	// Create ACK message with structured body
-	envelope, err := m.messageMgr.CreateMessage(
-		senderIdentity,
-		conversation,
-		"ack",
-		ackPayload,
-		nil,
-		300, // 5 minute TTL for ACKs
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create ACK message: %w", err)
-	}
-
-	// Send the ACK
-	return m.SendMessage(envelope)
+	_ = senderIdentity
+	_ = conversation
+	_ = ackedMsgID
+	_ = status
+	return fmt.Errorf("client ACK messages are disabled; use relay-managed read receipts")
 }
 
 // GenerateStorageKey generates a storage key for a message envelope
@@ -486,6 +474,51 @@ func (m *Manager) GetStorageStats(convID types.ConversationID) (*StorageStats, e
 	}
 
 	return stats, nil
+}
+
+// CountUnreadMessages returns the number of currently stored unread messages
+// for a conversation, based on the caller's seen-message map.
+func (m *Manager) CountUnreadMessages(
+	convID types.ConversationID,
+	seenMessageIDs map[types.MessageID]bool,
+) (int, error) {
+	if seenMessageIDs == nil {
+		seenMessageIDs = map[types.MessageID]bool{}
+	}
+
+	prefix := m.GenerateConversationPrefix(convID)
+	keys, err := m.storage.List(prefix)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list messages: %w", err)
+	}
+
+	unread := 0
+	for _, key := range keys {
+		msgID, err := m.ExtractMessageIDFromKey(key)
+		if err != nil {
+			continue
+		}
+
+		data, err := m.storage.Retrieve(key)
+		if err != nil {
+			continue
+		}
+
+		envelope, err := m.messageMgr.DeserializeEnvelope(data)
+		if err != nil {
+			continue
+		}
+
+		if m.messageMgr.CheckExpiry(envelope) {
+			continue
+		}
+
+		if !seenMessageIDs[msgID] {
+			unread++
+		}
+	}
+
+	return unread, nil
 }
 
 // StorageStats represents statistics about drop box storage

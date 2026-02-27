@@ -1,6 +1,10 @@
 package dropbox
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/corpo/qntm/pkg/types"
 )
 
 // HTTPStorageProvider implements StorageProvider via the qntm Cloudflare Worker API.
@@ -17,6 +23,19 @@ type HTTPStorageProvider struct {
 	BaseURL    string
 	client     *http.Client
 	maxRetries int
+}
+
+const readReceiptProto = "qntm-receipt-v1"
+
+type readReceiptPayload struct {
+	Proto        string `json:"proto"`
+	ConvID       string `json:"conv_id"`
+	MsgID        string `json:"msg_id"`
+	ReaderKID    string `json:"reader_kid"`
+	ReaderIKPK   string `json:"reader_ik_pk"`
+	ReadTS       int64  `json:"read_ts"`
+	RequiredAcks int    `json:"required_acks"`
+	Signature    string `json:"sig"`
 }
 
 // NewHTTPStorageProvider creates a new HTTP-backed storage provider.
@@ -68,6 +87,24 @@ func (h *HTTPStorageProvider) doWithRetry(req *http.Request) (*http.Response, er
 
 func (h *HTTPStorageProvider) keyURL(key string) string {
 	return h.BaseURL + "/v1/drop" + key
+}
+
+func buildReadReceiptSignable(
+	convID types.ConversationID,
+	msgID types.MessageID,
+	readerKID types.KeyID,
+	readTS int64,
+	requiredAcks int,
+) []byte {
+	return []byte(fmt.Sprintf(
+		"%s|%x|%x|%x|%d|%d",
+		readReceiptProto,
+		convID[:],
+		msgID[:],
+		readerKID[:],
+		readTS,
+		requiredAcks,
+	))
 }
 
 // Store implements StorageProvider.
@@ -146,10 +183,60 @@ func (h *HTTPStorageProvider) List(prefix string) ([]string, error) {
 
 // Delete implements StorageProvider.
 func (h *HTTPStorageProvider) Delete(key string) error {
-	req, err := http.NewRequest(http.MethodDelete, h.keyURL(key), nil)
+	_ = key
+	return fmt.Errorf("client-side delete is disabled; relay-managed cleanup only")
+}
+
+// RecordReadReceipt reports that a receiver has successfully read a message.
+// The relay may use this receipt to perform worker-side cleanup.
+func (h *HTTPStorageProvider) RecordReadReceipt(
+	receiverIdentity *types.Identity,
+	conversation *types.Conversation,
+	msgID types.MessageID,
+) error {
+	if receiverIdentity == nil {
+		return fmt.Errorf("receiver identity is required")
+	}
+	if conversation == nil {
+		return fmt.Errorf("conversation is required")
+	}
+
+	requiredAcks := len(conversation.Participants)
+	if requiredAcks < 1 {
+		requiredAcks = 1
+	}
+
+	readTS := time.Now().Unix()
+	signable := buildReadReceiptSignable(
+		conversation.ID,
+		msgID,
+		receiverIdentity.KeyID,
+		readTS,
+		requiredAcks,
+	)
+	signature := ed25519.Sign(receiverIdentity.PrivateKey, signable)
+
+	payload := readReceiptPayload{
+		Proto:        readReceiptProto,
+		ConvID:       hex.EncodeToString(conversation.ID[:]),
+		MsgID:        hex.EncodeToString(msgID[:]),
+		ReaderKID:    hex.EncodeToString(receiverIdentity.KeyID[:]),
+		ReaderIKPK:   base64.RawURLEncoding.EncodeToString(receiverIdentity.PublicKey),
+		ReadTS:       readTS,
+		RequiredAcks: requiredAcks,
+		Signature:    base64.RawURLEncoding.EncodeToString(signature),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode read receipt: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, h.BaseURL+"/v1/receipt", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := h.doWithRetry(req)
 	if err != nil {
@@ -157,9 +244,14 @@ func (h *HTTPStorageProvider) Delete(key string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("delete failed: HTTP %d", resp.StatusCode)
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(resp.Body)
+		if len(respBody) > 0 {
+			return fmt.Errorf("receipt failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return fmt.Errorf("receipt failed: HTTP %d", resp.StatusCode)
 	}
+
 	return nil
 }
 

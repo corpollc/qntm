@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,14 +146,9 @@ func checkForUpdate(synchronous bool) {
 	if data, err := os.ReadFile(cachePath); err == nil {
 		var cached versionCheck
 		if json.Unmarshal(data, &cached) == nil {
-			// If cached says we're out of date, just print — no need to re-fetch.
-			if cached.Version != "" && cached.Version != cliVersion && cliVersion != "dev" {
-				setUpgradeHint(cached.Version, synchronous)
-				return
-			}
-			// Versions matched last check — only re-fetch if cache is stale.
 			if t, err := time.Parse(time.RFC3339, cached.CheckedAt); err == nil {
 				if time.Since(t) < 24*time.Hour {
+					setUpgradeHint(cached.Version, synchronous)
 					return
 				}
 			}
@@ -185,8 +181,108 @@ func checkForUpdate(synchronous bool) {
 	setUpgradeHint(remote.Version, synchronous)
 }
 
+func normalizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "V")
+	return v
+}
+
+// parseSimpleSemver parses versions like "v1.2.3" or "1.2.3-beta.1".
+func parseSimpleSemver(v string) (core []int, prerelease string, ok bool) {
+	normalized := normalizeVersion(v)
+	if normalized == "" {
+		return nil, "", false
+	}
+
+	// Drop build metadata if present.
+	buildParts := strings.SplitN(normalized, "+", 2)
+	normalized = buildParts[0]
+
+	parts := strings.SplitN(normalized, "-", 2)
+	corePart := parts[0]
+	if len(parts) == 2 {
+		prerelease = parts[1]
+	}
+
+	if corePart == "" {
+		return nil, "", false
+	}
+
+	rawCore := strings.Split(corePart, ".")
+	core = make([]int, len(rawCore))
+
+	for i, piece := range rawCore {
+		n, err := strconv.Atoi(piece)
+		if err != nil || n < 0 {
+			return nil, "", false
+		}
+		core[i] = n
+	}
+
+	return core, prerelease, true
+}
+
+func compareSimpleSemver(aCore []int, aPre string, bCore []int, bPre string) int {
+	maxLen := len(aCore)
+	if len(bCore) > maxLen {
+		maxLen = len(bCore)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		av := 0
+		bv := 0
+		if i < len(aCore) {
+			av = aCore[i]
+		}
+		if i < len(bCore) {
+			bv = bCore[i]
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+	}
+
+	// Stable release is newer than prerelease with the same core.
+	if aPre == bPre {
+		return 0
+	}
+	if aPre == "" {
+		return 1
+	}
+	if bPre == "" {
+		return -1
+	}
+
+	// For prerelease-to-prerelease comparisons, lexicographic fallback.
+	if aPre < bPre {
+		return -1
+	}
+	if aPre > bPre {
+		return 1
+	}
+	return 0
+}
+
+func isNewerVersion(latest, current string) bool {
+	if latest == "" || current == "" || current == "dev" {
+		return false
+	}
+
+	latestCore, latestPre, okLatest := parseSimpleSemver(latest)
+	currentCore, currentPre, okCurrent := parseSimpleSemver(current)
+	if !okLatest || !okCurrent {
+		return false
+	}
+
+	return compareSimpleSemver(latestCore, latestPre, currentCore, currentPre) > 0
+}
+
 func setUpgradeHint(latest string, printNow bool) {
-	if latest == "" || latest == cliVersion || cliVersion == "dev" {
+	if !isNewerVersion(latest, cliVersion) {
 		return
 	}
 	msg := fmt.Sprintf(

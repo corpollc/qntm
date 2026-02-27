@@ -97,29 +97,29 @@ func TestManager_SendReceiveMessage(t *testing.T) {
 		t.Error("Message was not marked as seen")
 	}
 
-	// Message should still exist until all participants ACK.
+	// Client receive should not delete relay-stored messages.
 	exists, err = storage.Exists(key)
 	if err != nil {
 		t.Fatalf("Failed to check existence after receive: %v", err)
 	}
 	if !exists {
-		t.Error("Message should remain until all participants ACK")
+		t.Error("Message should remain after receive")
 	}
 
-	// Sender receives once, creating their ACK.
+	// Sender receives once too.
 	senderSeen := make(map[types.MessageID]bool)
 	_, err = manager.ReceiveMessages(senderIdentity, conversation, senderSeen)
 	if err != nil {
-		t.Fatalf("Sender failed to receive/ACK: %v", err)
+		t.Fatalf("Sender failed to receive: %v", err)
 	}
 
-	// Now both participants ACKed; message should be deleted.
+	// Message should still exist; deletion is relay-managed.
 	exists, err = storage.Exists(key)
 	if err != nil {
-		t.Fatalf("Failed to check existence after all ACKs: %v", err)
+		t.Fatalf("Failed to check existence after second receive: %v", err)
 	}
-	if exists {
-		t.Error("Message should be deleted after all participants ACK")
+	if !exists {
+		t.Error("Message should remain; client must not delete relay data")
 	}
 }
 
@@ -264,13 +264,13 @@ func TestManager_ExpiredMessages(t *testing.T) {
 		t.Errorf("Expected 0 messages (expired), got %d", len(messages))
 	}
 
-	// Verify expired message was deleted
+	// Expired message remains for relay-side cleanup.
 	exists, err = storage.Exists(key)
 	if err != nil {
 		t.Fatalf("Failed to check existence after cleanup: %v", err)
 	}
-	if exists {
-		t.Error("Expired message should have been deleted")
+	if !exists {
+		t.Error("Expired message should remain until relay cleanup")
 	}
 }
 

@@ -559,6 +559,16 @@ app.post('/api/profiles/:profileId/identity/generate', route(async (req, res) =>
   const showOutput = await runQntm(profile, ['identity', 'show'])
   const parsed = parseIdentityShowOutput(showOutput.stdout)
 
+  if (parsed.keyId) {
+    for (const p of store.profiles) {
+      const bucket = ensureContactsBucket(store, p.id)
+      if (!bucket[parsed.keyId.toLowerCase()]) {
+        bucket[parsed.keyId.toLowerCase()] = profile.name
+      }
+    }
+    saveStore(store)
+  }
+
   res.json({
     output: generateOutput.stdout,
     identity: {
