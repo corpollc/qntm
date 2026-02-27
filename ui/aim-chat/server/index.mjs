@@ -127,6 +127,27 @@ const resolveQntmInvocation = createQntmInvocationResolver({
   fileExists,
 })
 
+function parseJSONOutput(output) {
+  if (!output) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(output)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function qntmString(data, key) {
+  if (!data || typeof data !== 'object') {
+    return ''
+  }
+
+  const value = data[key]
+  return typeof value === 'string' ? value : ''
+}
+
 async function runQntm(profile, args) {
   ensureProfileFilesystem(profile)
 
@@ -149,14 +170,38 @@ async function runQntm(profile, args) {
       maxBuffer: 8 * 1024 * 1024,
     })
 
+    const stdoutTrimmed = stdout.trim()
+    const stderrTrimmed = stderr.trim()
+    const payload = parseJSONOutput(stdoutTrimmed)
+    if (!payload) {
+      const wrapped = new Error('qntm command returned invalid JSON')
+      wrapped.statusCode = 502
+      throw wrapped
+    }
+    if (payload.ok !== true) {
+      const wrapped = new Error(qntmString(payload, 'error') || 'qntm command failed')
+      wrapped.statusCode = 400
+      throw wrapped
+    }
+
     return {
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
+      stdout: stdoutTrimmed,
+      stderr: stderrTrimmed,
+      payload,
+      data: payload.data && typeof payload.data === 'object' ? payload.data : {},
     }
   } catch (error) {
+    if (Number.isInteger(error?.statusCode) &&
+      typeof error?.stdout !== 'string' &&
+      typeof error?.stderr !== 'string') {
+      throw error
+    }
+
     const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : ''
     const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : ''
-    const detail = stderr || stdout || error.message
+    const parsedError = parseJSONOutput(stdout)
+    const parsedDetail = qntmString(parsedError, 'error')
+    const detail = parsedDetail || stderr || stdout || error.message
 
     const wrapped = new Error(`qntm command failed: ${detail}`)
     wrapped.statusCode = 400
@@ -234,33 +279,6 @@ function loadConversations(profile) {
       }
     })
     .filter((entry) => entry !== null)
-}
-
-function parseIdentityShowOutput(stdout) {
-  const keyIdMatch = stdout.match(/^Key ID:\s*(.+)$/im)
-  const publicKeyMatch = stdout.match(/^Public Key:\s*(.+)$/im)
-
-  return {
-    keyId: keyIdMatch ? keyIdMatch[1].trim() : '',
-    publicKey: publicKeyMatch ? publicKeyMatch[1].trim() : '',
-  }
-}
-
-function parseInviteCreateOutput(stdout) {
-  const tokenMatch = stdout.match(/^Invite Token:\s*(.+)$/im)
-  const convMatch = stdout.match(/^Conversation ID:\s*([0-9a-f]+)$/im)
-
-  return {
-    inviteToken: tokenMatch ? tokenMatch[1].trim() : '',
-    conversationId: convMatch ? convMatch[1].trim().toLowerCase() : '',
-  }
-}
-
-function parseInviteAcceptOutput(stdout) {
-  const convMatch = stdout.match(/^Conversation ID:\s*([0-9a-f]+)$/im)
-  return {
-    conversationId: convMatch ? convMatch[1].trim().toLowerCase() : '',
-  }
 }
 
 function extractSenderKey(sender) {
@@ -428,31 +446,51 @@ function hasRecentOutgoingMatch(bucket, message, windowMs) {
   })
 }
 
-function parseReceiveOutput(stdout, conversationId) {
-  const lines = stdout.split(/\r?\n/)
-  const messages = []
-
-  for (const line of lines) {
-    const messageMatch = line.match(/^\s+\[(.+?)\]\s+([^:]+):\s?(.*)$/)
-    if (!messageMatch) {
-      continue
-    }
-
-    const sender = messageMatch[1].trim()
-
-    messages.push({
-      id: crypto.randomUUID(),
-      conversationId,
-      direction: 'incoming',
-      sender,
-      senderKey: extractSenderKey(sender),
-      bodyType: messageMatch[2].trim(),
-      text: messageMatch[3] || '',
-      createdAt: new Date().toISOString(),
-    })
+function decodeUnsafeBody(messageData) {
+  const unsafeBody = qntmString(messageData, 'unsafe_body')
+  if (unsafeBody) {
+    return unsafeBody
   }
 
-  return messages
+  const unsafeBodyB64 = qntmString(messageData, 'unsafe_body_b64')
+  if (!unsafeBodyB64) {
+    return ''
+  }
+
+  try {
+    return Buffer.from(unsafeBodyB64, 'base64').toString('utf8')
+  } catch {
+    return ''
+  }
+}
+
+function parseReceiveDataMessages(rawMessages, fallbackConversationId) {
+  if (!Array.isArray(rawMessages)) {
+    return []
+  }
+
+  return rawMessages
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => {
+      const conversationId = qntmString(entry, 'conversation_id') || fallbackConversationId
+      const sender = qntmString(entry, 'sender')
+      const senderKID = qntmString(entry, 'sender_kid').toLowerCase()
+      const bodyType = qntmString(entry, 'body_type') || 'text'
+      const rawText = decodeUnsafeBody(entry)
+      const text = rawText || (bodyType === 'text' ? '' : `[${bodyType}]`)
+      const createdTS = Number(entry.created_ts)
+
+      return {
+        id: qntmString(entry, 'message_id') || crypto.randomUUID(),
+        conversationId,
+        direction: 'incoming',
+        sender: sender || 'unknown',
+        senderKey: senderKID || extractSenderKey(sender),
+        bodyType,
+        text,
+        createdAt: Number.isFinite(createdTS) ? new Date(createdTS * 1000).toISOString() : new Date().toISOString(),
+      }
+    })
 }
 
 function route(handler) {
@@ -536,12 +574,11 @@ app.get('/api/profiles/:profileId/identity', route(async (req, res) => {
   }
 
   const output = await runQntm(profile, ['identity', 'show'])
-  const parsed = parseIdentityShowOutput(output.stdout)
 
   res.json({
     exists: true,
-    keyId: parsed.keyId,
-    publicKey: parsed.publicKey,
+    keyId: qntmString(output.data, 'key_id'),
+    publicKey: qntmString(output.data, 'public_key'),
   })
 }))
 
@@ -551,13 +588,14 @@ app.post('/api/profiles/:profileId/identity/generate', route(async (req, res) =>
 
   const generateOutput = await runQntm(profile, ['identity', 'generate'])
   const showOutput = await runQntm(profile, ['identity', 'show'])
-  const parsed = parseIdentityShowOutput(showOutput.stdout)
+  const showKeyID = qntmString(showOutput.data, 'key_id')
+  const showPublicKey = qntmString(showOutput.data, 'public_key')
 
-  if (parsed.keyId) {
+  if (showKeyID) {
     for (const p of store.profiles) {
       const bucket = ensureContactsBucket(store, p.id)
-      if (!bucket[parsed.keyId.toLowerCase()]) {
-        bucket[parsed.keyId.toLowerCase()] = profile.name
+      if (!bucket[showKeyID.toLowerCase()]) {
+        bucket[showKeyID.toLowerCase()] = profile.name
       }
     }
     saveStore(store)
@@ -567,8 +605,8 @@ app.post('/api/profiles/:profileId/identity/generate', route(async (req, res) =>
     output: generateOutput.stdout,
     identity: {
       exists: true,
-      keyId: parsed.keyId,
-      publicKey: parsed.publicKey,
+      keyId: showKeyID,
+      publicKey: showPublicKey,
     },
   })
 }))
@@ -627,40 +665,30 @@ app.post('/api/profiles/:profileId/invite/create', route(async (req, res) => {
   const isGroup = Boolean(req.body.group)
   const selfJoin = req.body.selfJoin !== false
 
-  const createArgs = ['invite', 'create']
+  const createArgs = ['convo', 'create']
   if (isGroup) {
     createArgs.push('--group')
   }
   if (rawName) {
     createArgs.push('--name', rawName)
   }
+  if (!selfJoin) {
+    createArgs.push('--self-join=false')
+  }
 
   const createOutput = await runQntm(profile, createArgs)
-  const parsedCreate = parseInviteCreateOutput(createOutput.stdout)
+  const inviteToken = qntmString(createOutput.data, 'invite_token')
+  const conversationID = qntmString(createOutput.data, 'conversation_id')
 
-  if (!parsedCreate.inviteToken) {
+  if (!inviteToken) {
     const error = new Error('failed to parse invite token from qntm output')
     error.statusCode = 500
     throw error
   }
 
-  if (selfJoin) {
-    const acceptArgs = ['invite', 'accept', parsedCreate.inviteToken]
-    if (rawName) {
-      acceptArgs.push('--name', rawName)
-    }
-
-    // Best effort: if conversation is already accepted, keep going.
-    try {
-      await runQntm(profile, acceptArgs)
-    } catch {
-      // Ignore and continue.
-    }
-  }
-
   res.json({
-    inviteToken: parsedCreate.inviteToken,
-    conversationId: parsedCreate.conversationId,
+    inviteToken,
+    conversationId: conversationID.toLowerCase(),
     output: createOutput.stdout,
     conversations: loadConversations(profile),
   })
@@ -679,16 +707,16 @@ app.post('/api/profiles/:profileId/invite/accept', route(async (req, res) => {
     throw error
   }
 
-  const args = ['invite', 'accept', token]
+  const args = ['convo', 'join', token]
   if (name) {
     args.push('--name', name)
   }
 
   const output = await runQntm(profile, args)
-  const parsed = parseInviteAcceptOutput(output.stdout)
+  const conversationID = qntmString(output.data, 'conversation_id')
 
   res.json({
-    conversationId: parsed.conversationId,
+    conversationId: conversationID.toLowerCase(),
     output: output.stdout,
     conversations: loadConversations(profile),
   })
@@ -735,7 +763,7 @@ app.post('/api/profiles/:profileId/messages/send', route(async (req, res) => {
     throw error
   }
 
-  const output = await runQntm(profile, ['message', 'send', conversationId, text])
+  const output = await runQntm(profile, ['send', conversationId, text])
 
   const message = {
     id: crypto.randomUUID(),
@@ -774,11 +802,10 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
 
   const historyBucket = ensureHistoryBucket(store, profile.id, conversationId)
   const identityOutput = await runQntm(profile, ['identity', 'show'])
-  const identity = parseIdentityShowOutput(identityOutput.stdout)
-  const selfLookupKeys = senderLookupKeys(identity.keyId)
+  const selfLookupKeys = senderLookupKeys(qntmString(identityOutput.data, 'key_id'))
 
-  const output = await runQntm(profile, ['message', 'receive', conversationId])
-  const incomingMessages = parseReceiveOutput(output.stdout, conversationId)
+  const output = await runQntm(profile, ['recv', conversationId])
+  const incomingMessages = parseReceiveDataMessages(output.data.messages, conversationId)
   const acceptedMessages = []
   let suppressedSelfEchoes = 0
 
