@@ -185,7 +185,12 @@ var convoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List conversations",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		summaries, totalUnread, err := collectConversationSummaries()
+		refresh, _ := cmd.Flags().GetBool("refresh")
+		if humanMode && !cmd.Flags().Changed("refresh") {
+			refresh = true
+		}
+
+		summaries, totalUnread, unreadFresh, err := collectConversationSummaries(refresh)
 		if err != nil {
 			return err
 		}
@@ -197,10 +202,14 @@ var convoListCmd = &cobra.Command{
 			}
 			fmt.Printf("Conversations (%d):\n", len(summaries))
 			for _, item := range summaries {
-				fmt.Printf("  %s (%s) unread=%d participants=%d\n",
+				unreadValue := "?"
+				if unreadFresh {
+					unreadValue = fmt.Sprintf("%d", item["unread"])
+				}
+				fmt.Printf("  %s (%s) unread=%s participants=%d\n",
 					item["label"],
 					item["type"],
-					item["unread"],
+					unreadValue,
 					item["participants"],
 				)
 			}
@@ -210,6 +219,7 @@ var convoListCmd = &cobra.Command{
 		return emitJSONSuccess("convo.list", map[string]interface{}{
 			"conversations": summaries,
 			"total_unread":  totalUnread,
+			"unread_fresh":  unreadFresh,
 		})
 	},
 }
@@ -257,13 +267,19 @@ func init() {
 	convoCreateCmd.Flags().String("name", "", "Conversation name")
 	convoCreateCmd.Flags().Bool("self-join", true, "Add yourself to the newly created conversation")
 	convoJoinCmd.Flags().String("name", "", "Conversation name override")
+	convoListCmd.Flags().Bool("refresh", false, "Fetch fresh unread counts from remote storage")
 }
 
 var inboxCmd = &cobra.Command{
 	Use:   "inbox",
 	Short: "Show inbox conversation summary",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		summaries, totalUnread, err := collectConversationSummaries()
+		refresh, _ := cmd.Flags().GetBool("refresh")
+		if humanMode && !cmd.Flags().Changed("refresh") {
+			refresh = true
+		}
+
+		summaries, totalUnread, unreadFresh, err := collectConversationSummaries(refresh)
 		if err != nil {
 			return err
 		}
@@ -273,9 +289,17 @@ var inboxCmd = &cobra.Command{
 				fmt.Println("Inbox is empty")
 				return nil
 			}
-			fmt.Printf("Inbox (%d conversations, %d unread):\n", len(summaries), totalUnread)
+			unreadTitle := "unknown"
+			if unreadFresh {
+				unreadTitle = fmt.Sprintf("%d", totalUnread)
+			}
+			fmt.Printf("Inbox (%d conversations, %s unread):\n", len(summaries), unreadTitle)
 			for _, item := range summaries {
-				fmt.Printf("  %s unread=%d\n", item["label"], item["unread"])
+				unreadValue := "?"
+				if unreadFresh {
+					unreadValue = fmt.Sprintf("%d", item["unread"])
+				}
+				fmt.Printf("  %s unread=%s\n", item["label"], unreadValue)
 			}
 			return nil
 		}
@@ -283,8 +307,13 @@ var inboxCmd = &cobra.Command{
 		return emitJSONSuccess("inbox", map[string]interface{}{
 			"conversations": summaries,
 			"total_unread":  totalUnread,
+			"unread_fresh":  unreadFresh,
 		})
 	},
+}
+
+func init() {
+	inboxCmd.Flags().Bool("refresh", false, "Fetch fresh unread counts from remote storage")
 }
 
 var sendCmd = &cobra.Command{
@@ -709,10 +738,10 @@ func parseConversationIDHex(convIDHex string) (types.ConversationID, error) {
 	return convID, nil
 }
 
-func collectConversationSummaries() ([]map[string]interface{}, int, error) {
+func collectConversationSummaries(refreshUnread bool) ([]map[string]interface{}, int, bool, error) {
 	conversations, err := loadConversations()
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to load conversations: %w", err)
+		return nil, 0, false, fmt.Errorf("failed to load conversations: %w", err)
 	}
 
 	storage := getStorageProvider()
@@ -725,9 +754,15 @@ func collectConversationSummaries() ([]map[string]interface{}, int, error) {
 
 	for _, conversation := range conversations {
 		convIDHex := hex.EncodeToString(conversation.ID[:])
-		unread, unreadErr := dropboxMgr.CountUnreadMessages(conversation.ID, allSeenMessages[conversation.ID])
-		if unreadErr != nil {
-			unread = 0
+		unread := 0
+		unreadValue := interface{}(nil)
+		if refreshUnread {
+			unreadCount, unreadErr := dropboxMgr.CountUnreadMessages(conversation.ID, allSeenMessages[conversation.ID])
+			if unreadErr != nil {
+				unreadCount = 0
+			}
+			unread = unreadCount
+			unreadValue = unreadCount
 		}
 
 		name := conversation.Name
@@ -743,10 +778,12 @@ func collectConversationSummaries() ([]map[string]interface{}, int, error) {
 			"name":         name,
 			"type":         conversation.Type,
 			"participants": len(conversation.Participants),
-			"unread":       unread,
+			"unread":       unreadValue,
 		})
-		totalUnread += unread
+		if refreshUnread {
+			totalUnread += unread
+		}
 	}
 
-	return summaries, totalUnread, nil
+	return summaries, totalUnread, refreshUnread, nil
 }

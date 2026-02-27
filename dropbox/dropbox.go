@@ -499,20 +499,6 @@ func (m *Manager) CountUnreadMessages(
 			continue
 		}
 
-		data, err := m.storage.Retrieve(key)
-		if err != nil {
-			continue
-		}
-
-		envelope, err := m.messageMgr.DeserializeEnvelope(data)
-		if err != nil {
-			continue
-		}
-
-		if m.messageMgr.CheckExpiry(envelope) {
-			continue
-		}
-
 		if !seenMessageIDs[msgID] {
 			unread++
 		}
