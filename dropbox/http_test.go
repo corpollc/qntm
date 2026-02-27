@@ -186,6 +186,48 @@ func TestHTTPStorageProvider_TooLarge(t *testing.T) {
 	}
 }
 
+func TestHTTPStorageProvider_RetryPreservesRequestBody(t *testing.T) {
+	attempts := 0
+	bodies := make([]string, 0, 2)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/drop/retry/body" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		attempts++
+		bodies = append(bodies, string(body))
+
+		// Force exactly one retry path before success.
+		if attempts == 1 {
+			http.Error(w, "transient failure", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	p := NewHTTPStorageProvider(srv.URL)
+	p.maxRetries = 1
+
+	payload := []byte("payload-123")
+	if err := p.Store("/retry/body", payload); err != nil {
+		t.Fatalf("Store failed after retry: %v", err)
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 captured request bodies, got %d", len(bodies))
+	}
+	if bodies[0] != string(payload) || bodies[1] != string(payload) {
+		t.Fatalf("request body changed across retries: %#v", bodies)
+	}
+}
+
 func TestHTTPStorageProvider_RecordReadReceipt(t *testing.T) {
 	srv, store := newTestServer()
 	defer srv.Close()

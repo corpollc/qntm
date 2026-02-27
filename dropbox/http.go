@@ -56,6 +56,28 @@ func NewHTTPStorageProvider(baseURL string) *HTTPStorageProvider {
 func (h *HTTPStorageProvider) doWithRetry(req *http.Request) (*http.Response, error) {
 	req.Header.Set("User-Agent", "qntm-cli/1.0")
 
+	var bodyBytes []byte
+	if req.Body != nil {
+		if req.GetBody != nil {
+			bodyReader, err := req.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("failed to clone request body: %w", err)
+			}
+			bodyBytes, err = io.ReadAll(bodyReader)
+			_ = bodyReader.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read request body: %w", err)
+			}
+		} else {
+			var err error
+			bodyBytes, err = io.ReadAll(req.Body)
+			_ = req.Body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("failed to buffer request body: %w", err)
+			}
+		}
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= h.maxRetries; attempt++ {
 		if attempt > 0 {
@@ -63,7 +85,16 @@ func (h *HTTPStorageProvider) doWithRetry(req *http.Request) (*http.Response, er
 			time.Sleep(backoff)
 		}
 
-		resp, err := h.client.Do(req)
+		attemptReq := req.Clone(req.Context())
+		if bodyBytes != nil {
+			attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			attemptReq.ContentLength = int64(len(bodyBytes))
+			attemptReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+			}
+		}
+
+		resp, err := h.client.Do(attemptReq)
 		if err != nil {
 			lastErr = err
 			continue
@@ -109,7 +140,7 @@ func buildReadReceiptSignable(
 
 // Store implements StorageProvider.
 func (h *HTTPStorageProvider) Store(key string, data []byte) error {
-	req, err := http.NewRequest(http.MethodPut, h.keyURL(key), strings.NewReader(string(data)))
+	req, err := http.NewRequest(http.MethodPut, h.keyURL(key), bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -129,6 +160,10 @@ func (h *HTTPStorageProvider) Store(key string, data []byte) error {
 	}
 	if resp.StatusCode == 413 {
 		return fmt.Errorf("envelope too large")
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if len(respBody) > 0 {
+		return fmt.Errorf("store failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	return fmt.Errorf("store failed: HTTP %d", resp.StatusCode)
 }
