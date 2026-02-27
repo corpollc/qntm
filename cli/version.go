@@ -36,9 +36,18 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version and check for updates",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("qntm %s\n", cliVersion)
-		// For the version command, run synchronously so the user sees the result.
+		if humanMode {
+			fmt.Printf("qntm %s\n", cliVersion)
+			// For the version command, run synchronously so the user sees the result.
+			checkForUpdate(true)
+			return
+		}
+
 		checkForUpdate(true)
+		_ = emitJSONSuccess("version", map[string]interface{}{
+			"version":     cliVersion,
+			"update_hint": getUpdateMessage(),
+		})
 	},
 }
 

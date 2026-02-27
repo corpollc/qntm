@@ -27,6 +27,7 @@ var (
 	dropboxURL   string
 	unsafeMode   bool
 	verboseMode  bool
+	humanMode    bool
 )
 
 func init() {
@@ -44,6 +45,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&dropboxURL, "dropbox-url", "", "HTTP drop box endpoint (default: https://inbox.qntm.corpo.llc)")
 	rootCmd.PersistentFlags().BoolVar(&unsafeMode, "unsafe", false, "Enable unsafe development features")
 	rootCmd.PersistentFlags().BoolVar(&verboseMode, "verbose", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVar(&humanMode, "human", false, "Use human-readable output and interactive UX")
 
 	// Identity commands
 	rootCmd.AddCommand(identityCmd)
@@ -59,18 +61,6 @@ func init() {
 	inviteCmd.AddCommand(inviteListCmd)
 
 	// Top-level accept alias: "qntm accept <token>" → "qntm invite accept <token>"
-	var acceptCmd = &cobra.Command{
-		Use:   "accept <invite-token>",
-		Short: "Accept a conversation invite (alias for 'invite accept')",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name, _ := cmd.Flags().GetString("name")
-			if name != "" {
-				inviteAcceptCmd.Flags().Set("name", name)
-			}
-			return inviteAcceptCmd.RunE(inviteAcceptCmd, args)
-		},
-	}
 	acceptCmd.Flags().String("name", "", "Name for this conversation")
 	rootCmd.AddCommand(acceptCmd)
 
@@ -122,12 +112,23 @@ var identityGenerateCmd = &cobra.Command{
 			return fmt.Errorf("failed to save identity: %w", err)
 		}
 
-		fmt.Printf("Generated new identity:\n")
-		fmt.Printf("Key ID: %s\n", identityMgr.KeyIDToString(newIdentity.KeyID))
-		fmt.Printf("Public Key: %s\n", identityMgr.PublicKeyToString(newIdentity.PublicKey))
-		fmt.Printf("Saved to: %s\n", getIdentityPath())
+		keyID := identityMgr.KeyIDToString(newIdentity.KeyID)
+		publicKey := identityMgr.PublicKeyToString(newIdentity.PublicKey)
 
-		return nil
+		if humanMode {
+			fmt.Printf("Generated new identity:\n")
+			fmt.Printf("Key ID: %s\n", keyID)
+			fmt.Printf("Public Key: %s\n", publicKey)
+			fmt.Printf("Saved to: %s\n", getIdentityPath())
+			return nil
+		}
+
+		return emitJSONSuccess("identity.generate", map[string]interface{}{
+			"key_id":       keyID,
+			"public_key":   publicKey,
+			"identity":     getIdentityPath(),
+			"spec_version": "QSP-v1.1",
+		})
 	},
 }
 
@@ -144,12 +145,19 @@ var identityShowCmd = &cobra.Command{
 		dc := NewDisplayContext()
 		kidHex := hex.EncodeToString(currentIdentity.KeyID[:])
 		displayKID := dc.FormatKIDHex(kidHex, "")
+		publicKey := identityMgr.PublicKeyToString(currentIdentity.PublicKey)
 
-		fmt.Printf("Current identity:\n")
-		fmt.Printf("Key ID: %s\n", displayKID)
-		fmt.Printf("Public Key: %s\n", identityMgr.PublicKeyToString(currentIdentity.PublicKey))
+		if humanMode {
+			fmt.Printf("Current identity:\n")
+			fmt.Printf("Key ID: %s\n", displayKID)
+			fmt.Printf("Public Key: %s\n", publicKey)
+			return nil
+		}
 
-		return nil
+		return emitJSONSuccess("identity.show", map[string]interface{}{
+			"key_id":     displayKID,
+			"public_key": publicKey,
+		})
 	},
 }
 
@@ -296,6 +304,19 @@ var inviteListCmd = &cobra.Command{
 		}
 
 		return nil
+	},
+}
+
+var acceptCmd = &cobra.Command{
+	Use:   "accept <invite-token>",
+	Short: "Accept a conversation invite (alias for 'invite accept')",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, _ := cmd.Flags().GetString("name")
+		if name != "" {
+			inviteAcceptCmd.Flags().Set("name", name)
+		}
+		return inviteAcceptCmd.RunE(inviteAcceptCmd, args)
 	},
 }
 

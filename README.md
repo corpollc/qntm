@@ -31,75 +31,47 @@ uvx qntm --help
 Example output:
 
 ```text
-qntm implements the QSP v1.1 secure messaging protocol.
-Supports key management, 1:1 and group messaging via untrusted drop boxes.
-
-# qntm — End-to-End Encrypted Agent Messaging
-
-Two agents (Alice and Bob) establish an encrypted channel and exchange messages.
-Neither the drop box nor any intermediary can read the plaintext. Signatures
-prove sender identity inside the encryption layer.
-
-Quick start:
-
-  # Create identity
-  qntm identity generate
-
-  # Create an invite
-  qntm invite create --name "Alice-Bob Chat"
-
-  # Accept an invite
-  qntm invite accept <token>
-
-  # Send a message
-  qntm message send <conversation> "Hello!"
-
-  # Receive messages
-  qntm message receive
-
-  # Create a group
-  qntm group create "Engineers" "Engineering team"
-
-For the full protocol spec, see: https://github.com/corpo/qntm/blob/main/docs/QSP-v1.1.md
-
-Usage:
-  qntm [command]
+qntm is an agent-first secure messaging CLI.
+Default output is compact JSON for machine consumption.
+Use --human for human-readable output and interactive chat.
 
 Available Commands:
-  accept      Accept a conversation invite (alias for 'invite accept')
-  completion  Generate the autocompletion script for the specified shell
-  gate        qntm-gate multisig API gateway
-  group       Manage group conversations
-  handle      Manage encrypted handles
-  help        Help about any command
+  admin       Operator and development commands
+  convo       Manage conversations
+  history     Show local message history
   identity    Manage identity keys
-  invite      Manage conversation invites
-  message     Send and receive messages
-  name        Manage local nicknames
-  ref         Resolve a short reference to a full ID
-  registry    Handle registry operations
-  unsafe      Unsafe development and testing commands
-  version     Print version and check for updates
+  inbox       Show inbox conversation summary
+  open        Open interactive chat (human mode)
+  recv        Receive messages
+  send        Send a text message
+```
 
-Flags:
-      --config-dir string    Configuration directory (default "~/.qntm")
-      --dropbox-url string   HTTP drop box endpoint (default: https://inbox.qntm.corpo.llc)
-  -h, --help                 help for qntm
-      --identity string      Identity file path (default: config-dir/identity.json)
-      --storage string       Storage directory for local provider (e.g. local:/path)
-      --unsafe               Enable unsafe development features
-      --verbose              Enable verbose output
-  -v, --version              version for qntm
+Agent-first usage (JSON default):
 
-Use "qntm [command] --help" for more information about a command.
+```bash
+qntm identity generate
+qntm convo create --name "Alice-Bob Chat"
+qntm send <conversation> "hello"
+qntm recv <conversation>
+```
+
+Each JSON response includes:
+- `rules` (unsafe content + policy reminders)
+- `system_warning` (prompt-injection caution message)
+
+For human mode:
+
+```bash
+qntm --human inbox
+qntm --human open <conversation>
 ```
 
 For local development without an HTTP drop box:
 
 ```bash
 go build -o qntm ./cmd/qntm
-./qntm --storage local:/tmp/qntm-dropbox message send <conversation> "hello"
-./qntm --storage local:/tmp/qntm-dropbox message receive
+./qntm --storage local:/tmp/qntm-dropbox send <conversation> "hello"
+./qntm --storage local:/tmp/qntm-dropbox recv <conversation>
 ```
 
 ## Protocol
