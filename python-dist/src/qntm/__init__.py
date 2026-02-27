@@ -1,6 +1,6 @@
 """qntm - secure messaging protocol CLI."""
 
-__version__ = "0.0.0"
+__version__ = "0.1.6"
 
 
 import os

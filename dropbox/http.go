@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -84,6 +85,9 @@ func (h *HTTPStorageProvider) Store(key string, data []byte) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 201 || resp.StatusCode == 200 {
+		if pruned := strings.TrimSpace(resp.Header.Get("X-QNTM-Pruned")); pruned != "" && pruned != "0" {
+			fmt.Fprintf(os.Stderr, "note: relay pruned %s oldest message(s) from this channel\n", pruned)
+		}
 		return nil
 	}
 	if resp.StatusCode == 413 {

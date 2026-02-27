@@ -149,6 +149,7 @@ qntm/
 ├── naming/            # Local aliases
 ├── shortref/          # Short-ID resolution
 ├── security/          # Policy enforcement (replay/skew/membership)
+├── ui/aim-chat/       # Vite AIM-style web UI + local qntm API bridge
 ├── worker/            # Worker-side support
 ├── docs/              # Protocol specifications
 └── python-dist/       # Python packaging and binary distribution

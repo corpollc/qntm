@@ -397,22 +397,14 @@ var messageReceiveCmd = &cobra.Command{
 		dropboxMgr := dropbox.NewManager(storage)
 		dc := NewDisplayContext()
 		groupMgr := group.NewManager()
+		receiverIdentity, err := loadIdentity()
+		if err != nil {
+			return fmt.Errorf("failed to load identity: %w", err)
+		}
 		handleStore := dc.Handles
 		if handleStore == nil {
 			handleStore, _ = handle.NewStore(configDir)
 			dc.Handles = handleStore
-		}
-
-		var currentIdentity *types.Identity
-		var identityErr error
-		identityLoaded := false
-		loadIdentityOnce := func() (*types.Identity, error) {
-			if identityLoaded {
-				return currentIdentity, identityErr
-			}
-			identityLoaded = true
-			currentIdentity, identityErr = loadIdentity()
-			return currentIdentity, identityErr
 		}
 
 		totalMessages := 0
@@ -431,7 +423,7 @@ var messageReceiveCmd = &cobra.Command{
 				allSeenMessages[conversation.ID] = conversationSeenMessages
 			}
 
-			messages, err := dropboxMgr.ReceiveMessages(conversation, conversationSeenMessages)
+			messages, err := dropboxMgr.ReceiveMessages(receiverIdentity, conversation, conversationSeenMessages)
 			if err != nil {
 				fmt.Printf("Error receiving from %s: %v\n",
 					dc.FormatConvIDHex(convIDHex), err)
@@ -474,12 +466,7 @@ var messageReceiveCmd = &cobra.Command{
 						}
 					case "group_rekey":
 						if conversation.Type == types.ConversationTypeGroup {
-							id, err := loadIdentityOnce()
-							if err != nil {
-								bodyDisplay = fmt.Sprintf("group rekey skipped: %v", err)
-								break
-							}
-							newGroupKey, newEpoch, err := groupMgr.ProcessRekeyMessage(msg, conversation, id)
+							newGroupKey, newEpoch, err := groupMgr.ProcessRekeyMessage(msg, conversation, receiverIdentity)
 							if err != nil {
 								bodyDisplay = fmt.Sprintf("group rekey not applied: %v", err)
 								break
