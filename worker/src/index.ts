@@ -1,5 +1,6 @@
 export interface Env {
 	QNTM_KV: KVNamespace;
+	CONVO_SEQ_DO: DurableObjectNamespace;
 	ENVELOPE_TTL_SECONDS: string;
 	MAX_ENVELOPE_SIZE: string;
 	MAX_MESSAGES_PER_CHANNEL: string;
@@ -66,6 +67,21 @@ type ReadReceiptPayload = {
 	sig: string;
 };
 
+type SendPayload = {
+	conv_id: string;
+	envelope_b64: string;
+};
+
+type PollConversation = {
+	conv_id: string;
+	from_seq: number;
+};
+
+type PollPayload = {
+	conversations: PollConversation[];
+	max_messages?: number;
+};
+
 function toHex(data: Uint8Array): string {
 	return Array.from(data)
 		.map((b) => b.toString(16).padStart(2, "0"))
@@ -92,6 +108,23 @@ function fromBase64URL(input: string): Uint8Array {
 		out[i] = raw.charCodeAt(i);
 	}
 	return out;
+}
+
+function fromBase64(input: string): Uint8Array {
+	const raw = atob(input);
+	const out = new Uint8Array(raw.length);
+	for (let i = 0; i < raw.length; i++) {
+		out[i] = raw.charCodeAt(i);
+	}
+	return out;
+}
+
+function toBase64(input: Uint8Array): string {
+	let binary = "";
+	for (let i = 0; i < input.length; i++) {
+		binary += String.fromCharCode(input[i]);
+	}
+	return btoa(binary);
 }
 
 function buildReceiptSignable(payload: ReadReceiptPayload): Uint8Array {
@@ -128,6 +161,65 @@ function isHexID(value: string, expectedLength: number): boolean {
 	return new RegExp(`^[0-9a-f]{${expectedLength}}$`, "i").test(value);
 }
 
+async function nextSequence(env: Env, convID: string): Promise<number> {
+	const id = env.CONVO_SEQ_DO.idFromName(convID);
+	const stub = env.CONVO_SEQ_DO.get(id);
+	const response = await stub.fetch("https://convo-seq/next", { method: "POST" });
+	if (!response.ok) {
+		throw new Error(`sequence allocation failed: HTTP ${response.status}`);
+	}
+	const payload = (await response.json()) as { seq?: number };
+	if (!payload || !Number.isInteger(payload.seq) || payload.seq! <= 0) {
+		throw new Error("invalid sequence allocation response");
+	}
+	return payload.seq!;
+}
+
+async function headSequence(env: Env, convID: string): Promise<number> {
+	const id = env.CONVO_SEQ_DO.idFromName(convID);
+	const stub = env.CONVO_SEQ_DO.get(id);
+	const response = await stub.fetch("https://convo-seq/head", { method: "GET" });
+	if (!response.ok) {
+		throw new Error(`sequence head failed: HTTP ${response.status}`);
+	}
+	const payload = (await response.json()) as { seq?: number };
+	if (!payload || !Number.isInteger(payload.seq) || payload.seq! < 0) {
+		throw new Error("invalid sequence head response");
+	}
+	return payload.seq!;
+}
+
+export class ConversationSequencerDO implements DurableObject {
+	private state: DurableObjectState;
+
+	constructor(state: DurableObjectState) {
+		this.state = state;
+	}
+
+	async fetch(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		if (request.method === "POST" && url.pathname === "/next") {
+			const current = ((await this.state.storage.get<number>("next_seq")) ?? 0) as number;
+			const next = current + 1;
+			await this.state.storage.put("next_seq", next);
+			return new Response(JSON.stringify({ seq: next }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		if (request.method === "GET" && url.pathname === "/head") {
+			const current = ((await this.state.storage.get<number>("next_seq")) ?? 0) as number;
+			return new Response(JSON.stringify({ seq: current }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		return new Response("not found", { status: 404 });
+	}
+}
+
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		// CORS preflight
@@ -144,11 +236,107 @@ export default {
 
 		const url = new URL(request.url);
 		const path = url.pathname;
-		const ttl = parseInt(env.ENVELOPE_TTL_SECONDS || "604800", 10);
-		const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
-		const maxMessagesPerChannel = parseInt(env.MAX_MESSAGES_PER_CHANNEL || "512", 10);
+			const ttl = parseInt(env.ENVELOPE_TTL_SECONDS || "604800", 10);
+			const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
+			const maxMessagesPerChannel = parseInt(env.MAX_MESSAGES_PER_CHANNEL || "512", 10);
 
-		if (request.method === "POST" && path === "/v1/receipt") {
+			if (request.method === "POST" && path === "/v1/send") {
+				let payload: SendPayload;
+				try {
+					payload = (await request.json()) as SendPayload;
+				} catch {
+					return errorResponse("invalid send payload", 400);
+				}
+
+				if (!payload || typeof payload.conv_id !== "string" || typeof payload.envelope_b64 !== "string") {
+					return errorResponse("invalid send fields", 400);
+				}
+
+				payload.conv_id = payload.conv_id.toLowerCase();
+				if (!isHexID(payload.conv_id, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+
+				let envelopeBytes: Uint8Array;
+				try {
+					envelopeBytes = fromBase64(payload.envelope_b64);
+				} catch {
+					return errorResponse("invalid envelope_b64", 400);
+				}
+				if (envelopeBytes.byteLength > maxSize) {
+					return errorResponse("envelope too large", 413);
+				}
+
+				const seq = await nextSequence(env, payload.conv_id);
+				const key = `/${payload.conv_id}/msg/${seq}.cbor`;
+				await env.QNTM_KV.put(key, envelopeBytes, { expirationTtl: ttl });
+				return jsonResponse({ seq }, 201);
+			}
+
+			if (request.method === "POST" && path === "/v1/poll") {
+				let payload: PollPayload;
+				try {
+					payload = (await request.json()) as PollPayload;
+				} catch {
+					return errorResponse("invalid poll payload", 400);
+				}
+
+				if (!payload || !Array.isArray(payload.conversations) || payload.conversations.length === 0 || payload.conversations.length > 20) {
+					return errorResponse("invalid conversations list", 400);
+				}
+
+				const maxMessagesRaw = payload.max_messages ?? 200;
+				if (!Number.isInteger(maxMessagesRaw) || maxMessagesRaw < 0 || maxMessagesRaw > 1000) {
+					return errorResponse("invalid max_messages", 400);
+				}
+				const maxMessages = maxMessagesRaw;
+
+				const conversationResults: Array<{ conv_id: string; up_to_seq: number; messages: Array<{ seq: number; envelope_b64: string }> }> = [];
+
+				for (const convo of payload.conversations) {
+					if (!convo || typeof convo.conv_id !== "string" || !Number.isInteger(convo.from_seq) || convo.from_seq < 0) {
+						return errorResponse("invalid conversation entry", 400);
+					}
+					const convID = convo.conv_id.toLowerCase();
+					if (!isHexID(convID, 32)) {
+						return errorResponse("invalid conv_id", 400);
+					}
+
+					const head = await headSequence(env, convID);
+					let upToSeq = head;
+					if (upToSeq < convo.from_seq) {
+						upToSeq = convo.from_seq;
+					}
+					if (maxMessages > 0 && convo.from_seq + maxMessages < upToSeq) {
+						upToSeq = convo.from_seq + maxMessages;
+					}
+
+					const messages: Array<{ seq: number; envelope_b64: string }> = [];
+					if (maxMessages > 0 && upToSeq > convo.from_seq) {
+						for (let seq = convo.from_seq + 1; seq <= upToSeq; seq++) {
+							const key = `/${convID}/msg/${seq}.cbor`;
+							const value = await env.QNTM_KV.get(key, "arrayBuffer");
+							if (value === null) {
+								continue;
+							}
+							messages.push({
+								seq,
+								envelope_b64: toBase64(new Uint8Array(value)),
+							});
+						}
+					}
+
+					conversationResults.push({
+						conv_id: convID,
+						up_to_seq: upToSeq,
+						messages,
+					});
+				}
+
+				return jsonResponse({ conversations: conversationResults }, 200);
+			}
+
+			if (request.method === "POST" && path === "/v1/receipt") {
 			let payload: ReadReceiptPayload;
 			try {
 				payload = (await request.json()) as ReadReceiptPayload;

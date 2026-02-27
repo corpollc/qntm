@@ -33,6 +33,19 @@ type StorageProvider interface {
 	Exists(key string) (bool, error)
 }
 
+// SequencedEnvelope represents one envelope in a conversation sequence stream.
+type SequencedEnvelope struct {
+	Seq  int64
+	Data []byte
+}
+
+// SequencedStorageProvider supports ordered append + cursor polling without List().
+type SequencedStorageProvider interface {
+	StoreEnvelope(convID types.ConversationID, data []byte) (int64, error)
+	PollEnvelopes(convID types.ConversationID, fromSeq int64, limit int) ([]SequencedEnvelope, int64, error)
+	HeadSequence(convID types.ConversationID) (int64, error)
+}
+
 // Manager handles drop box operations
 type Manager struct {
 	storage    StorageProvider
@@ -71,14 +84,29 @@ type ackSignable struct {
 
 // SendMessage stores a message envelope in the drop box
 func (m *Manager) SendMessage(envelope *types.OuterEnvelope) error {
+	_, err := m.SendMessageWithSequence(envelope)
+	return err
+}
+
+// SendMessageWithSequence stores a message envelope and returns its sequence
+// number when the storage backend supports sequenced append.
+func (m *Manager) SendMessageWithSequence(envelope *types.OuterEnvelope) (int64, error) {
 	if err := m.messageMgr.ValidateEnvelope(envelope); err != nil {
-		return fmt.Errorf("invalid envelope: %w", err)
+		return 0, fmt.Errorf("invalid envelope: %w", err)
 	}
 
 	// Serialize the envelope
 	data, err := m.messageMgr.SerializeEnvelope(envelope)
 	if err != nil {
-		return fmt.Errorf("failed to serialize envelope: %w", err)
+		return 0, fmt.Errorf("failed to serialize envelope: %w", err)
+	}
+
+	if sequenced, ok := m.storage.(SequencedStorageProvider); ok {
+		seq, err := sequenced.StoreEnvelope(envelope.ConvID, data)
+		if err != nil {
+			return 0, fmt.Errorf("failed to store envelope: %w", err)
+		}
+		return seq, nil
 	}
 
 	// Generate storage key
@@ -86,10 +114,10 @@ func (m *Manager) SendMessage(envelope *types.OuterEnvelope) error {
 
 	// Store in drop box
 	if err := m.storage.Store(key, data); err != nil {
-		return fmt.Errorf("failed to store envelope: %w", err)
+		return 0, fmt.Errorf("failed to store envelope: %w", err)
 	}
 
-	return nil
+	return 0, nil
 }
 
 // ReceiveMessages retrieves and decrypts messages from the drop box
@@ -153,13 +181,6 @@ func (m *Manager) ReceiveMessages(
 		seenMessageIDs[msgID] = true
 		messages = append(messages, msg)
 
-		// Relay-managed receipt recording (HTTP provider); ignore failures so
-		// message delivery is not blocked by transient receipt issues.
-		if recorder, ok := m.storage.(interface {
-			RecordReadReceipt(*types.Identity, *types.Conversation, types.MessageID) error
-		}); ok {
-			_ = recorder.RecordReadReceipt(receiverIdentity, conversation, msgID)
-		}
 	}
 
 	// Sort messages by creation timestamp
@@ -168,6 +189,68 @@ func (m *Manager) ReceiveMessages(
 	})
 
 	return messages, nil
+}
+
+// ReceiveMessagesFromSequence retrieves and decrypts messages from a
+// conversation sequence stream without using List().
+func (m *Manager) ReceiveMessagesFromSequence(
+	receiverIdentity *types.Identity,
+	conversation *types.Conversation,
+	fromSeq int64,
+	limit int,
+) ([]*types.Message, int64, error) {
+	if receiverIdentity == nil {
+		return nil, fromSeq, fmt.Errorf("receiver identity is required")
+	}
+	if conversation == nil {
+		return nil, fromSeq, fmt.Errorf("conversation is required")
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+
+	sequenced, ok := m.storage.(SequencedStorageProvider)
+	if !ok {
+		return nil, fromSeq, fmt.Errorf("storage does not support sequenced polling")
+	}
+
+	envelopes, upToSeq, err := sequenced.PollEnvelopes(conversation.ID, fromSeq, limit)
+	if err != nil {
+		return nil, fromSeq, fmt.Errorf("failed to poll messages: %w", err)
+	}
+
+	messages := make([]*types.Message, 0, len(envelopes))
+	for _, entry := range envelopes {
+		envelope, err := m.messageMgr.DeserializeEnvelope(entry.Data)
+		if err != nil {
+			continue
+		}
+
+		if m.messageMgr.CheckExpiry(envelope) {
+			continue
+		}
+
+		msg, err := m.messageMgr.DecryptMessage(envelope, conversation)
+		if err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+
+	}
+
+	sort.Slice(messages, func(i, j int) bool {
+		return messages[i].Envelope.CreatedTS < messages[j].Envelope.CreatedTS
+	})
+
+	return messages, upToSeq, nil
+}
+
+// HeadSequence returns the latest sequence number for a conversation.
+func (m *Manager) HeadSequence(convID types.ConversationID) (int64, error) {
+	if sequenced, ok := m.storage.(SequencedStorageProvider); ok {
+		return sequenced.HeadSequence(convID)
+	}
+	return 0, fmt.Errorf("storage does not support conversation sequence heads")
 }
 
 func (m *Manager) ensureACK(identity *types.Identity, convID types.ConversationID, msgID types.MessageID) error {

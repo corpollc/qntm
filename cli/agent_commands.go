@@ -356,7 +356,8 @@ var sendCmd = &cobra.Command{
 
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
-		if err := dropboxMgr.SendMessage(envelope); err != nil {
+		seq, err := dropboxMgr.SendMessageWithSequence(envelope)
+		if err != nil {
 			return fmt.Errorf("failed to send message: %w", err)
 		}
 
@@ -384,6 +385,7 @@ var sendCmd = &cobra.Command{
 		return emitJSONSuccess("send", map[string]interface{}{
 			"conversation_id": convIDHex,
 			"message_id":      messageID,
+			"sequence":        seq,
 			"body_type":       "text",
 			"body":            messageText,
 			"created_ts":      envelope.CreatedTS,
@@ -433,7 +435,7 @@ var recvCmd = &cobra.Command{
 		}
 
 		totalMessages := 0
-		allSeenMessages := loadSeenMessages()
+		sequenceCursors := loadSequenceCursors()
 		jsonMessages := make([]map[string]interface{}, 0)
 
 		for _, conversation := range conversations {
@@ -442,13 +444,8 @@ var recvCmd = &cobra.Command{
 			groupStateLoaded := false
 			groupStateDirty := false
 
-			conversationSeenMessages := allSeenMessages[conversation.ID]
-			if conversationSeenMessages == nil {
-				conversationSeenMessages = make(map[types.MessageID]bool)
-				allSeenMessages[conversation.ID] = conversationSeenMessages
-			}
-
-			messages, err := dropboxMgr.ReceiveMessages(receiverIdentity, conversation, conversationSeenMessages)
+			fromSeq := sequenceCursors[conversation.ID]
+			messages, upToSeq, err := dropboxMgr.ReceiveMessagesFromSequence(receiverIdentity, conversation, fromSeq, 200)
 			if err != nil {
 				if humanMode {
 					fmt.Printf("Error receiving from %s: %v\n", dc.FormatConvIDHex(convIDHex), err)
@@ -456,6 +453,7 @@ var recvCmd = &cobra.Command{
 				}
 				return fmt.Errorf("receive failed for %s: %w", convIDHex, err)
 			}
+			sequenceCursors[conversation.ID] = upToSeq
 
 			if humanMode && len(messages) > 0 {
 				fmt.Printf("\n%s (%d new messages):\n", dc.FormatConvIDHex(convIDHex), len(messages))
@@ -577,7 +575,9 @@ var recvCmd = &cobra.Command{
 			totalMessages += len(messages)
 		}
 
-		saveSeenMessages(allSeenMessages)
+		if err := saveSequenceCursors(sequenceCursors); err != nil && humanMode {
+			fmt.Fprintf(os.Stderr, "warning: failed to persist sequence cursors: %v\n", err)
+		}
 
 		if humanMode {
 			if totalMessages == 0 {
@@ -739,31 +739,18 @@ func parseConversationIDHex(convIDHex string) (types.ConversationID, error) {
 }
 
 func collectConversationSummaries(refreshUnread bool) ([]map[string]interface{}, int, bool, error) {
+	_ = refreshUnread
 	conversations, err := loadConversations()
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("failed to load conversations: %w", err)
 	}
 
-	storage := getStorageProvider()
-	dropboxMgr := dropbox.NewManager(storage)
 	dc := NewDisplayContext()
-	allSeenMessages := loadSeenMessages()
 
 	summaries := make([]map[string]interface{}, 0, len(conversations))
-	totalUnread := 0
 
 	for _, conversation := range conversations {
 		convIDHex := hex.EncodeToString(conversation.ID[:])
-		unread := 0
-		unreadValue := interface{}(nil)
-		if refreshUnread {
-			unreadCount, unreadErr := dropboxMgr.CountUnreadMessages(conversation.ID, allSeenMessages[conversation.ID])
-			if unreadErr != nil {
-				unreadCount = 0
-			}
-			unread = unreadCount
-			unreadValue = unreadCount
-		}
 
 		name := conversation.Name
 		if store, err := naming.NewStore(configDir); err == nil {
@@ -778,12 +765,9 @@ func collectConversationSummaries(refreshUnread bool) ([]map[string]interface{},
 			"name":         name,
 			"type":         conversation.Type,
 			"participants": len(conversation.Participants),
-			"unread":       unreadValue,
+			"unread":       nil,
 		})
-		if refreshUnread {
-			totalUnread += unread
-		}
 	}
 
-	return summaries, totalUnread, refreshUnread, nil
+	return summaries, 0, false, nil
 }

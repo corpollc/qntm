@@ -10,6 +10,14 @@ routes = [
 binding = "QNTM_KV"
 id = "3a542ff3af7c466aba9cb401bc8a07e1"
 
+[[durable_objects.bindings]]
+name = "CONVO_SEQ_DO"
+class_name = "ConversationSequencerDO"
+
+[[migrations]]
+tag = "convo-sequencer-v1"
+new_sqlite_classes = ["ConversationSequencerDO"]
+
 [vars]
 ENVELOPE_TTL_SECONDS = "604800"   # 7 days
 MAX_ENVELOPE_SIZE = "65536"       # 64KB

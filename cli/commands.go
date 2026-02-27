@@ -402,7 +402,7 @@ var messageSendCmd = &cobra.Command{
 		// Send via storage
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
-		if err := dropboxMgr.SendMessage(envelope); err != nil {
+		if _, err := dropboxMgr.SendMessageWithSequence(envelope); err != nil {
 			return fmt.Errorf("failed to send message: %w", err)
 		}
 
@@ -474,7 +474,7 @@ var messageReceiveCmd = &cobra.Command{
 		}
 
 		totalMessages := 0
-		allSeenMessages := loadSeenMessages()
+		sequenceCursors := loadSequenceCursors()
 
 		for _, conversation := range conversations {
 			convIDHex := hex.EncodeToString(conversation.ID[:])
@@ -482,19 +482,14 @@ var messageReceiveCmd = &cobra.Command{
 			groupStateLoaded := false
 			groupStateDirty := false
 
-			// Get seen messages for this conversation
-			conversationSeenMessages := allSeenMessages[conversation.ID]
-			if conversationSeenMessages == nil {
-				conversationSeenMessages = make(map[types.MessageID]bool)
-				allSeenMessages[conversation.ID] = conversationSeenMessages
-			}
-
-			messages, err := dropboxMgr.ReceiveMessages(receiverIdentity, conversation, conversationSeenMessages)
+			fromSeq := sequenceCursors[conversation.ID]
+			messages, upToSeq, err := dropboxMgr.ReceiveMessagesFromSequence(receiverIdentity, conversation, fromSeq, 200)
 			if err != nil {
 				fmt.Printf("Error receiving from %s: %v\n",
 					dc.FormatConvIDHex(convIDHex), err)
 				continue
 			}
+			sequenceCursors[conversation.ID] = upToSeq
 
 			if len(messages) > 0 {
 				fmt.Printf("\n%s (%d new messages):\n",
@@ -609,8 +604,10 @@ var messageReceiveCmd = &cobra.Command{
 			fmt.Printf("\nReceived %d total messages\n", totalMessages)
 		}
 
-		// Save updated seen messages
-		saveSeenMessages(allSeenMessages)
+		// Save updated sequence cursors
+		if err := saveSequenceCursors(sequenceCursors); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to persist sequence cursors: %v\n", err)
+		}
 
 		return nil
 	},
@@ -624,7 +621,7 @@ var messageListCmd = &cobra.Command{
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
 		dc := NewDisplayContext()
-		allSeenMessages := loadSeenMessages()
+		sequenceCursors := loadSequenceCursors()
 
 		// Show aggregate inbox stats when no specific conversation is requested.
 		if len(args) == 0 {
@@ -638,43 +635,37 @@ var messageListCmd = &cobra.Command{
 				return nil
 			}
 
-			totalMessages := 0
-			totalExpired := 0
-			totalSize := 0
+			totalHead := int64(0)
 			totalUnread := 0
 
 			fmt.Printf("Inboxes (%d):\n", len(conversations))
 			for _, conversation := range conversations {
 				convIDHex := hex.EncodeToString(conversation.ID[:])
-				stats, err := dropboxMgr.GetStorageStats(conversation.ID)
+				head, err := dropboxMgr.HeadSequence(conversation.ID)
 				if err != nil {
 					fmt.Printf("\n%s inbox stats: failed to load (%v)\n",
 						dc.FormatConvIDHex(convIDHex), err)
 					continue
 				}
-				unread, err := dropboxMgr.CountUnreadMessages(conversation.ID, allSeenMessages[conversation.ID])
-				if err != nil {
-					fmt.Printf("  Warning: unread count unavailable (%v)\n", err)
+				lastSeen := sequenceCursors[conversation.ID]
+				unread := 0
+				if head > lastSeen {
+					unread = int(head - lastSeen)
 				}
 
 				fmt.Printf("\n%s inbox stats:\n", dc.FormatConvIDHex(convIDHex))
 				fmt.Printf("  Type: %s\n", conversation.Type)
-				fmt.Printf("  Messages: %d\n", stats.MessageCount)
+				fmt.Printf("  Sequence head: %d\n", head)
+				fmt.Printf("  Last seen: %d\n", lastSeen)
 				fmt.Printf("  Unread: %d\n", unread)
-				fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
-				fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
 
-				totalMessages += stats.MessageCount
+				totalHead += head
 				totalUnread += unread
-				totalExpired += stats.ExpiredCount
-				totalSize += stats.TotalSize
 			}
 
 			fmt.Printf("\nTotal across inboxes:\n")
-			fmt.Printf("  Messages: %d\n", totalMessages)
+			fmt.Printf("  Sequence head sum: %d\n", totalHead)
 			fmt.Printf("  Unread: %d\n", totalUnread)
-			fmt.Printf("  Expired: %d\n", totalExpired)
-			fmt.Printf("  Total size: %d bytes\n", totalSize)
 			return nil
 		}
 
@@ -694,21 +685,21 @@ var messageListCmd = &cobra.Command{
 			return fmt.Errorf("conversation not found: %w", err)
 		}
 
-		stats, err := dropboxMgr.GetStorageStats(convID)
+		head, err := dropboxMgr.HeadSequence(convID)
 		if err != nil {
-			return fmt.Errorf("failed to get storage stats: %w", err)
+			return fmt.Errorf("failed to get sequence head: %w", err)
 		}
-		unread, err := dropboxMgr.CountUnreadMessages(convID, allSeenMessages[convID])
-		if err != nil {
-			return fmt.Errorf("failed to get unread count: %w", err)
+		lastSeen := sequenceCursors[convID]
+		unread := 0
+		if head > lastSeen {
+			unread = int(head - lastSeen)
 		}
 
 		fmt.Printf("%s storage stats:\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Printf("  Type: %s\n", conversation.Type)
-		fmt.Printf("  Messages: %d\n", stats.MessageCount)
+		fmt.Printf("  Sequence head: %d\n", head)
+		fmt.Printf("  Last seen: %d\n", lastSeen)
 		fmt.Printf("  Unread: %d\n", unread)
-		fmt.Printf("  Expired: %d\n", stats.ExpiredCount)
-		fmt.Printf("  Total size: %d bytes\n", stats.TotalSize)
 
 		return nil
 	},

@@ -61,12 +61,7 @@ var chatCmd = &cobra.Command{
 		dropboxMgr := dropbox.NewManager(storage)
 		messageMgr := message.NewManager()
 
-		allSeenMessages := loadSeenMessages()
-		conversationSeenMessages := allSeenMessages[convID]
-		if conversationSeenMessages == nil {
-			conversationSeenMessages = make(map[types.MessageID]bool)
-			allSeenMessages[convID] = conversationSeenMessages
-		}
+		sequenceCursors := loadSequenceCursors()
 
 		fmt.Printf("Chat mode for %s\n", dc.FormatConvIDHex(convIDHex))
 		fmt.Println("Commands: /help, /poll, /history, /quit")
@@ -76,10 +71,12 @@ var chatCmd = &cobra.Command{
 		}
 
 		pollInbox := func() error {
-			messages, err := dropboxMgr.ReceiveMessages(currentIdentity, conversation, conversationSeenMessages)
+			fromSeq := sequenceCursors[convID]
+			messages, upToSeq, err := dropboxMgr.ReceiveMessagesFromSequence(currentIdentity, conversation, fromSeq, 200)
 			if err != nil {
 				return err
 			}
+			sequenceCursors[convID] = upToSeq
 			if len(messages) == 0 {
 				return nil
 			}
@@ -104,7 +101,9 @@ var chatCmd = &cobra.Command{
 				}
 			}
 
-			saveSeenMessages(allSeenMessages)
+			if err := saveSequenceCursors(sequenceCursors); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to persist sequence cursors: %v\n", err)
+			}
 			return nil
 		}
 
@@ -128,14 +127,14 @@ var chatCmd = &cobra.Command{
 					fmt.Print("chat> ")
 				}
 			case err := <-errCh:
-				saveSeenMessages(allSeenMessages)
+				_ = saveSequenceCursors(sequenceCursors)
 				if err != nil {
 					return err
 				}
 				return nil
 			case line, ok := <-inputCh:
 				if !ok {
-					saveSeenMessages(allSeenMessages)
+					_ = saveSequenceCursors(sequenceCursors)
 					return nil
 				}
 
@@ -156,7 +155,7 @@ var chatCmd = &cobra.Command{
 					case "/history":
 						printRecentLocalHistory(conversation, dc, convIDHex, 30)
 					case "/quit", "/exit":
-						saveSeenMessages(allSeenMessages)
+						_ = saveSequenceCursors(sequenceCursors)
 						return nil
 					default:
 						fmt.Printf("unknown command: %s\n", line)
@@ -179,7 +178,7 @@ var chatCmd = &cobra.Command{
 					continue
 				}
 
-				if err := dropboxMgr.SendMessage(envelope); err != nil {
+				if _, err := dropboxMgr.SendMessageWithSequence(envelope); err != nil {
 					fmt.Fprintf(os.Stderr, "failed to send message: %v\n", err)
 					fmt.Print("chat> ")
 					continue

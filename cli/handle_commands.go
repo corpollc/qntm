@@ -197,7 +197,7 @@ var handleRevealCmd = &cobra.Command{
 
 		storage := getStorageProvider()
 		dropboxMgr := dropbox.NewManager(storage)
-		if err := dropboxMgr.SendMessage(envelope); err != nil {
+		if _, err := dropboxMgr.SendMessageWithSequence(envelope); err != nil {
 			return err
 		}
 

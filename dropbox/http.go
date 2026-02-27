@@ -38,6 +38,40 @@ type readReceiptPayload struct {
 	Signature    string `json:"sig"`
 }
 
+type sendEnvelopeRequest struct {
+	ConvID      string `json:"conv_id"`
+	EnvelopeB64 string `json:"envelope_b64"`
+}
+
+type sendEnvelopeResponse struct {
+	Seq int64 `json:"seq"`
+}
+
+type pollConversationRequest struct {
+	ConvID  string `json:"conv_id"`
+	FromSeq int64  `json:"from_seq"`
+}
+
+type pollRequest struct {
+	Conversations []pollConversationRequest `json:"conversations"`
+	MaxMessages   int                       `json:"max_messages,omitempty"`
+}
+
+type pollMessageResponse struct {
+	Seq         int64  `json:"seq"`
+	EnvelopeB64 string `json:"envelope_b64"`
+}
+
+type pollConversationResponse struct {
+	ConvID   string                `json:"conv_id"`
+	UpToSeq  int64                 `json:"up_to_seq"`
+	Messages []pollMessageResponse `json:"messages"`
+}
+
+type pollResponse struct {
+	Conversations []pollConversationResponse `json:"conversations"`
+}
+
 // NewHTTPStorageProvider creates a new HTTP-backed storage provider.
 func NewHTTPStorageProvider(baseURL string) *HTTPStorageProvider {
 	if baseURL == "" {
@@ -118,6 +152,14 @@ func (h *HTTPStorageProvider) doWithRetry(req *http.Request) (*http.Response, er
 
 func (h *HTTPStorageProvider) keyURL(key string) string {
 	return h.BaseURL + "/v1/drop" + key
+}
+
+func (h *HTTPStorageProvider) sequencedSendURL() string {
+	return h.BaseURL + "/v1/send"
+}
+
+func (h *HTTPStorageProvider) sequencedPollURL() string {
+	return h.BaseURL + "/v1/poll"
 }
 
 func buildReadReceiptSignable(
@@ -304,4 +346,120 @@ func (h *HTTPStorageProvider) Exists(key string) (bool, error) {
 	defer resp.Body.Close()
 
 	return resp.StatusCode == 200, nil
+}
+
+// StoreEnvelope stores an envelope through the worker sequenced API.
+func (h *HTTPStorageProvider) StoreEnvelope(convID types.ConversationID, data []byte) (int64, error) {
+	reqBody, err := json.Marshal(sendEnvelopeRequest{
+		ConvID:      hex.EncodeToString(convID[:]),
+		EnvelopeB64: base64.StdEncoding.EncodeToString(data),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode send request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, h.sequencedSendURL(), bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.doWithRetry(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if len(respBody) > 0 {
+			return 0, fmt.Errorf("sequenced send failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return 0, fmt.Errorf("sequenced send failed: HTTP %d", resp.StatusCode)
+	}
+
+	var result sendEnvelopeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to decode sequenced send response: %w", err)
+	}
+	if result.Seq <= 0 {
+		return 0, fmt.Errorf("invalid sequenced send response: missing seq")
+	}
+	return result.Seq, nil
+}
+
+// PollEnvelopes fetches sequenced envelopes from fromSeq+1 without List().
+func (h *HTTPStorageProvider) PollEnvelopes(
+	convID types.ConversationID,
+	fromSeq int64,
+	limit int,
+) ([]SequencedEnvelope, int64, error) {
+	requestBody := pollRequest{
+		Conversations: []pollConversationRequest{
+			{
+				ConvID:  hex.EncodeToString(convID[:]),
+				FromSeq: fromSeq,
+			},
+		},
+	}
+	if limit > 0 {
+		requestBody.MaxMessages = limit
+	}
+
+	reqBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fromSeq, fmt.Errorf("failed to encode poll request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, h.sequencedPollURL(), bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fromSeq, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.doWithRetry(req)
+	if err != nil {
+		return nil, fromSeq, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if len(respBody) > 0 {
+			return nil, fromSeq, fmt.Errorf("poll failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return nil, fromSeq, fmt.Errorf("poll failed: HTTP %d", resp.StatusCode)
+	}
+
+	var result pollResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fromSeq, fmt.Errorf("failed to decode poll response: %w", err)
+	}
+	if len(result.Conversations) == 0 {
+		return []SequencedEnvelope{}, fromSeq, nil
+	}
+
+	item := result.Conversations[0]
+	envelopes := make([]SequencedEnvelope, 0, len(item.Messages))
+	for _, msg := range item.Messages {
+		data, err := base64.StdEncoding.DecodeString(msg.EnvelopeB64)
+		if err != nil {
+			continue
+		}
+		envelopes = append(envelopes, SequencedEnvelope{
+			Seq:  msg.Seq,
+			Data: data,
+		})
+	}
+
+	return envelopes, item.UpToSeq, nil
+}
+
+// HeadSequence returns the latest known sequence for a conversation.
+func (h *HTTPStorageProvider) HeadSequence(convID types.ConversationID) (int64, error) {
+	_, upToSeq, err := h.PollEnvelopes(convID, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	return upToSeq, nil
 }
