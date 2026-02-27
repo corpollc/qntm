@@ -17,7 +17,10 @@ The API bridge runs `qntm` in this order:
 
 1. `QNTM_BIN` env var (if set)
 2. `./qntm` binary at repo root (if present)
-3. `go run ./cmd/qntm`
+3. Cached UI binary at `ui/aim-chat/.qntm-ui/bin/qntm` (if present)
+4. `qntm` from your system `PATH` (if present)
+5. `go build -o ui/aim-chat/.qntm-ui/bin/qntm ./cmd/qntm` (attempted once per server process)
+6. `go run ./cmd/qntm` fallback
 
 ## Run
 

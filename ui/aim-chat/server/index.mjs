@@ -7,6 +7,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { fileURLToPath } from 'url'
 import crypto from 'crypto'
+import { createQntmInvocationResolver } from './qntm-invocation.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -119,24 +120,17 @@ function ensureProfileFilesystem(profile) {
   }
 }
 
-function resolveQntmInvocation(profile) {
-  const explicit = expandHome(profile.qntmBin || process.env.QNTM_BIN || '')
-  if (explicit) {
-    return { command: explicit, prefixArgs: [] }
-  }
-
-  const localBinary = path.join(REPO_ROOT, 'qntm')
-  if (fileExists(localBinary)) {
-    return { command: localBinary, prefixArgs: [] }
-  }
-
-  return { command: 'go', prefixArgs: ['run', './cmd/qntm'] }
-}
+const resolveQntmInvocation = createQntmInvocationResolver({
+  repoRoot: REPO_ROOT,
+  dataRoot: DATA_ROOT,
+  env: process.env,
+  fileExists,
+})
 
 async function runQntm(profile, args) {
   ensureProfileFilesystem(profile)
 
-  const invocation = resolveQntmInvocation(profile)
+  const invocation = await resolveQntmInvocation(profile)
   const finalArgs = [...invocation.prefixArgs, '--config-dir', profile.configDir]
 
   if (profile.storage) {
