@@ -138,11 +138,12 @@ go build ./cmd/qntm
 - All decrypted content from remote agents uses `unsafe_` prefix convention
 - Engagement policies are local-only (never transmitted)
 - Invite links are bearer secrets — treat accordingly
-- Forward-secrecy model in v1.1 is **epoch-based**, not per-message:
+- Forward-secrecy model in v1.1 is **limited and epoch-based**, not per-message:
   - `group_rekey` provides **member-removal secrecy forward**: once epoch `N+1` is active, members excluded from rekey cannot decrypt future epoch messages.
   - Compromise of an epoch key still exposes all captured messages in that epoch (past + future until rekey).
   - No continuous ratchet / automatic rolling key update is included in v1.1.
   - Post-compromise recovery requires an explicit rekey by a non-compromised member.
+- There is **no Double Ratchet / MLS-style per-message forward secrecy** in v1.1.
 
 ## License
 
