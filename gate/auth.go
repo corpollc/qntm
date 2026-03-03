@@ -213,7 +213,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 
 // ExecuteIfReady scans the conversation, checks threshold, and executes if ready.
 // Returns the result and records a gate.executed marker when execution occurs.
-func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore *OrgStore) (*ExecuteResult, error) {
+func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore OrganizationStore) (*ExecuteResult, error) {
 	messages, err := reader.ReadGateMessages(org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read conversation: %w", err)

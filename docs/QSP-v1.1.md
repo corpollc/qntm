@@ -247,23 +247,27 @@ v1.1 adds these `body_type` values to the inner payload (v1.0 §10.2):
 
 In addition to v1.0 §14:
 
-1. **Rekey atomicity:** a rekey is only effective once all continuing members have processed it. Implementations SHOULD retain old epoch keys for a grace period (RECOMMENDED 24 hours) to handle in-flight messages.
+1. **Forward-secrecy boundary (v1.1):** QSP v1.1 provides epoch-level membership forward secrecy, not per-message forward secrecy. Rekeying excludes removed members from future epochs, but compromise of an epoch key exposes all captured ciphertexts for that epoch.
 
-2. **Removed member's window:** a removed member can observe the rekey message (it is encrypted under the old key). They learn *who* remains but cannot derive the new key. They can still read messages sent under the old epoch that are in transit.
+2. **No continuous ratchet / PCS:** v1.1 does not include automatic rolling key updates or post-compromise self-healing. Recovery after compromise requires an explicit rekey initiated by a non-compromised member.
 
-3. **Ephemeral key reuse in wrapping:** each wrapped key blob MUST use a fresh ephemeral X25519 keypair. Reusing `ek_sk` across recipients would allow cross-recipient key recovery.
+3. **Rekey atomicity:** a rekey is only effective once all continuing members have processed it. Implementations SHOULD retain old epoch keys for a grace period (RECOMMENDED 24 hours) to handle in-flight messages.
 
-4. **Handle brute-force resistance:** the 32-byte server-generated salt makes offline brute-forcing of `handle_commitment` computationally infeasible, even for short or common handles. The registry discards the salt after delivery to the client — a registry database compromise does not enable commitment reversal.
+4. **Removed member's window:** a removed member can observe the rekey message (it is encrypted under the old key). They learn *who* remains but cannot derive the new key. They can still read messages sent under the old epoch that are in transit.
 
-5. **Handle reveal scope:** revealing a handle in one conversation discloses the plaintext and salt to all members of that conversation. Those members could verify the same commitment in other contexts where the agent's `handle_commitment` is visible. This is by design — the handle is a consistent identity, not a per-conversation secret.
+5. **Ephemeral key reuse in wrapping:** each wrapped key blob MUST use a fresh ephemeral X25519 keypair. Reusing `ek_sk` across recipients would allow cross-recipient key recovery.
 
-6. **Registry trust:** the registry enforces uniqueness and generates salts. It does NOT authenticate account operations — all mutations (handle changes, deletion) require Ed25519 signatures from the identity key. A compromised registry could register fraudulent handles but cannot impersonate existing agents or modify their registrations without their private key.
+6. **Handle brute-force resistance:** the 32-byte server-generated salt makes offline brute-forcing of `handle_commitment` computationally infeasible, even for short or common handles. The registry discards the salt after delivery to the client — a registry database compromise does not enable commitment reversal.
 
-7. **Salt as non-secret after reveal:** once revealed in a conversation, the salt is known to recipients. It is not used for any authentication purpose. All account operations rely on Ed25519 signatures from the identity key.
+7. **Handle reveal scope:** revealing a handle in one conversation discloses the plaintext and salt to all members of that conversation. Those members could verify the same commitment in other contexts where the agent's `handle_commitment` is visible. This is by design — the handle is a consistent identity, not a per-conversation secret.
 
-8. **Ed25519→X25519 conversion:** implementations MUST use the standard birational map (RFC 7748 / libsodium `crypto_sign_ed25519_pk_to_curve25519`). Incorrect conversion is a total break of key wrapping.
+8. **Registry trust:** the registry enforces uniqueness and generates salts. It does NOT authenticate account operations — all mutations (handle changes, deletion) require Ed25519 signatures from the identity key. A compromised registry could register fraudulent handles but cannot impersonate existing agents or modify their registrations without their private key.
 
-9. **Group size and rekey cost:** at 128 members, a rekey is ~10 KB. Implementations MAY reject groups exceeding 128 members. Frequent membership churn in large groups will generate proportional rekey traffic.
+9. **Salt as non-secret after reveal:** once revealed in a conversation, the salt is known to recipients. It is not used for any authentication purpose. All account operations rely on Ed25519 signatures from the identity key.
+
+10. **Ed25519→X25519 conversion:** implementations MUST use the standard birational map (RFC 7748 / libsodium `crypto_sign_ed25519_pk_to_curve25519`). Incorrect conversion is a total break of key wrapping.
+
+11. **Group size and rekey cost:** at 128 members, a rekey is ~10 KB. Implementations MAY reject groups exceeding 128 members. Frequent membership churn in large groups will generate proportional rekey traffic.
 
 ---
 

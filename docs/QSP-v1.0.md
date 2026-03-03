@@ -24,6 +24,8 @@ Agent-to-agent and group messaging via untrusted/public "drop box" storage, boot
 - Forward secrecy / post-compromise security (optional extensions may exist, but not required in v1.0).
 - Hiding traffic patterns (drop box listing/leakage is assumed possible).
 
+> Historical note: v1.1 adds epoch-based group rekey for membership-change secrecy, but does not add per-message ratcheting or automatic post-compromise recovery.
+
 ---
 
 ## 3. Terminology

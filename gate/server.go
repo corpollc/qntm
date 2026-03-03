@@ -43,8 +43,8 @@ func (s *MemoryConversationStore) WriteGateMessage(orgID string, msg *GateConver
 
 // Server is the qntm-gate HTTP server.
 type Server struct {
-	OrgStore   *OrgStore
-	ConvStore  *MemoryConversationStore
+	OrgStore   OrganizationStore
+	ConvStore  MessageStore
 	AdminToken string
 	mux        *http.ServeMux
 }
@@ -54,18 +54,37 @@ func NewServer(adminToken string) (*Server, error) {
 	if strings.TrimSpace(adminToken) == "" {
 		return nil, fmt.Errorf("admin token is required")
 	}
-	return newServer(adminToken), nil
+	return newServer(adminToken, nil, nil), nil
+}
+
+// NewServerWithStores creates a gate server using caller-provided persistence implementations.
+func NewServerWithStores(adminToken string, orgStore OrganizationStore, convStore MessageStore) (*Server, error) {
+	if strings.TrimSpace(adminToken) == "" {
+		return nil, fmt.Errorf("admin token is required")
+	}
+	return newServer(adminToken, orgStore, convStore), nil
 }
 
 // NewInsecureServerForTests creates an unauthenticated server for tests/dev only.
 func NewInsecureServerForTests() *Server {
-	return newServer("")
+	return newServer("", nil, nil)
 }
 
-func newServer(adminToken string) *Server {
+// NewInsecureServerForTestsWithStores creates an unauthenticated server using custom stores.
+func NewInsecureServerForTestsWithStores(orgStore OrganizationStore, convStore MessageStore) *Server {
+	return newServer("", orgStore, convStore)
+}
+
+func newServer(adminToken string, orgStore OrganizationStore, convStore MessageStore) *Server {
+	if orgStore == nil {
+		orgStore = NewOrgStore()
+	}
+	if convStore == nil {
+		convStore = NewMemoryConversationStore()
+	}
 	s := &Server{
-		OrgStore:   NewOrgStore(),
-		ConvStore:  NewMemoryConversationStore(),
+		OrgStore:   orgStore,
+		ConvStore:  convStore,
 		AdminToken: adminToken,
 		mux:        http.NewServeMux(),
 	}
