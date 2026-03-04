@@ -1055,3 +1055,67 @@ ok  	github.com/corpo/qntm/naming
 ```
 
 > All 19 tests pass across 4 new packages: shortref, registry, handle, naming.
+
+---
+
+## Section 42: Announce/Broadcast Channels
+
+One-way channels where only the channel owner can post. The relay enforces write access via a transport-layer Ed25519 signature.
+
+### Key Generation
+
+Two Ed25519 key pairs are generated per channel:
+- **Master key**: creates/deletes channels, rotates the posting key
+- **Posting key**: signs each envelope; the relay verifies before accepting writes
+
+### Channel Lifecycle
+
+```bash
+# Create an announce channel (generates master + posting keys)
+$ qntm announce create qntm-announce
+Created announce channel: qntm-announce
+Conversation ID: 4841b6dd24c6b1232a188a3d5ca7e98c
+Master Key ID: 59e84111...
+
+IMPORTANT: Back up your master key! It cannot be recovered.
+
+Share this subscribe command with readers:
+  qntm announce subscribe 4841b6dd... --token abc123... --name qntm-announce
+
+# Post to the channel (owner only)
+$ qntm announce post qntm-announce "System maintenance at 2am UTC"
+Posted to 4841b6dd... (seq 1)
+
+# Subscribe (reader)
+$ qntm announce subscribe 4841b6dd... --token abc123... --name qntm-announce
+Subscribed to announce channel: qntm-announce
+
+# Receive announcements (normal message receive)
+$ qntm message receive
+```
+
+### Relay Enforcement
+
+- `POST /v1/send` for announce channels requires `announce_sig` (Ed25519 over SHA-256 of `envelope_b64`)
+- The relay rejects messages not signed by the registered posting key
+- Read receipts are disabled for announce channels (messages persist)
+- Only the master key can delete the channel (`POST /v1/announce/delete`)
+
+### Unit Tests
+
+```bash
+$ go test ./announce/ -v
+```
+
+```output
+--- PASS: TestGenerateChannelKeys (0.00s)
+--- PASS: TestSignVerifyRegister (0.00s)
+--- PASS: TestSignVerifyRotate (0.00s)
+--- PASS: TestSignVerifyDelete (0.00s)
+--- PASS: TestSignVerifyEnvelope (0.00s)
+--- PASS: TestSignVerifyRoundTrip (0.00s)
+--- PASS: TestInvalidSignatureFormats (0.00s)
+--- PASS: TestAnnounceChannelFullFlow (0.00s)
+PASS
+ok  	github.com/corpo/qntm/announce
+```

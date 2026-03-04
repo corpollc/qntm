@@ -41,6 +41,7 @@ type readReceiptPayload struct {
 type sendEnvelopeRequest struct {
 	ConvID      string `json:"conv_id"`
 	EnvelopeB64 string `json:"envelope_b64"`
+	AnnounceSig string `json:"announce_sig,omitempty"` // transport-layer sig for announce channels
 }
 
 type sendEnvelopeResponse struct {
@@ -386,6 +387,86 @@ func (h *HTTPStorageProvider) StoreEnvelope(convID types.ConversationID, data []
 		return 0, fmt.Errorf("invalid sequenced send response: missing seq")
 	}
 	return result.Seq, nil
+}
+
+// StoreAnnounceEnvelope stores an envelope with an announce transport-layer signature.
+func (h *HTTPStorageProvider) StoreAnnounceEnvelope(convID types.ConversationID, data []byte, announceSig string) (int64, error) {
+	reqBody, err := json.Marshal(sendEnvelopeRequest{
+		ConvID:      hex.EncodeToString(convID[:]),
+		EnvelopeB64: base64.StdEncoding.EncodeToString(data),
+		AnnounceSig: announceSig,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode send request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, h.sequencedSendURL(), bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.doWithRetry(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if len(respBody) > 0 {
+			return 0, fmt.Errorf("announce send failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		return 0, fmt.Errorf("announce send failed: HTTP %d", resp.StatusCode)
+	}
+
+	var result sendEnvelopeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to decode announce send response: %w", err)
+	}
+	return result.Seq, nil
+}
+
+// AnnounceRegister registers a new announce channel with the worker.
+func (h *HTTPStorageProvider) AnnounceRegister(payload json.RawMessage) error {
+	req, err := http.NewRequest(http.MethodPost, h.BaseURL+"/v1/announce/register", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.doWithRetry(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("announce register failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+// AnnounceDelete deletes an announce channel via the worker.
+func (h *HTTPStorageProvider) AnnounceDelete(payload json.RawMessage) error {
+	req, err := http.NewRequest(http.MethodPost, h.BaseURL+"/v1/announce/delete", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.doWithRetry(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("announce delete failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
 }
 
 // PollEnvelopes fetches sequenced envelopes from fromSeq+1 without List().

@@ -128,8 +128,9 @@ type Message struct {
 type ConversationType string
 
 const (
-	ConversationTypeDirect ConversationType = "direct"
-	ConversationTypeGroup  ConversationType = "group"
+	ConversationTypeDirect   ConversationType = "direct"
+	ConversationTypeGroup    ConversationType = "group"
+	ConversationTypeAnnounce ConversationType = "announce"
 )
 
 // Conversation represents a messaging conversation

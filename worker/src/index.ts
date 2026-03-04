@@ -70,6 +70,39 @@ type ReadReceiptPayload = {
 type SendPayload = {
 	conv_id: string;
 	envelope_b64: string;
+	announce_sig?: string; // hex Ed25519 sig over SHA-256(envelope_b64), required for announce channels
+};
+
+// --- Announce channel types ---
+
+const announceProto = "qntm-announce-v1";
+
+type AnnounceChannelMeta = {
+	name: string;
+	conv_id: string;
+	master_pk: string; // base64url Ed25519 public key
+	posting_pk: string; // base64url Ed25519 public key
+};
+
+type AnnounceRegisterPayload = {
+	name: string;
+	conv_id: string;
+	master_pk: string;
+	posting_pk: string;
+	sig: string; // hex Ed25519 sig over pipe-delimited signable
+};
+
+type AnnounceRotatePayload = {
+	conv_id: string;
+	new_posting_pk: string;
+	master_pk: string;
+	sig: string;
+};
+
+type AnnounceDeletePayload = {
+	conv_id: string;
+	master_pk: string;
+	sig: string;
 };
 
 type PollConversation = {
@@ -159,6 +192,34 @@ async function verifyReceiptSignature(payload: ReadReceiptPayload): Promise<bool
 
 function isHexID(value: string, expectedLength: number): boolean {
 	return new RegExp(`^[0-9a-f]{${expectedLength}}$`, "i").test(value);
+}
+
+// --- Announce channel helpers ---
+
+function announceMetaKey(convID: string): string {
+	return `/__announce__/${convID}/meta.json`;
+}
+
+async function getAnnounceMeta(env: Env, convID: string): Promise<AnnounceChannelMeta | null> {
+	const raw = await env.QNTM_KV.get(announceMetaKey(convID), "text");
+	if (!raw) return null;
+	return JSON.parse(raw) as AnnounceChannelMeta;
+}
+
+async function verifyEd25519Hex(publicKeyBase64URL: string, message: Uint8Array, signatureHex: string): Promise<boolean> {
+	const sigBytes = fromHex(signatureHex);
+	if (!sigBytes || sigBytes.length !== 64) return false;
+
+	const pkBytes = fromBase64URL(publicKeyBase64URL);
+	if (pkBytes.length !== 32) return false;
+
+	const key = await crypto.subtle.importKey("raw", pkBytes, { name: "Ed25519" }, false, ["verify"]);
+	return crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, message);
+}
+
+async function verifyAnnounceSig(publicKeyBase64URL: string, plaintext: string, signatureHex: string): Promise<boolean> {
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plaintext)));
+	return verifyEd25519Hex(publicKeyBase64URL, digest, signatureHex);
 }
 
 async function nextSequence(env: Env, convID: string): Promise<number> {
@@ -267,6 +328,20 @@ export default {
 					return errorResponse("envelope too large", 413);
 				}
 
+				// Announce channel write gate: if this conv_id is an announce
+				// channel, require a valid transport-layer signature from the
+				// channel's posting key.
+				const announceMeta = await getAnnounceMeta(env, payload.conv_id);
+				if (announceMeta) {
+					if (!payload.announce_sig || typeof payload.announce_sig !== "string") {
+						return errorResponse("announce channel requires announce_sig", 403);
+					}
+					const sigValid = await verifyAnnounceSig(announceMeta.posting_pk, payload.envelope_b64, payload.announce_sig);
+					if (!sigValid) {
+						return errorResponse("invalid announce channel signature", 403);
+					}
+				}
+
 				const seq = await nextSequence(env, payload.conv_id);
 				const key = `/${payload.conv_id}/msg/${seq}.cbor`;
 				await env.QNTM_KV.put(key, envelopeBytes, { expirationTtl: ttl });
@@ -336,6 +411,163 @@ export default {
 				return jsonResponse({ conversations: conversationResults }, 200);
 			}
 
+			// --- Announce channel management endpoints ---
+
+			if (request.method === "POST" && path === "/v1/announce/register") {
+				let payload: AnnounceRegisterPayload;
+				try {
+					payload = (await request.json()) as AnnounceRegisterPayload;
+				} catch {
+					return errorResponse("invalid register payload", 400);
+				}
+
+				if (
+					!payload ||
+					typeof payload.name !== "string" || payload.name.length === 0 || payload.name.length > 64 ||
+					typeof payload.conv_id !== "string" ||
+					typeof payload.master_pk !== "string" ||
+					typeof payload.posting_pk !== "string" ||
+					typeof payload.sig !== "string"
+				) {
+					return errorResponse("invalid register fields", 400);
+				}
+
+				payload.conv_id = payload.conv_id.toLowerCase();
+				if (!isHexID(payload.conv_id, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+
+				// Reject if channel already exists
+				const existing = await getAnnounceMeta(env, payload.conv_id);
+				if (existing) {
+					return errorResponse("announce channel already exists", 409);
+				}
+
+				// Verify master key signature: SHA-256("qntm-announce-v1|register|{name}|{conv_id}|{posting_pk}")
+				const registerSignable = `${announceProto}|register|${payload.name}|${payload.conv_id}|${payload.posting_pk}`;
+				const registerValid = await verifyAnnounceSig(payload.master_pk, registerSignable, payload.sig);
+				if (!registerValid) {
+					return errorResponse("invalid register signature", 403);
+				}
+
+				const meta: AnnounceChannelMeta = {
+					name: payload.name,
+					conv_id: payload.conv_id,
+					master_pk: payload.master_pk,
+					posting_pk: payload.posting_pk,
+				};
+				await env.QNTM_KV.put(announceMetaKey(payload.conv_id), JSON.stringify(meta));
+				return jsonResponse({ registered: true, name: meta.name, conv_id: meta.conv_id }, 201);
+			}
+
+			if (request.method === "POST" && path === "/v1/announce/rotate") {
+				let payload: AnnounceRotatePayload;
+				try {
+					payload = (await request.json()) as AnnounceRotatePayload;
+				} catch {
+					return errorResponse("invalid rotate payload", 400);
+				}
+
+				if (
+					!payload ||
+					typeof payload.conv_id !== "string" ||
+					typeof payload.new_posting_pk !== "string" ||
+					typeof payload.master_pk !== "string" ||
+					typeof payload.sig !== "string"
+				) {
+					return errorResponse("invalid rotate fields", 400);
+				}
+
+				payload.conv_id = payload.conv_id.toLowerCase();
+				if (!isHexID(payload.conv_id, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+
+				const rotateMeta = await getAnnounceMeta(env, payload.conv_id);
+				if (!rotateMeta) {
+					return errorResponse("announce channel not found", 404);
+				}
+
+				// Only the registered master key can rotate
+				if (payload.master_pk !== rotateMeta.master_pk) {
+					return errorResponse("master key mismatch", 403);
+				}
+
+				const rotateSignable = `${announceProto}|rotate|${payload.conv_id}|${payload.new_posting_pk}`;
+				const rotateValid = await verifyAnnounceSig(payload.master_pk, rotateSignable, payload.sig);
+				if (!rotateValid) {
+					return errorResponse("invalid rotate signature", 403);
+				}
+
+				rotateMeta.posting_pk = payload.new_posting_pk;
+				await env.QNTM_KV.put(announceMetaKey(payload.conv_id), JSON.stringify(rotateMeta));
+				return jsonResponse({ rotated: true, conv_id: rotateMeta.conv_id }, 200);
+			}
+
+			if (request.method === "POST" && path === "/v1/announce/delete") {
+				let payload: AnnounceDeletePayload;
+				try {
+					payload = (await request.json()) as AnnounceDeletePayload;
+				} catch {
+					return errorResponse("invalid delete payload", 400);
+				}
+
+				if (
+					!payload ||
+					typeof payload.conv_id !== "string" ||
+					typeof payload.master_pk !== "string" ||
+					typeof payload.sig !== "string"
+				) {
+					return errorResponse("invalid delete fields", 400);
+				}
+
+				payload.conv_id = payload.conv_id.toLowerCase();
+				if (!isHexID(payload.conv_id, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+
+				const deleteMeta = await getAnnounceMeta(env, payload.conv_id);
+				if (!deleteMeta) {
+					return errorResponse("announce channel not found", 404);
+				}
+
+				if (payload.master_pk !== deleteMeta.master_pk) {
+					return errorResponse("master key mismatch", 403);
+				}
+
+				const deleteSignable = `${announceProto}|delete|${payload.conv_id}`;
+				const deleteValid = await verifyAnnounceSig(payload.master_pk, deleteSignable, payload.sig);
+				if (!deleteValid) {
+					return errorResponse("invalid delete signature", 403);
+				}
+
+				// Delete channel metadata
+				await env.QNTM_KV.delete(announceMetaKey(payload.conv_id));
+
+				// Delete all messages in the channel
+				const msgPrefix = `/${payload.conv_id}/msg/`;
+				const msgList = await env.QNTM_KV.list({ prefix: msgPrefix, limit: 1000 });
+				for (const entry of msgList.keys) {
+					await env.QNTM_KV.delete(entry.name);
+				}
+
+				return jsonResponse({ deleted: true, conv_id: payload.conv_id }, 200);
+			}
+
+			if (request.method === "GET" && path === "/v1/announce/info") {
+				const convID = (url.searchParams.get("conv_id") || "").toLowerCase();
+				if (!isHexID(convID, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+
+				const infoMeta = await getAnnounceMeta(env, convID);
+				if (!infoMeta) {
+					return errorResponse("announce channel not found", 404);
+				}
+
+				return jsonResponse({ name: infoMeta.name, conv_id: infoMeta.conv_id, posting_pk: infoMeta.posting_pk }, 200);
+			}
+
 			if (request.method === "POST" && path === "/v1/receipt") {
 			let payload: ReadReceiptPayload;
 			try {
@@ -376,6 +608,12 @@ export default {
 			const signatureValid = await verifyReceiptSignature(payload);
 			if (!signatureValid) {
 				return errorResponse("invalid receipt signature", 401);
+			}
+
+			// Block receipt-based deletion for announce channels.
+			const receiptAnnounceMeta = await getAnnounceMeta(env, payload.conv_id);
+			if (receiptAnnounceMeta) {
+				return errorResponse("receipts not supported for announce channels", 403);
 			}
 
 			const messagePrefix = `/${payload.conv_id}/msg/`;

@@ -12,6 +12,7 @@ qntm implements the **QSP (qntm Secure Messaging Protocol) v1.1** — a protocol
 - **Drop box agnostic** — any object store works (Cloudflare KV, S3, R2, local filesystem)
 - **Invite-bootstrapped** — out-of-band invite link (iMessage, Signal, etc.) establishes the channel
 - **Engagement policies** — local-only trust tiers govern agent autonomy per channel
+- **Announce channels** — one-way broadcast channels with owner-only posting enforced at the relay
 
 ## Architecture
 
@@ -103,6 +104,34 @@ See [docs/QSP-v1.1.md](docs/QSP-v1.1.md) for the full specification.
 | `inner-circle` | High | Full access, 24/7, proactive coordination |
 | `one-time` | Scoped | Single-purpose, expires after completion |
 
+## Announce Channels
+
+Announce channels are one-way broadcast channels where only the channel owner can post. The relay enforces this via a transport-layer Ed25519 signature.
+
+**Two key pairs are generated:**
+- **Master key** — creates/deletes channels, rotates the posting key. Back this up; it cannot be recovered.
+- **Posting key** — signs each message envelope. The relay verifies this before accepting writes.
+
+```bash
+# Owner creates a channel
+qntm announce create qntm-announce
+# Output includes a subscribe command to share with readers
+
+# Owner posts to the channel
+qntm announce post qntm-announce "System maintenance at 2am UTC"
+
+# Subscribers join with the invite token
+qntm announce subscribe <conv-id> --token <token> --name qntm-announce
+
+# Subscribers receive via normal message receive
+qntm message receive
+
+# Owner can delete the channel
+qntm announce delete qntm-announce
+```
+
+Subscribers cannot post — the relay rejects any message not signed by the posting key. Messages are not auto-deleted by read receipts. Only the master key can delete the channel.
+
 ## Project Structure
 
 ```
@@ -115,6 +144,7 @@ qntm/
 ├── message/           # Envelope creation, encryption, verification
 ├── dropbox/           # Storage transport interfaces and providers
 ├── group/             # Group membership and rekey operations
+├── announce/          # Announce/broadcast channel keys and signatures
 ├── gate/              # qntm-gate threshold approval + forwarding
 ├── registry/          # Handle commitment registry service
 ├── handle/            # Handle reveal verification and local cache
