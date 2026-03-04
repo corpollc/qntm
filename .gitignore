@@ -5,3 +5,7 @@
 /ui/aim-chat/*.tsbuildinfo
 /ui/aim-chat/vite.config.js
 /ui/aim-chat/vite.config.d.ts
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
