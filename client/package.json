@@ -1,14 +1,29 @@
 {
-  "name": "@qntm/client",
-  "version": "0.1.0",
+  "name": "@corpollc/qntm",
+  "version": "0.4.2",
+  "description": "QSP v1.1 protocol library — identity, invites, encrypted messaging, and threshold gate signing",
   "type": "module",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/corpollc/qntm.git",
+    "directory": "client"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cross": "vitest run --config vitest.cross.config.ts"
