@@ -10,7 +10,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # environment: npm
     defaults:
       run:
         working-directory: client
@@ -20,7 +19,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
 
       - run: npm ci
 
@@ -35,4 +33,4 @@ jobs:
       - name: Set package version
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
 
-      - run: npm publish --access public
+      - run: npm publish --access public --provenance
