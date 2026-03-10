@@ -21,17 +21,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Check npm version
-        run: |
-          node --version
-          npm --version
-
-      - name: Update npm
-        run: npm install -g npm@latest
+      - run: npm install -g npm@latest
         working-directory: .
-
-      - name: Check updated npm version
-        run: npm --version
 
       - run: npm ci
 
