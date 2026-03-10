@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
-        run: pip install -e python-dist/[test] || pip install -e "python-dist/" pytest
+        run: pip install -e "python-dist/" && pip install pytest
 
       - name: Run Python tests
         run: python -m pytest python-dist/tests/ -v
