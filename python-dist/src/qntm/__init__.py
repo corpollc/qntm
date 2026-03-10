@@ -1,68 +1,46 @@
-"""qntm - secure messaging protocol CLI."""
+"""qntm - secure messaging protocol client library and CLI."""
 
-__version__ = "0.1.6"
+__version__ = "0.2.0"
 
-
-import os
-import platform
-import subprocess
-import sys
-
-
-def _get_binary_name():
-    """Return the platform-specific binary name."""
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-
-    # Normalize arch
-    arch_map = {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }
-    arch = arch_map.get(machine)
-    if not arch:
-        return None
-
-    # Normalize OS
-    os_map = {
-        "linux": "linux",
-        "darwin": "darwin",
-        "windows": "windows",
-    }
-    osname = os_map.get(system)
-    if not osname:
-        return None
-
-    name = f"qntm-{osname}-{arch}"
-    if osname == "windows":
-        name += ".exe"
-    return name
-
-
-def _find_binary():
-    """Find the Go binary bundled in this package."""
-    bin_dir = os.path.join(os.path.dirname(__file__), "bin")
-    name = _get_binary_name()
-    if not name:
-        return None
-    path = os.path.join(bin_dir, name)
-    if os.path.isfile(path):
-        return path
-    return None
-
-
-def main():
-    """Entry point: exec the bundled Go binary."""
-    binary = _find_binary()
-    if not binary:
-        plat = f"{platform.system()}/{platform.machine()}"
-        print(
-            f"qntm: no pre-built binary for {plat}.\n"
-            f"Build from source: https://github.com/corpollc/qntm",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    os.execv(binary, [binary] + sys.argv[1:])
+from .constants import (
+    DEFAULT_SUITE,
+    DEFAULT_TTL_SECONDS,
+    PROTOCOL_VERSION,
+)
+from .crypto import (
+    QSP1Suite,
+    ed25519_private_key_to_x25519,
+    ed25519_public_key_to_x25519,
+)
+from .identity import (
+    base64url_decode,
+    base64url_encode,
+    generate_conversation_id,
+    generate_identity,
+    generate_message_id,
+    key_id_from_public_key,
+    key_id_to_string,
+    public_key_to_string,
+    validate_identity,
+    verify_key_id,
+)
+from .invite import (
+    add_participant,
+    create_conversation,
+    create_invite,
+    derive_conversation_keys,
+    invite_from_url,
+    invite_to_token,
+    validate_invite,
+)
+from .message import (
+    create_message,
+    decrypt_message,
+    default_handshake_ttl,
+    default_ttl,
+    deserialize_envelope,
+    serialize_envelope,
+    validate_envelope,
+    verify_message_signature,
+)
+from .cbor import marshal_canonical, unmarshal

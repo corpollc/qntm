@@ -8,4 +8,5 @@
 {"key":"compact_tier2_dep_levels","value":"5"}
 {"key":"compaction_enabled","value":"false"}
 {"key":"issue_prefix","value":"qntm"}
+{"key":"kv.memory.default-dropbox-is-always-https-inbox-qntm-corpo","value":"Default dropbox is ALWAYS https://inbox.qntm.corpo.llc - never local filesystem. Both CLI and aim-ui should use this by default."}
 {"key":"schema_version","value":"6"}

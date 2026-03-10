@@ -92,4 +92,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ conversationId }),
     }),
+
+  getSettings: () =>
+    request<{ dropboxUrl: string; defaultDropboxUrl: string }>('/api/settings'),
+
+  updateSettings: (settings: { dropboxUrl: string }) =>
+    request<{ dropboxUrl: string; defaultDropboxUrl: string }>('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(settings),
+    }),
 }

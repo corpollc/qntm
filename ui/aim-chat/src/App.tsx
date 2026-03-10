@@ -50,6 +50,11 @@ export default function App() {
   const [createdInviteToken, setCreatedInviteToken] = useState('')
   const [composer, setComposer] = useState('')
 
+  const [showSettings, setShowSettings] = useState(false)
+  const [dropboxUrl, setDropboxUrl] = useState('')
+  const [defaultDropboxUrl, setDefaultDropboxUrl] = useState('')
+  const [dropboxDraft, setDropboxDraft] = useState('')
+
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [isWorking, setIsWorking] = useState(false)
@@ -97,6 +102,7 @@ export default function App() {
 
   useEffect(() => {
     void initializeProfiles()
+    void loadSettings()
   }, [])
 
   useEffect(() => {
@@ -166,6 +172,32 @@ export default function App() {
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load profiles')
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const response = await api.getSettings()
+      setDropboxUrl(response.dropboxUrl)
+      setDefaultDropboxUrl(response.defaultDropboxUrl)
+      setDropboxDraft(response.dropboxUrl)
+    } catch {
+      // Settings not critical for startup
+    }
+  }
+
+  async function onSaveSettings() {
+    setIsWorking(true)
+    try {
+      const response = await api.updateSettings({ dropboxUrl: dropboxDraft.trim() })
+      setDropboxUrl(response.dropboxUrl)
+      setDropboxDraft(response.dropboxUrl)
+      setStatus('Settings saved')
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save settings')
+    } finally {
+      setIsWorking(false)
     }
   }
 
@@ -425,10 +457,66 @@ export default function App() {
       <div className="aim-window">
         <header className="title-bar">
           <span className="title-text">qntm Instant Messenger</span>
-          <span className="title-detail">Classic mode</span>
+          <span className="title-detail">
+            <button
+              className="settings-toggle"
+              type="button"
+              onClick={() => setShowSettings(!showSettings)}
+            >
+              {showSettings ? 'Back to chat' : 'Settings'}
+            </button>
+          </span>
         </header>
 
         <div className="aim-body">
+          {showSettings ? (
+            <div className="settings-page">
+              <section className="panel">
+                <h2>Dropbox Endpoint</h2>
+                <p className="settings-description">
+                  The dropbox is the relay server that stores and delivers encrypted messages.
+                </p>
+
+                <label className="label" htmlFor="dropbox-url">Dropbox URL</label>
+                <input
+                  id="dropbox-url"
+                  className="input"
+                  placeholder={defaultDropboxUrl}
+                  value={dropboxDraft}
+                  onChange={(event) => setDropboxDraft(event.target.value)}
+                />
+
+                <div className="row">
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={isWorking}
+                    onClick={() => void onSaveSettings()}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={isWorking || dropboxDraft === defaultDropboxUrl}
+                    onClick={() => {
+                      setDropboxDraft(defaultDropboxUrl)
+                    }}
+                  >
+                    Reset to default
+                  </button>
+                </div>
+
+                <div className="meta">
+                  <div><strong>Current:</strong> {dropboxUrl}</div>
+                  <div><strong>Default:</strong> {defaultDropboxUrl}</div>
+                </div>
+              </section>
+
+              {error && <div className="error-banner">{error}</div>}
+            </div>
+          ) : (
+          <>
           <aside className="sidebar">
             <section className="panel">
               <h2>Identities</h2>
@@ -608,6 +696,8 @@ export default function App() {
 
             {error && <div className="error-banner">{error}</div>}
           </main>
+          </>
+          )}
         </div>
       </div>
     </div>

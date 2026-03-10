@@ -37,9 +37,10 @@ const APP_ROOT = path.resolve(__dirname, '..')
 
 const DATA_ROOT = path.join(APP_ROOT, '.qntm-ui')
 const PROFILES_ROOT = path.join(DATA_ROOT, 'profiles')
-const SHARED_DROPBOX_DIR = path.join(DATA_ROOT, 'dropbox')
 const STORE_PATH = path.join(DATA_ROOT, 'store.json')
 const SELF_ECHO_WINDOW_MS = Number(process.env.QNTM_UI_SELF_ECHO_WINDOW_MS || 60000)
+
+const DEFAULT_DROPBOX_URL = 'https://inbox.qntm.corpo.llc'
 
 const PORT = Number(process.env.QNTM_UI_API_PORT || 8787)
 
@@ -67,7 +68,6 @@ function fileExists(targetPath) {
 function ensureDataRoot() {
   fs.mkdirSync(DATA_ROOT, { recursive: true })
   fs.mkdirSync(PROFILES_ROOT, { recursive: true })
-  fs.mkdirSync(SHARED_DROPBOX_DIR, { recursive: true })
 }
 
 function loadStore() {
@@ -89,6 +89,7 @@ function loadStore() {
     profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
     history: parsed.history && typeof parsed.history === 'object' ? parsed.history : {},
     contacts: parsed.contacts && typeof parsed.contacts === 'object' ? parsed.contacts : {},
+    dropboxUrl: parsed.dropboxUrl || DEFAULT_DROPBOX_URL,
   }
 }
 
@@ -206,56 +207,87 @@ function getConversationCryptoState(profile, conversationId) {
   }
 }
 
-// --- Message storage (local filesystem dropbox) ---
+// --- Message storage (remote HTTP dropbox) ---
 
-function getDropboxDir(conversationId) {
-  const dir = path.join(SHARED_DROPBOX_DIR, conversationId)
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
+function getDropboxUrl(store) {
+  return store.dropboxUrl || DEFAULT_DROPBOX_URL
 }
 
-function storeEnvelope(conversationId, envelope) {
-  const dir = getDropboxDir(conversationId)
-  const msgIdHex = bytesToHex(envelope.msg_id)
-  const filePath = path.join(dir, `${msgIdHex}.cbor`)
+async function sendEnvelopeToDropbox(store, conversationId, envelope) {
+  const dropboxUrl = getDropboxUrl(store)
   const data = serializeEnvelope(envelope)
-  fs.writeFileSync(filePath, Buffer.from(data))
+  const envelopeB64 = Buffer.from(data).toString('base64')
+
+  const response = await fetch(`${dropboxUrl}/v1/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conv_id: conversationId,
+      envelope_b64: envelopeB64,
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`dropbox send failed: ${response.status} ${body}`)
+  }
+
+  return response.json()
 }
 
-function loadEnvelopes(conversationId) {
-  const dir = getDropboxDir(conversationId)
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.cbor')).sort()
+async function pollEnvelopesFromDropbox(store, conversationId, fromSeq) {
+  const dropboxUrl = getDropboxUrl(store)
+
+  const response = await fetch(`${dropboxUrl}/v1/poll`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conversations: [{ conv_id: conversationId, from_seq: fromSeq }],
+      max_messages: 200,
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`dropbox poll failed: ${response.status} ${body}`)
+  }
+
+  const result = await response.json()
+  const convResult = result.conversations?.[0]
+  if (!convResult) {
+    return { upToSeq: fromSeq, envelopes: [] }
+  }
 
   const envelopes = []
-  for (const file of files) {
+  for (const msg of convResult.messages || []) {
     try {
-      const data = new Uint8Array(fs.readFileSync(path.join(dir, file)))
-      const envelope = deserializeEnvelope(data)
-      envelopes.push(envelope)
+      const raw = Buffer.from(msg.envelope_b64, 'base64')
+      const envelope = deserializeEnvelope(new Uint8Array(raw))
+      envelopes.push({ seq: msg.seq, envelope })
     } catch {
-      // Skip corrupt files
+      // Skip corrupt envelopes
     }
   }
-  return envelopes
+
+  return { upToSeq: convResult.up_to_seq, envelopes }
 }
 
 function loadCursor(profile, conversationId) {
   const cursorsPath = path.join(profile.configDir, 'cursors.json')
   if (!fileExists(cursorsPath)) {
-    return new Set()
+    return 0
   }
   const raw = JSON.parse(fs.readFileSync(cursorsPath, 'utf8'))
-  const seen = raw[conversationId] || []
-  return new Set(seen)
+  return raw[conversationId] || 0
 }
 
-function saveCursor(profile, conversationId, seenSet) {
+function saveCursor(profile, conversationId, seq) {
   const cursorsPath = path.join(profile.configDir, 'cursors.json')
   let raw = {}
   if (fileExists(cursorsPath)) {
     raw = JSON.parse(fs.readFileSync(cursorsPath, 'utf8'))
   }
-  raw[conversationId] = Array.from(seenSet)
+  raw[conversationId] = seq
   fs.writeFileSync(cursorsPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
 }
 
@@ -693,8 +725,8 @@ app.post('/api/profiles/:profileId/messages/send', route(async (req, res) => {
   const bodyBytes = new TextEncoder().encode(text)
   const envelope = createMessage(identity, convCrypto, 'text', bodyBytes, undefined, defaultTTL())
 
-  // Store encrypted envelope to shared dropbox
-  storeEnvelope(conversationId, envelope)
+  // Send encrypted envelope to remote dropbox
+  await sendEnvelopeToDropbox(store, conversationId, envelope)
 
   const message = {
     id: bytesToHex(envelope.msg_id),
@@ -744,9 +776,9 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
     return
   }
 
-  // Load all envelopes from dropbox and check for new ones
-  const seenSet = loadCursor(profile, conversationId)
-  const allEnvelopes = loadEnvelopes(conversationId)
+  // Poll remote dropbox for new envelopes
+  const fromSeq = loadCursor(profile, conversationId)
+  const { upToSeq, envelopes } = await pollEnvelopesFromDropbox(store, conversationId, fromSeq)
 
   const selfKeyIdHex = bytesToHex(identity.keyID).toLowerCase()
   const selfLookupKeys = senderLookupKeys(selfKeyIdHex)
@@ -754,14 +786,9 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
 
   const acceptedMessages = []
   let suppressedSelfEchoes = 0
-  let newMessages = false
 
-  for (const envelope of allEnvelopes) {
+  for (const { envelope } of envelopes) {
     const msgIdHex = bytesToHex(envelope.msg_id)
-    if (seenSet.has(msgIdHex)) continue
-
-    seenSet.add(msgIdHex)
-    newMessages = true
 
     // Decrypt the message
     let decrypted
@@ -819,8 +846,8 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
     acceptedMessages.push(message)
   }
 
-  if (newMessages) {
-    saveCursor(profile, conversationId, seenSet)
+  if (upToSeq > fromSeq) {
+    saveCursor(profile, conversationId, upToSeq)
     saveStore(store)
   }
 
@@ -829,6 +856,31 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
     suppressedSelfEchoes,
     output: '',
     warning: '',
+  })
+}))
+
+// =========== SETTINGS ===========
+
+app.get('/api/settings', route(async (_req, res) => {
+  const store = loadStore()
+  res.json({
+    dropboxUrl: store.dropboxUrl || DEFAULT_DROPBOX_URL,
+    defaultDropboxUrl: DEFAULT_DROPBOX_URL,
+  })
+}))
+
+app.post('/api/settings', route(async (req, res) => {
+  const store = loadStore()
+
+  if (typeof req.body.dropboxUrl === 'string') {
+    const url = req.body.dropboxUrl.trim().replace(/\/+$/, '')
+    store.dropboxUrl = url || DEFAULT_DROPBOX_URL
+  }
+
+  saveStore(store)
+  res.json({
+    dropboxUrl: store.dropboxUrl || DEFAULT_DROPBOX_URL,
+    defaultDropboxUrl: DEFAULT_DROPBOX_URL,
   })
 }))
 
