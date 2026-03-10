@@ -1,0 +1,14 @@
+export declare const PROTOCOL_VERSION = 1;
+export declare const DEFAULT_SUITE = "QSP-1";
+export declare const MAX_GROUP_SIZE = 128;
+export declare const EPOCH_GRACE_PERIOD_SECONDS = 86400;
+export declare const PROTO_PREFIX = "qntm/qsp/v1";
+export declare const INFO_ROOT = "qntm/qsp/v1/root";
+export declare const INFO_AEAD = "qntm/qsp/v1/aead";
+export declare const INFO_NONCE = "qntm/qsp/v1/nonce";
+export declare const INFO_AEAD_V11 = "qntm/qsp/v1.1/aead";
+export declare const INFO_NONCE_V11 = "qntm/qsp/v1.1/nonce";
+export declare const INFO_WRAP_V11 = "qntm/qsp/v1.1/wrap";
+export declare const DEFAULT_TTL_SECONDS: number;
+export declare const DEFAULT_HANDSHAKE_TTL_SECONDS: number;
+export declare const CLOCK_SKEW_SECONDS = 300;

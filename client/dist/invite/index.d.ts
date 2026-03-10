@@ -1,0 +1,12 @@
+import type { Identity, InvitePayload, ConversationKeys, Conversation } from '../types.js';
+export declare function createInvite(inviterIdentity: Identity, convType: 'direct' | 'group'): InvitePayload;
+export declare function serializeInvite(invite: InvitePayload): Uint8Array;
+export declare function deserializeInvite(data: Uint8Array): InvitePayload;
+export declare function validateInvite(invite: InvitePayload): void;
+export declare function inviteToToken(invite: InvitePayload): string;
+export declare function inviteToURL(invite: InvitePayload, baseURL: string): string;
+export declare function inviteFromURL(inviteURL: string): InvitePayload;
+export declare function deriveConversationKeys(invite: InvitePayload): ConversationKeys;
+export declare function createConversation(invite: InvitePayload, keys: ConversationKeys): Conversation;
+export declare function addParticipant(conv: Conversation, pubkey: Uint8Array): void;
+export declare function isParticipant(conv: Conversation, pubkey: Uint8Array): boolean;

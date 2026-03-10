@@ -1,0 +1,11 @@
+import type { Identity, Conversation, OuterEnvelope, InnerPayload, Message } from '../types.js';
+export declare function createMessage(senderIdentity: Identity, conversation: Conversation, bodyType: string, body: Uint8Array, refs: unknown[] | undefined, ttlSeconds: number): OuterEnvelope;
+export declare function decryptMessage(envelope: OuterEnvelope, conversation: Conversation): Message;
+export declare function verifyMessageSignature(envelope: OuterEnvelope, innerPayload: InnerPayload): boolean;
+export declare function validateEnvelope(envelope: OuterEnvelope): void;
+export declare function validateInnerPayload(inner: InnerPayload): void;
+export declare function serializeEnvelope(envelope: OuterEnvelope): Uint8Array;
+export declare function deserializeEnvelope(data: Uint8Array): OuterEnvelope;
+export declare function checkExpiry(envelope: OuterEnvelope): boolean;
+export declare function defaultTTL(): number;
+export declare function defaultHandshakeTTL(): number;
