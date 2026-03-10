@@ -3,25 +3,42 @@ import express from 'express'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { fileURLToPath } from 'url'
 import crypto from 'crypto'
-import { createQntmInvocationResolver } from './qntm-invocation.mjs'
 
-const execFileAsync = promisify(execFile)
+// Import @qntm/client library (replaces Go binary invocations)
+import {
+  generateIdentity as clientGenerateIdentity,
+  keyIDToString,
+  publicKeyToString,
+  serializeIdentity,
+  deserializeIdentity,
+  validateIdentity,
+  keyIDFromPublicKey,
+  createInvite,
+  inviteToToken,
+  inviteFromURL,
+  deriveConversationKeys,
+  createConversation,
+  addParticipant,
+  createMessage,
+  decryptMessage,
+  serializeEnvelope,
+  deserializeEnvelope,
+  defaultTTL,
+  marshalCanonical,
+  unmarshalCanonical,
+  base64UrlEncode,
+} from '@qntm/client'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const APP_ROOT = path.resolve(__dirname, '..')
-const REPO_ROOT = path.resolve(APP_ROOT, '..', '..')
 
 const DATA_ROOT = path.join(APP_ROOT, '.qntm-ui')
 const PROFILES_ROOT = path.join(DATA_ROOT, 'profiles')
 const SHARED_DROPBOX_DIR = path.join(DATA_ROOT, 'dropbox')
 const STORE_PATH = path.join(DATA_ROOT, 'store.json')
-const DEFAULT_STORAGE = parseStorage(process.env.QNTM_UI_DEFAULT_STORAGE || '')
-const DEFAULT_DROPBOX_URL = (process.env.QNTM_UI_DEFAULT_DROPBOX_URL || 'https://inbox.qntm.corpo.llc').trim()
 const SELF_ECHO_WINDOW_MS = Number(process.env.QNTM_UI_SELF_ECHO_WINDOW_MS || 60000)
 
 const PORT = Number(process.env.QNTM_UI_API_PORT || 8787)
@@ -36,27 +53,6 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 32)
-}
-
-function expandHome(inputPath) {
-  if (!inputPath) {
-    return inputPath
-  }
-  if (inputPath.startsWith('~/')) {
-    return path.join(os.homedir(), inputPath.slice(2))
-  }
-  return inputPath
-}
-
-function parseStorage(inputStorage) {
-  if (!inputStorage) {
-    return ''
-  }
-  if (inputStorage.startsWith('local:')) {
-    const dir = expandHome(inputStorage.slice('local:'.length))
-    return `local:${path.resolve(dir)}`
-  }
-  return inputStorage
 }
 
 function fileExists(targetPath) {
@@ -113,135 +109,43 @@ function getProfileOrThrow(store, id) {
 
 function ensureProfileFilesystem(profile) {
   fs.mkdirSync(profile.configDir, { recursive: true })
-
-  if (profile.storage && profile.storage.startsWith('local:')) {
-    const localDir = profile.storage.slice('local:'.length)
-    fs.mkdirSync(localDir, { recursive: true })
-  }
 }
 
-const resolveQntmInvocation = createQntmInvocationResolver({
-  repoRoot: REPO_ROOT,
-  dataRoot: DATA_ROOT,
-  env: process.env,
-  fileExists,
-})
+// --- Identity helpers ---
 
-function parseJSONOutput(output) {
-  if (!output) {
+function bytesToHex(bytes) {
+  return Buffer.from(bytes).toString('hex')
+}
+
+function hexToBytes(hex) {
+  return new Uint8Array(Buffer.from(hex, 'hex'))
+}
+
+function loadIdentity(profile) {
+  const identityPath = path.join(profile.configDir, 'identity.json')
+  if (!fileExists(identityPath)) {
     return null
   }
-  try {
-    const parsed = JSON.parse(output)
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch {
-    return null
+
+  const raw = JSON.parse(fs.readFileSync(identityPath, 'utf8'))
+  return {
+    privateKey: hexToBytes(raw.private_key),
+    publicKey: hexToBytes(raw.public_key),
+    keyID: hexToBytes(raw.key_id),
   }
 }
 
-function qntmString(data, key) {
-  if (!data || typeof data !== 'object') {
-    return ''
+function saveIdentity(profile, identity) {
+  const identityPath = path.join(profile.configDir, 'identity.json')
+  const data = {
+    private_key: bytesToHex(identity.privateKey),
+    public_key: bytesToHex(identity.publicKey),
+    key_id: bytesToHex(identity.keyID),
   }
-
-  const value = data[key]
-  return typeof value === 'string' ? value : ''
+  fs.writeFileSync(identityPath, JSON.stringify(data, null, 2) + '\n', 'utf8')
 }
 
-async function runQntm(profile, args) {
-  ensureProfileFilesystem(profile)
-
-  const invocation = await resolveQntmInvocation(profile)
-  const finalArgs = [...invocation.prefixArgs, '--config-dir', profile.configDir]
-
-  if (profile.storage) {
-    finalArgs.push('--storage', profile.storage)
-  }
-
-  if (profile.dropboxUrl) {
-    finalArgs.push('--dropbox-url', profile.dropboxUrl)
-  }
-
-  finalArgs.push(...args)
-
-  try {
-    const { stdout, stderr } = await execFileAsync(invocation.command, finalArgs, {
-      cwd: REPO_ROOT,
-      maxBuffer: 8 * 1024 * 1024,
-    })
-
-    const stdoutTrimmed = stdout.trim()
-    const stderrTrimmed = stderr.trim()
-    const payload = parseJSONOutput(stdoutTrimmed)
-    if (!payload) {
-      const wrapped = new Error('qntm command returned invalid JSON')
-      wrapped.statusCode = 502
-      throw wrapped
-    }
-    if (payload.ok !== true) {
-      const wrapped = new Error(qntmString(payload, 'error') || 'qntm command failed')
-      wrapped.statusCode = 400
-      throw wrapped
-    }
-
-    return {
-      stdout: stdoutTrimmed,
-      stderr: stderrTrimmed,
-      payload,
-      data: payload.data && typeof payload.data === 'object' ? payload.data : {},
-    }
-  } catch (error) {
-    if (Number.isInteger(error?.statusCode) &&
-      typeof error?.stdout !== 'string' &&
-      typeof error?.stderr !== 'string') {
-      throw error
-    }
-
-    const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : ''
-    const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : ''
-    const parsedError = parseJSONOutput(stdout)
-    const parsedDetail = qntmString(parsedError, 'error')
-    const detail = parsedDetail || stderr || stdout || error.message
-
-    const wrapped = new Error(`qntm command failed: ${detail}`)
-    wrapped.statusCode = 400
-    throw wrapped
-  }
-}
-
-function bytesToHex(value) {
-  if (Array.isArray(value)) {
-    return Buffer.from(value).toString('hex')
-  }
-
-  if (typeof value === 'string') {
-    if (/^[0-9a-f]{32}$/i.test(value)) {
-      return value.toLowerCase()
-    }
-
-    try {
-      const decoded = Buffer.from(value, 'base64url')
-      if (decoded.length === 16) {
-        return decoded.toString('hex')
-      }
-    } catch {
-      // Ignore decode errors and fall through.
-    }
-
-    try {
-      const decoded = Buffer.from(value, 'base64')
-      if (decoded.length === 16) {
-        return decoded.toString('hex')
-      }
-    } catch {
-      // Ignore decode errors and fall through.
-    }
-
-    return value
-  }
-
-  return ''
-}
+// --- Conversation helpers ---
 
 function loadConversations(profile) {
   const conversationsPath = path.join(profile.configDir, 'conversations.json')
@@ -249,53 +153,120 @@ function loadConversations(profile) {
     return []
   }
 
-  const raw = fs.readFileSync(conversationsPath, 'utf8')
-  const parsed = JSON.parse(raw)
-
-  if (!Array.isArray(parsed)) {
+  const raw = JSON.parse(fs.readFileSync(conversationsPath, 'utf8'))
+  if (!Array.isArray(raw)) {
     return []
   }
 
-  return parsed
-    .map((entry) => {
-      const id = bytesToHex(entry.id)
-      if (!id) {
-        return null
-      }
-
-      const participantsRaw = Array.isArray(entry.participants) ? entry.participants : []
-      const participants = participantsRaw
-        .map((participant) => bytesToHex(participant))
-        .filter((participant) => participant)
-
-      const fallbackName = `${entry.type || 'chat'}-${id.slice(0, 8)}`
-
-      return {
-        id,
-        name: entry.name || fallbackName,
-        type: entry.type || 'direct',
-        participants,
-        createdAt: entry.created_at || null,
-      }
-    })
-    .filter((entry) => entry !== null)
+  return raw
 }
 
+function saveConversations(profile, conversations) {
+  const conversationsPath = path.join(profile.configDir, 'conversations.json')
+  fs.writeFileSync(conversationsPath, JSON.stringify(conversations, null, 2) + '\n', 'utf8')
+}
+
+function formatConversationsForClient(conversations) {
+  return conversations.map((conv) => {
+    const id = conv.id
+    const participants = Array.isArray(conv.participants) ? conv.participants : []
+    const fallbackName = `${conv.type || 'chat'}-${id.slice(0, 8)}`
+    return {
+      id,
+      name: conv.name || fallbackName,
+      type: conv.type || 'direct',
+      participants,
+      createdAt: conv.createdAt || null,
+    }
+  })
+}
+
+function findConversation(profile, conversationId) {
+  const conversations = loadConversations(profile)
+  return conversations.find((c) => c.id === conversationId) || null
+}
+
+function getConversationCryptoState(profile, conversationId) {
+  const conv = findConversation(profile, conversationId)
+  if (!conv) {
+    return null
+  }
+  // Reconstruct the conversation object with crypto keys
+  return {
+    id: hexToBytes(conv.id),
+    type: conv.type,
+    keys: {
+      root: hexToBytes(conv.keys.root),
+      aeadKey: hexToBytes(conv.keys.aeadKey),
+      nonceKey: hexToBytes(conv.keys.nonceKey),
+    },
+    participants: (conv.participants || []).map((p) => hexToBytes(p)),
+    createdAt: new Date(conv.createdAt || Date.now()),
+    currentEpoch: conv.currentEpoch || 0,
+  }
+}
+
+// --- Message storage (local filesystem dropbox) ---
+
+function getDropboxDir(conversationId) {
+  const dir = path.join(SHARED_DROPBOX_DIR, conversationId)
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function storeEnvelope(conversationId, envelope) {
+  const dir = getDropboxDir(conversationId)
+  const msgIdHex = bytesToHex(envelope.msg_id)
+  const filePath = path.join(dir, `${msgIdHex}.cbor`)
+  const data = serializeEnvelope(envelope)
+  fs.writeFileSync(filePath, Buffer.from(data))
+}
+
+function loadEnvelopes(conversationId) {
+  const dir = getDropboxDir(conversationId)
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.cbor')).sort()
+
+  const envelopes = []
+  for (const file of files) {
+    try {
+      const data = new Uint8Array(fs.readFileSync(path.join(dir, file)))
+      const envelope = deserializeEnvelope(data)
+      envelopes.push(envelope)
+    } catch {
+      // Skip corrupt files
+    }
+  }
+  return envelopes
+}
+
+function loadCursor(profile, conversationId) {
+  const cursorsPath = path.join(profile.configDir, 'cursors.json')
+  if (!fileExists(cursorsPath)) {
+    return new Set()
+  }
+  const raw = JSON.parse(fs.readFileSync(cursorsPath, 'utf8'))
+  const seen = raw[conversationId] || []
+  return new Set(seen)
+}
+
+function saveCursor(profile, conversationId, seenSet) {
+  const cursorsPath = path.join(profile.configDir, 'cursors.json')
+  let raw = {}
+  if (fileExists(cursorsPath)) {
+    raw = JSON.parse(fs.readFileSync(cursorsPath, 'utf8'))
+  }
+  raw[conversationId] = Array.from(seenSet)
+  fs.writeFileSync(cursorsPath, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+}
+
+// --- Contact helpers ---
+
 function extractSenderKey(sender) {
-  if (typeof sender !== 'string') {
-    return ''
-  }
-
+  if (typeof sender !== 'string') return ''
   const trimmed = sender.trim()
-  if (!trimmed) {
-    return ''
-  }
-
+  if (!trimmed) return ''
   const wrappedMatch = trimmed.match(/\(([^()]+)\)\s*$/)
-  if (wrappedMatch) {
-    return wrappedMatch[1].trim()
-  }
-
+  if (wrappedMatch) return wrappedMatch[1].trim()
   return trimmed
 }
 
@@ -305,46 +276,25 @@ function normalizeSenderKey(sender) {
 
 function senderLookupKeys(...labels) {
   const result = new Set()
-
   for (const value of labels) {
-    if (typeof value !== 'string') {
-      continue
-    }
-
+    if (typeof value !== 'string') continue
     const raw = value.trim()
-    if (!raw) {
-      continue
-    }
-
-    const normalizedRaw = raw.toLowerCase()
-    if (normalizedRaw) {
-      result.add(normalizedRaw)
-    }
-
+    if (!raw) continue
+    result.add(raw.toLowerCase())
     const extracted = normalizeSenderKey(raw)
-    if (extracted) {
-      result.add(extracted)
-    }
+    if (extracted) result.add(extracted)
   }
-
   return result
 }
 
 function ensureContactsBucket(store, profileId) {
-  if (!store.contacts || typeof store.contacts !== 'object') {
-    store.contacts = {}
-  }
-
-  if (!store.contacts[profileId] || typeof store.contacts[profileId] !== 'object') {
-    store.contacts[profileId] = {}
-  }
-
+  if (!store.contacts || typeof store.contacts !== 'object') store.contacts = {}
+  if (!store.contacts[profileId] || typeof store.contacts[profileId] !== 'object') store.contacts[profileId] = {}
   return store.contacts[profileId]
 }
 
 function listContacts(store, profileId) {
   const bucket = ensureContactsBucket(store, profileId)
-
   return Object.entries(bucket)
     .filter(([key, value]) => key && typeof value === 'string' && value.trim())
     .sort(([left], [right]) => left.localeCompare(right))
@@ -353,10 +303,7 @@ function listContacts(store, profileId) {
 
 function resolveContactAlias(store, profileId, sender) {
   const normalizedKey = normalizeSenderKey(sender)
-  if (!normalizedKey) {
-    return ''
-  }
-
+  if (!normalizedKey) return ''
   const bucket = ensureContactsBucket(store, profileId)
   const alias = bucket[normalizedKey]
   return typeof alias === 'string' ? alias.trim() : ''
@@ -367,29 +314,17 @@ function formatMessageForClient(store, profileId, message) {
   const alias = message.direction === 'incoming'
     ? resolveContactAlias(store, profileId, senderKey)
     : ''
-
-  return {
-    ...message,
-    senderKey,
-    sender: alias || message.sender,
-  }
+  return { ...message, senderKey, sender: alias || message.sender }
 }
 
 function ensureHistoryBucket(store, profileId, conversationId) {
-  if (!store.history[profileId]) {
-    store.history[profileId] = {}
-  }
-
-  if (!store.history[profileId][conversationId]) {
-    store.history[profileId][conversationId] = []
-  }
-
+  if (!store.history[profileId]) store.history[profileId] = {}
+  if (!store.history[profileId][conversationId]) store.history[profileId][conversationId] = []
   return store.history[profileId][conversationId]
 }
 
 function addHistoryMessage(store, profileId, conversationId, message) {
   const bucket = ensureHistoryBucket(store, profileId, conversationId)
-
   const dedupeWindowMs = 1500
   const hasRecentDuplicate = bucket.some((existing) => {
     const sameCore =
@@ -397,100 +332,27 @@ function addHistoryMessage(store, profileId, conversationId, message) {
       existing.sender === message.sender &&
       existing.bodyType === message.bodyType &&
       existing.text === message.text
-
-    if (!sameCore) {
-      return false
-    }
-
+    if (!sameCore) return false
     const existingTs = Date.parse(existing.createdAt)
     const incomingTs = Date.parse(message.createdAt)
-    if (Number.isNaN(existingTs) || Number.isNaN(incomingTs)) {
-      return false
-    }
-
+    if (Number.isNaN(existingTs) || Number.isNaN(incomingTs)) return false
     return Math.abs(existingTs - incomingTs) <= dedupeWindowMs
   })
-
-  if (hasRecentDuplicate) {
-    return
-  }
-
+  if (hasRecentDuplicate) return
   bucket.push(message)
-
-  if (bucket.length > 1000) {
-    bucket.splice(0, bucket.length - 1000)
-  }
+  if (bucket.length > 1000) bucket.splice(0, bucket.length - 1000)
 }
 
 function hasRecentOutgoingMatch(bucket, message, windowMs) {
   const incomingTs = Date.parse(message.createdAt)
-  if (Number.isNaN(incomingTs)) {
-    return false
-  }
-
+  if (Number.isNaN(incomingTs)) return false
   return bucket.some((existing) => {
-    if (existing.direction !== 'outgoing') {
-      return false
-    }
-
-    if (existing.bodyType !== message.bodyType || existing.text !== message.text) {
-      return false
-    }
-
+    if (existing.direction !== 'outgoing') return false
+    if (existing.bodyType !== message.bodyType || existing.text !== message.text) return false
     const existingTs = Date.parse(existing.createdAt)
-    if (Number.isNaN(existingTs)) {
-      return false
-    }
-
+    if (Number.isNaN(existingTs)) return false
     return Math.abs(existingTs - incomingTs) <= windowMs
   })
-}
-
-function decodeUnsafeBody(messageData) {
-  const unsafeBody = qntmString(messageData, 'unsafe_body')
-  if (unsafeBody) {
-    return unsafeBody
-  }
-
-  const unsafeBodyB64 = qntmString(messageData, 'unsafe_body_b64')
-  if (!unsafeBodyB64) {
-    return ''
-  }
-
-  try {
-    return Buffer.from(unsafeBodyB64, 'base64').toString('utf8')
-  } catch {
-    return ''
-  }
-}
-
-function parseReceiveDataMessages(rawMessages, fallbackConversationId) {
-  if (!Array.isArray(rawMessages)) {
-    return []
-  }
-
-  return rawMessages
-    .filter((entry) => entry && typeof entry === 'object')
-    .map((entry) => {
-      const conversationId = qntmString(entry, 'conversation_id') || fallbackConversationId
-      const sender = qntmString(entry, 'sender')
-      const senderKID = qntmString(entry, 'sender_kid').toLowerCase()
-      const bodyType = qntmString(entry, 'body_type') || 'text'
-      const rawText = decodeUnsafeBody(entry)
-      const text = rawText || (bodyType === 'text' ? '' : `[${bodyType}]`)
-      const createdTS = Number(entry.created_ts)
-
-      return {
-        id: qntmString(entry, 'message_id') || crypto.randomUUID(),
-        conversationId,
-        direction: 'incoming',
-        sender: sender || 'unknown',
-        senderKey: senderKID || extractSenderKey(sender),
-        bodyType,
-        text,
-        createdAt: Number.isFinite(createdTS) ? new Date(createdTS * 1000).toISOString() : new Date().toISOString(),
-      }
-    })
 }
 
 function route(handler) {
@@ -502,6 +364,8 @@ function route(handler) {
     }
   }
 }
+
+// =========== ROUTES ===========
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
@@ -523,28 +387,20 @@ app.post('/api/profiles', route(async (req, res) => {
   const slug = slugify(name) || `agent-${store.profiles.length + 1}`
   const id = `${slug}-${crypto.randomBytes(2).toString('hex')}`
 
-  const configDirInput = typeof req.body.configDir === 'string' ? req.body.configDir : ''
-  const storageInput = typeof req.body.storage === 'string' ? req.body.storage : ''
-  const dropboxUrlInput = typeof req.body.dropboxUrl === 'string' ? req.body.dropboxUrl.trim() : ''
-  const qntmBin = typeof req.body.qntmBin === 'string' ? req.body.qntmBin.trim() : ''
-
-  const configDir = path.resolve(expandHome(configDirInput || path.join(PROFILES_ROOT, id, 'config')))
-  const storage = parseStorage(storageInput || DEFAULT_STORAGE)
-  const dropboxUrl = dropboxUrlInput || (!storage ? DEFAULT_DROPBOX_URL : '')
+  const configDir = path.resolve(path.join(PROFILES_ROOT, id, 'config'))
 
   const profile = {
     id,
     name,
     configDir,
-    storage,
-    dropboxUrl,
-    qntmBin,
+    storage: '',
+    dropboxUrl: '',
+    qntmBin: '',
   }
 
   ensureProfileFilesystem(profile)
 
   store.profiles.push(profile)
-
   if (!store.activeProfileId) {
     store.activeProfileId = id
   }
@@ -566,19 +422,17 @@ app.post('/api/profiles/:profileId/select', route(async (req, res) => {
 app.get('/api/profiles/:profileId/identity', route(async (req, res) => {
   const store = loadStore()
   const profile = getProfileOrThrow(store, req.params.profileId)
-  const identityPath = path.join(profile.configDir, 'identity.json')
+  const identity = loadIdentity(profile)
 
-  if (!fileExists(identityPath)) {
+  if (!identity) {
     res.json({ exists: false, keyId: '', publicKey: '' })
     return
   }
 
-  const output = await runQntm(profile, ['identity', 'show'])
-
   res.json({
     exists: true,
-    keyId: qntmString(output.data, 'key_id'),
-    publicKey: qntmString(output.data, 'public_key'),
+    keyId: bytesToHex(identity.keyID),
+    publicKey: bytesToHex(identity.publicKey),
   })
 }))
 
@@ -586,27 +440,30 @@ app.post('/api/profiles/:profileId/identity/generate', route(async (req, res) =>
   const store = loadStore()
   const profile = getProfileOrThrow(store, req.params.profileId)
 
-  const generateOutput = await runQntm(profile, ['identity', 'generate'])
-  const showOutput = await runQntm(profile, ['identity', 'show'])
-  const showKeyID = qntmString(showOutput.data, 'key_id')
-  const showPublicKey = qntmString(showOutput.data, 'public_key')
+  // Generate identity using @qntm/client
+  const identity = clientGenerateIdentity()
 
-  if (showKeyID) {
-    for (const p of store.profiles) {
-      const bucket = ensureContactsBucket(store, p.id)
-      if (!bucket[showKeyID.toLowerCase()]) {
-        bucket[showKeyID.toLowerCase()] = profile.name
-      }
+  // Save to disk
+  ensureProfileFilesystem(profile)
+  saveIdentity(profile, identity)
+
+  const keyIdHex = bytesToHex(identity.keyID)
+
+  // Auto-add self as contact in all profiles
+  for (const p of store.profiles) {
+    const bucket = ensureContactsBucket(store, p.id)
+    if (!bucket[keyIdHex.toLowerCase()]) {
+      bucket[keyIdHex.toLowerCase()] = profile.name
     }
-    saveStore(store)
   }
+  saveStore(store)
 
   res.json({
-    output: generateOutput.stdout,
+    output: 'Identity generated using @qntm/client',
     identity: {
       exists: true,
-      keyId: showKeyID,
-      publicKey: showPublicKey,
+      keyId: keyIdHex,
+      publicKey: bytesToHex(identity.publicKey),
     },
   })
 }))
@@ -616,7 +473,7 @@ app.get('/api/profiles/:profileId/conversations', route(async (req, res) => {
   const profile = getProfileOrThrow(store, req.params.profileId)
   const conversations = loadConversations(profile)
 
-  res.json({ conversations })
+  res.json({ conversations: formatConversationsForClient(conversations) })
 }))
 
 app.get('/api/profiles/:profileId/contacts', route(async (req, res) => {
@@ -661,42 +518,66 @@ app.post('/api/profiles/:profileId/invite/create', route(async (req, res) => {
   const store = loadStore()
   const profile = getProfileOrThrow(store, req.params.profileId)
 
-  const rawName = typeof req.body.name === 'string' ? req.body.name.trim() : ''
-  const isGroup = Boolean(req.body.group)
-  const selfJoin = req.body.selfJoin !== false
-
-  const createArgs = ['convo', 'create']
-  if (isGroup) {
-    createArgs.push('--group')
-  }
-  if (rawName) {
-    createArgs.push('--name', rawName)
-  }
-  if (!selfJoin) {
-    createArgs.push('--self-join=false')
-  }
-
-  const createOutput = await runQntm(profile, createArgs)
-  const inviteToken = qntmString(createOutput.data, 'invite_token')
-  const conversationID = qntmString(createOutput.data, 'conversation_id')
-
-  if (!inviteToken) {
-    const error = new Error('failed to parse invite token from qntm output')
-    error.statusCode = 500
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile; generate one first')
+    error.statusCode = 400
     throw error
   }
 
+  const rawName = typeof req.body.name === 'string' ? req.body.name.trim() : ''
+  const selfJoin = req.body.selfJoin !== false
+
+  // Create invite using @qntm/client
+  const invite = createInvite(identity, 'direct')
+  const token = inviteToToken(invite)
+  const convIdHex = bytesToHex(invite.conv_id)
+
+  // Derive keys and create conversation
+  const keys = deriveConversationKeys(invite)
+  const conv = createConversation(invite, keys)
+
+  // If self-join, add own identity as participant
+  if (selfJoin) {
+    addParticipant(conv, identity.publicKey)
+  }
+
+  // Save conversation to disk
+  const conversations = loadConversations(profile)
+  const convRecord = {
+    id: convIdHex,
+    name: rawName || `Chat ${convIdHex.slice(0, 8)}`,
+    type: 'direct',
+    keys: {
+      root: bytesToHex(keys.root),
+      aeadKey: bytesToHex(keys.aeadKey),
+      nonceKey: bytesToHex(keys.nonceKey),
+    },
+    participants: conv.participants.map((p) => bytesToHex(p)),
+    createdAt: new Date().toISOString(),
+    currentEpoch: 0,
+  }
+  conversations.push(convRecord)
+  saveConversations(profile, conversations)
+
   res.json({
-    inviteToken,
-    conversationId: conversationID.toLowerCase(),
-    output: createOutput.stdout,
-    conversations: loadConversations(profile),
+    inviteToken: token,
+    conversationId: convIdHex.toLowerCase(),
+    output: 'Invite created using @qntm/client',
+    conversations: formatConversationsForClient(conversations),
   })
 }))
 
 app.post('/api/profiles/:profileId/invite/accept', route(async (req, res) => {
   const store = loadStore()
   const profile = getProfileOrThrow(store, req.params.profileId)
+
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile; generate one first')
+    error.statusCode = 400
+    throw error
+  }
 
   const token = typeof req.body.token === 'string' ? req.body.token.trim() : ''
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : ''
@@ -707,18 +588,49 @@ app.post('/api/profiles/:profileId/invite/accept', route(async (req, res) => {
     throw error
   }
 
-  const args = ['convo', 'join', token]
-  if (name) {
-    args.push('--name', name)
+  // Parse invite and derive keys using @qntm/client
+  const invite = inviteFromURL(token)
+  const keys = deriveConversationKeys(invite)
+  const conv = createConversation(invite, keys)
+
+  // Add self as participant
+  addParticipant(conv, identity.publicKey)
+
+  const convIdHex = bytesToHex(invite.conv_id)
+
+  // Check if conversation already exists
+  const conversations = loadConversations(profile)
+  const existing = conversations.find((c) => c.id === convIdHex)
+  if (existing) {
+    res.json({
+      conversationId: convIdHex.toLowerCase(),
+      output: 'Conversation already exists',
+      conversations: formatConversationsForClient(conversations),
+    })
+    return
   }
 
-  const output = await runQntm(profile, args)
-  const conversationID = qntmString(output.data, 'conversation_id')
+  // Save conversation
+  const convRecord = {
+    id: convIdHex,
+    name: name || `Chat ${convIdHex.slice(0, 8)}`,
+    type: invite.type || 'direct',
+    keys: {
+      root: bytesToHex(keys.root),
+      aeadKey: bytesToHex(keys.aeadKey),
+      nonceKey: bytesToHex(keys.nonceKey),
+    },
+    participants: conv.participants.map((p) => bytesToHex(p)),
+    createdAt: new Date().toISOString(),
+    currentEpoch: 0,
+  }
+  conversations.push(convRecord)
+  saveConversations(profile, conversations)
 
   res.json({
-    conversationId: conversationID.toLowerCase(),
-    output: output.stdout,
-    conversations: loadConversations(profile),
+    conversationId: convIdHex.toLowerCase(),
+    output: 'Invite accepted using @qntm/client',
+    conversations: formatConversationsForClient(conversations),
   })
 }))
 
@@ -763,25 +675,44 @@ app.post('/api/profiles/:profileId/messages/send', route(async (req, res) => {
     throw error
   }
 
-  const output = await runQntm(profile, ['send', conversationId, text])
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
+
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    const error = new Error(`conversation ${conversationId} not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Create and encrypt message using @qntm/client
+  const bodyBytes = new TextEncoder().encode(text)
+  const envelope = createMessage(identity, convCrypto, 'text', bodyBytes, undefined, defaultTTL())
+
+  // Store encrypted envelope to shared dropbox
+  storeEnvelope(conversationId, envelope)
 
   const message = {
-    id: crypto.randomUUID(),
+    id: bytesToHex(envelope.msg_id),
     conversationId,
     direction: 'outgoing',
     sender: profile.name,
     senderKey: '',
     bodyType: 'text',
     text,
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(envelope.created_ts * 1000).toISOString(),
   }
 
   addHistoryMessage(store, profile.id, conversationId, message)
   saveStore(store)
 
   res.json({
-    output: output.stdout,
-    warning: output.stderr,
+    output: 'Message sent using @qntm/client',
+    warning: '',
     message: formatMessageForClient(store, profile.id, message),
   })
 }))
@@ -800,54 +731,104 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
     throw error
   }
 
-  const historyBucket = ensureHistoryBucket(store, profile.id, conversationId)
-  const identityOutput = await runQntm(profile, ['identity', 'show'])
-  const selfLookupKeys = senderLookupKeys(qntmString(identityOutput.data, 'key_id'))
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
 
-  const output = await runQntm(profile, ['recv', conversationId])
-  const incomingMessages = parseReceiveDataMessages(output.data.messages, conversationId)
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    res.json({ messages: [], suppressedSelfEchoes: 0, output: '', warning: '' })
+    return
+  }
+
+  // Load all envelopes from dropbox and check for new ones
+  const seenSet = loadCursor(profile, conversationId)
+  const allEnvelopes = loadEnvelopes(conversationId)
+
+  const selfKeyIdHex = bytesToHex(identity.keyID).toLowerCase()
+  const selfLookupKeys = senderLookupKeys(selfKeyIdHex)
+  const historyBucket = ensureHistoryBucket(store, profile.id, conversationId)
+
   const acceptedMessages = []
   let suppressedSelfEchoes = 0
+  let newMessages = false
 
-  if (incomingMessages.length > 0) {
-    for (const message of incomingMessages) {
-      const senderKeys = senderLookupKeys(message.sender, message.senderKey)
-      let isSelfSender = false
-      for (const key of senderKeys) {
-        if (selfLookupKeys.has(key)) {
-          isSelfSender = true
-          break
-        }
+  for (const envelope of allEnvelopes) {
+    const msgIdHex = bytesToHex(envelope.msg_id)
+    if (seenSet.has(msgIdHex)) continue
+
+    seenSet.add(msgIdHex)
+    newMessages = true
+
+    // Decrypt the message
+    let decrypted
+    try {
+      decrypted = decryptMessage(envelope, convCrypto)
+    } catch (err) {
+      // Skip messages we can't decrypt
+      continue
+    }
+
+    const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
+    const bodyText = new TextDecoder().decode(new Uint8Array(decrypted.inner.body))
+    const bodyType = decrypted.inner.body_type || 'text'
+    const createdAt = new Date(envelope.created_ts * 1000).toISOString()
+
+    const message = {
+      id: msgIdHex,
+      conversationId,
+      direction: 'incoming',
+      sender: senderKidHex,
+      senderKey: senderKidHex,
+      bodyType,
+      text: bodyText,
+      createdAt,
+    }
+
+    // Check if this is a self-echo
+    const senderKeys = senderLookupKeys(senderKidHex)
+    let isSelfSender = false
+    for (const key of senderKeys) {
+      if (selfLookupKeys.has(key)) {
+        isSelfSender = true
+        break
       }
+    }
 
-      if (isSelfSender) {
-        if (hasRecentOutgoingMatch(historyBucket, message, SELF_ECHO_WINDOW_MS)) {
-          suppressedSelfEchoes += 1
-          continue
-        }
-
-        const normalizedSelfMessage = {
-          ...message,
-          direction: 'outgoing',
-          sender: profile.name,
-          senderKey: '',
-        }
-        addHistoryMessage(store, profile.id, conversationId, normalizedSelfMessage)
-        acceptedMessages.push(normalizedSelfMessage)
+    if (isSelfSender) {
+      if (hasRecentOutgoingMatch(historyBucket, message, SELF_ECHO_WINDOW_MS)) {
+        suppressedSelfEchoes++
         continue
       }
 
-      addHistoryMessage(store, profile.id, conversationId, message)
-      acceptedMessages.push(message)
+      const normalizedSelfMessage = {
+        ...message,
+        direction: 'outgoing',
+        sender: profile.name,
+        senderKey: '',
+      }
+      addHistoryMessage(store, profile.id, conversationId, normalizedSelfMessage)
+      acceptedMessages.push(normalizedSelfMessage)
+      continue
     }
+
+    addHistoryMessage(store, profile.id, conversationId, message)
+    acceptedMessages.push(message)
+  }
+
+  if (newMessages) {
+    saveCursor(profile, conversationId, seenSet)
     saveStore(store)
   }
 
   res.json({
-    messages: acceptedMessages.map((message) => formatMessageForClient(store, profile.id, message)),
+    messages: acceptedMessages.map((msg) => formatMessageForClient(store, profile.id, msg)),
     suppressedSelfEchoes,
-    output: output.stdout,
-    warning: output.stderr,
+    output: '',
+    warning: '',
   })
 }))
 
@@ -862,4 +843,5 @@ app.listen(PORT, () => {
   ensureDataRoot()
   console.log(`qntm AIM API listening on http://localhost:${PORT}`)
   console.log(`data root: ${DATA_ROOT}`)
+  console.log('Using @qntm/client library (no Go binary required)')
 })
