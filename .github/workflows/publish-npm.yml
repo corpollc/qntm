@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    environment: npm
+    # environment: npm
     defaults:
       run:
         working-directory: client
