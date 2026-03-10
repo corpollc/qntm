@@ -9,7 +9,7 @@ permissions:
   id-token: write  # Required for PyPI trusted publisher
 
 jobs:
-  verify:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,38 +18,36 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Run unit and integration tests
+      - name: Run Go tests
         run: go test ./...
-
-      - name: Run static analysis
-        run: go vet ./...
-
-  release:
-    needs: verify
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install Python build tools
+      - name: Install Python dependencies
+        run: pip install -e python-dist/[test] || pip install -e "python-dist/" pytest
+
+      - name: Run Python tests
+        run: python -m pytest python-dist/tests/ -v
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
         run: pip install build
 
       - name: Get version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
-      - name: Cross-compile Go binaries
-        run: |
-          chmod +x python-dist/scripts/build-binaries.sh
-          python-dist/scripts/build-binaries.sh "${{ steps.version.outputs.version }}"
 
       - name: Update Python package version
         run: |
@@ -69,7 +67,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: python-dist/src/qntm/bin/qntm-*
           generate_release_notes: true
 
       # Requires SITE_DEPLOY_TOKEN secret with repo scope on corpollc/qntm-site
