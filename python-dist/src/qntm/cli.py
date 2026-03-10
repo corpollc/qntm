@@ -601,6 +601,7 @@ def cmd_history(args):
 def cmd_version(args):
     _output("version", {
         "version": __version__,
+        "runtime": "python",
         "update_hint": "",
     })
 
