@@ -86,6 +86,17 @@ var gateServeCmd = &cobra.Command{
 			}
 			srv = secureSrv
 		}
+
+		// Configure vault for credential encryption at rest
+		if vaultKey := os.Getenv("GATE_VAULT_KEY"); vaultKey != "" {
+			vault, err := gate.NewEnvVaultFromBase64(vaultKey)
+			if err != nil {
+				return fmt.Errorf("invalid GATE_VAULT_KEY: %w", err)
+			}
+			srv.Vault = vault
+			fmt.Println("Vault: AES-256-GCM credential encryption enabled")
+		}
+
 		addr := fmt.Sprintf(":%d", gatePort)
 		if token != "" {
 			fmt.Printf("qntm-gate server starting on %s (admin auth enabled, stateless)\n", addr)

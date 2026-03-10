@@ -213,7 +213,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 
 // ExecuteIfReady scans the conversation, checks threshold, and executes if ready.
 // Returns the result and records a gate.executed marker when execution occurs.
-func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore OrganizationStore) (*ExecuteResult, error) {
+func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgStore OrganizationStore, vault ...VaultProvider) (*ExecuteResult, error) {
 	messages, err := reader.ReadGateMessages(org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read conversation: %w", err)
@@ -263,6 +263,16 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 		return result, fmt.Errorf("get credential: %w", err)
 	}
 	defer cred.Scrub() // zero credential material after use
+
+	// Decrypt credential if a vault provider is available
+	if len(vault) > 0 && vault[0] != nil {
+		decrypted, err := vault[0].Decrypt(cred.Value)
+		if err != nil {
+			result.Status = StatusApproved
+			return result, fmt.Errorf("decrypt credential: %w", err)
+		}
+		cred.Value = decrypted
+	}
 
 	var bodyReader io.Reader
 	if len(reqMsg.Payload) > 0 {

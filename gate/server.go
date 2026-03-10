@@ -45,6 +45,7 @@ func (s *MemoryConversationStore) WriteGateMessage(orgID string, msg *GateConver
 type Server struct {
 	OrgStore   OrganizationStore
 	ConvStore  MessageStore
+	Vault      VaultProvider
 	AdminToken string
 	mux        *http.ServeMux
 }
@@ -85,6 +86,7 @@ func newServer(adminToken string, orgStore OrganizationStore, convStore MessageS
 	s := &Server{
 		OrgStore:   orgStore,
 		ConvStore:  convStore,
+		Vault:      NoopVault{},
 		AdminToken: adminToken,
 		mux:        http.NewServeMux(),
 	}
@@ -208,6 +210,14 @@ func (s *Server) handleCredentials(w http.ResponseWriter, r *http.Request, orgID
 		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	// Encrypt credential value at rest
+	encrypted, err := s.Vault.Encrypt(cred.Value)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "encrypt credential: "+err.Error())
+		return
+	}
+	cred.Value = encrypted
+
 	if err := s.OrgStore.AddCredential(orgID, &cred); err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
@@ -340,7 +350,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 
 	// Auto-execute: scan the conversation and execute if threshold met
 	org2, _ := s.OrgStore.Get(orgID)
-	result, err := ExecuteIfReady(msg.RequestID, org2, s.ConvStore, s.OrgStore)
+	result, err := ExecuteIfReady(msg.RequestID, org2, s.ConvStore, s.OrgStore, s.Vault)
 	if err != nil {
 		// Not an error if just pending or expired — return the scan result
 		if result != nil {
@@ -371,7 +381,7 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request, orgID, re
 		return
 	}
 
-	result, err := ExecuteIfReady(requestID, org, s.ConvStore, s.OrgStore)
+	result, err := ExecuteIfReady(requestID, org, s.ConvStore, s.OrgStore, s.Vault)
 	if err != nil {
 		if result != nil {
 			writeJSON(w, http.StatusBadRequest, result)

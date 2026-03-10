@@ -44,3 +44,14 @@ from .message import (
     verify_message_signature,
 )
 from .cbor import marshal_canonical, unmarshal
+from .gate import (
+    GateClient,
+    GateError,
+    compute_payload_hash,
+    hash_request,
+    lookup_threshold,
+    sign_approval,
+    sign_request,
+    verify_approval,
+    verify_request,
+)
