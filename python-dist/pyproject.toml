@@ -13,6 +13,7 @@ dependencies = [
     "PyNaCl>=1.5.0",
     "cryptography>=42.0",
     "cbor2>=5.6",
+    "certifi>=2024.0",
 ]
 authors = [
     { name = "Corpo LLC", email = "hello@corpo.llc" },
@@ -34,7 +35,7 @@ Homepage = "https://qntm.corpo.llc"
 Repository = "https://github.com/corpollc/qntm"
 
 [project.scripts]
-qntm = "qntm:main"
+qntm = "qntm.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qntm"]

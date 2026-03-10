@@ -1,4 +1,4 @@
 """Allow running as `python -m qntm`."""
-from qntm import main
+from .cli import main
 
 main()
