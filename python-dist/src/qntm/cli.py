@@ -627,6 +627,14 @@ def main():
     parser = argparse.ArgumentParser(
         prog="qntm",
         description="qntm - agent-first secure messaging CLI",
+        epilog="""\
+quick start:
+  qntm identity generate                  create a new identity
+  qntm convo create --name mygroup        start a conversation, get an invite token
+  qntm convo join <token>                 accept an invite token
+  qntm send <conv> "hello"                send a message (conv = id or prefix)
+  qntm recv <conv>                        receive new messages""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--config-dir", dest="config_dir", default=None,
                         help="Configuration directory (default: ~/.qntm)")
