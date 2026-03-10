@@ -20,7 +20,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+
+      - name: Check npm version
+        run: |
+          node --version
+          npm --version
+
+      - name: Update npm
+        run: npm install -g npm@latest
+        working-directory: .
+
+      - name: Check updated npm version
+        run: npm --version
 
       - run: npm ci
 
@@ -35,6 +46,4 @@ jobs:
       - name: Set package version
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
 
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ""
+      - run: npm publish --access public --provenance
