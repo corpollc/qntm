@@ -38,5 +38,21 @@ export {
   resolveRecipe,
 } from './gate/index.js';
 
+export {
+  createGroupGenesisBody, parseGroupGenesisBody,
+  createGroupAddBody, parseGroupAddBody,
+  createGroupRemoveBody, parseGroupRemoveBody,
+  createGroupRekeyBody, parseGroupRekeyBody,
+  GroupState, processGroupMessage,
+  createRekey, applyRekey,
+} from './group/index.js';
+export type {
+  GroupMember, GroupGenesisBody, GroupAddBody,
+  GroupRemoveBody, GroupRekeyBody,
+} from './group/index.js';
+
+export { DropboxClient } from './dropbox/index.js';
+export type { ReceiveResult } from './dropbox/index.js';
+
 export * from './types.js';
 export * from './constants.js';

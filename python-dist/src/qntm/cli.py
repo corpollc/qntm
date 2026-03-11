@@ -62,6 +62,7 @@ from .identity import (
     base64url_decode,
     key_id_from_public_key,
 )
+from .naming import NamingStore
 
 AGENT_RULES = {
     "engagement_policy_scope": "local_only",
@@ -1704,8 +1705,94 @@ def cmd_version(args):
     })
 
 
-def _resolve_conversation(conversations, input_str):
-    """Resolve conversation by full hex ID or prefix."""
+# --- Naming commands ---
+
+
+def cmd_name_set(args):
+    config_dir = _get_config_dir(args)
+    _ensure_config_dir(config_dir)
+    store = NamingStore(config_dir)
+    kid_hex = args.kid_or_ref
+    store.set_identity_name(kid_hex, args.local_name)
+    short = kid_hex[:8] + "..." if len(kid_hex) > 8 else kid_hex
+    _output("name_set", {"kid": kid_hex, "name": args.local_name, "short": short})
+
+
+def cmd_name_list(args):
+    config_dir = _get_config_dir(args)
+    store = NamingStore(config_dir)
+    ids = store.list_identities()
+    convs = store.list_conversations()
+    entries = []
+    for kid, name in ids.items():
+        short = kid[:8] + "..." if len(kid) > 8 else kid
+        entries.append({"type": "identity", "id": kid, "short": short, "name": name})
+    for cid, name in convs.items():
+        short = cid[:8] + "..." if len(cid) > 8 else cid
+        entries.append({"type": "conversation", "id": cid, "short": short, "name": name})
+    _output("name_list", {"names": entries, "count": len(entries)})
+
+
+def cmd_name_remove(args):
+    config_dir = _get_config_dir(args)
+    store = NamingStore(config_dir)
+    if store.remove_identity_name(args.name):
+        _output("name_removed", {"name": args.name, "type": "identity"})
+        return
+    if store.remove_conversation_name(args.name):
+        _output("name_removed", {"name": args.name, "type": "conversation"})
+        return
+    _output("error", {"message": f"name {args.name!r} not found"}, ok=False)
+    sys.exit(1)
+
+
+def cmd_convo_name(args):
+    config_dir = _get_config_dir(args)
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation, config_dir)
+    if not conv_record:
+        _output("error", {"message": f"conversation not found: {args.conversation}"}, ok=False)
+        sys.exit(1)
+    conv_id_hex = conv_record["id"]
+    store = NamingStore(config_dir)
+    store.set_conversation_name(conv_id_hex, args.local_name)
+    short = conv_id_hex[:8] + "..." if len(conv_id_hex) > 8 else conv_id_hex
+    _output("convo_named", {"conv_id": conv_id_hex, "name": args.local_name, "short": short})
+
+
+def cmd_ref(args):
+    config_dir = _get_config_dir(args)
+    prefix = args.short_prefix.lower()
+    # Collect all known IDs from conversations, identity, and naming store
+    all_ids = set()
+    conversations = _load_conversations(config_dir)
+    for c in conversations:
+        all_ids.add(c["id"].lower())
+        for p in c.get("participants", []):
+            all_ids.add(p.lower())
+    identity = _load_identity(config_dir)
+    if identity:
+        all_ids.add(identity["keyID"].hex().lower())
+    store = NamingStore(config_dir)
+    for kid in store.all_known_ids():
+        all_ids.add(kid.lower())
+
+    matches = sorted([x for x in all_ids if x.startswith(prefix)])
+    if len(matches) == 0:
+        _output("error", {"message": f"no match for {prefix!r}"}, ok=False)
+        sys.exit(1)
+    elif len(matches) == 1:
+        _output("ref_resolved", {"id": matches[0], "prefix": prefix})
+    else:
+        _output("ref_ambiguous", {
+            "prefix": prefix,
+            "matches": matches,
+            "count": len(matches),
+        })
+
+
+def _resolve_conversation(conversations, input_str, config_dir=None):
+    """Resolve conversation by full hex ID, prefix, or local name."""
     input_lower = input_str.lower()
     # Exact match
     for c in conversations:
@@ -1715,6 +1802,17 @@ def _resolve_conversation(conversations, input_str):
     matches = [c for c in conversations if c["id"].lower().startswith(input_lower)]
     if len(matches) == 1:
         return matches[0]
+    # Name-based resolution (if config_dir available)
+    if config_dir is not None:
+        try:
+            store = NamingStore(config_dir)
+            resolved = store.resolve_conversation_by_name(input_str)
+            if resolved:
+                for c in conversations:
+                    if c["id"].lower() == resolved.lower():
+                        return c
+        except Exception:
+            pass
     return None
 
 
@@ -1767,6 +1865,10 @@ quick start:
     join_p.add_argument("--name", default="", help="Conversation name")
 
     convo_sub.add_parser("list", help="List conversations")
+
+    convo_name_p = convo_sub.add_parser("name", help="Set a local name for a conversation")
+    convo_name_p.add_argument("conversation", help="Conversation ID or prefix")
+    convo_name_p.add_argument("local_name", help="Local nickname")
 
     # send
     send_p = subparsers.add_parser("send", help="Send a text message")
@@ -1894,6 +1996,23 @@ quick start:
                                default="Bearer {value}",
                                help="Header value template (default: 'Bearer {value}')")
 
+    # name
+    name_parser = subparsers.add_parser("name", help="Manage local nicknames")
+    name_sub = name_parser.add_subparsers(dest="name_command")
+
+    name_set_p = name_sub.add_parser("set", help="Assign a local name to an identity (by KID)")
+    name_set_p.add_argument("kid_or_ref", help="Key ID (hex) or short prefix")
+    name_set_p.add_argument("local_name", help="Local nickname")
+
+    name_sub.add_parser("list", help="List all local names")
+
+    name_remove_p = name_sub.add_parser("remove", help="Remove a local name")
+    name_remove_p.add_argument("name", help="Name to remove")
+
+    # ref
+    ref_p = subparsers.add_parser("ref", help="Resolve a short prefix to a full ID")
+    ref_p.add_argument("short_prefix", help="Short hex prefix")
+
     # version
     subparsers.add_parser("version", help="Print version")
 
@@ -1917,6 +2036,8 @@ quick start:
             cmd_convo_join(args)
         elif args.convo_command == "list":
             cmd_convo_list(args)
+        elif args.convo_command == "name":
+            cmd_convo_name(args)
         else:
             convo_parser.print_help()
     elif args.command == "group":
@@ -1961,6 +2082,17 @@ quick start:
         cmd_gate_config(args)
     elif args.command == "gate-secret":
         cmd_gate_secret(args)
+    elif args.command == "name":
+        if args.name_command == "set":
+            cmd_name_set(args)
+        elif args.name_command == "list":
+            cmd_name_list(args)
+        elif args.name_command == "remove":
+            cmd_name_remove(args)
+        else:
+            name_parser.print_help()
+    elif args.command == "ref":
+        cmd_ref(args)
     elif args.command == "version":
         cmd_version(args)
     else:
