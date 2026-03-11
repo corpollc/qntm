@@ -9,6 +9,9 @@ import json
 import os
 import sys
 import time
+import uuid as _uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 from . import __version__
 from .identity import (
@@ -29,6 +32,35 @@ from .message import (
     default_ttl,
     deserialize_envelope,
     serialize_envelope,
+)
+from .gate import (
+    GATE_MESSAGE_APPROVAL,
+    GATE_MESSAGE_CONFIG,
+    GATE_MESSAGE_EXECUTED,
+    GATE_MESSAGE_PROMOTE,
+    GATE_MESSAGE_REQUEST,
+    GATE_MESSAGE_SECRET,
+    Recipe,
+    RecipeParam,
+    compute_payload_hash,
+    hash_request,
+    resolve_recipe,
+    seal_secret,
+    sign_approval,
+    sign_request,
+)
+from .group import (
+    GroupState,
+    apply_rekey,
+    create_group_add_body,
+    create_group_genesis_body,
+    create_group_rekey_body,
+    create_group_remove_body,
+    create_rekey,
+)
+from .identity import (
+    base64url_decode,
+    key_id_from_public_key,
 )
 
 AGENT_RULES = {
@@ -147,6 +179,25 @@ def _load_history(config_dir, conv_id_hex):
 
 def _save_history(config_dir, conv_id_hex, entries):
     _save_json(_history_path(config_dir, conv_id_hex), entries)
+
+
+def _group_state_path(config_dir, conv_id_hex):
+    groups_dir = os.path.join(config_dir, "groups")
+    os.makedirs(groups_dir, exist_ok=True)
+    return os.path.join(groups_dir, f"{conv_id_hex}.json")
+
+
+def _load_group_state(config_dir, conv_id_hex):
+    path = _group_state_path(config_dir, conv_id_hex)
+    raw = _load_json(path)
+    if raw is None:
+        return GroupState()
+    return GroupState.from_dict(raw)
+
+
+def _save_group_state(config_dir, conv_id_hex, state):
+    path = _group_state_path(config_dir, conv_id_hex)
+    _save_json(path, state.to_dict())
 
 
 def _find_conversation(conversations, conv_id_hex):
@@ -598,6 +649,1053 @@ def cmd_history(args):
     _output("history", {"entries": entries})
 
 
+def cmd_group_create(args):
+    """Create a group conversation with genesis message."""
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    group_name = args.name
+
+    # Create group invite and conversation
+    invite = create_invite(identity, "group")
+    token = invite_to_token(invite)
+    keys = derive_conversation_keys(invite)
+    conv = create_conversation(invite, keys)
+    add_participant(conv, identity["publicKey"])
+
+    conv_id_hex = conv["id"].hex()
+
+    # Save conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = {
+        "id": conv_id_hex,
+        "name": group_name,
+        "type": "group",
+        "keys": {
+            "root": keys["root"].hex(),
+            "aead_key": keys["aeadKey"].hex(),
+            "nonce_key": keys["nonceKey"].hex(),
+        },
+        "participants": [p.hex() for p in conv["participants"]],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current_epoch": 0,
+    }
+    conversations.append(conv_record)
+    _save_conversations(config_dir, conversations)
+
+    # Create and send genesis message
+    body_bytes = create_group_genesis_body(
+        group_name=group_name,
+        description=getattr(args, "description", "") or "",
+        creator_identity=identity,
+        founding_member_keys=[],
+    )
+    conv_crypto = _conv_to_crypto(conv_record)
+    envelope = create_message(
+        identity, conv_crypto, "group_genesis", body_bytes, None, default_ttl()
+    )
+    envelope_bytes = serialize_envelope(envelope)
+
+    try:
+        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    except Exception:
+        pass  # Group created locally even if dropbox unreachable
+
+    # Initialize and save group state
+    from .group import parse_group_genesis_body
+    state = GroupState()
+    state.apply_genesis(parse_group_genesis_body(body_bytes))
+    _save_group_state(config_dir, conv_id_hex, state)
+
+    _output("group.create", {
+        "conversation_id": conv_id_hex,
+        "type": "group",
+        "name": group_name,
+        "invite_token": token,
+        "members": state.member_count(),
+    })
+
+
+def cmd_group_join(args):
+    """Join a group conversation via invite token."""
+    config_dir = _get_config_dir(args)
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    token = args.token
+    invite = invite_from_url(token)
+
+    if invite["type"] != "group":
+        _error("invite is not for a group conversation")
+
+    keys = derive_conversation_keys(invite)
+    conv = create_conversation(invite, keys)
+    add_participant(conv, identity["publicKey"])
+
+    conv_id_hex = conv["id"].hex()
+    name = getattr(args, "name", None) or ""
+
+    conversations = _load_conversations(config_dir)
+    existing = _find_conversation(conversations, conv_id_hex)
+    if existing:
+        _output("group.join", {
+            "conversation_id": conv_id_hex,
+            "type": "group",
+            "name": existing.get("name", ""),
+            "participants": len(existing.get("participants", [])),
+        })
+        return
+
+    conv_record = {
+        "id": conv_id_hex,
+        "name": name or f"Group {conv_id_hex[:8]}",
+        "type": "group",
+        "keys": {
+            "root": keys["root"].hex(),
+            "aead_key": keys["aeadKey"].hex(),
+            "nonce_key": keys["nonceKey"].hex(),
+        },
+        "participants": [p.hex() for p in conv["participants"]],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current_epoch": 0,
+    }
+    conversations.append(conv_record)
+    _save_conversations(config_dir, conversations)
+
+    _output("group.join", {
+        "conversation_id": conv_id_hex,
+        "type": "group",
+        "name": conv_record["name"],
+        "participants": len(conv["participants"]),
+    })
+
+
+def cmd_group_add(args):
+    """Add a member to a group conversation."""
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    if conv_record.get("type") != "group":
+        _error("conversation is not a group")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+
+    # Parse public key (base64url-encoded)
+    try:
+        new_member_pk = base64url_decode(args.public_key)
+    except Exception:
+        # Try hex
+        try:
+            new_member_pk = bytes.fromhex(args.public_key)
+        except Exception:
+            _error("invalid public key format (expected base64url or hex)")
+
+    if len(new_member_pk) != 32:
+        _error(f"invalid public key length: {len(new_member_pk)}")
+
+    # Create and send group_add message
+    body_bytes = create_group_add_body(
+        adder_identity=identity,
+        new_member_keys=[new_member_pk],
+    )
+    envelope = create_message(
+        identity, conv_crypto, "group_add", body_bytes, None, default_ttl()
+    )
+    envelope_bytes = serialize_envelope(envelope)
+
+    try:
+        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    except Exception:
+        pass
+
+    # Update local group state
+    state = _load_group_state(config_dir, conv_id_hex)
+    from .group import parse_group_add_body
+    state.apply_add(parse_group_add_body(body_bytes))
+    _save_group_state(config_dir, conv_id_hex, state)
+
+    # Update conversation participants
+    add_participant(conv_crypto, new_member_pk)
+    conv_record["participants"] = [p.hex() for p in conv_crypto["participants"]]
+    _save_conversations(config_dir, conversations)
+
+    new_member_kid = key_id_from_public_key(new_member_pk)
+    _output("group.add", {
+        "conversation_id": conv_id_hex,
+        "added_key_id": new_member_kid.hex(),
+        "members": state.member_count(),
+    })
+
+
+def cmd_group_remove(args):
+    """Remove a member from a group conversation."""
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    if conv_record.get("type") != "group":
+        _error("conversation is not a group")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+
+    # Parse key ID (hex)
+    try:
+        member_kid = bytes.fromhex(args.key_id)
+    except Exception:
+        _error("invalid key ID format (expected hex)")
+
+    # Create and send group_remove message
+    body_bytes = create_group_remove_body(
+        removed_member_kids=[member_kid],
+        reason=getattr(args, "reason", "") or "removed by admin",
+    )
+    envelope = create_message(
+        identity, conv_crypto, "group_remove", body_bytes, None, default_ttl()
+    )
+    envelope_bytes = serialize_envelope(envelope)
+
+    try:
+        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    except Exception:
+        pass
+
+    # Update local group state
+    state = _load_group_state(config_dir, conv_id_hex)
+    from .group import parse_group_remove_body
+    state.apply_remove(parse_group_remove_body(body_bytes))
+    _save_group_state(config_dir, conv_id_hex, state)
+
+    _output("group.remove", {
+        "conversation_id": conv_id_hex,
+        "removed_key_id": member_kid.hex(),
+        "members": state.member_count(),
+    })
+
+
+def cmd_group_rekey(args):
+    """Rekey a group conversation (new epoch)."""
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    if conv_record.get("type") != "group":
+        _error("conversation is not a group")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    state = _load_group_state(config_dir, conv_id_hex)
+
+    if state.member_count() == 0:
+        _error("group has no members; cannot rekey")
+
+    # Create rekey
+    rekey_body_bytes, new_group_key = create_rekey(
+        sender_identity=identity,
+        conversation=conv_crypto,
+        state=state,
+        conv_id=conv_crypto["id"],
+    )
+
+    # Send rekey message (encrypted under current epoch keys)
+    envelope = create_message(
+        identity, conv_crypto, "group_rekey", rekey_body_bytes, None, default_ttl()
+    )
+    envelope_bytes = serialize_envelope(envelope)
+
+    try:
+        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    except Exception:
+        pass
+
+    # Apply rekey locally
+    new_epoch = conv_crypto["currentEpoch"] + 1
+    apply_rekey(conv_crypto, new_group_key, new_epoch)
+
+    # Update stored conversation
+    conv_record["keys"]["root"] = conv_crypto["keys"]["root"].hex()
+    conv_record["keys"]["aead_key"] = conv_crypto["keys"]["aeadKey"].hex()
+    conv_record["keys"]["nonce_key"] = conv_crypto["keys"]["nonceKey"].hex()
+    conv_record["current_epoch"] = new_epoch
+    _save_conversations(config_dir, conversations)
+
+    _output("group.rekey", {
+        "conversation_id": conv_id_hex,
+        "new_epoch": new_epoch,
+        "members": state.member_count(),
+    })
+
+
+def cmd_group_list(args):
+    """List group conversations."""
+    config_dir = _get_config_dir(args)
+    conversations = _load_conversations(config_dir)
+
+    groups = []
+    for c in conversations:
+        if c.get("type") != "group":
+            continue
+
+        conv_id_hex = c["id"]
+        state = _load_group_state(config_dir, conv_id_hex)
+
+        groups.append({
+            "id": conv_id_hex,
+            "name": c.get("name", conv_id_hex[:8]),
+            "type": "group",
+            "members": state.member_count(),
+            "epoch": c.get("current_epoch", 0),
+        })
+
+    _output("group.list", {
+        "groups": groups,
+        "count": len(groups),
+    })
+
+
+# --- Gate helpers ---
+
+
+def _load_starter_catalog():
+    """Load the recipe catalog from the starter JSON file.
+
+    Looks for QNTM_RECIPE_CATALOG_PATH env var first, then falls back to
+    gate/recipes/starter.json relative to the repo root.
+    """
+    env_path = os.environ.get("QNTM_RECIPE_CATALOG_PATH")
+    if env_path:
+        catalog_path = env_path
+    else:
+        # Resolve relative to the package: src/qntm/cli.py -> repo root
+        pkg_dir = Path(__file__).resolve().parent
+        repo_root = pkg_dir.parent.parent.parent
+        catalog_path = str(repo_root / "gate" / "recipes" / "starter.json")
+
+    with open(catalog_path) as f:
+        data = json.load(f)
+
+    recipes = {}
+    for name, raw in data.get("recipes", {}).items():
+        path_params = []
+        for p in raw.get("path_params", []):
+            path_params.append(RecipeParam(
+                name=p["name"],
+                description=p.get("description", ""),
+                required=p.get("required", False),
+                type=p.get("type", "string"),
+                default=p.get("default", ""),
+            ))
+        query_params = []
+        for p in raw.get("query_params", []):
+            query_params.append(RecipeParam(
+                name=p["name"],
+                description=p.get("description", ""),
+                required=p.get("required", False),
+                type=p.get("type", "string"),
+                default=p.get("default", ""),
+            ))
+        body_schema = raw.get("body_schema")
+        if body_schema is not None and not isinstance(body_schema, str):
+            body_schema = json.dumps(body_schema)
+        body_example = raw.get("body_example")
+        if body_example is not None and not isinstance(body_example, str):
+            body_example = json.dumps(body_example)
+        recipes[name] = Recipe(
+            name=raw["name"],
+            description=raw.get("description", ""),
+            service=raw["service"],
+            verb=raw["verb"],
+            endpoint=raw["endpoint"],
+            target_url=raw["target_url"],
+            risk_tier=raw.get("risk_tier", "read"),
+            threshold=raw.get("threshold", 1),
+            content_type=raw.get("content_type"),
+            path_params=path_params,
+            query_params=query_params,
+            body_schema=body_schema,
+            body_example=body_example,
+        )
+    return recipes
+
+
+def _build_gate_request_message(identity, recipe, org_id, args):
+    """Build a gate.request message dict. Returns (msg_dict, request_id)."""
+    from datetime import timedelta
+
+    endpoint, target_url, body = resolve_recipe(recipe, args)
+    request_id = str(_uuid.uuid4())
+    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+    expires_at_unix = int(expires_at.timestamp())
+
+    payload = json.loads(body.decode()) if body else None
+    payload_hash = compute_payload_hash(payload)
+
+    sig = sign_request(
+        identity["privateKey"],
+        org_id=org_id,
+        request_id=request_id,
+        verb=recipe.verb,
+        target_endpoint=endpoint,
+        target_service=recipe.service,
+        target_url=target_url,
+        expires_at_unix=expires_at_unix,
+        payload_hash=payload_hash,
+    )
+
+    msg = {
+        "type": GATE_MESSAGE_REQUEST,
+        "org_id": org_id,
+        "request_id": request_id,
+        "verb": recipe.verb,
+        "target_endpoint": endpoint,
+        "target_service": recipe.service,
+        "target_url": target_url,
+        "payload": payload,
+        "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "signer_kid": identity["keyID"].hex(),
+        "signature": sig.hex(),
+        "recipe_name": recipe.name,
+        "arguments": args if args else None,
+    }
+    return msg, request_id
+
+
+def _build_gate_approval_message(identity, request_msg):
+    """Build a gate.approval message dict from a request message."""
+    expires_dt = datetime.fromisoformat(
+        request_msg["expires_at"].replace("Z", "+00:00")
+    )
+    expires_unix = int(expires_dt.timestamp())
+    payload_hash = compute_payload_hash(request_msg.get("payload"))
+
+    req_hash = hash_request(
+        org_id=request_msg["org_id"],
+        request_id=request_msg["request_id"],
+        verb=request_msg["verb"],
+        target_endpoint=request_msg["target_endpoint"],
+        target_service=request_msg["target_service"],
+        target_url=request_msg["target_url"],
+        expires_at_unix=expires_unix,
+        payload_hash=payload_hash,
+    )
+
+    sig = sign_approval(
+        identity["privateKey"],
+        org_id=request_msg["org_id"],
+        request_id=request_msg["request_id"],
+        request_hash=req_hash,
+    )
+
+    return {
+        "type": GATE_MESSAGE_APPROVAL,
+        "org_id": request_msg["org_id"],
+        "request_id": request_msg["request_id"],
+        "signer_kid": identity["keyID"].hex(),
+        "signature": sig.hex(),
+    }
+
+
+def _scan_gate_history(history_entries):
+    """Scan history entries for gate messages.
+
+    Returns (requests, approvals, executed) where:
+      requests: {request_id: msg_dict}
+      approvals: {request_id: [signer_kid, ...]}
+      executed: {request_id: True}
+    """
+    requests = {}
+    approvals = {}
+    executed = {}
+
+    for entry in history_entries:
+        body_type = entry.get("body_type", "")
+        if body_type not in (
+            GATE_MESSAGE_REQUEST,
+            GATE_MESSAGE_APPROVAL,
+            GATE_MESSAGE_EXECUTED,
+        ):
+            continue
+
+        raw = entry.get("unsafe_body") or entry.get("body", "")
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if body_type == GATE_MESSAGE_REQUEST:
+            requests[msg.get("request_id", "")] = msg
+        elif body_type == GATE_MESSAGE_APPROVAL:
+            rid = msg.get("request_id", "")
+            approvals.setdefault(rid, []).append(msg.get("signer_kid", ""))
+        elif body_type == GATE_MESSAGE_EXECUTED:
+            executed[msg.get("request_id", "")] = True
+
+    return requests, approvals, executed
+
+
+def _find_gate_request_in_history(history_entries, request_id):
+    """Find a gate.request message in history by request_id."""
+    for entry in history_entries:
+        if entry.get("body_type") != GATE_MESSAGE_REQUEST:
+            continue
+        raw = entry.get("unsafe_body") or entry.get("body", "")
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if msg.get("request_id") == request_id:
+            return msg
+    raise ValueError(
+        f"gate request {request_id!r} not found in conversation history "
+        "(try 'qntm recv' first)"
+    )
+
+
+def _build_promote_payload(identity, org_id, threshold):
+    """Build a gate.promote payload dict."""
+    if threshold < 1:
+        raise ValueError("threshold must be at least 1")
+    return {
+        "type": GATE_MESSAGE_PROMOTE,
+        "org_id": org_id,
+        "signers": [
+            {
+                "kid": identity["keyID"].hex(),
+                "public_key": base64url_encode(identity["publicKey"]),
+                "label": "",
+            }
+        ],
+        "rules": [
+            {
+                "service": "*",
+                "endpoint": "*",
+                "verb": "*",
+                "m": threshold,
+                "n": 1,
+            }
+        ],
+    }
+
+
+def _build_config_payload(threshold):
+    """Build a gate.config payload dict."""
+    if threshold < 1:
+        raise ValueError("threshold must be at least 1")
+    return {
+        "type": GATE_MESSAGE_CONFIG,
+        "rules": [
+            {
+                "service": "*",
+                "endpoint": "*",
+                "verb": "*",
+                "m": threshold,
+                "n": 0,
+            }
+        ],
+    }
+
+
+def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
+                          header_name="Authorization",
+                          header_template="Bearer {value}"):
+    """Build a gate.secret payload dict with encrypted secret."""
+    try:
+        gw_pub = bytes.fromhex(gateway_pubkey_hex)
+    except ValueError:
+        raise ValueError("gateway public key must be valid hex")
+    if len(gw_pub) != 32:
+        raise ValueError(
+            f"gateway public key must be 32 bytes (got {len(gw_pub)})"
+        )
+
+    ct = seal_secret(identity["privateKey"], gw_pub, value.encode())
+    secret_id = str(_uuid.uuid4())
+
+    return {
+        "type": GATE_MESSAGE_SECRET,
+        "secret_id": secret_id,
+        "service": service,
+        "header_name": header_name,
+        "header_template": header_template,
+        "encrypted_blob": ct.hex(),
+        "sender_kid": identity["keyID"].hex(),
+    }
+
+
+def _send_gate_message_to_conv(identity, conv_crypto, conv_id_hex, body_type,
+                               payload_dict, dropbox_url):
+    """Encrypt and send a gate message to a conversation via dropbox."""
+    body = json.dumps(payload_dict, separators=(",", ":")).encode()
+    envelope = create_message(identity, conv_crypto, body_type, body, None, default_ttl())
+    envelope_bytes = serialize_envelope(envelope)
+    result = _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    return result, envelope
+
+
+def _post_to_gate_server(gate_url, org_id, payload_dict):
+    """POST a gate message to the gate server. Returns response dict or None."""
+    body = json.dumps(payload_dict, separators=(",", ":")).encode()
+    req = urllib.request.Request(
+        f"{gate_url}/v1/orgs/{org_id}/messages",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": f"qntm-python/{__version__}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+
+# --- Gate CLI commands ---
+
+
+def cmd_gate_run(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+    gate_url = getattr(args, "gate_url", None)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+
+    org_id = args.org
+    recipe_name = args.recipe
+
+    try:
+        catalog = _load_starter_catalog()
+    except Exception as e:
+        _error(f"failed to load recipe catalog: {e}")
+    if recipe_name not in catalog:
+        _error(f"unknown recipe: {recipe_name!r}. Available: {', '.join(sorted(catalog.keys()))}")
+
+    recipe = catalog[recipe_name]
+
+    # Parse --arg key=value pairs
+    recipe_args = {}
+    for kv in getattr(args, "arg", None) or []:
+        if "=" not in kv:
+            _error(f"invalid --arg format: {kv!r} (expected key=value)")
+        k, v = kv.split("=", 1)
+        recipe_args[k] = v
+
+    try:
+        msg, request_id = _build_gate_request_message(
+            identity=identity,
+            recipe=recipe,
+            org_id=org_id,
+            args=recipe_args or None,
+        )
+    except ValueError as e:
+        _error(str(e))
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_REQUEST, msg, dropbox_url,
+    )
+
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_REQUEST,
+        "unsafe_body": json.dumps(msg),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    gate_result = None
+    if gate_url:
+        gate_result = _post_to_gate_server(gate_url, org_id, msg)
+
+    _output("gate.run", {
+        "conversation_id": conv_id_hex,
+        "request_id": request_id,
+        "recipe": recipe_name,
+        "verb": recipe.verb,
+        "endpoint": msg["target_endpoint"],
+        "service": recipe.service,
+        "org_id": org_id,
+        "signer_kid": identity["keyID"].hex(),
+        "expires_at": msg["expires_at"],
+        "gate_server_result": gate_result,
+    })
+
+
+def cmd_gate_approve(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+    gate_url = getattr(args, "gate_url", None)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    request_id = args.request_id
+
+    history = _load_history(config_dir, conv_id_hex)
+    try:
+        req_msg = _find_gate_request_in_history(history, request_id)
+    except ValueError as e:
+        _error(str(e))
+
+    approval_msg = _build_gate_approval_message(identity, req_msg)
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_APPROVAL, approval_msg, dropbox_url,
+    )
+
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_APPROVAL,
+        "unsafe_body": json.dumps(approval_msg),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    gate_result = None
+    if gate_url:
+        gate_result = _post_to_gate_server(gate_url, req_msg["org_id"], approval_msg)
+
+    _output("gate.approve", {
+        "conversation_id": conv_id_hex,
+        "request_id": request_id,
+        "signer_kid": identity["keyID"].hex(),
+        "gate_server_result": gate_result,
+    })
+
+
+def cmd_gate_pending(args):
+    config_dir = _get_config_dir(args)
+    conversations = _load_conversations(config_dir)
+
+    conv_id_input = getattr(args, "conversation", None)
+    if conv_id_input:
+        conv_record = _resolve_conversation(conversations, conv_id_input)
+        if not conv_record:
+            _error(f"conversation {conv_id_input} not found")
+        conv_records = [conv_record]
+    else:
+        conv_records = conversations
+
+    now = int(time.time())
+    pending = []
+
+    for conv_record in conv_records:
+        conv_id_hex = conv_record["id"]
+        history = _load_history(config_dir, conv_id_hex)
+        requests, approvals, executed = _scan_gate_history(history)
+
+        for req_id, req in requests.items():
+            if req_id in executed:
+                continue
+
+            expires_at = req.get("expires_at", "")
+            expired = False
+            if expires_at:
+                try:
+                    expires_dt = datetime.fromisoformat(
+                        expires_at.replace("Z", "+00:00")
+                    )
+                    expired = int(expires_dt.timestamp()) < now
+                except Exception:
+                    pass
+
+            approval_count = len(approvals.get(req_id, []))
+            total_sigs = approval_count + 1
+
+            status = "expired" if expired else "pending"
+            pending.append({
+                "conversation_id": conv_id_hex,
+                "request_id": req_id,
+                "verb": req.get("verb", ""),
+                "target_endpoint": req.get("target_endpoint", ""),
+                "target_service": req.get("target_service", ""),
+                "org_id": req.get("org_id", ""),
+                "requester_kid": req.get("signer_kid", ""),
+                "approval_count": total_sigs,
+                "approver_kids": approvals.get(req_id, []),
+                "expires_at": expires_at,
+                "status": status,
+                "recipe_name": req.get("recipe_name"),
+            })
+
+    _output("gate.pending", {
+        "pending": pending,
+        "total": len(pending),
+    })
+
+
+def cmd_gate_promote(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+
+    org_id = getattr(args, "org", None) or ""
+    threshold = args.threshold
+
+    try:
+        payload = _build_promote_payload(identity, org_id, threshold)
+    except ValueError as e:
+        _error(str(e))
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_PROMOTE, payload, dropbox_url,
+    )
+
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_PROMOTE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gate.promote", {
+        "conversation_id": conv_id_hex,
+        "org_id": org_id,
+        "threshold": threshold,
+        "signers": len(payload["signers"]),
+    })
+
+
+def cmd_gate_config(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    threshold = args.threshold
+
+    try:
+        payload = _build_config_payload(threshold)
+    except ValueError as e:
+        _error(str(e))
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_CONFIG, payload, dropbox_url,
+    )
+
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_CONFIG,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gate.config", {
+        "conversation_id": conv_id_hex,
+        "threshold": threshold,
+    })
+
+
+def cmd_gate_secret(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+
+    service = args.service
+    gateway_pubkey = args.gateway_pubkey
+    value = getattr(args, "value", None) or ""
+    if not value:
+        value = sys.stdin.readline().strip()
+    if not value:
+        _error("secret value is required (use --value or pipe via stdin)")
+
+    header_name = getattr(args, "header_name", "Authorization")
+    header_template = getattr(args, "header_template", "Bearer {value}")
+
+    try:
+        payload = _build_secret_payload(
+            identity=identity,
+            gateway_pubkey_hex=gateway_pubkey,
+            service=service,
+            value=value,
+            header_name=header_name,
+            header_template=header_template,
+        )
+    except ValueError as e:
+        _error(str(e))
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_SECRET, payload, dropbox_url,
+    )
+
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_SECRET,
+        "unsafe_body": json.dumps({k: v for k, v in payload.items() if k != "encrypted_blob"}),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gate.secret", {
+        "conversation_id": conv_id_hex,
+        "secret_id": payload["secret_id"],
+        "service": service,
+        "header_name": header_name,
+        "encrypted": True,
+    })
+
+
+def cmd_gateway_init(args):
+    from .gateway import init_gateway
+
+    config_dir = getattr(args, "gateway_config_dir", None) or os.path.expanduser(
+        "~/.qntm-gateway"
+    )
+    force = getattr(args, "force", False)
+
+    try:
+        result = init_gateway(config_dir, force=force)
+    except FileExistsError as e:
+        _error(str(e))
+
+    _output("gateway.init", {
+        "config_dir": result["config_dir"],
+        "key_id": result["key_id"],
+        "public_key": result["public_key"],
+        "vault_dir": result["vault_dir"],
+        "identity": result["identity_path"],
+    })
+
+
+def cmd_gateway_serve(args):
+    import logging
+
+    from .gateway import Gateway
+
+    config_dir = getattr(args, "gateway_config_dir", None) or os.path.expanduser(
+        "~/.qntm-gateway"
+    )
+    poll_interval = getattr(args, "poll_interval", 5)
+    dropbox_url = _get_dropbox_url(args)
+
+    # Set up logging for gateway
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        stream=sys.stderr,
+    )
+
+    try:
+        gw = Gateway(config_dir)
+        gw.load_identity()
+    except FileNotFoundError as e:
+        _error(str(e))
+
+    conversations = gw.load_conversations()
+    if not conversations:
+        _error(
+            f"no conversations found in {config_dir}\n"
+            f"The gateway needs at least one conversation to poll.\n"
+            f"Join one with: qntm --config-dir {config_dir} convo join <token>"
+        )
+
+    try:
+        gw.run(
+            dropbox_url=dropbox_url,
+            poll_interval=poll_interval,
+            conversations=conversations,
+        )
+    except KeyboardInterrupt:
+        pass
+
+
 def cmd_version(args):
     _output("version", {
         "version": __version__,
@@ -686,6 +1784,116 @@ quick start:
     history_p = subparsers.add_parser("history", help="Show message history")
     history_p.add_argument("conversation", help="Conversation ID or prefix")
 
+    # gateway
+    gateway_parser = subparsers.add_parser("gateway", help="Run a standalone qntm gateway")
+    gateway_parser.add_argument(
+        "--config-dir", dest="gateway_config_dir", default=None,
+        help="Gateway configuration directory (default: ~/.qntm-gateway)")
+    gateway_sub = gateway_parser.add_subparsers(dest="gateway_command")
+
+    gw_init_p = gateway_sub.add_parser("init", help="Generate gateway identity and config")
+    gw_init_p.add_argument("--force", action="store_true",
+                           help="Overwrite existing identity if present")
+    gw_init_p.add_argument(
+        "--config-dir", dest="gateway_config_dir", default=None,
+        help="Gateway configuration directory (default: ~/.qntm-gateway)")
+
+    gw_serve_p = gateway_sub.add_parser("serve", help="Start the gateway polling loop")
+    gw_serve_p.add_argument(
+        "--config-dir", dest="gateway_config_dir", default=None,
+        help="Gateway configuration directory (default: ~/.qntm-gateway)")
+    gw_serve_p.add_argument(
+        "--poll-interval", dest="poll_interval", type=int, default=5,
+        help="Poll interval in seconds (default: 5)")
+    gw_serve_p.add_argument(
+        "--health-addr", dest="health_addr", default="",
+        help="Address for HTTP health endpoint (e.g. :8081)")
+
+    # group
+    group_parser = subparsers.add_parser("group", help="Manage group conversations")
+    group_sub = group_parser.add_subparsers(dest="group_command")
+
+    group_create_p = group_sub.add_parser("create", help="Create a new group")
+    group_create_p.add_argument("name", help="Group name")
+    group_create_p.add_argument("--description", default="", help="Group description")
+
+    group_join_p = group_sub.add_parser("join", help="Join a group via invite token")
+    group_join_p.add_argument("token", help="Invite token")
+    group_join_p.add_argument("--name", default="", help="Group name")
+
+    group_add_p = group_sub.add_parser("add", help="Add member to group")
+    group_add_p.add_argument("conversation", help="Conversation ID or prefix")
+    group_add_p.add_argument("public_key", help="Member public key (base64url or hex)")
+
+    group_remove_p = group_sub.add_parser("remove", help="Remove member from group")
+    group_remove_p.add_argument("conversation", help="Conversation ID or prefix")
+    group_remove_p.add_argument("key_id", help="Member key ID (hex)")
+    group_remove_p.add_argument("--reason", default="", help="Removal reason")
+
+    group_rekey_p = group_sub.add_parser("rekey", help="Rekey group (new epoch)")
+    group_rekey_p.add_argument("conversation", help="Conversation ID or prefix")
+
+    group_sub.add_parser("list", help="List group conversations")
+
+    # gate-run
+    gate_run_p = subparsers.add_parser("gate-run", help="Submit a gate authorization request")
+    gate_run_p.add_argument("recipe", help="Recipe name (e.g. jokes.dad, hn.get-item)")
+    gate_run_p.add_argument("-c", "--conversation", required=True,
+                            help="Conversation ID or prefix")
+    gate_run_p.add_argument("-o", "--org", required=True, help="Gate org ID")
+    gate_run_p.add_argument("--gate-url", dest="gate_url", default=None,
+                            help="Gate server URL for execution tracking")
+    gate_run_p.add_argument("--arg", action="append", metavar="KEY=VALUE",
+                            help="Recipe argument (repeatable)")
+
+    # gate-approve
+    gate_approve_p = subparsers.add_parser("gate-approve", help="Approve a gate request")
+    gate_approve_p.add_argument("request_id", help="Request ID to approve")
+    gate_approve_p.add_argument("-c", "--conversation", required=True,
+                                help="Conversation ID or prefix")
+    gate_approve_p.add_argument("--gate-url", dest="gate_url", default=None,
+                                help="Gate server URL for auto-execution")
+
+    # gate-pending
+    gate_pending_p = subparsers.add_parser("gate-pending", help="List pending gate requests")
+    gate_pending_p.add_argument("-c", "--conversation", default=None,
+                                help="Conversation ID or prefix (optional, scans all if omitted)")
+
+    # gate-promote
+    gate_promote_p = subparsers.add_parser("gate-promote", help="Promote conversation to gate-enabled")
+    gate_promote_p.add_argument("-c", "--conversation", required=True,
+                                help="Conversation ID or prefix")
+    gate_promote_p.add_argument("--threshold", type=int, required=True,
+                                help="Approval threshold (M-of-N)")
+    gate_promote_p.add_argument("-o", "--org", default="",
+                                help="Gate org ID")
+    gate_promote_p.add_argument("--gateway-kid", default="",
+                                help="KID of gateway participant (optional)")
+
+    # gate-config
+    gate_config_p = subparsers.add_parser("gate-config", help="Update gate threshold rules")
+    gate_config_p.add_argument("-c", "--conversation", required=True,
+                               help="Conversation ID or prefix")
+    gate_config_p.add_argument("--threshold", type=int, required=True,
+                               help="New approval threshold")
+
+    # gate-secret
+    gate_secret_p = subparsers.add_parser("gate-secret", help="Provision a secret to gate conversation")
+    gate_secret_p.add_argument("-c", "--conversation", required=True,
+                               help="Conversation ID or prefix")
+    gate_secret_p.add_argument("--service", required=True,
+                               help="Target service name (e.g. stripe, github)")
+    gate_secret_p.add_argument("--gateway-pubkey", required=True,
+                               help="Gateway Ed25519 public key (hex)")
+    gate_secret_p.add_argument("--value", default="",
+                               help="Secret value (omit to read from stdin)")
+    gate_secret_p.add_argument("--header-name", dest="header_name",
+                               default="Authorization",
+                               help="HTTP header name (default: Authorization)")
+    gate_secret_p.add_argument("--header-template", dest="header_template",
+                               default="Bearer {value}",
+                               help="Header value template (default: 'Bearer {value}')")
+
     # version
     subparsers.add_parser("version", help="Print version")
 
@@ -711,6 +1919,28 @@ quick start:
             cmd_convo_list(args)
         else:
             convo_parser.print_help()
+    elif args.command == "group":
+        if args.group_command == "create":
+            cmd_group_create(args)
+        elif args.group_command == "join":
+            cmd_group_join(args)
+        elif args.group_command == "add":
+            cmd_group_add(args)
+        elif args.group_command == "remove":
+            cmd_group_remove(args)
+        elif args.group_command == "rekey":
+            cmd_group_rekey(args)
+        elif args.group_command == "list":
+            cmd_group_list(args)
+        else:
+            group_parser.print_help()
+    elif args.command == "gateway":
+        if args.gateway_command == "init":
+            cmd_gateway_init(args)
+        elif args.gateway_command == "serve":
+            cmd_gateway_serve(args)
+        else:
+            gateway_parser.print_help()
     elif args.command == "send":
         cmd_send(args)
     elif args.command == "recv":
@@ -719,6 +1949,18 @@ quick start:
         cmd_inbox(args)
     elif args.command == "history":
         cmd_history(args)
+    elif args.command == "gate-run":
+        cmd_gate_run(args)
+    elif args.command == "gate-approve":
+        cmd_gate_approve(args)
+    elif args.command == "gate-pending":
+        cmd_gate_pending(args)
+    elif args.command == "gate-promote":
+        cmd_gate_promote(args)
+    elif args.command == "gate-config":
+        cmd_gate_config(args)
+    elif args.command == "gate-secret":
+        cmd_gate_secret(args)
     elif args.command == "version":
         cmd_version(args)
     else:

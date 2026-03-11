@@ -44,6 +44,20 @@ from .message import (
     verify_message_signature,
 )
 from .cbor import marshal_canonical, unmarshal
+from .group import (
+    GroupState,
+    apply_rekey,
+    create_group_add_body,
+    create_group_genesis_body,
+    create_group_rekey_body,
+    create_group_remove_body,
+    create_rekey,
+    parse_group_add_body,
+    parse_group_genesis_body,
+    parse_group_rekey_body,
+    parse_group_remove_body,
+    process_group_message,
+)
 from .gate import (
     GateClient,
     GateError,
