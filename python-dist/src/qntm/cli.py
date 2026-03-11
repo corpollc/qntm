@@ -33,6 +33,17 @@ from .message import (
     deserialize_envelope,
     serialize_envelope,
 )
+from .announce import (
+    create_channel,
+    derive_announce_keys,
+    generate_channel_keys,
+    load_announce_store,
+    resolve_channel,
+    save_announce_store,
+    sign_delete,
+    sign_envelope,
+    sign_register,
+)
 from .gate import (
     GATE_MESSAGE_APPROVAL,
     GATE_MESSAGE_CONFIG,
@@ -982,6 +993,255 @@ def cmd_group_list(args):
     _output("group.list", {
         "groups": groups,
         "count": len(groups),
+    })
+
+
+# --- Announce commands ---
+
+
+def _announce_store_path(config_dir):
+    return os.path.join(config_dir, "announce_channels.json")
+
+
+def cmd_announce_create(args):
+    """Create a new announce channel."""
+    config_dir = _get_config_dir(args)
+    _ensure_config_dir(config_dir)
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    channel_name = args.name
+
+    channel = create_channel(channel_name)
+    conv = channel["conversation"]
+    conv_id_hex = channel["conv_id"]
+
+    # Save conversation record
+    conversations = _load_conversations(config_dir)
+    conv_keys = conv["keys"]
+    conv_record = {
+        "id": conv_id_hex,
+        "name": channel_name,
+        "type": "announce",
+        "keys": {
+            "root": conv_keys["root"].hex(),
+            "aead_key": conv_keys["aeadKey"].hex(),
+            "nonce_key": conv_keys["nonceKey"].hex(),
+        },
+        "participants": [],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current_epoch": 0,
+    }
+    conversations.append(conv_record)
+    _save_conversations(config_dir, conversations)
+
+    # Save announce store entry
+    store = load_announce_store(config_dir)
+    store["channels"][conv_id_hex] = {
+        "name": channel_name,
+        "conv_id": conv_id_hex,
+        "master_private": channel["master_private"],
+        "master_public": channel["master_public"],
+        "posting_private": channel["posting_private"],
+        "posting_public": channel["posting_public"],
+        "is_owner": True,
+    }
+    save_announce_store(config_dir, store)
+
+    _output("announce.create", {
+        "conversation_id": conv_id_hex,
+        "name": channel_name,
+        "invite_secret": channel["invite_secret"],
+        "subscribe_command": (
+            f"qntm announce subscribe {conv_id_hex} "
+            f"--token {channel['invite_secret']} --name {channel_name}"
+        ),
+    })
+
+
+def cmd_announce_post(args):
+    """Post a message to an announce channel (owner only)."""
+    config_dir = _get_config_dir(args)
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    store = load_announce_store(config_dir)
+    try:
+        entry = resolve_channel(store, args.channel)
+    except ValueError as e:
+        _error(str(e))
+
+    if not entry.get("is_owner"):
+        _error("you are not the owner of this announce channel")
+
+    conv_id_hex = entry["conv_id"]
+    conversations = _load_conversations(config_dir)
+    conv_record = _find_conversation(conversations, conv_id_hex)
+    if not conv_record:
+        _error(f"conversation {conv_id_hex} not found")
+
+    conv = _conv_to_crypto(conv_record)
+
+    envelope = create_message(
+        identity, conv, "text", args.message.encode(), None, default_ttl()
+    )
+
+    envelope_bytes = serialize_envelope(envelope)
+    envelope_b64 = base64.b64encode(envelope_bytes).decode()
+
+    posting_priv = bytes.fromhex(entry["posting_private"])
+    announce_sig = sign_envelope(posting_priv, envelope_b64)
+
+    # Send to dropbox
+    dropbox_url = _get_dropbox_url(args)
+    try:
+        result = _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+    except Exception as e:
+        _error(f"failed to send announce message: {e}")
+
+    # Save to local history
+    msg_id_hex = envelope["msg_id"].hex()
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": msg_id_hex,
+        "sender_kid": identity["keyID"].hex(),
+        "body_type": "text",
+        "body": args.message,
+        "timestamp": envelope["created_ts"],
+        "direction": "sent",
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("announce.post", {
+        "conversation_id": conv_id_hex,
+        "message_id": msg_id_hex,
+        "channel_name": entry.get("name", ""),
+    })
+
+
+def cmd_announce_subscribe(args):
+    """Subscribe to an announce channel."""
+    config_dir = _get_config_dir(args)
+    _ensure_config_dir(config_dir)
+
+    conv_id_hex = args.conv_id
+    token = args.token
+    name = getattr(args, "name", None) or ""
+
+    if not token:
+        _error("--token is required (provided by channel owner)")
+
+    # Validate conv_id
+    try:
+        conv_id_bytes = bytes.fromhex(conv_id_hex)
+    except ValueError:
+        _error("invalid conversation ID (must be hex)")
+    if len(conv_id_bytes) != 16:
+        _error("invalid conversation ID length (must be 16 bytes / 32 hex chars)")
+
+    # Validate invite token
+    try:
+        invite_secret = bytes.fromhex(token)
+    except ValueError:
+        _error("invalid invite token (must be hex)")
+    if len(invite_secret) != 32:
+        _error("invalid invite token length (must be 32 bytes / 64 hex chars)")
+
+    # Derive keys
+    conv_keys = derive_announce_keys(invite_secret, conv_id_bytes)
+
+    if not name:
+        name = f"announce-{conv_id_hex[:8]}"
+
+    # Save conversation record
+    conversations = _load_conversations(config_dir)
+    existing = _find_conversation(conversations, conv_id_hex)
+    if existing:
+        _output("announce.subscribe", {
+            "conversation_id": conv_id_hex,
+            "name": existing.get("name", ""),
+            "already_subscribed": True,
+        })
+        return
+
+    conv_record = {
+        "id": conv_id_hex,
+        "name": name,
+        "type": "announce",
+        "keys": {
+            "root": conv_keys["root"].hex(),
+            "aead_key": conv_keys["aeadKey"].hex(),
+            "nonce_key": conv_keys["nonceKey"].hex(),
+        },
+        "participants": [],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current_epoch": 0,
+    }
+    conversations.append(conv_record)
+    _save_conversations(config_dir, conversations)
+
+    # Save announce store entry (subscriber)
+    store = load_announce_store(config_dir)
+    store["channels"][conv_id_hex] = {
+        "name": name,
+        "conv_id": conv_id_hex,
+        "is_owner": False,
+    }
+    save_announce_store(config_dir, store)
+
+    _output("announce.subscribe", {
+        "conversation_id": conv_id_hex,
+        "name": name,
+        "already_subscribed": False,
+    })
+
+
+def cmd_announce_list(args):
+    """List announce channels."""
+    config_dir = _get_config_dir(args)
+    store = load_announce_store(config_dir)
+
+    channels = []
+    for entry in store["channels"].values():
+        channels.append({
+            "conv_id": entry["conv_id"],
+            "name": entry.get("name", ""),
+            "role": "owner" if entry.get("is_owner") else "subscriber",
+        })
+
+    _output("announce.list", {
+        "channels": channels,
+        "count": len(channels),
+    })
+
+
+def cmd_announce_delete(args):
+    """Delete an announce channel."""
+    config_dir = _get_config_dir(args)
+
+    store = load_announce_store(config_dir)
+    try:
+        entry = resolve_channel(store, args.channel)
+    except ValueError as e:
+        _error(str(e))
+
+    conv_id_hex = entry["conv_id"]
+
+    # Remove from announce store
+    if conv_id_hex in store["channels"]:
+        del store["channels"][conv_id_hex]
+        save_announce_store(config_dir, store)
+
+    # Remove from conversations
+    conversations = _load_conversations(config_dir)
+    conversations = [c for c in conversations if c["id"] != conv_id_hex]
+    _save_conversations(config_dir, conversations)
+
+    _output("announce.delete", {
+        "conversation_id": conv_id_hex,
+        "name": entry.get("name", ""),
     })
 
 
@@ -1937,6 +2197,27 @@ quick start:
 
     group_sub.add_parser("list", help="List group conversations")
 
+    # announce
+    announce_parser = subparsers.add_parser("announce", help="Manage announce channels")
+    announce_sub = announce_parser.add_subparsers(dest="announce_command")
+
+    announce_create_p = announce_sub.add_parser("create", help="Create a new announce channel")
+    announce_create_p.add_argument("name", help="Channel name")
+
+    announce_post_p = announce_sub.add_parser("post", help="Post a message to a channel")
+    announce_post_p.add_argument("channel", help="Channel name or conv ID")
+    announce_post_p.add_argument("message", help="Message text")
+
+    announce_subscribe_p = announce_sub.add_parser("subscribe", help="Subscribe to a channel")
+    announce_subscribe_p.add_argument("conv_id", help="Conversation ID (hex)")
+    announce_subscribe_p.add_argument("--token", required=True, help="Invite token from owner")
+    announce_subscribe_p.add_argument("--name", default="", help="Local name for this channel")
+
+    announce_sub.add_parser("list", help="List announce channels")
+
+    announce_delete_p = announce_sub.add_parser("delete", help="Delete an announce channel")
+    announce_delete_p.add_argument("channel", help="Channel name or conv ID")
+
     # gate-run
     gate_run_p = subparsers.add_parser("gate-run", help="Submit a gate authorization request")
     gate_run_p.add_argument("recipe", help="Recipe name (e.g. jokes.dad, hn.get-item)")
@@ -2070,6 +2351,19 @@ quick start:
         cmd_inbox(args)
     elif args.command == "history":
         cmd_history(args)
+    elif args.command == "announce":
+        if args.announce_command == "create":
+            cmd_announce_create(args)
+        elif args.announce_command == "post":
+            cmd_announce_post(args)
+        elif args.announce_command == "subscribe":
+            cmd_announce_subscribe(args)
+        elif args.announce_command == "list":
+            cmd_announce_list(args)
+        elif args.announce_command == "delete":
+            cmd_announce_delete(args)
+        else:
+            announce_parser.print_help()
     elif args.command == "gate-run":
         cmd_gate_run(args)
     elif args.command == "gate-approve":
