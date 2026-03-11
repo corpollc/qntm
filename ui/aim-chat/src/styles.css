@@ -424,3 +424,86 @@ body {
     max-width: 88%;
   }
 }
+
+/* Gate message cards */
+
+.gate-card {
+  border: 1px solid var(--border-dark);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  font-size: 0.85rem;
+}
+
+.gate-card-header {
+  font-weight: 700;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.gate-request {
+  background: #fff8e1;
+  border-color: #f9a825;
+}
+
+.gate-request .gate-card-header {
+  color: #e65100;
+}
+
+.gate-approval {
+  background: #e8f5e9;
+  border-color: #66bb6a;
+}
+
+.gate-approval .gate-card-header {
+  color: #2e7d32;
+}
+
+.gate-executed {
+  background: #e3f2fd;
+  border-color: #42a5f5;
+}
+
+.gate-executed .gate-card-header {
+  color: #1565c0;
+}
+
+.gate-card-body div {
+  margin-bottom: 2px;
+}
+
+.gate-card-body strong {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.gate-approve-btn {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 16px;
+  background: #2e7d32;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.gate-approve-btn:hover {
+  background: #1b5e20;
+}
+
+.gate-approve-btn:disabled {
+  background: #a5d6a7;
+  cursor: default;
+}
+
+.gate-expired {
+  margin-top: 6px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 0.8rem;
+}

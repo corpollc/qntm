@@ -1,6 +1,108 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, IdentityInfo, Profile } from './types'
+
+interface GateRequestBody {
+  type: string
+  org_id: string
+  request_id: string
+  verb: string
+  target_endpoint: string
+  target_service: string
+  target_url: string
+  expires_at: string
+  signer_kid: string
+}
+
+interface GateApprovalBody {
+  type: string
+  request_id: string
+  signer_kid: string
+}
+
+interface GateExecutedBody {
+  type: string
+  request_id: string
+  execution_status_code: number
+}
+
+function parseGateMessage(text: string): GateRequestBody | GateApprovalBody | GateExecutedBody | null {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function GateRequestCard({
+  message,
+  onApprove,
+  isWorking,
+}: {
+  message: ChatMessage
+  onApprove: (requestId: string, conversationId: string) => void
+  isWorking: boolean
+}) {
+  const parsed = parseGateMessage(message.text) as GateRequestBody | null
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  const isExpired = new Date(parsed.expires_at) < new Date()
+
+  return (
+    <div className="gate-card gate-request">
+      <div className="gate-card-header">Gate Request</div>
+      <div className="gate-card-body">
+        <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
+        <div><strong>Action:</strong> {parsed.verb} {parsed.target_endpoint}</div>
+        <div><strong>Service:</strong> {parsed.target_service}</div>
+        <div><strong>Org:</strong> {parsed.org_id}</div>
+        <div><strong>Requester:</strong> {shortId(parsed.signer_kid)}</div>
+        <div><strong>Expires:</strong> {new Date(parsed.expires_at).toLocaleTimeString()}</div>
+      </div>
+      {!isExpired && (
+        <button
+          className="gate-approve-btn"
+          type="button"
+          disabled={isWorking}
+          onClick={() => onApprove(parsed.request_id, message.conversationId)}
+        >
+          Approve
+        </button>
+      )}
+      {isExpired && <div className="gate-expired">Expired</div>}
+    </div>
+  )
+}
+
+function GateApprovalCard({ message }: { message: ChatMessage }) {
+  const parsed = parseGateMessage(message.text) as GateApprovalBody | null
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  return (
+    <div className="gate-card gate-approval">
+      <div className="gate-card-header">Gate Approval</div>
+      <div className="gate-card-body">
+        <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
+        <div><strong>Approved by:</strong> {shortId(parsed.signer_kid)}</div>
+      </div>
+    </div>
+  )
+}
+
+function GateExecutedCard({ message }: { message: ChatMessage }) {
+  const parsed = parseGateMessage(message.text) as GateExecutedBody | null
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  return (
+    <div className="gate-card gate-executed">
+      <div className="gate-card-header">Gate Executed</div>
+      <div className="gate-card-body">
+        <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
+        <div><strong>HTTP Status:</strong> {parsed.execution_status_code || 'N/A'}</div>
+      </div>
+    </div>
+  )
+}
 
 const POLL_INTERVAL_MS = 3000
 
@@ -425,6 +527,23 @@ export default function App() {
     }
   }
 
+  const onGateApprove = useCallback(async (requestId: string, conversationId: string) => {
+    if (!activeProfileId) return
+
+    setIsWorking(true)
+    try {
+      await api.gateApprove(activeProfileId, conversationId, requestId)
+      setStatus(`Approval sent for ${requestId.slice(0, 8)}...`)
+      setError('')
+      // Refresh to show the new approval message
+      await refreshHistory(activeProfileId, conversationId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to approve gate request')
+    } finally {
+      setIsWorking(false)
+    }
+  }, [activeProfileId])
+
   async function onSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
@@ -659,7 +778,15 @@ export default function App() {
                     <span className="sender">{message.sender}</span>
                     <span className="time">{formatTime(message.createdAt)}</span>
                   </div>
-                  <div className="message-body">{message.text}</div>
+                  {message.bodyType === 'gate.request' ? (
+                    <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
+                  ) : message.bodyType === 'gate.approval' ? (
+                    <GateApprovalCard message={message} />
+                  ) : message.bodyType === 'gate.executed' ? (
+                    <GateExecutedCard message={message} />
+                  ) : (
+                    <div className="message-body">{message.text}</div>
+                  )}
                   <div className="message-type">{message.bodyType}</div>
                 </article>
               ))}

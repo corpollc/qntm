@@ -85,6 +85,10 @@ var chatCmd = &cobra.Command{
 				ts := time.Unix(msg.Envelope.CreatedTS, 0).Local().Format("15:04")
 				senderDisplay := dc.FormatKID(msg.Inner.SenderKID, convIDHex)
 				bodyDisplay := string(msg.Inner.Body)
+				switch msg.Inner.BodyType {
+				case "gate.request", "gate.approval", "gate.executed":
+					bodyDisplay = FormatGateMessage(msg.Inner.BodyType, msg.Inner.Body)
+				}
 				fmt.Printf("\n[%s] %s: %s\n", ts, senderDisplay, bodyDisplay)
 
 				bodyEncoded, bodyEncoding := encodeChatBody(msg.Inner.Body)

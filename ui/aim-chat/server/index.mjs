@@ -29,6 +29,9 @@ import {
   marshalCanonical,
   unmarshalCanonical,
   base64UrlEncode,
+  signApproval,
+  hashRequest,
+  computePayloadHash,
 } from '@qntm/client'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -856,6 +859,122 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
     suppressedSelfEchoes,
     output: '',
     warning: '',
+  })
+}))
+
+// =========== GATE ===========
+
+app.post('/api/profiles/:profileId/gate/approve', route(async (req, res) => {
+  const store = loadStore()
+  const profile = getProfileOrThrow(store, req.params.profileId)
+
+  const conversationId = typeof req.body.conversationId === 'string'
+    ? req.body.conversationId.trim().toLowerCase()
+    : ''
+  const requestId = typeof req.body.requestId === 'string'
+    ? req.body.requestId.trim()
+    : ''
+
+  if (!conversationId || !requestId) {
+    const error = new Error('conversationId and requestId are required')
+    error.statusCode = 400
+    throw error
+  }
+
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
+
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    const error = new Error(`conversation ${conversationId} not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Find the gate.request in history
+  const bucket = ensureHistoryBucket(store, profile.id, conversationId)
+  let reqMsg = null
+  for (const msg of bucket) {
+    if (msg.bodyType !== 'gate.request') continue
+    try {
+      const parsed = JSON.parse(msg.text)
+      if (parsed.request_id === requestId) {
+        reqMsg = parsed
+        break
+      }
+    } catch {
+      continue
+    }
+  }
+
+  if (!reqMsg) {
+    const error = new Error(`gate request ${requestId} not found in conversation history`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Build gate signable and sign approval
+  const kidHex = bytesToHex(identity.keyID)
+  const payloadHash = computePayloadHash(reqMsg.payload || null)
+
+  const signable = {
+    org_id: reqMsg.org_id,
+    request_id: requestId,
+    verb: reqMsg.verb,
+    target_endpoint: reqMsg.target_endpoint,
+    target_service: reqMsg.target_service,
+    target_url: reqMsg.target_url,
+    expires_at_unix: Math.floor(new Date(reqMsg.expires_at).getTime() / 1000),
+    payload_hash: payloadHash,
+  }
+
+  const reqHash = hashRequest(signable)
+  const approvalSignable = {
+    org_id: reqMsg.org_id,
+    request_id: requestId,
+    request_hash: reqHash,
+  }
+
+  const sig = signApproval(identity.privateKey, approvalSignable)
+  const sigB64 = base64UrlEncode(sig)
+
+  // Build approval message body
+  const approvalBody = {
+    type: 'gate.approval',
+    org_id: reqMsg.org_id,
+    request_id: requestId,
+    signer_kid: kidHex,
+    signature: sigB64,
+  }
+  const bodyText = JSON.stringify(approvalBody)
+  const bodyBytes = new TextEncoder().encode(bodyText)
+
+  // Create and send encrypted qntm message with body_type=gate.approval
+  const envelope = createMessage(identity, convCrypto, 'gate.approval', bodyBytes, undefined, defaultTTL())
+  await sendEnvelopeToDropbox(store, conversationId, envelope)
+
+  const message = {
+    id: bytesToHex(envelope.msg_id),
+    conversationId,
+    direction: 'outgoing',
+    sender: profile.name,
+    senderKey: '',
+    bodyType: 'gate.approval',
+    text: bodyText,
+    createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+  }
+
+  addHistoryMessage(store, profile.id, conversationId, message)
+  saveStore(store)
+
+  res.json({
+    output: 'Gate approval sent',
+    warning: '',
+    message: formatMessageForClient(store, profile.id, message),
   })
 }))
 

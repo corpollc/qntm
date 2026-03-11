@@ -93,6 +93,12 @@ export const api = {
       body: JSON.stringify({ conversationId }),
     }),
 
+  gateApprove: (profileId: string, conversationId: string, requestId: string) =>
+    request<{ message: ChatMessage; warning?: string }>(`/api/profiles/${profileId}/gate/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId, requestId }),
+    }),
+
   getSettings: () =>
     request<{ dropboxUrl: string; defaultDropboxUrl: string }>('/api/settings'),
 
