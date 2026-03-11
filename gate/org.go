@@ -75,6 +75,12 @@ func (s *OrgStore) Create(org *Org) error {
 	if org.Credentials == nil {
 		org.Credentials = make(map[string]*Credential)
 	}
+	// Compute KIDs from public keys if not set
+	for i := range org.Signers {
+		if org.Signers[i].KID == "" && len(org.Signers[i].PublicKey) > 0 {
+			org.Signers[i].KID = KIDFromPublicKey(org.Signers[i].PublicKey)
+		}
+	}
 	s.orgs[org.ID] = org
 	return nil
 }

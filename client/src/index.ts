@@ -3,6 +3,7 @@ export {
   ed25519PublicKeyToX25519, ed25519PrivateKeyToX25519,
   generateX25519Keypair, x25519SharedSecret,
 } from './crypto/x25519.js';
+export { sealSecret, openSecret } from './crypto/naclbox.js';
 export { marshalCanonical, unmarshalCanonical } from './crypto/cbor.js';
 
 export {
@@ -33,6 +34,8 @@ export {
   signRequest, verifyRequest, signApproval, verifyApproval,
   hashRequest, computePayloadHash,
   GateClient, GateError, lookupThreshold,
+  GateMessagePromote, GateMessageConfig, GateMessageSecret, GateMessageResult,
+  resolveRecipe,
 } from './gate/index.js';
 
 export * from './types.js';

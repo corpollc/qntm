@@ -1,4 +1,4 @@
-import type { ChatMessage, ContactAlias, Conversation, IdentityInfo, Profile } from './types'
+import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 
 interface ApiError {
   error?: string
@@ -97,6 +97,27 @@ export const api = {
     request<{ message: ChatMessage; warning?: string }>(`/api/profiles/${profileId}/gate/approve`, {
       method: 'POST',
       body: JSON.stringify({ conversationId, requestId }),
+    }),
+
+  gateRecipes: () =>
+    request<{ recipes: GateRecipe[] }>('/api/gate/recipes'),
+
+  gatePromote: (profileId: string, conversationId: string, orgId: string, threshold: number, gatewayKid?: string) =>
+    request<{ message: ChatMessage; warning?: string }>(`/api/profiles/${profileId}/gate/promote`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId, orgId, threshold, gatewayKid }),
+    }),
+
+  gateRun: (profileId: string, conversationId: string, recipeName: string, orgId: string, gateUrl: string, args?: Record<string, string>) =>
+    request<{ message: ChatMessage; warning?: string }>(`/api/profiles/${profileId}/gate/run`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId, recipeName, orgId, gateUrl, arguments: args }),
+    }),
+
+  gateSecret: (profileId: string, conversationId: string, service: string, value: string, headerName?: string, headerTemplate?: string, gatewayPublicKey?: string) =>
+    request<{ output: string; message: ChatMessage; warning?: string }>(`/api/profiles/${profileId}/gate/secret`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId, service, value, headerName, headerTemplate, gatewayPublicKey }),
     }),
 
   getSettings: () =>

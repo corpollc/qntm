@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import type { ChatMessage, ContactAlias, Conversation, IdentityInfo, Profile } from './types'
+import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 
 interface GateRequestBody {
   type: string
+  recipe_name?: string
   org_id: string
   request_id: string
   verb: string
@@ -12,6 +13,8 @@ interface GateRequestBody {
   target_url: string
   expires_at: string
   signer_kid: string
+  arguments?: Record<string, string>
+  request_body?: unknown
 }
 
 interface GateApprovalBody {
@@ -24,6 +27,14 @@ interface GateExecutedBody {
   type: string
   request_id: string
   execution_status_code: number
+}
+
+interface GateResultBody {
+  type: string
+  request_id: string
+  status_code: number
+  content_type?: string
+  body?: string
 }
 
 function parseGateMessage(text: string): GateRequestBody | GateApprovalBody | GateExecutedBody | null {
@@ -47,17 +58,45 @@ function GateRequestCard({
   if (!parsed) return <div className="message-body">{message.text}</div>
 
   const isExpired = new Date(parsed.expires_at) < new Date()
+  const hasArgs = parsed.arguments && Object.keys(parsed.arguments).length > 0
+  const hasBody = parsed.request_body !== undefined && parsed.request_body !== null
 
   return (
     <div className="gate-card gate-request">
-      <div className="gate-card-header">Gate Request</div>
+      <div className="gate-card-header">
+        Gate Request{parsed.recipe_name ? `: ${parsed.recipe_name}` : ''}
+      </div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
-        <div><strong>Action:</strong> {parsed.verb} {parsed.target_endpoint}</div>
+        <div className="gate-verb-line">
+          <span className={`gate-verb gate-verb-${parsed.verb.toLowerCase()}`}>{parsed.verb}</span>
+          <code className="gate-url-resolved">{parsed.target_url}</code>
+        </div>
+        <div><strong>Endpoint:</strong> {parsed.target_endpoint}</div>
         <div><strong>Service:</strong> {parsed.target_service}</div>
         <div><strong>Org:</strong> {parsed.org_id}</div>
         <div><strong>Requester:</strong> {shortId(parsed.signer_kid)}</div>
         <div><strong>Expires:</strong> {new Date(parsed.expires_at).toLocaleTimeString()}</div>
+        {hasArgs && (
+          <div className="gate-args-display">
+            <strong>Arguments:</strong>
+            {Object.entries(parsed.arguments!).filter(([k]) => k !== '_body').map(([key, value]) => (
+              <div key={key} className="gate-arg-item">
+                <code>{key}</code>: {value}
+              </div>
+            ))}
+          </div>
+        )}
+        {hasBody && (
+          <div className="gate-body-preview">
+            <strong>Request body:</strong>
+            <pre className="gate-body-content">
+              {typeof parsed.request_body === 'string'
+                ? parsed.request_body
+                : JSON.stringify(parsed.request_body, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
       {!isExpired && (
         <button
@@ -99,6 +138,112 @@ function GateExecutedCard({ message }: { message: ChatMessage }) {
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div><strong>HTTP Status:</strong> {parsed.execution_status_code || 'N/A'}</div>
+      </div>
+    </div>
+  )
+}
+
+interface GatePromoteBody {
+  org_id: string
+  signers: Array<{ kid: string; public_key: string }>
+  rules: Array<{ service: string; endpoint: string; verb: string; m: number; n: number }>
+}
+
+function GatePromoteCard({ message }: { message: ChatMessage }) {
+  let parsed: GatePromoteBody | null = null
+  try {
+    parsed = JSON.parse(message.text)
+  } catch {
+    return <div className="message-body">{message.text}</div>
+  }
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  const threshold = parsed.rules?.[0]?.m ?? '?'
+  const n = parsed.signers?.length ?? '?'
+
+  return (
+    <div className="gate-card gate-promote">
+      <div className="gate-card-header">Gate Promote</div>
+      <div className="gate-card-body">
+        <div><strong>Org:</strong> {parsed.org_id}</div>
+        <div><strong>Threshold:</strong> {threshold}-of-{n}</div>
+        <div><strong>Signers:</strong> {parsed.signers?.length ?? 0}</div>
+        {parsed.signers?.map((s) => (
+          <div key={s.kid} className="gate-signer-item">
+            <code>{shortId(s.kid)}</code>
+          </div>
+        ))}
+        <div><strong>Rules:</strong> {parsed.rules?.length ?? 0}</div>
+      </div>
+    </div>
+  )
+}
+
+function GateConfigCard({ message }: { message: ChatMessage }) {
+  let parsed: { rules?: Array<{ service: string; endpoint: string; verb: string; m: number; n: number }> } | null = null
+  try {
+    parsed = JSON.parse(message.text)
+  } catch {
+    return <div className="message-body">{message.text}</div>
+  }
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  return (
+    <div className="gate-card gate-config">
+      <div className="gate-card-header">Gate Config Update</div>
+      <div className="gate-card-body">
+        <div><strong>Rules:</strong> {parsed.rules?.length ?? 0}</div>
+        {parsed.rules?.map((r, i) => (
+          <div key={i}>
+            <code>{r.verb} {r.endpoint}</code> on <code>{r.service}</code>: M={r.m}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function GateResultCard({ message }: { message: ChatMessage }) {
+  const parsed = parseGateMessage(message.text) as GateResultBody | null
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  const isSuccess = parsed.status_code >= 200 && parsed.status_code < 300
+  const isJson = parsed.content_type?.includes('json')
+  const MAX_BODY_LENGTH = 2000
+
+  let displayBody = parsed.body || ''
+  if (isJson && displayBody) {
+    try {
+      displayBody = JSON.stringify(JSON.parse(displayBody), null, 2)
+    } catch {
+      // keep raw
+    }
+  }
+  const truncated = displayBody.length > MAX_BODY_LENGTH
+  if (truncated) {
+    displayBody = displayBody.slice(0, MAX_BODY_LENGTH)
+  }
+
+  return (
+    <div className={`gate-card gate-result ${isSuccess ? 'gate-result-ok' : 'gate-result-err'}`}>
+      <div className="gate-card-header">Gate Result</div>
+      <div className="gate-card-body">
+        <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
+        <div>
+          <strong>Status:</strong>{' '}
+          <span className={isSuccess ? 'gate-status-ok' : 'gate-status-err'}>
+            {parsed.status_code}
+          </span>
+        </div>
+        {parsed.content_type && (
+          <div><strong>Content-Type:</strong> {parsed.content_type}</div>
+        )}
+        {displayBody && (
+          <div className="gate-result-body-section">
+            <strong>Response:</strong>
+            <pre className="gate-result-body">{displayBody}{truncated ? '\n... (truncated)' : ''}</pre>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -152,6 +297,18 @@ export default function App() {
   const [createdInviteToken, setCreatedInviteToken] = useState('')
   const [composer, setComposer] = useState('')
 
+  const [gateRecipes, setGateRecipes] = useState<GateRecipe[]>([])
+  const [selectedRecipe, setSelectedRecipe] = useState('')
+  const [gateOrgId, setGateOrgId] = useState('')
+  const [gateServerUrl, setGateServerUrl] = useState('http://localhost:8080')
+  const [gateArgs, setGateArgs] = useState<Record<string, string>>({})
+  const [gatePromoteThreshold, setGatePromoteThreshold] = useState(2)
+
+  const [secretService, setSecretService] = useState('')
+  const [secretValue, setSecretValue] = useState('')
+  const [secretHeaderName, setSecretHeaderName] = useState('Authorization')
+  const [secretHeaderTemplate, setSecretHeaderTemplate] = useState('Bearer {value}')
+
   const [showSettings, setShowSettings] = useState(false)
   const [dropboxUrl, setDropboxUrl] = useState('')
   const [defaultDropboxUrl, setDefaultDropboxUrl] = useState('')
@@ -173,6 +330,26 @@ export default function App() {
     () => conversations.find((conversation) => conversation.id === selectedConversationId) || null,
     [conversations, selectedConversationId],
   )
+
+  const activeRecipe = useMemo(
+    () => gateRecipes.find((r) => r.name === selectedRecipe) || null,
+    [gateRecipes, selectedRecipe],
+  )
+
+  const resolvedGateUrl = useMemo(() => {
+    if (!activeRecipe) return ''
+    let url = activeRecipe.target_url
+    url = url.replace(/\{(\w+)\}/g, (match, key) => gateArgs[key] || match)
+    // Append query params
+    const qp = activeRecipe.query_params || []
+    const queryParts: string[] = []
+    for (const param of qp) {
+      const val = gateArgs[param.name] || param.default || ''
+      if (val) queryParts.push(`${encodeURIComponent(param.name)}=${encodeURIComponent(val)}`)
+    }
+    if (queryParts.length > 0) url += (url.includes('?') ? '&' : '?') + queryParts.join('&')
+    return url
+  }, [activeRecipe, gateArgs])
 
   const contactNameByKey = useMemo(() => {
     const mapping: Record<string, string> = {}
@@ -205,6 +382,7 @@ export default function App() {
   useEffect(() => {
     void initializeProfiles()
     void loadSettings()
+    void loadGateRecipes()
   }, [])
 
   useEffect(() => {
@@ -527,6 +705,101 @@ export default function App() {
     }
   }
 
+  async function loadGateRecipes() {
+    try {
+      const response = await api.gateRecipes()
+      setGateRecipes(response.recipes)
+    } catch {
+      // Gate recipes not critical
+    }
+  }
+
+  function onRecipeChange(recipeName: string) {
+    setSelectedRecipe(recipeName)
+    setGateArgs({})
+  }
+
+  function onGateArgChange(key: string, value: string) {
+    setGateArgs((prev) => ({ ...prev, [key]: value }))
+  }
+
+  async function onGateRun() {
+    if (!activeProfileId || !selectedConversationId || !selectedRecipe || !gateOrgId.trim()) {
+      setError('Select a recipe and enter an org ID')
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.gateRun(
+        activeProfileId,
+        selectedConversationId,
+        selectedRecipe,
+        gateOrgId.trim(),
+        gateServerUrl.trim(),
+        Object.keys(gateArgs).length > 0 ? gateArgs : undefined,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus(`Gate request submitted: ${selectedRecipe}`)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit gate request')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
+  async function onGatePromote() {
+    if (!activeProfileId || !selectedConversationId || !gateOrgId.trim()) {
+      setError('Enter an org ID to promote this conversation')
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.gatePromote(
+        activeProfileId,
+        selectedConversationId,
+        gateOrgId.trim(),
+        gatePromoteThreshold,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus(`Gate promote sent: org=${gateOrgId.trim()} threshold=${gatePromoteThreshold}`)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to promote conversation')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
+  async function onGateSecret() {
+    if (!activeProfileId || !selectedConversationId || !secretService.trim() || !secretValue) {
+      setError('Enter a service name and secret value')
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.gateSecret(
+        activeProfileId,
+        selectedConversationId,
+        secretService.trim(),
+        secretValue,
+        secretHeaderName.trim() || undefined,
+        secretHeaderTemplate.trim() || undefined,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus(response.output || `Secret provisioned for ${secretService.trim()}`)
+      setSecretValue('')
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to provision secret')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
   const onGateApprove = useCallback(async (requestId: string, conversationId: string) => {
     if (!activeProfileId) return
 
@@ -679,6 +952,22 @@ export default function App() {
                 <div>
                   <strong>KID:</strong> {identity.keyId ? shortId(identity.keyId) : '-'}
                 </div>
+                {identity.publicKey && (
+                  <div className="pubkey-row">
+                    <strong>Public key:</strong>
+                    <code className="pubkey-value">{shortId(identity.publicKey)}</code>
+                    <button
+                      className="button-small"
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(identity.publicKey)
+                        setStatus('Public key copied to clipboard')
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -758,6 +1047,203 @@ export default function App() {
                 ))}
               </div>
             </section>
+
+            <section className="panel">
+              <h2>Gate</h2>
+
+              <label className="label" htmlFor="gate-recipe">Recipe</label>
+              <select
+                id="gate-recipe"
+                className="input"
+                value={selectedRecipe}
+                onChange={(event) => onRecipeChange(event.target.value)}
+              >
+                <option value="">Select a recipe...</option>
+                {gateRecipes.map((recipe) => (
+                  <option key={recipe.name} value={recipe.name}>
+                    {recipe.name} — {recipe.verb} {recipe.endpoint}
+                  </option>
+                ))}
+              </select>
+
+              <label className="label" htmlFor="gate-org">Org ID</label>
+              <input
+                id="gate-org"
+                className="input"
+                placeholder="e.g. acme"
+                value={gateOrgId}
+                onChange={(event) => setGateOrgId(event.target.value)}
+              />
+
+              <label className="label" htmlFor="gate-url">Gate server</label>
+              <input
+                id="gate-url"
+                className="input"
+                placeholder="http://localhost:8080"
+                value={gateServerUrl}
+                onChange={(event) => setGateServerUrl(event.target.value)}
+              />
+
+              {activeRecipe && (
+                <div className="gate-args">
+                  {(activeRecipe.path_params || []).length > 0 && (
+                    <>
+                      <div className="gate-args-heading">Path params</div>
+                      {activeRecipe.path_params!.map((param) => (
+                        <div className="gate-arg-field" key={`path-${param.name}`}>
+                          <label className="label" htmlFor={`gate-path-${param.name}`}>
+                            {param.name}{param.required ? ' *' : ''}
+                          </label>
+                          <input
+                            id={`gate-path-${param.name}`}
+                            className="input"
+                            placeholder={param.description || param.name}
+                            value={gateArgs[param.name] || ''}
+                            onChange={(e) => onGateArgChange(param.name, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {(activeRecipe.query_params || []).length > 0 && (
+                    <>
+                      <div className="gate-args-heading">Query params</div>
+                      {activeRecipe.query_params!.map((param) => (
+                        <div className="gate-arg-field" key={`query-${param.name}`}>
+                          <label className="label" htmlFor={`gate-query-${param.name}`}>
+                            {param.name}{param.required ? ' *' : ''}
+                          </label>
+                          <input
+                            id={`gate-query-${param.name}`}
+                            className="input"
+                            placeholder={param.default || param.description || param.name}
+                            value={gateArgs[param.name] || ''}
+                            onChange={(e) => onGateArgChange(param.name, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {activeRecipe.body_schema?.properties && (
+                    <>
+                      <div className="gate-args-heading">Body fields</div>
+                      {Object.entries(activeRecipe.body_schema.properties as Record<string, { description?: string; type?: string }>).map(([key, prop]) => (
+                        <div className="gate-arg-field" key={`body-${key}`}>
+                          <label className="label" htmlFor={`gate-body-${key}`}>
+                            {key}
+                          </label>
+                          <input
+                            id={`gate-body-${key}`}
+                            className="input"
+                            placeholder={prop.description || prop.type || key}
+                            value={gateArgs[key] || ''}
+                            onChange={(e) => onGateArgChange(key, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {!activeRecipe.body_schema && activeRecipe.body_example && (
+                    <>
+                      <div className="gate-args-heading">Request body</div>
+                      <textarea
+                        className="token-box"
+                        placeholder={JSON.stringify(activeRecipe.body_example, null, 2)}
+                        value={gateArgs._body || ''}
+                        onChange={(e) => onGateArgChange('_body', e.target.value)}
+                      />
+                    </>
+                  )}
+
+                  {resolvedGateUrl && (
+                    <div className="gate-url-preview">
+                      <span className={`gate-verb gate-verb-${activeRecipe.verb.toLowerCase()}`}>
+                        {activeRecipe.verb}
+                      </span>{' '}
+                      <code>{resolvedGateUrl}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                className="button full"
+                type="button"
+                disabled={isWorking || !selectedConversation || !selectedRecipe || !gateOrgId.trim()}
+                onClick={() => void onGateRun()}
+              >
+                Submit gate request
+              </button>
+
+              <div className="gate-promote-section">
+                <div className="gate-args-heading">Promote conversation</div>
+                <label className="label" htmlFor="gate-promote-threshold">Threshold</label>
+                <input
+                  id="gate-promote-threshold"
+                  className="input"
+                  type="number"
+                  min={1}
+                  value={gatePromoteThreshold}
+                  onChange={(event) => setGatePromoteThreshold(Number(event.target.value) || 1)}
+                />
+                <button
+                  className="button full"
+                  type="button"
+                  disabled={isWorking || !selectedConversation || !gateOrgId.trim()}
+                  onClick={() => void onGatePromote()}
+                >
+                  Promote to Gate
+                </button>
+              </div>
+
+              <div className="gate-secret-section">
+                <div className="gate-args-heading">Add Secret</div>
+                <label className="label" htmlFor="secret-service">Service</label>
+                <input
+                  id="secret-service"
+                  className="input"
+                  placeholder="e.g. stripe, github"
+                  value={secretService}
+                  onChange={(event) => setSecretService(event.target.value)}
+                />
+                <label className="label" htmlFor="secret-header-name">Header name</label>
+                <input
+                  id="secret-header-name"
+                  className="input"
+                  placeholder="Authorization"
+                  value={secretHeaderName}
+                  onChange={(event) => setSecretHeaderName(event.target.value)}
+                />
+                <label className="label" htmlFor="secret-header-template">Header template</label>
+                <input
+                  id="secret-header-template"
+                  className="input"
+                  placeholder="Bearer {value}"
+                  value={secretHeaderTemplate}
+                  onChange={(event) => setSecretHeaderTemplate(event.target.value)}
+                />
+                <label className="label" htmlFor="secret-value">Secret value</label>
+                <input
+                  id="secret-value"
+                  className="input"
+                  type="password"
+                  placeholder="API key or token"
+                  value={secretValue}
+                  onChange={(event) => setSecretValue(event.target.value)}
+                />
+                <button
+                  className="button full"
+                  type="button"
+                  disabled={isWorking || !selectedConversation || !secretService.trim() || !secretValue}
+                  onClick={() => void onGateSecret()}
+                >
+                  Provision secret
+                </button>
+              </div>
+            </section>
           </aside>
 
           <main className="chat-pane">
@@ -778,12 +1264,18 @@ export default function App() {
                     <span className="sender">{message.sender}</span>
                     <span className="time">{formatTime(message.createdAt)}</span>
                   </div>
-                  {message.bodyType === 'gate.request' ? (
+                  {message.bodyType === 'gate.promote' ? (
+                    <GatePromoteCard message={message} />
+                  ) : message.bodyType === 'gate.config' ? (
+                    <GateConfigCard message={message} />
+                  ) : message.bodyType === 'gate.request' ? (
                     <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
                   ) : message.bodyType === 'gate.approval' ? (
                     <GateApprovalCard message={message} />
                   ) : message.bodyType === 'gate.executed' ? (
                     <GateExecutedCard message={message} />
+                  ) : message.bodyType === 'gate.result' ? (
+                    <GateResultCard message={message} />
                   ) : (
                     <div className="message-body">{message.text}</div>
                   )}

@@ -1,20 +1,39 @@
 """Gate: multisig threshold authorization for external API execution.
 
 Provides Ed25519 request/approval signing, threshold rule matching,
-and an HTTP client for the qntm-gate server.
+recipes, secret sealing, and an HTTP client for the qntm-gate server.
 """
 
 import hashlib
 import json
-from dataclasses import dataclass
+import os
+import re
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import httpx
+import nacl.bindings
 
 from .cbor import marshal_canonical
-from .crypto import QSP1Suite
+from .crypto import (
+    QSP1Suite,
+    ed25519_private_key_to_x25519,
+    ed25519_public_key_to_x25519,
+)
 
 _suite = QSP1Suite()
+
+
+# ---------------------------------------------------------------------------
+# Message type constants (mirrors Go GateMessageType)
+# ---------------------------------------------------------------------------
+
+GATE_MESSAGE_REQUEST: str = "gate.request"
+GATE_MESSAGE_APPROVAL: str = "gate.approval"
+GATE_MESSAGE_EXECUTED: str = "gate.executed"
+GATE_MESSAGE_PROMOTE: str = "gate.promote"
+GATE_MESSAGE_SECRET: str = "gate.secret"
+GATE_MESSAGE_CONFIG: str = "gate.config"
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +105,88 @@ class ExecuteResult:
     threshold: int
     expires_at: str
     execution_result: Optional[ExecutionResult] = None
+
+
+# ---------------------------------------------------------------------------
+# Recipe types (mirrors Go Recipe, RecipeParam)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RecipeParam:
+    name: str
+    description: str
+    required: bool
+    type: str  # "string", "integer", "boolean"
+    default: str = ""
+
+
+@dataclass
+class Recipe:
+    name: str
+    description: str
+    service: str
+    verb: str
+    endpoint: str
+    target_url: str
+    risk_tier: str
+    threshold: int
+    params: Optional[str] = None  # JSON schema for parameters
+    content_type: Optional[str] = None
+    path_params: list[RecipeParam] = field(default_factory=list)
+    query_params: list[RecipeParam] = field(default_factory=list)
+    body_schema: Optional[str] = None  # JSON string of body schema
+    body_example: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Gateway payload types (mirrors Go PromotePayload, ConfigPayload, SecretPayload)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PromotePayload:
+    org_id: str
+    signers: list[Signer]
+    rules: list[ThresholdRule]
+
+
+@dataclass
+class ConfigPayload:
+    rules: list[ThresholdRule]
+
+
+@dataclass
+class SecretPayload:
+    secret_id: str
+    service: str
+    header_name: str
+    header_template: str  # e.g. "Bearer {value}"
+    encrypted_blob: str  # base64-encoded NaCl box ciphertext
+    sender_kid: str
+
+
+# ---------------------------------------------------------------------------
+# GateConversationMessage (mirrors Go GateConversationMessage)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GateConversationMessage:
+    type: str
+    org_id: str
+    request_id: str
+    signer_kid: str
+    signature: str
+    # Request fields (only for gate.request)
+    verb: Optional[str] = None
+    target_endpoint: Optional[str] = None
+    target_service: Optional[str] = None
+    target_url: Optional[str] = None
+    payload: Optional[Any] = None
+    expires_at: Optional[str] = None
+    executed_at: Optional[str] = None
+    execution_status_code: Optional[int] = None
+    # Recipe fields (optional -- populated when request originates from a recipe)
+    recipe_name: Optional[str] = None
+    arguments: Optional[dict[str, str]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +361,158 @@ def lookup_threshold(
             best = rule
 
     return best
+
+
+# ---------------------------------------------------------------------------
+# Recipe resolution (mirrors Go ResolveRecipe)
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
+
+
+def resolve_recipe(
+    recipe: Recipe,
+    args: Optional[dict[str, str]],
+) -> tuple[str, str, Optional[bytes]]:
+    """Resolve a recipe by substituting parameters.
+
+    Returns (endpoint, target_url, body_bytes_or_None).
+    Raises ValueError on missing required parameters.
+    """
+    if args is None:
+        args = {}
+    # Make a mutable copy so we can inject defaults
+    args = dict(args)
+
+    # Validate required path params
+    for p in recipe.path_params:
+        if p.required and p.name not in args:
+            if p.default:
+                args[p.name] = p.default
+            else:
+                raise ValueError(f"missing required path parameter {p.name!r}")
+
+    # Validate required query params
+    for p in recipe.query_params:
+        if p.required and p.name not in args:
+            if p.default:
+                args[p.name] = p.default
+            else:
+                raise ValueError(f"missing required query parameter {p.name!r}")
+
+    # Substitute {param} placeholders
+    def _sub(s: str) -> str:
+        def _repl(m: re.Match) -> str:
+            key = m.group(1)
+            return args.get(key, m.group(0))
+        return _PLACEHOLDER_RE.sub(_repl, s)
+
+    endpoint = _sub(recipe.endpoint)
+    target_url = _sub(recipe.target_url)
+
+    # Append query params to target URL
+    query_parts: list[str] = []
+    for p in recipe.query_params:
+        if p.name in args:
+            query_parts.append(f"{p.name}={args[p.name]}")
+        elif p.default:
+            query_parts.append(f"{p.name}={p.default}")
+    if query_parts:
+        sep = "&" if "?" in target_url else "?"
+        target_url = target_url + sep + "&".join(query_parts)
+
+    # Build body from body_schema + args for POST/PUT/PATCH
+    body: Optional[bytes] = None
+    verb = recipe.verb.upper()
+    if verb in ("POST", "PUT", "PATCH") and recipe.body_schema:
+        schema = json.loads(recipe.body_schema)
+
+        # Discover field names from JSON Schema "properties"
+        field_names: list[str] = []
+        if "properties" in schema:
+            field_names = list(schema["properties"].keys())
+
+        # Fall back to flat schema keys
+        if not field_names:
+            field_names = [
+                k for k in schema
+                if k not in ("type", "properties", "required")
+            ]
+
+        # Build body object from args matching schema fields
+        body_map: dict[str, Any] = {}
+        for name in field_names:
+            if name in args:
+                body_map[name] = args[name]
+
+        if body_map:
+            body = json.dumps(body_map, separators=(",", ":")).encode()
+
+        # Validate required body params
+        if "required" in schema:
+            for name in schema["required"]:
+                if name not in args:
+                    raise ValueError(f"missing required body parameter {name!r}")
+
+    return endpoint, target_url, body
+
+
+# ---------------------------------------------------------------------------
+# NaCl box secret sealing (mirrors Go SealSecret / OpenSecret)
+# ---------------------------------------------------------------------------
+
+# NaCl box overhead: 16 bytes Poly1305 MAC
+_NACL_BOX_NONCE_SIZE = 24
+_NACL_BOX_MAC_SIZE = 16
+
+
+def seal_secret(
+    sender_private_key: bytes,
+    gateway_public_key: bytes,
+    plaintext: bytes,
+) -> bytes:
+    """Encrypt a secret to the gateway using NaCl box (X25519-XSalsa20-Poly1305).
+
+    Ed25519 keys are converted to X25519 for the DH exchange.
+    Returns nonce (24 bytes) || ciphertext.
+    """
+    sender_x25519 = ed25519_private_key_to_x25519(sender_private_key)
+    gateway_x25519 = ed25519_public_key_to_x25519(gateway_public_key)
+
+    nonce = os.urandom(_NACL_BOX_NONCE_SIZE)
+
+    ciphertext = nacl.bindings.crypto_box(
+        plaintext, nonce, gateway_x25519, sender_x25519
+    )
+
+    return nonce + ciphertext
+
+
+def open_secret(
+    gateway_private_key: bytes,
+    sender_public_key: bytes,
+    ciphertext: bytes,
+) -> bytes:
+    """Decrypt a secret sealed by seal_secret.
+
+    Raises ValueError if ciphertext is too short.
+    Raises nacl.exceptions.CryptoError on authentication failure.
+    """
+    min_len = _NACL_BOX_NONCE_SIZE + _NACL_BOX_MAC_SIZE
+    if len(ciphertext) < min_len:
+        raise ValueError(
+            f"ciphertext too short: {len(ciphertext)} bytes, need at least {min_len}"
+        )
+
+    gateway_x25519 = ed25519_private_key_to_x25519(gateway_private_key)
+    sender_x25519 = ed25519_public_key_to_x25519(sender_public_key)
+
+    nonce = ciphertext[:_NACL_BOX_NONCE_SIZE]
+    encrypted = ciphertext[_NACL_BOX_NONCE_SIZE:]
+
+    return nacl.bindings.crypto_box_open(
+        encrypted, nonce, sender_x25519, gateway_x25519
+    )
 
 
 # ---------------------------------------------------------------------------

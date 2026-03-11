@@ -91,6 +91,216 @@ func TestRecipeCatalog_ValidateRecipe_BadEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveRecipe_PathParamSubstitution(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.path",
+		Verb:     "GET",
+		Endpoint: "/item/{id}.json",
+		TargetURL: "https://example.com/v0/item/{id}.json",
+		PathParams: []RecipeParam{
+			{Name: "id", Description: "Item ID", Required: true, Type: "string"},
+		},
+	}
+
+	ep, url, body, err := ResolveRecipe(recipe, map[string]string{"id": "12345"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep != "/item/12345.json" {
+		t.Fatalf("endpoint = %q, want /item/12345.json", ep)
+	}
+	if url != "https://example.com/v0/item/12345.json" {
+		t.Fatalf("targetURL = %q, want https://example.com/v0/item/12345.json", url)
+	}
+	if body != nil {
+		t.Fatalf("expected nil body for GET, got %s", body)
+	}
+}
+
+func TestResolveRecipe_MissingRequiredPathParam(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.path",
+		Verb:     "GET",
+		Endpoint: "/item/{id}.json",
+		TargetURL: "https://example.com/v0/item/{id}.json",
+		PathParams: []RecipeParam{
+			{Name: "id", Description: "Item ID", Required: true, Type: "string"},
+		},
+	}
+
+	_, _, _, err := ResolveRecipe(recipe, map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing required path param")
+	}
+	if !strings.Contains(err.Error(), "missing required path parameter") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveRecipe_DefaultPathParam(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.default",
+		Verb:     "GET",
+		Endpoint: "/breed/{breed}/images/random",
+		TargetURL: "https://example.com/breed/{breed}/images/random",
+		PathParams: []RecipeParam{
+			{Name: "breed", Description: "Breed", Required: true, Default: "labrador", Type: "string"},
+		},
+	}
+
+	ep, url, _, err := ResolveRecipe(recipe, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep != "/breed/labrador/images/random" {
+		t.Fatalf("endpoint = %q, want /breed/labrador/images/random", ep)
+	}
+	if url != "https://example.com/breed/labrador/images/random" {
+		t.Fatalf("targetURL = %q", url)
+	}
+}
+
+func TestResolveRecipe_BodyBuilding(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.body",
+		Verb:     "POST",
+		Endpoint: "/leet",
+		TargetURL: "http://localhost:9090/leet",
+		BodySchema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`),
+	}
+
+	ep, url, body, err := ResolveRecipe(recipe, map[string]string{"text": "Hello World"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep != "/leet" {
+		t.Fatalf("endpoint = %q", ep)
+	}
+	if url != "http://localhost:9090/leet" {
+		t.Fatalf("targetURL = %q", url)
+	}
+
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(body, &bodyMap); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if bodyMap["text"] != "Hello World" {
+		t.Fatalf("body text = %q, want Hello World", bodyMap["text"])
+	}
+}
+
+func TestResolveRecipe_MissingRequiredBodyParam(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.body",
+		Verb:     "POST",
+		Endpoint: "/leet",
+		TargetURL: "http://localhost:9090/leet",
+		BodySchema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`),
+	}
+
+	_, _, _, err := ResolveRecipe(recipe, map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing required body param")
+	}
+	if !strings.Contains(err.Error(), "missing required body parameter") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveRecipe_QueryParams(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.query",
+		Verb:     "GET",
+		Endpoint: "/search",
+		TargetURL: "https://example.com/search",
+		QueryParams: []RecipeParam{
+			{Name: "term", Description: "Search term", Required: true, Type: "string"},
+			{Name: "limit", Description: "Result limit", Required: false, Default: "10", Type: "integer"},
+		},
+	}
+
+	_, url, _, err := ResolveRecipe(recipe, map[string]string{"term": "golang"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(url, "term=golang") {
+		t.Fatalf("targetURL missing term param: %q", url)
+	}
+	if !strings.Contains(url, "limit=10") {
+		t.Fatalf("targetURL missing default limit param: %q", url)
+	}
+}
+
+func TestResolveRecipe_NoParamsGET(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.simple",
+		Verb:     "GET",
+		Endpoint: "/topstories.json",
+		TargetURL: "https://example.com/v0/topstories.json",
+	}
+
+	ep, url, body, err := ResolveRecipe(recipe, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep != "/topstories.json" {
+		t.Fatalf("endpoint = %q", ep)
+	}
+	if url != "https://example.com/v0/topstories.json" {
+		t.Fatalf("targetURL = %q", url)
+	}
+	if body != nil {
+		t.Fatalf("expected nil body, got %s", body)
+	}
+}
+
+func TestResolveRecipe_MultiplePathParams(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.multi",
+		Verb:     "GET",
+		Endpoint: "/repos/{owner}/{repo}/pulls",
+		TargetURL: "https://api.github.com/repos/{owner}/{repo}/pulls",
+		PathParams: []RecipeParam{
+			{Name: "owner", Description: "Repo owner", Required: true, Type: "string"},
+			{Name: "repo", Description: "Repo name", Required: true, Type: "string"},
+		},
+	}
+
+	ep, url, _, err := ResolveRecipe(recipe, map[string]string{"owner": "corpo", "repo": "qntm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep != "/repos/corpo/qntm/pulls" {
+		t.Fatalf("endpoint = %q", ep)
+	}
+	if url != "https://api.github.com/repos/corpo/qntm/pulls" {
+		t.Fatalf("targetURL = %q", url)
+	}
+}
+
+func TestResolveRecipe_QueryParamsWithExistingQueryString(t *testing.T) {
+	recipe := &Recipe{
+		Name:     "test.existing-qs",
+		Verb:     "GET",
+		Endpoint: "/api.php",
+		TargetURL: "https://example.com/api.php?amount=1",
+		QueryParams: []RecipeParam{
+			{Name: "category", Description: "Category ID", Required: false, Type: "integer"},
+		},
+	}
+
+	_, url, _, err := ResolveRecipe(recipe, map[string]string{"category": "9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(url, "amount=1") {
+		t.Fatalf("lost existing query string: %q", url)
+	}
+	if !strings.Contains(url, "&category=9") {
+		t.Fatalf("missing appended query param: %q", url)
+	}
+}
+
 func TestFunServer_Leet(t *testing.T) {
 	srv := httptest.NewServer(NewFunServer())
 	defer srv.Close()

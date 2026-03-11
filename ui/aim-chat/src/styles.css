@@ -425,6 +425,37 @@ body {
   }
 }
 
+/* Public key display */
+
+.pubkey-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pubkey-value {
+  font-size: 0.75rem;
+  background: var(--incoming);
+  padding: 1px 4px;
+  border-radius: 2px;
+  word-break: break-all;
+}
+
+.button-small {
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  background: var(--bg-2);
+  color: #fff;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.button-small:hover {
+  background: var(--bg-1);
+}
+
 /* Gate message cards */
 
 .gate-card {
@@ -506,4 +537,188 @@ body {
   color: var(--danger);
   font-weight: 600;
   font-size: 0.8rem;
+}
+
+/* Gate argument form */
+
+.gate-args {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #f0f4f9;
+  border: 1px solid #c0cfe0;
+}
+
+.gate-args-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #163758;
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+}
+
+.gate-args-heading:first-child {
+  margin-top: 0;
+}
+
+.gate-arg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gate-url-preview {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #e8eef5;
+  border: 1px solid #b8c8d8;
+  font-size: 11px;
+  word-break: break-all;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.gate-url-preview code {
+  font-size: 11px;
+}
+
+.gate-verb {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate-verb-get {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.gate-verb-post {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.gate-verb-put {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.gate-verb-patch {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.gate-verb-delete {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+/* Enhanced gate request card */
+
+.gate-verb-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.gate-url-resolved {
+  font-size: 11px;
+  word-break: break-all;
+  font-family: Consolas, 'Courier New', monospace;
+  background: rgba(255,255,255,0.5);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.gate-args-display {
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: rgba(255,255,255,0.4);
+  border-radius: 2px;
+}
+
+.gate-arg-item {
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.gate-arg-item code {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  color: #163758;
+}
+
+.gate-body-preview {
+  margin-top: 4px;
+}
+
+.gate-body-content {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  background: rgba(255,255,255,0.5);
+  border-radius: 2px;
+  font-size: 11px;
+  font-family: Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* Gate result card */
+
+.gate-result {
+  border-color: #78909c;
+}
+
+.gate-result-ok {
+  background: #e8f5e9;
+  border-color: #66bb6a;
+}
+
+.gate-result-ok .gate-card-header {
+  color: #2e7d32;
+}
+
+.gate-result-err {
+  background: #fce4ec;
+  border-color: #ef5350;
+}
+
+.gate-result-err .gate-card-header {
+  color: #c62828;
+}
+
+.gate-status-ok {
+  color: #2e7d32;
+  font-weight: 700;
+}
+
+.gate-status-err {
+  color: #c62828;
+  font-weight: 700;
+}
+
+.gate-result-body-section {
+  margin-top: 4px;
+}
+
+.gate-result-body {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.6);
+  border: 1px solid #c0cfe0;
+  border-radius: 2px;
+  font-size: 11px;
+  font-family: Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }

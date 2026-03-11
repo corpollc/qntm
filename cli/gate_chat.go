@@ -475,6 +475,23 @@ func FormatGateMessage(bodyType string, body []byte) string {
 	}
 
 	switch gate.GateMessageType(bodyType) {
+	case gate.GateMessagePromote:
+		var payload gate.PromotePayload
+		if err := json.Unmarshal(body, &payload); err == nil {
+			return fmt.Sprintf("GATE PROMOTE org=%s signers=%d rules=%d",
+				payload.OrgID, len(payload.Signers), len(payload.Rules))
+		}
+		return string(body)
+	case gate.GateMessageConfig:
+		var payload gate.ConfigPayload
+		if err := json.Unmarshal(body, &payload); err == nil {
+			ruleDesc := ""
+			if len(payload.Rules) > 0 {
+				ruleDesc = fmt.Sprintf(" (M=%d)", payload.Rules[0].M)
+			}
+			return fmt.Sprintf("GATE CONFIG rules=%d%s", len(payload.Rules), ruleDesc)
+		}
+		return string(body)
 	case gate.GateMessageRequest:
 		return fmt.Sprintf("GATE REQUEST %s\n    %s %s on %s (org: %s)\n    signer: %s  expires: %s",
 			msg.RequestID,

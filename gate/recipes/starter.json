@@ -86,7 +86,9 @@
       "target_url": "http://localhost:9090/leet",
       "risk_tier": "read",
       "threshold": 1,
-      "content_type": "application/json"
+      "content_type": "application/json",
+      "body_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to translate to leet speak"}}, "required": ["text"]},
+      "body_example": {"text": "Hello World"}
     },
     "ascii.artify": {
       "name": "ascii.artify",
@@ -97,7 +99,9 @@
       "target_url": "http://localhost:9090/ascii",
       "risk_tier": "read",
       "threshold": 1,
-      "content_type": "application/json"
+      "content_type": "application/json",
+      "body_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to convert to ASCII art"}}, "required": ["text"]},
+      "body_example": {"text": "HI"}
     },
     "hn.top-stories": {
       "name": "hn.top-stories",
@@ -119,7 +123,10 @@
       "target_url": "https://hacker-news.firebaseio.com/v0/item/{id}.json",
       "risk_tier": "read",
       "threshold": 1,
-      "content_type": "application/json"
+      "content_type": "application/json",
+      "path_params": [
+        {"name": "id", "description": "Hacker News item ID", "required": true, "type": "string"}
+      ]
     },
     "httpbin.echo": {
       "name": "httpbin.echo",
@@ -130,7 +137,9 @@
       "target_url": "https://httpbin.org/post",
       "risk_tier": "read",
       "threshold": 2,
-      "content_type": "application/json"
+      "content_type": "application/json",
+      "body_schema": {"type": "object", "properties": {"data": {"type": "string", "description": "Arbitrary data to echo back"}}},
+      "body_example": {"data": "hello"}
     },
     "httpbin.headers": {
       "name": "httpbin.headers",
@@ -185,7 +194,10 @@
       "target_url": "https://dog.ceo/api/breed/{breed}/images/random",
       "risk_tier": "read",
       "threshold": 1,
-      "content_type": "application/json"
+      "content_type": "application/json",
+      "path_params": [
+        {"name": "breed", "description": "Dog breed name (e.g. labrador, poodle)", "required": true, "type": "string"}
+      ]
     }
   }
 }

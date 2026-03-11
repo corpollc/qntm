@@ -542,7 +542,7 @@ var messageReceiveCmd = &cobra.Command{
 								bodyDisplay = fmt.Sprintf("applied group rekey to epoch %d", newEpoch)
 							}
 						}
-					case "gate.request", "gate.approval", "gate.executed":
+					case "gate.promote", "gate.config", "gate.request", "gate.approval", "gate.executed":
 						bodyDisplay = FormatGateMessage(msg.Inner.BodyType, msg.Inner.Body)
 					case "handle_reveal":
 						if handleStore != nil {

@@ -29,9 +29,11 @@ import {
   marshalCanonical,
   unmarshalCanonical,
   base64UrlEncode,
+  signRequest,
   signApproval,
   hashRequest,
   computePayloadHash,
+  sealSecret,
 } from '@qntm/client'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -864,6 +866,164 @@ app.post('/api/profiles/:profileId/messages/receive', route(async (req, res) => 
 
 // =========== GATE ===========
 
+// Embedded starter recipes (loaded from the Go-compiled JSON)
+const starterCatalogPath = path.resolve(__dirname, '..', '..', '..', 'gate', 'recipes', 'starter.json')
+let starterCatalog = { profiles: {}, recipes: {} }
+try {
+  starterCatalog = JSON.parse(fs.readFileSync(starterCatalogPath, 'utf8'))
+} catch {
+  console.warn('Could not load starter catalog from', starterCatalogPath)
+}
+
+app.get('/api/gate/recipes', route(async (_req, res) => {
+  const recipes = Object.values(starterCatalog.recipes || {})
+  res.json({ recipes })
+}))
+
+app.post('/api/profiles/:profileId/gate/run', route(async (req, res) => {
+  const store = loadStore()
+  const profile = getProfileOrThrow(store, req.params.profileId)
+
+  const conversationId = typeof req.body.conversationId === 'string'
+    ? req.body.conversationId.trim().toLowerCase()
+    : ''
+  const recipeName = typeof req.body.recipeName === 'string' ? req.body.recipeName.trim() : ''
+  const orgId = typeof req.body.orgId === 'string' ? req.body.orgId.trim() : ''
+  const gateUrl = typeof req.body.gateUrl === 'string' ? req.body.gateUrl.trim() : ''
+  const args = (req.body.arguments && typeof req.body.arguments === 'object') ? req.body.arguments : {}
+
+  if (!conversationId || !recipeName || !orgId) {
+    const error = new Error('conversationId, recipeName, and orgId are required')
+    error.statusCode = 400
+    throw error
+  }
+
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
+
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    const error = new Error(`conversation ${conversationId} not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Look up recipe
+  const recipe = starterCatalog.recipes?.[recipeName]
+  if (!recipe) {
+    const error = new Error(`recipe "${recipeName}" not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Resolve template params in endpoint and target_url
+  function resolveTemplate(template, params) {
+    return template.replace(/\{(\w+)\}/g, (match, key) => {
+      return params[key] !== undefined ? params[key] : match
+    })
+  }
+
+  const resolvedEndpoint = resolveTemplate(recipe.endpoint, args)
+  const resolvedTargetUrl = resolveTemplate(recipe.target_url, args)
+
+  // Build request body from body_schema or body_example if applicable
+  let requestBody = null
+  if (recipe.body_schema && recipe.body_schema.properties) {
+    requestBody = {}
+    for (const [key, _schemaProp] of Object.entries(recipe.body_schema.properties)) {
+      if (args[key] !== undefined) {
+        requestBody[key] = args[key]
+      }
+    }
+    if (Object.keys(requestBody).length === 0) requestBody = null
+  } else if (args._body) {
+    try { requestBody = JSON.parse(args._body) } catch { requestBody = args._body }
+  }
+
+  // Generate request ID and expiry
+  const requestId = crypto.randomUUID()
+  const expiresAt = new Date(Date.now() + 3600000).toISOString()
+  const expiresAtUnix = Math.floor(Date.now() / 1000) + 3600
+
+  // Sign the request
+  const kidHex = bytesToHex(identity.keyID)
+  const payloadHash = computePayloadHash(requestBody ? JSON.stringify(requestBody) : null)
+
+  const signable = {
+    org_id: orgId,
+    request_id: requestId,
+    verb: recipe.verb,
+    target_endpoint: resolvedEndpoint,
+    target_service: recipe.service,
+    target_url: resolvedTargetUrl,
+    expires_at_unix: expiresAtUnix,
+    payload_hash: payloadHash,
+  }
+
+  const sig = signRequest(identity.privateKey, signable)
+  const sigB64 = base64UrlEncode(sig)
+
+  // Build gate.request message body
+  const gateMsg = {
+    type: 'gate.request',
+    recipe_name: recipeName,
+    org_id: orgId,
+    request_id: requestId,
+    verb: recipe.verb,
+    target_endpoint: resolvedEndpoint,
+    target_service: recipe.service,
+    target_url: resolvedTargetUrl,
+    expires_at: expiresAt,
+    signer_kid: kidHex,
+    signature: sigB64,
+    arguments: Object.keys(args).length > 0 ? args : undefined,
+    request_body: requestBody || undefined,
+  }
+  const bodyText = JSON.stringify(gateMsg)
+  const bodyBytes = new TextEncoder().encode(bodyText)
+
+  // Send as encrypted qntm message
+  const envelope = createMessage(identity, convCrypto, 'gate.request', bodyBytes, undefined, defaultTTL())
+  await sendEnvelopeToDropbox(store, conversationId, envelope)
+
+  // Also POST to gate server if provided
+  if (gateUrl) {
+    try {
+      await fetch(`${gateUrl}/v1/orgs/${orgId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyText,
+      })
+    } catch {
+      // Gate server may not be running — not fatal
+    }
+  }
+
+  const message = {
+    id: bytesToHex(envelope.msg_id),
+    conversationId,
+    direction: 'outgoing',
+    sender: profile.name,
+    senderKey: '',
+    bodyType: 'gate.request',
+    text: bodyText,
+    createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+  }
+
+  addHistoryMessage(store, profile.id, conversationId, message)
+  saveStore(store)
+
+  res.json({
+    output: `Gate request ${requestId} submitted`,
+    warning: '',
+    message: formatMessageForClient(store, profile.id, message),
+  })
+}))
+
 app.post('/api/profiles/:profileId/gate/approve', route(async (req, res) => {
   const store = loadStore()
   const profile = getProfileOrThrow(store, req.params.profileId)
@@ -973,6 +1133,215 @@ app.post('/api/profiles/:profileId/gate/approve', route(async (req, res) => {
 
   res.json({
     output: 'Gate approval sent',
+    warning: '',
+    message: formatMessageForClient(store, profile.id, message),
+  })
+}))
+
+app.post('/api/profiles/:profileId/gate/promote', route(async (req, res) => {
+  const store = loadStore()
+  const profile = getProfileOrThrow(store, req.params.profileId)
+
+  const conversationId = typeof req.body.conversationId === 'string'
+    ? req.body.conversationId.trim().toLowerCase()
+    : ''
+  const orgId = typeof req.body.orgId === 'string' ? req.body.orgId.trim() : ''
+  const threshold = typeof req.body.threshold === 'number' ? req.body.threshold : 2
+  const gatewayKid = typeof req.body.gatewayKid === 'string' ? req.body.gatewayKid.trim() : ''
+
+  if (!conversationId || !orgId) {
+    const error = new Error('conversationId and orgId are required')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (threshold < 1) {
+    const error = new Error('threshold must be at least 1')
+    error.statusCode = 400
+    throw error
+  }
+
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
+
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    const error = new Error(`conversation ${conversationId} not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Build signers from conversation participants
+  const conv = findConversation(profile, conversationId)
+  const signers = []
+  const selfKidHex = bytesToHex(identity.keyID)
+  const seen = new Set()
+
+  // Add self
+  signers.push({ kid: selfKidHex, public_key: bytesToHex(identity.publicKey) })
+  seen.add(selfKidHex)
+
+  // Add other participants
+  if (conv && Array.isArray(conv.participants)) {
+    for (const pHex of conv.participants) {
+      const pBytes = hexToBytes(pHex)
+      const pKid = bytesToHex(keyIDFromPublicKey(pBytes))
+      if (!seen.has(pKid)) {
+        signers.push({ kid: pKid, public_key: pHex })
+        seen.add(pKid)
+      }
+    }
+  }
+
+  const n = signers.length
+
+  // Build promote payload (matches Go PromotePayload)
+  const promotePayload = {
+    org_id: orgId,
+    signers: signers,
+    rules: [
+      {
+        service: '*',
+        endpoint: '*',
+        verb: '*',
+        m: threshold,
+        n: n,
+      },
+    ],
+  }
+
+  const bodyText = JSON.stringify(promotePayload)
+  const bodyBytes = new TextEncoder().encode(bodyText)
+
+  // Send as encrypted qntm message with body_type=gate.promote
+  const envelope = createMessage(identity, convCrypto, 'gate.promote', bodyBytes, undefined, defaultTTL())
+  await sendEnvelopeToDropbox(store, conversationId, envelope)
+
+  const message = {
+    id: bytesToHex(envelope.msg_id),
+    conversationId,
+    direction: 'outgoing',
+    sender: profile.name,
+    senderKey: '',
+    bodyType: 'gate.promote',
+    text: bodyText,
+    createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+  }
+
+  addHistoryMessage(store, profile.id, conversationId, message)
+  saveStore(store)
+
+  res.json({
+    output: `Gate promote sent: org=${orgId} threshold=${threshold}-of-${n}`,
+    warning: '',
+    message: formatMessageForClient(store, profile.id, message),
+  })
+}))
+
+app.post('/api/profiles/:profileId/gate/secret', route(async (req, res) => {
+  const store = loadStore()
+  const profile = getProfileOrThrow(store, req.params.profileId)
+
+  const conversationId = typeof req.body.conversationId === 'string'
+    ? req.body.conversationId.trim().toLowerCase()
+    : ''
+  const service = typeof req.body.service === 'string' ? req.body.service.trim() : ''
+  const headerName = typeof req.body.headerName === 'string' ? req.body.headerName.trim() : 'Authorization'
+  const headerTemplate = typeof req.body.headerTemplate === 'string' ? req.body.headerTemplate.trim() : 'Bearer {value}'
+  const value = typeof req.body.value === 'string' ? req.body.value : ''
+  const gatewayPublicKey = typeof req.body.gatewayPublicKey === 'string' ? req.body.gatewayPublicKey.trim() : ''
+
+  if (!conversationId || !service || !value) {
+    const error = new Error('conversationId, service, and value are required')
+    error.statusCode = 400
+    throw error
+  }
+
+  const identity = loadIdentity(profile)
+  if (!identity) {
+    const error = new Error('no identity found for this profile')
+    error.statusCode = 400
+    throw error
+  }
+
+  const convCrypto = getConversationCryptoState(profile, conversationId)
+  if (!convCrypto) {
+    const error = new Error(`conversation ${conversationId} not found`)
+    error.statusCode = 404
+    throw error
+  }
+
+  // Find the gateway public key
+  let gwPubKeyBytes
+  const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
+
+  if (gatewayPublicKey) {
+    gwPubKeyBytes = hexToBytes(gatewayPublicKey)
+  } else {
+    // Use first non-self participant
+    const conv = findConversation(profile, conversationId)
+    if (conv && Array.isArray(conv.participants)) {
+      for (const pHex of conv.participants) {
+        const pBytes = hexToBytes(pHex)
+        const pKid = bytesToHex(keyIDFromPublicKey(pBytes)).toLowerCase()
+        if (pKid !== selfKidHex) {
+          gwPubKeyBytes = pBytes
+          break
+        }
+      }
+    }
+    if (!gwPubKeyBytes) {
+      const error = new Error('no gateway participant found (need a non-self participant, or provide gatewayPublicKey)')
+      error.statusCode = 400
+      throw error
+    }
+  }
+
+  // Encrypt the secret to the gateway's public key
+  const secretId = crypto.randomUUID()
+  const plaintext = new TextEncoder().encode(value)
+  const sealed = sealSecret(identity.privateKey, gwPubKeyBytes, plaintext)
+  const encryptedBlob = Buffer.from(sealed).toString('base64url')
+
+  // Build gate.secret payload
+  const secretPayload = {
+    secret_id: secretId,
+    service,
+    header_name: headerName,
+    header_template: headerTemplate,
+    encrypted_blob: encryptedBlob,
+    sender_kid: bytesToHex(identity.keyID),
+  }
+
+  const bodyText = JSON.stringify(secretPayload)
+  const bodyBytes = new TextEncoder().encode(bodyText)
+
+  // Send as encrypted qntm message with body_type=gate.secret
+  const envelope = createMessage(identity, convCrypto, 'gate.secret', bodyBytes, undefined, defaultTTL())
+  await sendEnvelopeToDropbox(store, conversationId, envelope)
+
+  const message = {
+    id: bytesToHex(envelope.msg_id),
+    conversationId,
+    direction: 'outgoing',
+    sender: profile.name,
+    senderKey: '',
+    bodyType: 'gate.secret',
+    text: bodyText,
+    createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+  }
+
+  addHistoryMessage(store, profile.id, conversationId, message)
+  saveStore(store)
+
+  const gwKid = bytesToHex(keyIDFromPublicKey(gwPubKeyBytes))
+
+  res.json({
+    output: `Secret provisioned for service ${service} (encrypted to gateway ${gwKid.slice(0, 8)}...)`,
     warning: '',
     message: formatMessageForClient(store, profile.id, message),
   })

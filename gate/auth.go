@@ -47,6 +47,10 @@ type GateConversationMessage struct {
 	ExecutedAt          time.Time       `json:"executed_at,omitempty"`
 	ExecutionStatusCode int             `json:"execution_status_code,omitempty"`
 
+	// Recipe fields (optional — populated when request originates from a recipe)
+	RecipeName string            `json:"recipe_name,omitempty"`
+	Arguments  map[string]string `json:"arguments,omitempty"`
+
 	// Common fields
 	SignerKID string `json:"signer_kid"`
 	Signature string `json:"signature"` // base64url

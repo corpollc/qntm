@@ -134,7 +134,14 @@ export interface Org {
 
 export type RequestStatus = 'pending' | 'approved' | 'executed' | 'expired';
 
-export type GateMessageType = 'gate.request' | 'gate.approval' | 'gate.executed';
+export type GateMessageType =
+  | 'gate.request'
+  | 'gate.approval'
+  | 'gate.executed'
+  | 'gate.promote'
+  | 'gate.config'
+  | 'gate.secret'
+  | 'gate.result';
 
 export interface GateConversationMessage {
   type: GateMessageType;
@@ -150,6 +157,65 @@ export interface GateConversationMessage {
   execution_status_code?: number;
   signer_kid: string;
   signature: string;
+
+  // Recipe fields (optional -- populated when request originates from a recipe)
+  recipe_name?: string;
+  arguments?: Record<string, string>;
+}
+
+// Recipe types
+
+export interface RecipeParam {
+  name: string;
+  description: string;
+  required: boolean;
+  default?: string;
+  type: string; // "string" | "integer" | "boolean"
+}
+
+export interface Recipe {
+  name: string;
+  description: string;
+  service: string;
+  verb: string;
+  endpoint: string;
+  target_url: string;
+  risk_tier: string;
+  threshold: number;
+  content_type?: string;
+  path_params?: RecipeParam[];
+  query_params?: RecipeParam[];
+  body_schema?: Record<string, unknown>;
+  body_example?: Record<string, unknown>;
+}
+
+export interface RecipeCatalog {
+  profiles: Record<string, unknown>;
+  recipes: Record<string, Recipe>;
+}
+
+// Gateway payload types
+
+export interface PromotePayload {
+  type: 'gate.promote';
+  org_id: string;
+  signers: Array<{ kid: string; public_key: Uint8Array; label: string }>;
+  rules: ThresholdRule[];
+}
+
+export interface ConfigPayload {
+  type: 'gate.config';
+  rules: ThresholdRule[];
+}
+
+export interface SecretPayload {
+  type: 'gate.secret';
+  secret_id: string;
+  service: string;
+  header_name: string;
+  header_template: string;
+  encrypted_blob: Uint8Array;
+  sender_kid: string;
 }
 
 export interface GateSignable {

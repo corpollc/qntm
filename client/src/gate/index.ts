@@ -4,7 +4,14 @@ import { base64UrlEncode, base64UrlDecode } from '../identity/index.js';
 import type {
   GateConversationMessage, GateSignable, ApprovalSignable,
   ThresholdRule, Credential, Signer, Org, ScanResult, ExecuteResult,
+  Recipe,
 } from '../types.js';
+
+// Gate message type constants (mirrors Go gate package constants)
+export const GateMessagePromote = 'gate.promote' as const;
+export const GateMessageConfig = 'gate.config' as const;
+export const GateMessageSecret = 'gate.secret' as const;
+export const GateMessageResult = 'gate.result' as const;
 
 const suite = new QSP1Suite();
 
@@ -196,4 +203,121 @@ export function lookupThreshold(
   }
 
   return bestMatch;
+}
+
+// Placeholder regex matching {param}
+const placeholderRe = /\{([^}]+)\}/g;
+
+/**
+ * resolveRecipe substitutes parameter placeholders in a recipe's endpoint and
+ * target URL, validates required parameters, and builds a JSON body from args
+ * when the recipe defines a body schema.
+ *
+ * Mirrors Go's ResolveRecipe function.
+ */
+export function resolveRecipe(
+  recipe: Recipe,
+  args?: Record<string, string>,
+): { endpoint: string; target_url: string; body?: Uint8Array } {
+  const a: Record<string, string> = args ? { ...args } : {};
+
+  // Validate required path params
+  if (recipe.path_params) {
+    for (const p of recipe.path_params) {
+      if (p.required && !(p.name in a)) {
+        if (p.default) {
+          a[p.name] = p.default;
+        } else {
+          throw new Error(`missing required path parameter "${p.name}"`);
+        }
+      }
+    }
+  }
+
+  // Validate required query params
+  if (recipe.query_params) {
+    for (const p of recipe.query_params) {
+      if (p.required && !(p.name in a)) {
+        if (p.default) {
+          a[p.name] = p.default;
+        } else {
+          throw new Error(`missing required query parameter "${p.name}"`);
+        }
+      }
+    }
+  }
+
+  // Substitute {param} placeholders
+  const substitute = (s: string): string =>
+    s.replace(placeholderRe, (match, key) => {
+      if (key in a) return a[key];
+      return match;
+    });
+
+  let endpoint = substitute(recipe.endpoint);
+  let targetURL = substitute(recipe.target_url);
+
+  // Append query params to target URL
+  const queryParts: string[] = [];
+  if (recipe.query_params) {
+    for (const p of recipe.query_params) {
+      if (p.name in a) {
+        queryParts.push(`${p.name}=${a[p.name]}`);
+      } else if (p.default) {
+        queryParts.push(`${p.name}=${p.default}`);
+      }
+    }
+  }
+  if (queryParts.length > 0) {
+    const sep = targetURL.includes('?') ? '&' : '?';
+    targetURL = targetURL + sep + queryParts.join('&');
+  }
+
+  // Build body from body_schema + args for POST/PUT/PATCH
+  let body: Uint8Array | undefined;
+  const verb = recipe.verb.toUpperCase();
+  if (verb === 'POST' || verb === 'PUT' || verb === 'PATCH') {
+    if (recipe.body_schema && typeof recipe.body_schema === 'object') {
+      const schema = recipe.body_schema as Record<string, unknown>;
+
+      // Discover field names from "properties" (JSON Schema style)
+      let fieldNames: string[] = [];
+      if (schema.properties && typeof schema.properties === 'object') {
+        fieldNames = Object.keys(schema.properties as Record<string, unknown>);
+      }
+
+      // Build body object from args matching schema fields
+      const bodyMap: Record<string, string> = {};
+      if (fieldNames.length > 0) {
+        for (const name of fieldNames) {
+          if (name in a) {
+            bodyMap[name] = a[name];
+          }
+        }
+      } else {
+        // Flat schema: treat each top-level key as a field name
+        for (const name of Object.keys(schema)) {
+          if (name === 'type' || name === 'properties' || name === 'required') continue;
+          if (name in a) {
+            bodyMap[name] = a[name];
+          }
+        }
+      }
+
+      if (Object.keys(bodyMap).length > 0) {
+        body = new TextEncoder().encode(JSON.stringify(bodyMap));
+      }
+
+      // Validate required body params from body_schema "required" field
+      if (Array.isArray(schema.required)) {
+        for (const name of schema.required as string[]) {
+          if (!(name in a)) {
+            throw new Error(`missing required body parameter "${name}"`);
+          }
+        }
+      }
+    }
+  }
+
+  return { endpoint, target_url: targetURL, body };
 }
