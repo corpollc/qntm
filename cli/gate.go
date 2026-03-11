@@ -53,6 +53,16 @@ func init() {
 	// Execute
 	gateCmd.AddCommand(gateExecuteCmd)
 
+	// Fun server
+	funPort := 9090
+	gateFunCmd.Flags().IntVar(&funPort, "port", 9090, "Fun server port")
+	gateCmd.AddCommand(gateFunCmd)
+
+	// Recipe
+	gateCmd.AddCommand(gateRecipeCmd)
+	gateRecipeCmd.AddCommand(gateRecipeListCmd)
+	gateRecipeCmd.AddCommand(gateRecipeShowCmd)
+
 	// Persistent flag for gate URL
 	gateCmd.PersistentFlags().StringVar(&gateURL, "gate-url", "http://localhost:8080", "Gate server URL")
 }
@@ -363,4 +373,59 @@ func gatePost(path string, body []byte) error {
 		return fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// --- Fun server ---
+
+var gateFunCmd = &cobra.Command{
+	Use:   "fun",
+	Short: "Start the fun test server (leet speak + ASCII art)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		port, _ := cmd.Flags().GetInt("port")
+		addr := fmt.Sprintf(":%d", port)
+		fmt.Printf("qntm fun server on %s (endpoints: /leet, /ascii, /health)\n", addr)
+		return http.ListenAndServe(addr, gate.NewFunServer())
+	},
+}
+
+// --- Recipe commands ---
+
+var gateRecipeCmd = &cobra.Command{
+	Use:   "recipe",
+	Short: "Manage gate recipes",
+}
+
+var gateRecipeListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all available recipes",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cat, err := gate.LoadStarterCatalog()
+		if err != nil {
+			return err
+		}
+		for _, name := range cat.ListRecipes() {
+			r := cat.Recipes[name]
+			fmt.Printf("%-20s %s %s  %s\n", r.Name, r.Verb, r.Endpoint, r.Description)
+		}
+		return nil
+	},
+}
+
+var gateRecipeShowCmd = &cobra.Command{
+	Use:   "show <name>",
+	Short: "Show recipe details",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cat, err := gate.LoadStarterCatalog()
+		if err != nil {
+			return err
+		}
+		r, err := cat.GetRecipe(args[0])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(r, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	},
 }

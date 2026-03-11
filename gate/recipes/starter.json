@@ -1,0 +1,191 @@
+{
+  "profiles": {
+    "fun": {
+      "service": "fun",
+      "description": "qntm fun server — leet speak and ASCII art",
+      "base_url": "http://localhost:9090",
+      "hosts": ["localhost"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/leet", "verb": "POST", "description": "Translate text to l33tsp34k", "risk_tier": "read"},
+        {"path": "/ascii", "verb": "POST", "description": "Convert text to block-letter ASCII art", "risk_tier": "read"},
+        {"path": "/ascii", "verb": "GET", "description": "Convert text to block-letter ASCII art (query param)", "risk_tier": "read"},
+        {"path": "/health", "verb": "GET", "description": "Health check", "risk_tier": "read"}
+      ]
+    },
+    "hackernews": {
+      "service": "hackernews",
+      "description": "Hacker News Firebase API — public, read-only",
+      "base_url": "https://hacker-news.firebaseio.com/v0",
+      "hosts": ["hacker-news.firebaseio.com"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/topstories.json", "verb": "GET", "description": "Top 500 story IDs", "risk_tier": "read"},
+        {"path": "/newstories.json", "verb": "GET", "description": "New story IDs", "risk_tier": "read"},
+        {"path": "/beststories.json", "verb": "GET", "description": "Best story IDs", "risk_tier": "read"},
+        {"path": "/item/{id}.json", "verb": "GET", "description": "Get item (story, comment, job, poll)", "risk_tier": "read"},
+        {"path": "/user/{id}.json", "verb": "GET", "description": "Get user profile", "risk_tier": "read"}
+      ]
+    },
+    "httpbin": {
+      "service": "httpbin",
+      "description": "httpbin.org — HTTP request/response testing",
+      "base_url": "https://httpbin.org",
+      "hosts": ["httpbin.org"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/post", "verb": "POST", "description": "Echo POST data back", "risk_tier": "read"},
+        {"path": "/get", "verb": "GET", "description": "Echo GET parameters and headers", "risk_tier": "read"},
+        {"path": "/headers", "verb": "GET", "description": "Return request headers", "risk_tier": "read"},
+        {"path": "/ip", "verb": "GET", "description": "Return origin IP", "risk_tier": "read"},
+        {"path": "/user-agent", "verb": "GET", "description": "Return user-agent", "risk_tier": "read"},
+        {"path": "/status/{code}", "verb": "GET", "description": "Return given HTTP status code", "risk_tier": "read"}
+      ]
+    },
+    "dadjokes": {
+      "service": "dadjokes",
+      "description": "icanhazdadjoke.com — random dad jokes",
+      "base_url": "https://icanhazdadjoke.com",
+      "hosts": ["icanhazdadjoke.com"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/", "verb": "GET", "description": "Random dad joke", "risk_tier": "read"},
+        {"path": "/search", "verb": "GET", "description": "Search dad jokes", "risk_tier": "read"}
+      ]
+    },
+    "trivia": {
+      "service": "trivia",
+      "description": "Open Trivia Database — random trivia questions",
+      "base_url": "https://opentdb.com",
+      "hosts": ["opentdb.com"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/api.php", "verb": "GET", "description": "Get trivia questions", "risk_tier": "read"}
+      ]
+    },
+    "dogs": {
+      "service": "dogs",
+      "description": "Dog CEO API — random dog images (binary JPEG responses)",
+      "base_url": "https://dog.ceo/api",
+      "hosts": ["dog.ceo"],
+      "auth_required": false,
+      "endpoints": [
+        {"path": "/breeds/image/random", "verb": "GET", "description": "Random dog image URL", "risk_tier": "read"},
+        {"path": "/breed/{breed}/images/random", "verb": "GET", "description": "Random image of specific breed", "risk_tier": "read"},
+        {"path": "/breeds/list/all", "verb": "GET", "description": "List all breeds", "risk_tier": "read"}
+      ]
+    }
+  },
+  "recipes": {
+    "leet.translate": {
+      "name": "leet.translate",
+      "description": "Translate text to l33tsp34k",
+      "service": "fun",
+      "verb": "POST",
+      "endpoint": "/leet",
+      "target_url": "http://localhost:9090/leet",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "ascii.artify": {
+      "name": "ascii.artify",
+      "description": "Convert text to block-letter ASCII art",
+      "service": "fun",
+      "verb": "POST",
+      "endpoint": "/ascii",
+      "target_url": "http://localhost:9090/ascii",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "hn.top-stories": {
+      "name": "hn.top-stories",
+      "description": "Get top Hacker News story IDs",
+      "service": "hackernews",
+      "verb": "GET",
+      "endpoint": "/topstories.json",
+      "target_url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "hn.get-item": {
+      "name": "hn.get-item",
+      "description": "Get a Hacker News item by ID (story, comment, job)",
+      "service": "hackernews",
+      "verb": "GET",
+      "endpoint": "/item/{id}.json",
+      "target_url": "https://hacker-news.firebaseio.com/v0/item/{id}.json",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "httpbin.echo": {
+      "name": "httpbin.echo",
+      "description": "Echo POST body and headers back (verifies credential injection)",
+      "service": "httpbin",
+      "verb": "POST",
+      "endpoint": "/post",
+      "target_url": "https://httpbin.org/post",
+      "risk_tier": "read",
+      "threshold": 2,
+      "content_type": "application/json"
+    },
+    "httpbin.headers": {
+      "name": "httpbin.headers",
+      "description": "Return request headers (shows injected auth)",
+      "service": "httpbin",
+      "verb": "GET",
+      "endpoint": "/headers",
+      "target_url": "https://httpbin.org/headers",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "jokes.dad": {
+      "name": "jokes.dad",
+      "description": "Get a random dad joke",
+      "service": "dadjokes",
+      "verb": "GET",
+      "endpoint": "/",
+      "target_url": "https://icanhazdadjoke.com/",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "trivia.random": {
+      "name": "trivia.random",
+      "description": "Get a random trivia question",
+      "service": "trivia",
+      "verb": "GET",
+      "endpoint": "/api.php",
+      "target_url": "https://opentdb.com/api.php?amount=1",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "dogs.random": {
+      "name": "dogs.random",
+      "description": "Get a random dog image URL (JSON with image link)",
+      "service": "dogs",
+      "verb": "GET",
+      "endpoint": "/breeds/image/random",
+      "target_url": "https://dog.ceo/api/breeds/image/random",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    },
+    "dogs.breed": {
+      "name": "dogs.breed",
+      "description": "Get a random image of a specific dog breed",
+      "service": "dogs",
+      "verb": "GET",
+      "endpoint": "/breed/{breed}/images/random",
+      "target_url": "https://dog.ceo/api/breed/{breed}/images/random",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
+    }
+  }
+}
