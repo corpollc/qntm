@@ -1,3 +1,6 @@
+// DEPRECATED: Go CLI moved to attic
+//go:build ignore
+
 package cli
 
 import "github.com/spf13/cobra"
