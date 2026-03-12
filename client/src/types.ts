@@ -138,6 +138,7 @@ export type GateMessageType =
   | 'gate.request'
   | 'gate.approval'
   | 'gate.executed'
+  | 'gate.expired'
   | 'gate.promote'
   | 'gate.config'
   | 'gate.secret'
@@ -223,6 +224,18 @@ export interface SecretPayload {
   header_template: string;
   encrypted_blob: Uint8Array;
   sender_kid: string;
+  ttl?: number; // seconds until expiry; 0 or omitted means no expiry
+}
+
+/** Body of a gate.expired notification message, sent when a credential's
+ *  TTL has elapsed. The gateway can USE secrets but cannot CREATE or
+ *  REFRESH them -- humans must re-provision. */
+export interface ExpiredPayload {
+  type: 'gate.expired';
+  secret_id: string;
+  service: string;
+  expired_at: string; // ISO 8601 / RFC3339 timestamp
+  message: string;    // Human-readable description
 }
 
 export interface GateSignable {

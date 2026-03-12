@@ -23,6 +23,18 @@ type SecretPayload struct {
 	TTL            int64  `json:"ttl,omitempty"` // seconds until expiry; 0 means no expiry
 }
 
+// String returns a safe representation of the SecretPayload that does not
+// expose the full encrypted blob. This prevents accidental leakage if the
+// struct is passed to fmt.Printf or similar.
+func (sp SecretPayload) String() string {
+	blobRedacted := "[redacted]"
+	if len(sp.EncryptedBlob) > 8 {
+		blobRedacted = sp.EncryptedBlob[:4] + "..." + sp.EncryptedBlob[len(sp.EncryptedBlob)-4:]
+	}
+	return fmt.Sprintf("SecretPayload{id=%s service=%s header=%s blob=%s sender=%s}",
+		sp.SecretID, sp.Service, sp.HeaderName, blobRedacted, sp.SenderKID)
+}
+
 // SealSecret encrypts a secret value to the gateway's public key using NaCl box
 // (X25519-XSalsa20-Poly1305). Ed25519 keys are converted to X25519 for DH.
 func SealSecret(senderPrivKey ed25519.PrivateKey, gatewayPubKey ed25519.PublicKey, plaintext []byte) ([]byte, error) {

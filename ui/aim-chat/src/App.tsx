@@ -143,6 +143,47 @@ function GateExecutedCard({ message }: { message: ChatMessage }) {
   )
 }
 
+interface GateExpiredBody {
+  type: string
+  secret_id: string
+  service: string
+  expired_at: string
+  message: string
+}
+
+function GateExpiredCard({ message }: { message: ChatMessage }) {
+  let parsed: GateExpiredBody | null = null
+  try {
+    parsed = JSON.parse(message.text)
+  } catch {
+    return <div className="message-body">{message.text}</div>
+  }
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  const expiredDate = new Date(parsed.expired_at)
+  const timeAgo = Math.round((Date.now() - expiredDate.getTime()) / 60000)
+
+  return (
+    <div className="gate-card gate-expired" style={{
+      borderColor: '#e67e22',
+      backgroundColor: 'rgba(230, 126, 34, 0.08)',
+      borderLeft: '4px solid #e67e22',
+    }}>
+      <div className="gate-card-header" style={{ color: '#e67e22' }}>
+        Credential Expired
+      </div>
+      <div className="gate-card-body">
+        <div><strong>Service:</strong> {parsed.service}</div>
+        <div><strong>Secret:</strong> {shortId(parsed.secret_id)}</div>
+        <div><strong>Expired:</strong> {timeAgo > 0 ? `${timeAgo}m ago` : 'just now'} ({expiredDate.toLocaleString()})</div>
+        <div style={{ marginTop: '8px', color: '#e67e22', fontWeight: 500 }}>
+          {parsed.message}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface GatePromoteBody {
   org_id: string
   signers: Array<{ kid: string; public_key: string }>
@@ -1274,6 +1315,8 @@ export default function App() {
                     <GateApprovalCard message={message} />
                   ) : message.bodyType === 'gate.executed' ? (
                     <GateExecutedCard message={message} />
+                  ) : message.bodyType === 'gate.expired' ? (
+                    <GateExpiredCard message={message} />
                   ) : message.bodyType === 'gate.result' ? (
                     <GateResultCard message={message} />
                   ) : (

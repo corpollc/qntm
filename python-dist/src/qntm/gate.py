@@ -35,6 +35,7 @@ GATE_MESSAGE_PROMOTE: str = "gate.promote"
 GATE_MESSAGE_SECRET: str = "gate.secret"
 GATE_MESSAGE_CONFIG: str = "gate.config"
 GATE_MESSAGE_REVOKE: str = "gate.revoke"
+GATE_MESSAGE_EXPIRED: str = "gate.expired"
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,21 @@ class SecretPayload:
     header_template: str  # e.g. "Bearer {value}"
     encrypted_blob: str  # base64-encoded NaCl box ciphertext
     sender_kid: str
+    ttl: int = 0  # seconds until expiry; 0 means no expiry
+
+
+@dataclass
+class ExpiredPayload:
+    """Body of a gate.expired notification message.
+
+    Sent when a credential's TTL has elapsed. The gateway can USE secrets
+    but cannot CREATE or REFRESH them -- humans must re-provision.
+    """
+
+    secret_id: str
+    service: str
+    expired_at: str  # ISO 8601 / RFC3339 timestamp
+    message: str  # Human-readable description
 
 
 # ---------------------------------------------------------------------------

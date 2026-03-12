@@ -1489,7 +1489,8 @@ def _build_config_payload(threshold):
 
 def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
                           header_name="Authorization",
-                          header_template="Bearer {value}"):
+                          header_template="Bearer {value}",
+                          ttl=0):
     """Build a gate.secret payload dict with encrypted secret."""
     try:
         gw_pub = bytes.fromhex(gateway_pubkey_hex)
@@ -1503,7 +1504,7 @@ def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
     ct = seal_secret(identity["privateKey"], gw_pub, value.encode())
     secret_id = str(_uuid.uuid4())
 
-    return {
+    payload = {
         "type": GATE_MESSAGE_SECRET,
         "secret_id": secret_id,
         "service": service,
@@ -1512,6 +1513,9 @@ def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
         "encrypted_blob": ct.hex(),
         "sender_kid": identity["keyID"].hex(),
     }
+    if ttl > 0:
+        payload["ttl"] = ttl
+    return payload
 
 
 def _send_gate_message_to_conv(identity, conv_crypto, conv_id_hex, body_type,
@@ -1856,6 +1860,7 @@ def cmd_gate_secret(args):
 
     header_name = getattr(args, "header_name", "Authorization")
     header_template = getattr(args, "header_template", "Bearer {value}")
+    ttl = getattr(args, "ttl", 0) or 0
 
     try:
         payload = _build_secret_payload(
@@ -1865,6 +1870,7 @@ def cmd_gate_secret(args):
             value=value,
             header_name=header_name,
             header_template=header_template,
+            ttl=ttl,
         )
     except ValueError as e:
         _error(str(e))
@@ -2276,6 +2282,8 @@ quick start:
     gate_secret_p.add_argument("--header-template", dest="header_template",
                                default="Bearer {value}",
                                help="Header value template (default: 'Bearer {value}')")
+    gate_secret_p.add_argument("--ttl", type=int, default=0,
+                               help="Secret TTL in seconds (0 = no expiry, default: 0)")
 
     # name
     name_parser = subparsers.add_parser("name", help="Manage local nicknames")
