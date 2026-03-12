@@ -68,6 +68,7 @@ package gate
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -84,10 +85,12 @@ import (
 // GateMessageType constants for gateway-specific message types.
 // NOTE: GateMessageExpired is declared in expiry.go.
 const (
-	GateMessagePromote GateMessageType = "gate.promote"
-	GateMessageSecret  GateMessageType = "gate.secret"
-	GateMessageConfig  GateMessageType = "gate.config"
-	GateMessageRevoke  GateMessageType = "gate.revoke"
+	GateMessagePromote            GateMessageType = "gate.promote"
+	GateMessageSecret             GateMessageType = "gate.secret"
+	GateMessageConfig             GateMessageType = "gate.config"
+	GateMessageRevoke             GateMessageType = "gate.revoke"
+	GateMessageMembershipProposal GateMessageType = "gate.membership_proposal"
+	GateMessageMembershipApproval GateMessageType = "gate.membership_approval"
 )
 
 // RevokePayload is the body of a gate.revoke message.
@@ -96,13 +99,39 @@ type RevokePayload struct {
 	Service  string `json:"service,omitempty"`   // Revoke all secrets for service
 }
 
+// MembershipProposalPayload is the body of a gate.membership_proposal message.
+type MembershipProposalPayload struct {
+	ProposalID   string `json:"proposal_id"`
+	Action       string `json:"action"`        // "add" or "remove"
+	MemberKID    string `json:"member_kid"`
+	MemberPubkey string `json:"member_pubkey,omitempty"` // base64-encoded, required for "add"
+	ProposerKID  string `json:"proposer_kid"`
+}
+
+// MembershipApprovalPayload is the body of a gate.membership_approval message.
+type MembershipApprovalPayload struct {
+	ProposalID  string `json:"proposal_id"`
+	ApproverKID string `json:"approver_kid"`
+}
+
+// MembershipProposal tracks a pending membership change proposal.
+type MembershipProposal struct {
+	ProposalID   string            `json:"proposal_id"`
+	Action       string            `json:"action"`        // "add" or "remove"
+	MemberKID    string            `json:"member_kid"`
+	MemberPubkey string            `json:"member_pubkey,omitempty"`
+	ProposerKID  string            `json:"proposer_kid"`
+	Approvals    map[string]bool   `json:"approvals"` // kid -> approved
+}
+
 // ConversationGateState holds per-conversation gate state.
 type ConversationGateState struct {
-	ConversationID types.ConversationID
-	OrgID          string
-	Rules          []ThresholdRule
-	Credentials    map[string]*Credential
-	Participants   map[string]ed25519.PublicKey // kid (base64url) -> pubkey
+	ConversationID             types.ConversationID
+	OrgID                      string
+	Rules                      []ThresholdRule
+	Credentials                map[string]*Credential
+	Participants               map[string]ed25519.PublicKey // kid (base64url) -> pubkey
+	PendingMembershipProposals map[string]*MembershipProposal
 }
 
 // PromotePayload is the body of a gate.promote message.
@@ -279,6 +308,21 @@ func (gw *Gateway) pollAllConversations(ctx context.Context, dropboxMgr *dropbox
 func (gw *Gateway) processMessage(conv *types.Conversation, msg *types.Message, dropboxMgr *dropbox.Manager) error {
 	bodyType := GateMessageType(msg.Inner.BodyType)
 
+	// Block direct group_add/group_remove in promoted conversations.
+	// Membership changes must go through the proposal/approval flow.
+	if msg.Inner.BodyType == "group_add" || msg.Inner.BodyType == "group_remove" {
+		gw.mu.RLock()
+		state := gw.Conversations[conv.ID]
+		gw.mu.RUnlock()
+		if state != nil {
+			log.Printf("[gateway] REJECTED direct %s in promoted conversation conv=%x org=%s",
+				msg.Inner.BodyType, conv.ID[:4], state.OrgID)
+			return fmt.Errorf("direct %s not allowed in promoted conversation; use gate.membership_proposal", msg.Inner.BodyType)
+		}
+		// Non-promoted: silently ignore (not our concern)
+		return nil
+	}
+
 	switch bodyType {
 	case GateMessagePromote:
 		return gw.handlePromote(conv, msg)
@@ -292,6 +336,10 @@ func (gw *Gateway) processMessage(conv *types.Conversation, msg *types.Message, 
 		return gw.handleRequest(conv, msg, dropboxMgr)
 	case GateMessageApproval:
 		return gw.handleApproval(conv, msg, dropboxMgr)
+	case GateMessageMembershipProposal:
+		return gw.handleMembershipProposal(conv, msg)
+	case GateMessageMembershipApproval:
+		return gw.handleMembershipApproval(conv, msg)
 	default:
 		// Ignore non-gate messages silently
 		return nil
@@ -319,11 +367,12 @@ func (gw *Gateway) handlePromote(conv *types.Conversation, msg *types.Message) e
 	}
 
 	state := &ConversationGateState{
-		ConversationID: conv.ID,
-		OrgID:          payload.OrgID,
-		Rules:          payload.Rules,
-		Credentials:    make(map[string]*Credential),
-		Participants:   participants,
+		ConversationID:             conv.ID,
+		OrgID:                      payload.OrgID,
+		Rules:                      payload.Rules,
+		Credentials:                make(map[string]*Credential),
+		Participants:               participants,
+		PendingMembershipProposals: make(map[string]*MembershipProposal),
 	}
 
 	gw.mu.Lock()
@@ -623,6 +672,112 @@ func (gw *Gateway) checkAndExecute(
 		}
 	}
 
+	return nil
+}
+
+// handleMembershipProposal processes a gate.membership_proposal message.
+// It stores the proposal and auto-records the proposer's approval.
+func (gw *Gateway) handleMembershipProposal(conv *types.Conversation, msg *types.Message) error {
+	gw.mu.RLock()
+	state := gw.Conversations[conv.ID]
+	gw.mu.RUnlock()
+
+	if state == nil {
+		return fmt.Errorf("gate.membership_proposal received for non-promoted conversation")
+	}
+
+	var payload MembershipProposalPayload
+	if err := json.Unmarshal(msg.Inner.Body, &payload); err != nil {
+		return fmt.Errorf("unmarshal membership_proposal payload: %w", err)
+	}
+
+	proposal := &MembershipProposal{
+		ProposalID:   payload.ProposalID,
+		Action:       payload.Action,
+		MemberKID:    payload.MemberKID,
+		MemberPubkey: payload.MemberPubkey,
+		ProposerKID:  payload.ProposerKID,
+		Approvals:    map[string]bool{payload.ProposerKID: true},
+	}
+
+	gw.mu.Lock()
+	state.PendingMembershipProposals[payload.ProposalID] = proposal
+	gw.mu.Unlock()
+
+	log.Printf("[gateway] MEMBERSHIP_PROPOSAL conv=%x org=%s proposal=%s action=%s member=%s proposer=%s",
+		conv.ID[:4], state.OrgID, payload.ProposalID, payload.Action, payload.MemberKID, payload.ProposerKID)
+
+	// Check if unanimous already (single-signer case)
+	return gw.checkAndExecuteMembership(conv, state, payload.ProposalID)
+}
+
+// handleMembershipApproval processes a gate.membership_approval message.
+func (gw *Gateway) handleMembershipApproval(conv *types.Conversation, msg *types.Message) error {
+	gw.mu.RLock()
+	state := gw.Conversations[conv.ID]
+	gw.mu.RUnlock()
+
+	if state == nil {
+		return fmt.Errorf("gate.membership_approval received for non-promoted conversation")
+	}
+
+	var payload MembershipApprovalPayload
+	if err := json.Unmarshal(msg.Inner.Body, &payload); err != nil {
+		return fmt.Errorf("unmarshal membership_approval payload: %w", err)
+	}
+
+	gw.mu.Lock()
+	proposal, ok := state.PendingMembershipProposals[payload.ProposalID]
+	if !ok {
+		gw.mu.Unlock()
+		return fmt.Errorf("no pending membership proposal %q", payload.ProposalID)
+	}
+	proposal.Approvals[payload.ApproverKID] = true
+	gw.mu.Unlock()
+
+	log.Printf("[gateway] MEMBERSHIP_APPROVAL conv=%x org=%s proposal=%s approver=%s approvals=%d/%d",
+		conv.ID[:4], state.OrgID, payload.ProposalID, payload.ApproverKID,
+		len(proposal.Approvals), len(state.Participants))
+
+	return gw.checkAndExecuteMembership(conv, state, payload.ProposalID)
+}
+
+// checkAndExecuteMembership checks if all signers have approved a membership
+// proposal and, if so, executes the add or remove.
+func (gw *Gateway) checkAndExecuteMembership(conv *types.Conversation, state *ConversationGateState, proposalID string) error {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+
+	proposal, ok := state.PendingMembershipProposals[proposalID]
+	if !ok {
+		return nil
+	}
+
+	// Check for unanimous consent from all current signers
+	for kid := range state.Participants {
+		if !proposal.Approvals[kid] {
+			return nil // Still waiting for more approvals
+		}
+	}
+
+	// Unanimous — execute the membership change
+	switch proposal.Action {
+	case "add":
+		pubBytes, err := base64.StdEncoding.DecodeString(proposal.MemberPubkey)
+		if err != nil {
+			return fmt.Errorf("decode member pubkey: %w", err)
+		}
+		state.Participants[proposal.MemberKID] = ed25519.PublicKey(pubBytes)
+		log.Printf("[gateway] MEMBERSHIP_EXECUTED conv=%x org=%s action=add member=%s",
+			conv.ID[:4], state.OrgID, proposal.MemberKID)
+
+	case "remove":
+		delete(state.Participants, proposal.MemberKID)
+		log.Printf("[gateway] MEMBERSHIP_EXECUTED conv=%x org=%s action=remove member=%s",
+			conv.ID[:4], state.OrgID, proposal.MemberKID)
+	}
+
+	delete(state.PendingMembershipProposals, proposalID)
 	return nil
 }
 

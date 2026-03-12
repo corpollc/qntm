@@ -351,6 +351,7 @@ export default function App() {
   const [secretHeaderTemplate, setSecretHeaderTemplate] = useState('Bearer {value}')
 
   const [showSettings, setShowSettings] = useState(false)
+  const [showGatePanel, setShowGatePanel] = useState(false)
   const [dropboxUrl, setDropboxUrl] = useState('')
   const [defaultDropboxUrl, setDefaultDropboxUrl] = useState('')
   const [dropboxDraft, setDropboxDraft] = useState('')
@@ -1088,9 +1089,95 @@ export default function App() {
                 ))}
               </div>
             </section>
+          </aside>
 
+          <main className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
+            <div className="chat-header">
+              <div className="chat-header-left">
+                <div>
+                  <strong>{selectedConversation?.name || 'No conversation selected'}</strong>
+                </div>
+                <div className="chat-subheader">
+                  {selectedConversation ? shortId(selectedConversation.id) : 'Create or accept an invite'}
+                </div>
+              </div>
+              {selectedConversation && (
+                <button
+                  className={`gate-toggle ${showGatePanel ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => setShowGatePanel(!showGatePanel)}
+                >
+                  Gate
+                </button>
+              )}
+            </div>
+
+            <div className="chat-log">
+              {messages.length === 0 && <div className="empty">No messages yet.</div>}
+              {messages.map((message) => (
+                <article key={message.id} className={`message ${message.direction}`}>
+                  <div className="message-top">
+                    <span className="sender">{message.sender}</span>
+                    <span className="time">{formatTime(message.createdAt)}</span>
+                  </div>
+                  {message.bodyType === 'gate.promote' ? (
+                    <GatePromoteCard message={message} />
+                  ) : message.bodyType === 'gate.config' ? (
+                    <GateConfigCard message={message} />
+                  ) : message.bodyType === 'gate.request' ? (
+                    <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
+                  ) : message.bodyType === 'gate.approval' ? (
+                    <GateApprovalCard message={message} />
+                  ) : message.bodyType === 'gate.executed' ? (
+                    <GateExecutedCard message={message} />
+                  ) : message.bodyType === 'gate.expired' ? (
+                    <GateExpiredCard message={message} />
+                  ) : message.bodyType === 'gate.result' ? (
+                    <GateResultCard message={message} />
+                  ) : (
+                    <div className="message-body">{message.text}</div>
+                  )}
+                  <div className="message-type">{message.bodyType}</div>
+                </article>
+              ))}
+              <div ref={messageTailRef} />
+            </div>
+
+            <form className="composer" onSubmit={onSendMessage}>
+              <input
+                className="input grow"
+                placeholder={selectedConversation ? 'Type a message' : 'Select a conversation first'}
+                value={composer}
+                onChange={(event) => setComposer(event.target.value)}
+                disabled={!selectedConversation || isWorking}
+              />
+              <button className="button" type="submit" disabled={!selectedConversation || isWorking}>
+                Send
+              </button>
+              <button
+                className="button"
+                type="button"
+                disabled={!selectedConversation || isWorking}
+                onClick={() => void receiveMessages(true)}
+              >
+                Check mail
+              </button>
+            </form>
+
+            <footer className="status-bar">
+              <span>
+                Profile: <strong>{activeProfile?.name || '-'}</strong>
+              </span>
+              <span>{status || 'Idle'}</span>
+            </footer>
+
+            {error && <div className="error-banner">{error}</div>}
+          </main>
+
+          {showGatePanel && selectedConversation && (
+          <aside className="gate-panel">
             <section className="panel">
-              <h2>Gate</h2>
+              <h2>API Request</h2>
 
               <label className="label" htmlFor="gate-recipe">Recipe</label>
               <select
@@ -1218,146 +1305,75 @@ export default function App() {
               >
                 Submit gate request
               </button>
+            </section>
 
-              <div className="gate-promote-section">
-                <div className="gate-args-heading">Promote conversation</div>
-                <label className="label" htmlFor="gate-promote-threshold">Threshold</label>
-                <input
-                  id="gate-promote-threshold"
-                  className="input"
-                  type="number"
-                  min={1}
-                  value={gatePromoteThreshold}
-                  onChange={(event) => setGatePromoteThreshold(Number(event.target.value) || 1)}
-                />
-                <button
-                  className="button full"
-                  type="button"
-                  disabled={isWorking || !selectedConversation || !gateOrgId.trim()}
-                  onClick={() => void onGatePromote()}
-                >
-                  Promote to Gate
-                </button>
-              </div>
+            <section className="panel">
+              <h2>Promote</h2>
+              <label className="label" htmlFor="gate-promote-threshold">Threshold</label>
+              <input
+                id="gate-promote-threshold"
+                className="input"
+                type="number"
+                min={1}
+                value={gatePromoteThreshold}
+                onChange={(event) => setGatePromoteThreshold(Number(event.target.value) || 1)}
+              />
+              <button
+                className="button full"
+                type="button"
+                disabled={isWorking || !selectedConversation || !gateOrgId.trim()}
+                onClick={() => void onGatePromote()}
+              >
+                Promote to Gate
+              </button>
+            </section>
 
-              <div className="gate-secret-section">
-                <div className="gate-args-heading">Add Secret</div>
-                <label className="label" htmlFor="secret-service">Service</label>
-                <input
-                  id="secret-service"
-                  className="input"
-                  placeholder="e.g. stripe, github"
-                  value={secretService}
-                  onChange={(event) => setSecretService(event.target.value)}
-                />
-                <label className="label" htmlFor="secret-header-name">Header name</label>
-                <input
-                  id="secret-header-name"
-                  className="input"
-                  placeholder="Authorization"
-                  value={secretHeaderName}
-                  onChange={(event) => setSecretHeaderName(event.target.value)}
-                />
-                <label className="label" htmlFor="secret-header-template">Header template</label>
-                <input
-                  id="secret-header-template"
-                  className="input"
-                  placeholder="Bearer {value}"
-                  value={secretHeaderTemplate}
-                  onChange={(event) => setSecretHeaderTemplate(event.target.value)}
-                />
-                <label className="label" htmlFor="secret-value">Secret value</label>
-                <input
-                  id="secret-value"
-                  className="input"
-                  type="password"
-                  placeholder="API key or token"
-                  value={secretValue}
-                  onChange={(event) => setSecretValue(event.target.value)}
-                />
-                <button
-                  className="button full"
-                  type="button"
-                  disabled={isWorking || !selectedConversation || !secretService.trim() || !secretValue}
-                  onClick={() => void onGateSecret()}
-                >
-                  Provision secret
-                </button>
-              </div>
+            <section className="panel">
+              <h2>Secrets</h2>
+              <label className="label" htmlFor="secret-service">Service</label>
+              <input
+                id="secret-service"
+                className="input"
+                placeholder="e.g. stripe, github"
+                value={secretService}
+                onChange={(event) => setSecretService(event.target.value)}
+              />
+              <label className="label" htmlFor="secret-header-name">Header name</label>
+              <input
+                id="secret-header-name"
+                className="input"
+                placeholder="Authorization"
+                value={secretHeaderName}
+                onChange={(event) => setSecretHeaderName(event.target.value)}
+              />
+              <label className="label" htmlFor="secret-header-template">Header template</label>
+              <input
+                id="secret-header-template"
+                className="input"
+                placeholder="Bearer {value}"
+                value={secretHeaderTemplate}
+                onChange={(event) => setSecretHeaderTemplate(event.target.value)}
+              />
+              <label className="label" htmlFor="secret-value">Secret value</label>
+              <input
+                id="secret-value"
+                className="input"
+                type="password"
+                placeholder="API key or token"
+                value={secretValue}
+                onChange={(event) => setSecretValue(event.target.value)}
+              />
+              <button
+                className="button full"
+                type="button"
+                disabled={isWorking || !selectedConversation || !secretService.trim() || !secretValue}
+                onClick={() => void onGateSecret()}
+              >
+                Provision secret
+              </button>
             </section>
           </aside>
-
-          <main className="chat-pane">
-            <div className="chat-header">
-              <div>
-                <strong>{selectedConversation?.name || 'No conversation selected'}</strong>
-              </div>
-              <div className="chat-subheader">
-                {selectedConversation ? shortId(selectedConversation.id) : 'Create or accept an invite'}
-              </div>
-            </div>
-
-            <div className="chat-log">
-              {messages.length === 0 && <div className="empty">No messages yet.</div>}
-              {messages.map((message) => (
-                <article key={message.id} className={`message ${message.direction}`}>
-                  <div className="message-top">
-                    <span className="sender">{message.sender}</span>
-                    <span className="time">{formatTime(message.createdAt)}</span>
-                  </div>
-                  {message.bodyType === 'gate.promote' ? (
-                    <GatePromoteCard message={message} />
-                  ) : message.bodyType === 'gate.config' ? (
-                    <GateConfigCard message={message} />
-                  ) : message.bodyType === 'gate.request' ? (
-                    <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
-                  ) : message.bodyType === 'gate.approval' ? (
-                    <GateApprovalCard message={message} />
-                  ) : message.bodyType === 'gate.executed' ? (
-                    <GateExecutedCard message={message} />
-                  ) : message.bodyType === 'gate.expired' ? (
-                    <GateExpiredCard message={message} />
-                  ) : message.bodyType === 'gate.result' ? (
-                    <GateResultCard message={message} />
-                  ) : (
-                    <div className="message-body">{message.text}</div>
-                  )}
-                  <div className="message-type">{message.bodyType}</div>
-                </article>
-              ))}
-              <div ref={messageTailRef} />
-            </div>
-
-            <form className="composer" onSubmit={onSendMessage}>
-              <input
-                className="input grow"
-                placeholder={selectedConversation ? 'Type a message' : 'Select a conversation first'}
-                value={composer}
-                onChange={(event) => setComposer(event.target.value)}
-                disabled={!selectedConversation || isWorking}
-              />
-              <button className="button" type="submit" disabled={!selectedConversation || isWorking}>
-                Send
-              </button>
-              <button
-                className="button"
-                type="button"
-                disabled={!selectedConversation || isWorking}
-                onClick={() => void receiveMessages(true)}
-              >
-                Check mail
-              </button>
-            </form>
-
-            <footer className="status-bar">
-              <span>
-                Profile: <strong>{activeProfile?.name || '-'}</strong>
-              </span>
-              <span>{status || 'Idle'}</span>
-            </footer>
-
-            {error && <div className="error-banner">{error}</div>}
-          </main>
+          )}
           </>
           )}
         </div>
