@@ -9,3 +9,4 @@
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+ui/tui/node_modules/

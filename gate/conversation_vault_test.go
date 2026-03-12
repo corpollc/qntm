@@ -3,6 +3,7 @@ package gate
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestConversationVault_StoreGet(t *testing.T) {
@@ -165,5 +166,188 @@ func TestConversationVault_EnvKey(t *testing.T) {
 	}
 	if secret.Value != "val2" {
 		t.Fatalf("expected val2, got %s", secret.Value)
+	}
+}
+
+func TestConversationVault_TTL_RetrievableBeforeExpiry(t *testing.T) {
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store with 15-minute TTL
+	err = vault.StoreWithTTL("conv-ttl-1", "cred-1", "stripe",
+		"Authorization", "Bearer {value}", "sk_live_xxx", 15*60)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be retrievable immediately (well before expiry)
+	secret, err := vault.Get("conv-ttl-1", "stripe")
+	if err != nil {
+		t.Fatalf("expected secret to be retrievable before expiry, got: %v", err)
+	}
+	if secret.Value != "sk_live_xxx" {
+		t.Fatalf("unexpected value: %s", secret.Value)
+	}
+	if secret.SecretID != "cred-1" {
+		t.Fatalf("unexpected secret_id: %s", secret.SecretID)
+	}
+}
+
+func TestConversationVault_TTL_ExpiredSecretReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store with 1-second TTL
+	err = vault.StoreWithTTL("conv-ttl-2", "cred-1", "github",
+		"Authorization", "token {value}", "ghp_xxx", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for expiry
+	time.Sleep(2 * time.Second)
+
+	// Should return error for expired secret
+	_, err = vault.Get("conv-ttl-2", "github")
+	if err == nil {
+		t.Fatal("expected error for expired secret, got nil")
+	}
+}
+
+func TestConversationVault_TTL_ZeroMeansNoExpiry(t *testing.T) {
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store with TTL=0 (no expiry) via StoreWithTTL
+	err = vault.StoreWithTTL("conv-ttl-3", "cred-1", "aws",
+		"Authorization", "AWS {value}", "AKIAIOSFODNN7EXAMPLE", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should always be retrievable
+	secret, err := vault.Get("conv-ttl-3", "aws")
+	if err != nil {
+		t.Fatalf("expected secret with TTL=0 to never expire, got: %v", err)
+	}
+	if secret.Value != "AKIAIOSFODNN7EXAMPLE" {
+		t.Fatalf("unexpected value: %s", secret.Value)
+	}
+}
+
+func TestConversationVault_TTL_StoreWithoutTTLNeverExpires(t *testing.T) {
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store via original Store method (no TTL)
+	err = vault.Store("conv-ttl-4", "cred-1", "stripe",
+		"Authorization", "Bearer {value}", "sk_test_xxx")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should always be retrievable
+	secret, err := vault.Get("conv-ttl-4", "stripe")
+	if err != nil {
+		t.Fatalf("expected secret without TTL to never expire, got: %v", err)
+	}
+	if secret.Value != "sk_test_xxx" {
+		t.Fatalf("unexpected value: %s", secret.Value)
+	}
+}
+
+func TestConversationVault_PurgeExpired(t *testing.T) {
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store one secret with 1s TTL and one without TTL
+	err = vault.StoreWithTTL("conv-purge", "cred-exp", "expiring-svc",
+		"Auth", "Bearer {value}", "will-expire", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = vault.Store("conv-purge", "cred-keep", "keep-svc",
+		"Auth", "Token {value}", "will-keep")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the short-TTL secret to expire
+	time.Sleep(2 * time.Second)
+
+	// Purge expired
+	purged := vault.PurgeExpired("conv-purge")
+	if purged != 1 {
+		t.Fatalf("expected 1 purged secret, got %d", purged)
+	}
+
+	// Expired secret should be gone
+	_, err = vault.Get("conv-purge", "expiring-svc")
+	if err == nil {
+		t.Fatal("expected error for purged secret")
+	}
+
+	// Non-expiring secret should still be there
+	secret, err := vault.Get("conv-purge", "keep-svc")
+	if err != nil {
+		t.Fatalf("expected non-expiring secret to survive purge: %v", err)
+	}
+	if secret.Value != "will-keep" {
+		t.Fatalf("unexpected value: %s", secret.Value)
+	}
+}
+
+func TestConversationVault_TTL_CommonDurations(t *testing.T) {
+	// Test that TTL values of 15min, 60min, and 4hr store correctly
+	dir := t.TempDir()
+	key := make([]byte, 32)
+	vault, err := NewConversationVault(dir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ttls := map[string]int{
+		"svc-15m": 15 * 60,      // 15 minutes
+		"svc-60m": 60 * 60,      // 60 minutes
+		"svc-4hr": 4 * 60 * 60,  // 4 hours
+	}
+
+	for svc, ttl := range ttls {
+		err = vault.StoreWithTTL("conv-durations", "cred-"+svc, svc,
+			"Auth", "Bearer {value}", "secret-"+svc, ttl)
+		if err != nil {
+			t.Fatalf("store %s: %v", svc, err)
+		}
+	}
+
+	// All should be retrievable immediately
+	for svc := range ttls {
+		secret, err := vault.Get("conv-durations", svc)
+		if err != nil {
+			t.Fatalf("get %s: %v", svc, err)
+		}
+		if secret.Value != "secret-"+svc {
+			t.Fatalf("unexpected value for %s: %s", svc, secret.Value)
+		}
 	}
 }

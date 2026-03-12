@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ThresholdRule defines M-of-N threshold for a verb/endpoint/service combination.
@@ -20,12 +21,21 @@ type ThresholdRule struct {
 // Credential stores an API credential for a target service.
 // TODO(v1): integrate Vault encryption at rest per qntm-gate-spec.md §3.
 type Credential struct {
-	ID          string `json:"id"`
-	Service     string `json:"service"`
-	Value       string `json:"value"`        // plaintext for v0.1; see Scrub()
-	HeaderName  string `json:"header_name"`  // e.g. "Authorization"
-	HeaderValue string `json:"header_value"` // template: {value} gets replaced
-	Description string `json:"description"`
+	ID          string    `json:"id"`
+	Service     string    `json:"service"`
+	Value       string    `json:"value"`                  // plaintext for v0.1; see Scrub()
+	HeaderName  string    `json:"header_name"`            // e.g. "Authorization"
+	HeaderValue string    `json:"header_value"`           // template: {value} gets replaced
+	Description string    `json:"description"`
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`   // zero value means no expiry
+}
+
+// IsExpired returns true if the credential has an expiry time that is in the past.
+func (c *Credential) IsExpired() bool {
+	if c == nil || c.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(c.ExpiresAt)
 }
 
 // Scrub zeros the credential Value in memory after use.

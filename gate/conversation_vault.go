@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // ConversationVault stores per-conversation credentials on disk, encrypted with
@@ -41,7 +42,8 @@ type storedSecretEncrypted struct {
 	Service        string `json:"service"`
 	HeaderName     string `json:"header_name"`
 	HeaderTemplate string `json:"header_template"`
-	EncryptedValue string `json:"encrypted_value"` // base64 nonce+ciphertext via EnvVault format
+	EncryptedValue string `json:"encrypted_value"`        // base64 nonce+ciphertext via EnvVault format
+	ExpiresAt      int64  `json:"expires_at,omitempty"`   // unix timestamp; 0 = no expiry
 }
 
 // NewConversationVault creates a vault at the given base path. If vaultKeyBytes
@@ -100,7 +102,14 @@ func resolveVaultKey(basePath string, explicit []byte) ([]byte, error) {
 }
 
 // Store encrypts and persists a credential for a conversation+service.
+// The secret has no expiry (TTL=0).
 func (v *ConversationVault) Store(convID, secretID, service, headerName, headerTemplate, value string) error {
+	return v.StoreWithTTL(convID, secretID, service, headerName, headerTemplate, value, 0)
+}
+
+// StoreWithTTL encrypts and persists a credential with an optional TTL.
+// If ttlSeconds is 0, the secret never expires.
+func (v *ConversationVault) StoreWithTTL(convID, secretID, service, headerName, headerTemplate, value string, ttlSeconds int) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -112,18 +121,25 @@ func (v *ConversationVault) Store(convID, secretID, service, headerName, headerT
 		return fmt.Errorf("encrypt secret value: %w", err)
 	}
 
+	var expiresAt int64
+	if ttlSeconds > 0 {
+		expiresAt = time.Now().Unix() + int64(ttlSeconds)
+	}
+
 	vaultFile.Secrets[service] = &storedSecretEncrypted{
 		SecretID:       secretID,
 		Service:        service,
 		HeaderName:     headerName,
 		HeaderTemplate: headerTemplate,
 		EncryptedValue: encValue,
+		ExpiresAt:      expiresAt,
 	}
 
 	return v.saveFile(convID, vaultFile)
 }
 
 // Get retrieves and decrypts a credential for a conversation+service.
+// Returns an error if the secret has expired.
 func (v *ConversationVault) Get(convID, service string) (*StoredSecret, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -133,6 +149,11 @@ func (v *ConversationVault) Get(convID, service string) (*StoredSecret, error) {
 	enc, ok := vaultFile.Secrets[service]
 	if !ok {
 		return nil, fmt.Errorf("no secret for service %q in conversation %s", service, convID)
+	}
+
+	// Check expiry: ExpiresAt > 0 means there is a TTL
+	if enc.ExpiresAt > 0 && time.Now().Unix() >= enc.ExpiresAt {
+		return nil, fmt.Errorf("secret for service %q in conversation %s has expired", service, convID)
 	}
 
 	decrypted, err := v.decrypt(enc.EncryptedValue)
@@ -147,6 +168,51 @@ func (v *ConversationVault) Get(convID, service string) (*StoredSecret, error) {
 		HeaderTemplate: enc.HeaderTemplate,
 		Value:          decrypted,
 	}, nil
+}
+
+// PurgeExpired removes all expired secrets for a conversation from disk.
+// Returns the number of secrets purged.
+func (v *ConversationVault) PurgeExpired(convID string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	vaultFile := v.loadFile(convID)
+	now := time.Now().Unix()
+	purged := 0
+
+	for svc, enc := range vaultFile.Secrets {
+		if enc.ExpiresAt > 0 && now >= enc.ExpiresAt {
+			delete(vaultFile.Secrets, svc)
+			purged++
+		}
+	}
+
+	if purged > 0 {
+		_ = v.saveFile(convID, vaultFile)
+	}
+	return purged
+}
+
+// Delete removes a credential for a specific service from the vault.
+// If the service does not exist, this is a no-op.
+func (v *ConversationVault) Delete(convID, service string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	vaultFile := v.loadFile(convID)
+	if _, ok := vaultFile.Secrets[service]; !ok {
+		return nil // no-op for nonexistent service
+	}
+
+	delete(vaultFile.Secrets, service)
+	return v.saveFile(convID, vaultFile)
+}
+
+// DeleteByService removes all credentials matching the given service name.
+// Since secrets are keyed by service, this removes at most one entry.
+// If the service does not exist, this is a no-op.
+func (v *ConversationVault) DeleteByService(convID, service string) error {
+	return v.Delete(convID, service)
 }
 
 func (v *ConversationVault) convFilePath(convID string) string {

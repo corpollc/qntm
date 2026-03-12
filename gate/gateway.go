@@ -82,11 +82,19 @@ import (
 )
 
 // GateMessageType constants for gateway-specific message types.
+// NOTE: GateMessageExpired is declared in auth.go — do not re-declare here.
 const (
 	GateMessagePromote GateMessageType = "gate.promote"
 	GateMessageSecret  GateMessageType = "gate.secret"
 	GateMessageConfig  GateMessageType = "gate.config"
+	GateMessageRevoke  GateMessageType = "gate.revoke"
 )
+
+// RevokePayload is the body of a gate.revoke message.
+type RevokePayload struct {
+	SecretID string `json:"secret_id,omitempty"` // Revoke specific secret by ID
+	Service  string `json:"service,omitempty"`   // Revoke all secrets for service
+}
 
 // ConversationGateState holds per-conversation gate state.
 type ConversationGateState struct {
@@ -140,6 +148,10 @@ type Gateway struct {
 	// convMessageStores holds per-conversation in-memory gate message stores.
 	convMessageStores map[types.ConversationID]*MemoryConversationStore
 
+	// expiryNotified tracks which credentials have already had expiry
+	// notifications sent, keyed by "convID:service" to avoid spamming.
+	expiryNotified map[string]bool
+
 	mu sync.RWMutex
 }
 
@@ -154,6 +166,7 @@ func NewGateway(id *types.Identity) *Gateway {
 		PollInterval:      5 * time.Second,
 		SequenceCursors:   make(map[types.ConversationID]int64),
 		convMessageStores: make(map[types.ConversationID]*MemoryConversationStore),
+		expiryNotified:    make(map[string]bool),
 	}
 }
 
@@ -188,6 +201,9 @@ func (gw *Gateway) Run(ctx context.Context) error {
 	ticker := time.NewTicker(gw.PollInterval)
 	defer ticker.Stop()
 
+	expiryTicker := time.NewTicker(60 * time.Second)
+	defer expiryTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -195,6 +211,27 @@ func (gw *Gateway) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			gw.pollAllConversations(ctx, dropboxMgr, messageMgr)
+		case <-expiryTicker.C:
+			gw.checkAllExpiredCredentials()
+		}
+	}
+}
+
+// checkAllExpiredCredentials iterates all promoted conversations and logs
+// any newly expired credentials. Never logs secret values.
+func (gw *Gateway) checkAllExpiredCredentials() {
+	gw.mu.RLock()
+	states := make(map[types.ConversationID]*ConversationGateState, len(gw.Conversations))
+	for id, state := range gw.Conversations {
+		states[id] = state
+	}
+	gw.mu.RUnlock()
+
+	for convID, state := range states {
+		expired := gw.checkExpiredCredentials(convID, state)
+		for _, ep := range expired {
+			log.Printf("[gateway] EXPIRED conv=%x org=%s service=%s secret_id=%s expired_at=%s",
+				convID[:4], state.OrgID, ep.Service, ep.SecretID, ep.ExpiredAt)
 		}
 	}
 }
@@ -249,6 +286,8 @@ func (gw *Gateway) processMessage(conv *types.Conversation, msg *types.Message, 
 		return gw.handleSecret(conv, msg)
 	case GateMessageConfig:
 		return gw.handleConfig(conv, msg)
+	case GateMessageRevoke:
+		return gw.handleRevoke(conv, msg)
 	case GateMessageRequest:
 		return gw.handleRequest(conv, msg, dropboxMgr)
 	case GateMessageApproval:
@@ -335,6 +374,11 @@ func (gw *Gateway) handleSecret(conv *types.Conversation, msg *types.Message) er
 		HeaderValue: payload.HeaderTemplate,
 	}
 
+	// Set expiry from TTL if provided
+	if payload.TTL > 0 {
+		cred.ExpiresAt = time.Now().Add(time.Duration(payload.TTL) * time.Second)
+	}
+
 	// If a VaultProvider is available, encrypt the value at rest
 	if gw.Vault != nil {
 		encrypted, err := gw.Vault.Encrypt(decryptedValue)
@@ -350,8 +394,14 @@ func (gw *Gateway) handleSecret(conv *types.Conversation, msg *types.Message) er
 	state.Credentials[payload.Service] = cred
 	gw.mu.Unlock()
 
-	log.Printf("[gateway] SECRET stored conv=%x org=%s service=%s secret_id=%s sender=%s",
-		conv.ID[:4], state.OrgID, payload.Service, payload.SecretID, payload.SenderKID)
+	if payload.TTL > 0 {
+		log.Printf("[gateway] SECRET stored conv=%x org=%s service=%s secret_id=%s sender=%s expires_at=%s",
+			conv.ID[:4], state.OrgID, payload.Service, payload.SecretID, payload.SenderKID,
+			cred.ExpiresAt.UTC().Format(time.RFC3339))
+	} else {
+		log.Printf("[gateway] SECRET stored conv=%x org=%s service=%s secret_id=%s sender=%s ttl=none",
+			conv.ID[:4], state.OrgID, payload.Service, payload.SecretID, payload.SenderKID)
+	}
 	return nil
 }
 
@@ -376,6 +426,47 @@ func (gw *Gateway) handleConfig(conv *types.Conversation, msg *types.Message) er
 
 	log.Printf("[gateway] CONFIG updated conv=%x org=%s rules=%d",
 		conv.ID[:4], state.OrgID, len(payload.Rules))
+	return nil
+}
+
+// handleRevoke removes credentials from a gate-enabled conversation.
+// If Service is set, removes the credential for that service.
+// If SecretID is set, removes the credential matching that secret ID.
+func (gw *Gateway) handleRevoke(conv *types.Conversation, msg *types.Message) error {
+	gw.mu.RLock()
+	state := gw.Conversations[conv.ID]
+	gw.mu.RUnlock()
+
+	if state == nil {
+		return fmt.Errorf("gate.revoke received for non-promoted conversation")
+	}
+
+	var payload RevokePayload
+	if err := json.Unmarshal(msg.Inner.Body, &payload); err != nil {
+		return fmt.Errorf("unmarshal revoke payload: %w", err)
+	}
+
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+
+	if payload.Service != "" {
+		delete(state.Credentials, payload.Service)
+		log.Printf("[gateway] REVOKE conv=%x org=%s service=%s",
+			conv.ID[:4], state.OrgID, payload.Service)
+	}
+
+	if payload.SecretID != "" {
+		// Find and remove credential by secret ID
+		for svc, cred := range state.Credentials {
+			if cred.ID == payload.SecretID {
+				delete(state.Credentials, svc)
+				log.Printf("[gateway] REVOKE conv=%x org=%s secret_id=%s service=%s",
+					conv.ID[:4], state.OrgID, payload.SecretID, svc)
+				break
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -482,6 +573,19 @@ func (gw *Gateway) checkAndExecute(
 
 	if !scan.ThresholdMet {
 		return nil
+	}
+
+	// Check if the credential for the target service has expired
+	if scan.Request != nil && scan.Request.TargetService != "" {
+		gw.mu.RLock()
+		cred := state.Credentials[scan.Request.TargetService]
+		gw.mu.RUnlock()
+		if cred != nil && cred.IsExpired() {
+			log.Printf("[gateway] credential for service %s expired, human re-provisioning required",
+				scan.Request.TargetService)
+			return fmt.Errorf("credential for service %s expired, human re-provisioning required",
+				scan.Request.TargetService)
+		}
 	}
 
 	// Threshold met -- execute

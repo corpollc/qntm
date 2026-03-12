@@ -20,6 +20,7 @@ type SecretPayload struct {
 	HeaderTemplate string `json:"header_template"` // e.g. "Bearer {value}"
 	EncryptedBlob  string `json:"encrypted_blob"`  // base64-encoded NaCl box ciphertext
 	SenderKID      string `json:"sender_kid"`
+	TTL            int64  `json:"ttl,omitempty"` // seconds until expiry; 0 means no expiry
 }
 
 // SealSecret encrypts a secret value to the gateway's public key using NaCl box

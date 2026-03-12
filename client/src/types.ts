@@ -141,6 +141,7 @@ export type GateMessageType =
   | 'gate.promote'
   | 'gate.config'
   | 'gate.secret'
+  | 'gate.revoke'
   | 'gate.result';
 
 export interface GateConversationMessage {
@@ -206,6 +207,12 @@ export interface PromotePayload {
 export interface ConfigPayload {
   type: 'gate.config';
   rules: ThresholdRule[];
+}
+
+export interface RevokePayload {
+  type: 'gate.revoke';
+  secret_id?: string;  // Revoke specific secret by ID
+  service?: string;    // Revoke all secrets for service
 }
 
 export interface SecretPayload {

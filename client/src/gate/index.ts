@@ -11,6 +11,7 @@ import type {
 export const GateMessagePromote = 'gate.promote' as const;
 export const GateMessageConfig = 'gate.config' as const;
 export const GateMessageSecret = 'gate.secret' as const;
+export const GateMessageRevoke = 'gate.revoke' as const;
 export const GateMessageResult = 'gate.result' as const;
 
 const suite = new QSP1Suite();

@@ -34,6 +34,7 @@ GATE_MESSAGE_EXECUTED: str = "gate.executed"
 GATE_MESSAGE_PROMOTE: str = "gate.promote"
 GATE_MESSAGE_SECRET: str = "gate.secret"
 GATE_MESSAGE_CONFIG: str = "gate.config"
+GATE_MESSAGE_REVOKE: str = "gate.revoke"
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,12 @@ class PromotePayload:
 @dataclass
 class ConfigPayload:
     rules: list[ThresholdRule]
+
+
+@dataclass
+class RevokePayload:
+    secret_id: Optional[str] = None  # Revoke specific secret by ID
+    service: Optional[str] = None  # Revoke all secrets for service
 
 
 @dataclass
