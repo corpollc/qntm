@@ -7,6 +7,9 @@ import (
 	"github.com/corpo/qntm/pkg/types"
 )
 
+// GateMessageExpired is the message type for secret expiry notifications.
+const GateMessageExpired GateMessageType = "gate.expired"
+
 // ExpiredPayload is the body of a gate.expired notification message, sent when
 // a credential's TTL has elapsed.
 type ExpiredPayload struct {

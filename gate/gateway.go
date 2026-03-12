@@ -82,7 +82,7 @@ import (
 )
 
 // GateMessageType constants for gateway-specific message types.
-// NOTE: GateMessageExpired is declared in auth.go — do not re-declare here.
+// NOTE: GateMessageExpired is declared in expiry.go.
 const (
 	GateMessagePromote GateMessageType = "gate.promote"
 	GateMessageSecret  GateMessageType = "gate.secret"
@@ -389,6 +389,11 @@ func (gw *Gateway) handleSecret(conv *types.Conversation, msg *types.Message) er
 	} else {
 		cred.Value = decryptedValue
 	}
+
+	// Best-effort: zero the plaintext decrypted value in memory.
+	// Go strings are immutable, but we can zero the byte slice returned by
+	// ParseSecretPayload (which was allocated by nacl/box.Open).
+	zeroBytes([]byte(decryptedValue))
 
 	gw.mu.Lock()
 	state.Credentials[payload.Service] = cred
