@@ -21,6 +21,7 @@ export interface SidebarProps {
   selectedConversationId: string
   setSelectedConversationId: (id: string) => void
   hiddenConversations: Set<string>
+  unreadCounts: Record<string, number>
   hiddenCount: number
   showHidden: boolean
   setShowHidden: (fn: (prev: boolean) => boolean) => void
@@ -56,6 +57,7 @@ export function Sidebar({
   selectedConversationId,
   setSelectedConversationId,
   hiddenConversations,
+  unreadCounts,
   hiddenCount,
   showHidden,
   setShowHidden,
@@ -161,6 +163,7 @@ export function Sidebar({
           selectedConversationId={selectedConversationId}
           setSelectedConversationId={setSelectedConversationId}
           hiddenConversations={hiddenConversations}
+          unreadCounts={unreadCounts}
           hiddenCount={hiddenCount}
           showHidden={showHidden}
           setShowHidden={setShowHidden}

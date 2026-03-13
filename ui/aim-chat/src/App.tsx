@@ -56,6 +56,8 @@ export default function App() {
   const [defaultDropboxUrl, setDefaultDropboxUrl] = useState('')
   const [dropboxDraft, setDropboxDraft] = useState('')
 
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
+
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [isWorking, setIsWorking] = useState(false)
@@ -112,6 +114,16 @@ export default function App() {
     }
     return { promoted, orgId, threshold, signerCount }
   }, [messages])
+
+  const selectConversation = useCallback((convId: string) => {
+    setSelectedConversationId(convId)
+    setUnreadCounts((prev) => {
+      if (!prev[convId]) return prev
+      const next = { ...prev }
+      delete next[convId]
+      return next
+    })
+  }, [])
 
   const toggleHideConversation = useCallback((convId: string) => {
     setHiddenConversations(prev => {
@@ -209,6 +221,46 @@ export default function App() {
       window.clearInterval(timer)
     }
   }, [activeProfileId, selectedConversationId])
+
+  // Poll non-selected conversations for unread message counts
+  const bgPollingRef = useRef(false)
+  useEffect(() => {
+    if (!activeProfileId || conversations.length === 0) {
+      return
+    }
+
+    async function pollOtherConversations() {
+      if (bgPollingRef.current) return
+      bgPollingRef.current = true
+      try {
+        for (const conv of conversations) {
+          if (conv.id === selectedConversationId) continue
+          try {
+            const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', conv.id)
+            if (response.messages.length > 0) {
+              setUnreadCounts((prev) => ({
+                ...prev,
+                [conv.id]: (prev[conv.id] || 0) + response.messages.length,
+              }))
+            }
+          } catch {
+            // Ignore errors for background polling of individual conversations
+          }
+        }
+      } finally {
+        bgPollingRef.current = false
+      }
+    }
+
+    void pollOtherConversations()
+    const timer = window.setInterval(() => {
+      void pollOtherConversations()
+    }, POLL_INTERVAL_MS)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [activeProfileId, conversations, selectedConversationId])
 
   async function initializeProfiles() {
     try {
@@ -677,8 +729,9 @@ export default function App() {
             createdInviteToken={createdInviteToken}
             visibleConversations={visibleConversations}
             selectedConversationId={selectedConversationId}
-            setSelectedConversationId={setSelectedConversationId}
+            setSelectedConversationId={selectConversation}
             hiddenConversations={hiddenConversations}
+            unreadCounts={unreadCounts}
             hiddenCount={hiddenCount}
             showHidden={showHidden}
             setShowHidden={setShowHidden}
@@ -712,6 +765,10 @@ export default function App() {
             onSendMessage={onSendMessage}
             onCheckMessages={() => void receiveMessages(true)}
             onGateApprove={onGateApprove}
+            identityExists={identity.exists}
+            conversationCount={conversations.length}
+            onGenerateIdentity={onGenerateIdentity}
+            onOpenInvites={() => {}}
           />
 
           {showGatePanel && selectedConversation && (

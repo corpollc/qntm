@@ -331,7 +331,27 @@ body {
 
 .conversation-name {
   font-size: 13px;
+  font-weight: 400;
+}
+
+.conversation-name.has-unread {
   font-weight: 700;
+}
+
+.unread-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin: auto 6px auto 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #2f78cc;
+  border-radius: 10px;
+  flex-shrink: 0;
 }
 
 .conversation-id {
@@ -982,4 +1002,118 @@ body {
   word-break: break-word;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* Welcome card (onboarding) */
+
+.welcome-card {
+  margin: auto;
+  max-width: 480px;
+  width: 100%;
+  padding: 28px 32px;
+  background: #fff;
+  border: 2px solid var(--border-dark);
+  border-top-color: var(--border-light);
+  border-left-color: var(--border-light);
+  box-shadow: 0 8px 24px rgba(15, 32, 49, 0.12);
+}
+
+.welcome-heading {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: var(--title-1);
+}
+
+.welcome-description {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.welcome-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.welcome-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.welcome-step-indicator {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  border: 2px solid var(--border-dark);
+  background: linear-gradient(#fefefe, #d0dce9);
+  color: var(--ink);
+}
+
+.welcome-step.completed .welcome-step-indicator {
+  background: #e8f5e9;
+  border-color: #66bb6a;
+  color: #2e7d32;
+}
+
+.welcome-step.active .welcome-step-indicator {
+  background: linear-gradient(#fff8cf, #f2cd53);
+  border-color: #d4a017;
+  color: #5d4500;
+}
+
+.welcome-step.locked .welcome-step-indicator {
+  opacity: 0.45;
+}
+
+.welcome-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 3px;
+}
+
+.welcome-step-content strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.welcome-step.completed .welcome-step-content strong {
+  color: var(--muted);
+}
+
+.welcome-step.locked .welcome-step-content strong {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.welcome-step-done {
+  font-size: 12px;
+  color: #2e7d32;
+}
+
+.welcome-step-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.welcome-step.locked .welcome-step-hint {
+  opacity: 0.6;
+}
+
+.welcome-step-content .button {
+  align-self: flex-start;
+  margin-top: 2px;
 }

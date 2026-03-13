@@ -11,6 +11,7 @@ import {
   GateResultCard,
 } from './GateCards'
 import { Composer } from './Composer'
+import { WelcomeCard } from './WelcomeCard'
 
 export interface ChatPaneProps {
   selectedConversation: Conversation | null
@@ -27,6 +28,10 @@ export interface ChatPaneProps {
   onSendMessage: (event: FormEvent<HTMLFormElement>) => void
   onCheckMessages: () => void
   onGateApprove: (requestId: string, conversationId: string) => void
+  identityExists: boolean
+  conversationCount: number
+  onGenerateIdentity: () => void
+  onOpenInvites: () => void
 }
 
 export function ChatPane({
@@ -44,7 +49,12 @@ export function ChatPane({
   onSendMessage,
   onCheckMessages,
   onGateApprove,
+  identityExists,
+  conversationCount,
+  onGenerateIdentity,
+  onOpenInvites,
 }: ChatPaneProps) {
+  const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
   return (
     <main className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
       <div className="chat-header">
@@ -68,7 +78,16 @@ export function ChatPane({
       </div>
 
       <div className="chat-log">
-        {messages.length === 0 && <div className="empty">No messages yet.</div>}
+        {showWelcome && (
+          <WelcomeCard
+            identityExists={identityExists}
+            conversationCount={conversationCount}
+            isWorking={isWorking}
+            onGenerateIdentity={onGenerateIdentity}
+            onOpenInvites={onOpenInvites}
+          />
+        )}
+        {!showWelcome && messages.length === 0 && <div className="empty">No messages yet.</div>}
         {messages.map((message) => (
           <article key={message.id} className={`message ${message.direction}`}>
             <div className="message-top">
