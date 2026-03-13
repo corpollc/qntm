@@ -1,9 +1,10 @@
-import { FormEvent } from 'react'
+import { FormEvent, useState, useCallback } from 'react'
 import type { Conversation, IdentityInfo, Profile } from '../types'
 import { IdentityPanel } from './IdentityPanel'
 import { InvitePanel } from './InvitePanel'
 import { ConversationList } from './ConversationList'
 import { ContactList } from './ContactList'
+import { CollapsiblePanel } from './CollapsiblePanel'
 
 export interface SidebarProps {
   profiles: Profile[]
@@ -38,6 +39,8 @@ export interface SidebarProps {
   setStatus: (value: string) => void
 }
 
+type PanelId = 'identity' | 'invites' | 'conversations' | 'contacts'
+
 export function Sidebar({
   profiles,
   activeProfileId,
@@ -70,52 +73,117 @@ export function Sidebar({
   onSaveContact,
   setStatus,
 }: SidebarProps) {
+  const [expandedPanels, setExpandedPanels] = useState<Set<PanelId>>(
+    () => new Set(['conversations']),
+  )
+  const [conversationFilter, setConversationFilter] = useState('')
+
+  const toggle = useCallback((id: PanelId) => {
+    setExpandedPanels((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  const filteredConversations = conversationFilter
+    ? visibleConversations.filter((c) =>
+        c.name.toLowerCase().includes(conversationFilter.toLowerCase()),
+      )
+    : visibleConversations
+
   return (
     <aside className="sidebar">
-      <IdentityPanel
-        profiles={profiles}
-        activeProfileId={activeProfileId}
-        identity={identity}
-        newProfileName={newProfileName}
-        setNewProfileName={setNewProfileName}
-        isWorking={isWorking}
-        onSelectProfile={onSelectProfile}
-        onCreateProfile={onCreateProfile}
-        onGenerateIdentity={onGenerateIdentity}
-        setStatus={setStatus}
-      />
+      <CollapsiblePanel
+        title="Identities"
+        expanded={expandedPanels.has('identity')}
+        onToggle={() => toggle('identity')}
+      >
+        <IdentityPanel
+          profiles={profiles}
+          activeProfileId={activeProfileId}
+          identity={identity}
+          newProfileName={newProfileName}
+          setNewProfileName={setNewProfileName}
+          isWorking={isWorking}
+          onSelectProfile={onSelectProfile}
+          onCreateProfile={onCreateProfile}
+          onGenerateIdentity={onGenerateIdentity}
+          setStatus={setStatus}
+        />
+      </CollapsiblePanel>
 
-      <InvitePanel
-        inviteName={inviteName}
-        setInviteName={setInviteName}
-        inviteToken={inviteToken}
-        setInviteToken={setInviteToken}
-        createdInviteToken={createdInviteToken}
-        identity={identity}
-        isWorking={isWorking}
-        onCreateInvite={onCreateInvite}
-        onAcceptInvite={onAcceptInvite}
-      />
+      <CollapsiblePanel
+        title="Invites"
+        expanded={expandedPanels.has('invites')}
+        onToggle={() => toggle('invites')}
+      >
+        <InvitePanel
+          inviteName={inviteName}
+          setInviteName={setInviteName}
+          inviteToken={inviteToken}
+          setInviteToken={setInviteToken}
+          createdInviteToken={createdInviteToken}
+          identity={identity}
+          isWorking={isWorking}
+          onCreateInvite={onCreateInvite}
+          onAcceptInvite={onAcceptInvite}
+        />
+      </CollapsiblePanel>
 
-      <ConversationList
-        visibleConversations={visibleConversations}
-        selectedConversationId={selectedConversationId}
-        setSelectedConversationId={setSelectedConversationId}
-        hiddenConversations={hiddenConversations}
-        hiddenCount={hiddenCount}
-        showHidden={showHidden}
-        setShowHidden={setShowHidden}
-        toggleHideConversation={toggleHideConversation}
-      />
+      <CollapsiblePanel
+        title="Conversations"
+        expanded={expandedPanels.has('conversations')}
+        onToggle={() => toggle('conversations')}
+        grow
+        trailing={
+          hiddenCount > 0 ? (
+            <button
+              className="button-small"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowHidden((v) => !v)
+              }}
+              title={showHidden ? 'Hide hidden conversations' : 'Show hidden conversations'}
+            >
+              {showHidden ? `Hide (${hiddenCount})` : `${hiddenCount} hidden`}
+            </button>
+          ) : undefined
+        }
+      >
+        <ConversationList
+          visibleConversations={filteredConversations}
+          selectedConversationId={selectedConversationId}
+          setSelectedConversationId={setSelectedConversationId}
+          hiddenConversations={hiddenConversations}
+          hiddenCount={hiddenCount}
+          showHidden={showHidden}
+          setShowHidden={setShowHidden}
+          toggleHideConversation={toggleHideConversation}
+          conversationFilter={conversationFilter}
+          setConversationFilter={setConversationFilter}
+        />
+      </CollapsiblePanel>
 
-      <ContactList
-        visibleContactKeys={visibleContactKeys}
-        contactDrafts={contactDrafts}
-        contactNameByKey={contactNameByKey}
-        isWorking={isWorking}
-        onContactDraftChange={onContactDraftChange}
-        onSaveContact={onSaveContact}
-      />
+      <CollapsiblePanel
+        title="Contacts"
+        expanded={expandedPanels.has('contacts')}
+        onToggle={() => toggle('contacts')}
+      >
+        <ContactList
+          visibleContactKeys={visibleContactKeys}
+          contactDrafts={contactDrafts}
+          contactNameByKey={contactNameByKey}
+          isWorking={isWorking}
+          onContactDraftChange={onContactDraftChange}
+          onSaveContact={onSaveContact}
+        />
+      </CollapsiblePanel>
     </aside>
   )
 }

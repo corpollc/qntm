@@ -10,6 +10,8 @@ export interface ConversationListProps {
   showHidden: boolean
   setShowHidden: (fn: (prev: boolean) => boolean) => void
   toggleHideConversation: (convId: string) => void
+  conversationFilter: string
+  setConversationFilter: (value: string) => void
 }
 
 export function ConversationList({
@@ -17,26 +19,18 @@ export function ConversationList({
   selectedConversationId,
   setSelectedConversationId,
   hiddenConversations,
-  hiddenCount,
-  showHidden,
-  setShowHidden,
   toggleHideConversation,
+  conversationFilter,
+  setConversationFilter,
 }: ConversationListProps) {
   return (
-    <section className="panel grow">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Conversations</h2>
-        {hiddenCount > 0 && (
-          <button
-            className="button-small"
-            type="button"
-            onClick={() => setShowHidden(v => !v)}
-            title={showHidden ? 'Hide hidden conversations' : 'Show hidden conversations'}
-          >
-            {showHidden ? `Hide (${hiddenCount})` : `${hiddenCount} hidden`}
-          </button>
-        )}
-      </div>
+    <>
+      <input
+        className="input conversation-filter"
+        placeholder="Filter conversations..."
+        value={conversationFilter}
+        onChange={(e) => setConversationFilter(e.target.value)}
+      />
       <ul className="conversation-list">
         {visibleConversations.length === 0 && <li className="empty">No conversations yet</li>}
         {visibleConversations.map((conversation) => (
@@ -62,6 +56,6 @@ export function ConversationList({
           </li>
         ))}
       </ul>
-    </section>
+    </>
   )
 }

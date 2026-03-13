@@ -18,8 +18,7 @@ export function ContactList({
   onSaveContact,
 }: ContactListProps) {
   return (
-    <section className="panel">
-      <h2>Contacts</h2>
+    <>
       <div className="contact-list">
         {visibleContactKeys.length === 0 && (
           <div className="empty">No contacts yet</div>
@@ -44,6 +43,6 @@ export function ContactList({
           </div>
         ))}
       </div>
-    </section>
+    </>
   )
 }

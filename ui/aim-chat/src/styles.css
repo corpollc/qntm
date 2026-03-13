@@ -119,6 +119,72 @@ body {
   color: #163758;
 }
 
+/* Collapsible panel */
+
+.collapsible-panel {
+  padding: 0;
+}
+
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapsible-header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.collapsible-chevron {
+  font-size: 11px;
+  color: #163758;
+  width: 12px;
+  flex-shrink: 0;
+}
+
+.collapsible-trailing {
+  margin-left: auto;
+}
+
+.collapsible-body {
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+  max-height: 0;
+}
+
+.collapsible-panel.grow .collapsible-body-open {
+  flex: 1;
+  overflow: hidden;
+}
+
+.collapsible-panel.grow {
+  display: flex;
+  flex-direction: column;
+}
+
+.collapsible-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.collapsible-panel.grow .collapsible-inner {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Conversation filter input */
+
+.conversation-filter {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
 .label {
   font-size: 11px;
   color: var(--muted);
@@ -277,7 +343,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 180px;
+  max-height: 300px;
   overflow-y: auto;
 }
 
@@ -418,6 +484,68 @@ body {
   color: var(--muted);
   font-size: 12px;
   font-style: italic;
+}
+
+/* Invite panel */
+
+.invite-panel {
+  gap: 0;
+}
+
+.invite-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.invite-separator {
+  border-top: 1px solid #a0b3c5;
+  margin: 8px 0;
+}
+
+.invite-success {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 2px;
+}
+
+.invite-success-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2e7d32;
+}
+
+.invite-token-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.invite-token-row .token-box {
+  flex: 1;
+  min-height: 56px;
+}
+
+.invite-copy-btn {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: 60px;
+}
+
+.invite-join-success {
+  padding: 10px;
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2e7d32;
+  text-align: center;
 }
 
 .settings-toggle {

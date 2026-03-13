@@ -28,9 +28,7 @@ export function IdentityPanel({
   setStatus,
 }: IdentityPanelProps) {
   return (
-    <section className="panel">
-      <h2>Identities</h2>
-
+    <>
       <label className="label" htmlFor="profile-select">
         Active profile
       </label>
@@ -87,6 +85,6 @@ export function IdentityPanel({
           </div>
         )}
       </div>
-    </section>
+    </>
   )
 }
