@@ -74,47 +74,41 @@ def _save_json(path, data):
 
 
 def _decode_public_key(value: str) -> bytes:
-    """Decode a signer public key from base64url or legacy hex."""
+    """Decode a signer public key from canonical base64url."""
     text = (value or "").strip()
     if not text:
         return b""
 
     try:
         decoded = base64url_decode(text)
-        if len(decoded) == 32:
-            return decoded
-    except Exception:
-        pass
-
-    try:
-        decoded = bytes.fromhex(text)
-    except ValueError as exc:
+    except Exception as exc:
         raise ValueError("invalid signer public key encoding") from exc
 
     if len(decoded) != 32:
         raise ValueError(f"invalid signer public key length: {len(decoded)}")
+    if base64url_encode(decoded) != text:
+        raise ValueError("signer public key must use canonical base64url encoding")
     return decoded
 
 
 def _decode_encrypted_blob(value: str) -> bytes:
-    """Decode encrypted_blob from base64, base64url, or legacy hex."""
+    """Decode encrypted_blob from canonical standard base64."""
     text = (value or "").strip()
     if not text:
         raise ValueError("encrypted_blob is required")
 
-    try:
-        return bytes.fromhex(text)
-    except ValueError:
-        pass
+    # Reject ambiguous legacy hex payloads before base64 decoding.
+    if len(text) % 2 == 0 and all(ch in "0123456789abcdefABCDEF" for ch in text):
+        raise ValueError("encrypted_blob must use standard base64 encoding, not hex")
 
-    padded = text + ("=" * (-len(text) % 4))
     try:
-        return base64.b64decode(padded, validate=True)
-    except binascii.Error:
-        try:
-            return base64.urlsafe_b64decode(padded)
-        except binascii.Error as exc:
-            raise ValueError("invalid encrypted_blob encoding") from exc
+        decoded = base64.b64decode(text, validate=True)
+    except binascii.Error as exc:
+        raise ValueError("invalid encrypted_blob encoding") from exc
+
+    if base64.b64encode(decoded).decode("ascii") != text:
+        raise ValueError("encrypted_blob must use canonical base64 encoding")
+    return decoded
 
 
 # ---------------------------------------------------------------------------

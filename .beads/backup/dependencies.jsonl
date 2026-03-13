@@ -17,6 +17,7 @@
 {"created_at":"2026-03-12T18:47:44Z","created_by":"PV","depends_on_id":"qntm-cds","issue_id":"qntm-mh3","type":"blocks"}
 {"created_at":"2026-03-12T18:47:43Z","created_by":"PV","depends_on_id":"qntm-fj2","issue_id":"qntm-mh3","type":"blocks"}
 {"created_at":"2026-03-12T18:47:44Z","created_by":"PV","depends_on_id":"qntm-cds","issue_id":"qntm-phy","type":"blocks"}
+{"created_at":"2026-03-13T12:23:11Z","created_by":"PV","depends_on_id":"qntm-9o9","issue_id":"qntm-r5o","type":"discovered-from"}
 {"created_at":"2026-03-13T10:06:00Z","created_by":"PV","depends_on_id":"qntm-x3j","issue_id":"qntm-szc","type":"discovered-from"}
 {"created_at":"2026-03-13T10:06:00Z","created_by":"PV","depends_on_id":"qntm-x3j","issue_id":"qntm-u2b","type":"discovered-from"}
 {"created_at":"2026-03-12T18:47:44Z","created_by":"PV","depends_on_id":"qntm-92z","issue_id":"qntm-ufp","type":"blocks"}

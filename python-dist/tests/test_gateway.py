@@ -238,7 +238,30 @@ class TestGatewayState:
             # The decrypted value should be the original secret
             assert cred["value"] == secret_value.decode()
 
-    def test_handle_secret_accepts_legacy_hex_and_urlsafe_encodings(self):
+    def test_handle_promote_rejects_non_canonical_public_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = os.path.join(tmpdir, "gw")
+            init_gateway(config_dir)
+            gw = Gateway(config_dir)
+            gw.load_identity()
+
+            conv_id = _make_conv_id()
+            sender = generate_identity()
+
+            with pytest.raises(ValueError, match="signer public key"):
+                gw.handle_promote(conv_id, {
+                    "org_id": "test-org",
+                    "signers": [{
+                        "kid": sender["keyID"].hex(),
+                        "public_key": base64.b64encode(sender["publicKey"]).decode(),
+                        "label": "alice",
+                    }],
+                    "rules": [
+                        {"service": "*", "endpoint": "*", "verb": "*", "m": 1, "n": 1}
+                    ],
+                })
+
+    def test_handle_secret_rejects_non_canonical_encodings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = os.path.join(tmpdir, "gw")
             init_gateway(config_dir)
@@ -252,7 +275,7 @@ class TestGatewayState:
                 "org_id": "test-org",
                 "signers": [{
                     "kid": sender["keyID"].hex(),
-                    "public_key": sender["publicKey"].hex(),
+                    "public_key": base64url_encode(sender["publicKey"]),
                     "label": "alice",
                 }],
                 "rules": [
@@ -265,19 +288,26 @@ class TestGatewayState:
                 identity["publicKey"],
                 b"legacy-secret",
             )
-            secret_payload = {
-                "secret_id": "cred-legacy",
-                "service": "legacy-api",
-                "header_name": "Authorization",
-                "header_template": "Bearer {value}",
-                "encrypted_blob": base64.urlsafe_b64encode(encrypted).decode().rstrip("="),
-                "sender_kid": sender["keyID"].hex(),
-            }
 
-            gw.handle_secret(conv_id, secret_payload)
+            with pytest.raises(ValueError, match="standard base64 encoding, not hex"):
+                gw.handle_secret(conv_id, {
+                    "secret_id": "cred-legacy-hex",
+                    "service": "legacy-api",
+                    "header_name": "Authorization",
+                    "header_template": "Bearer {value}",
+                    "encrypted_blob": encrypted.hex(),
+                    "sender_kid": sender["keyID"].hex(),
+                })
 
-            state = gw.get_conversation_state(conv_id)
-            assert state.credentials["legacy-api"]["value"] == "legacy-secret"
+            with pytest.raises(ValueError, match="invalid encrypted_blob encoding"):
+                gw.handle_secret(conv_id, {
+                    "secret_id": "cred-legacy-urlsafe",
+                    "service": "legacy-api",
+                    "header_name": "Authorization",
+                    "header_template": "Bearer {value}",
+                    "encrypted_blob": base64.urlsafe_b64encode(encrypted).decode().rstrip("="),
+                    "sender_kid": sender["keyID"].hex(),
+                })
 
 
 # ---------------------------------------------------------------------------
