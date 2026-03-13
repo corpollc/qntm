@@ -5,7 +5,7 @@
  * Manages identity lifecycle, conversation state, and message polling.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { DropboxClient } from '@corpollc/qntm';
 
@@ -355,6 +355,21 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     }
   }, [identity, kidHex, activeConvId, configDir, store, addSystemMessage, exit]);
 
+  // ── Last message per conversation ─────────────────────────────────
+
+  const lastMessages = useMemo(() => {
+    const result: Record<string, StoredMessage> = {};
+    for (const conv of conversations) {
+      const history = store.loadHistory(conv.id);
+      if (history.length > 0) {
+        result[conv.id] = history[history.length - 1];
+      }
+    }
+    return result;
+    // Re-derive when messages change (active conv) or conversations list changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations, messages, store]);
+
   // ── Active conversation name ───────────────────────────────────────
 
   const activeConvName =
@@ -383,9 +398,24 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   return (
     <Box flexDirection="column" height={terminalHeight}>
       {/* Header */}
-      <Box paddingX={1} justifyContent="space-between">
-        <Text bold color="cyan">qntm messenger</Text>
-        <Text dimColor>v0.1.0</Text>
+      <Box paddingX={1} flexDirection="row" justifyContent="space-between">
+        <Box width={14}>
+          <Text>
+            <Text color={connected ? 'green' : 'red'}>{connected ? '\u25cf' : '\u25cb'}</Text>
+            {' '}
+            <Text dimColor>{connected ? 'online' : 'offline'}</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} justifyContent="center">
+          <Text bold color="cyan">
+            {activeConvName || 'qntm messenger'}
+          </Text>
+        </Box>
+        <Box width={32} justifyContent="flex-end">
+          <Text dimColor>
+            {scrollMode ? 'j/k: scroll | Esc: exit' : 'Tab: sidebar | Esc: scroll | /help'}
+          </Text>
+        </Box>
       </Box>
 
       {/* Main content: sidebar + chat */}
@@ -396,6 +426,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
               conversations={conversations}
               activeId={activeConvId}
               unread={unread}
+              lastMessages={lastMessages}
               onSelect={(id) => {
                 setActiveConvId(id);
                 setMessages(store.loadHistory(id));
@@ -422,9 +453,9 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       <StatusBar
         kid={kidHex}
         name={displayName}
-        activeConversation={activeConvId}
-        activeConversationName={activeConvName}
         connected={connected}
+        conversationCount={conversations.length}
+        scrollMode={scrollMode}
         scrollOffset={scrollOffset}
       />
 

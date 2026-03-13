@@ -42,15 +42,13 @@ export default function ChatPane({
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box borderStyle="single" borderColor="blue" paddingX={1} flexDirection="column" flexGrow={1}>
-        <Box justifyContent="space-between">
-          <Text bold color="blue">{conversationName || 'No conversation selected'}</Text>
-          {messages.length > 0 && (
+        {messages.length > 0 && scrollOffset > 0 && (
+          <Box justifyContent="flex-end">
             <Text dimColor>
-              {startIdx + 1}-{endIdx}/{messages.length}
-              {scrollOffset > 0 ? ' (scrolled)' : ''}
+              {startIdx + 1}-{endIdx}/{messages.length} (scrolled)
             </Text>
-          )}
-        </Box>
+          </Box>
+        )}
 
         {visible.length === 0 && (
           <Text dimColor>No messages yet. Type a message below to start chatting.</Text>
