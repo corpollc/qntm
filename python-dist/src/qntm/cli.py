@@ -1533,7 +1533,7 @@ def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
         "service": service,
         "header_name": header_name,
         "header_template": header_template,
-        "encrypted_blob": ct.hex(),
+        "encrypted_blob": base64.b64encode(ct).decode(),
         "sender_kid": identity["keyID"].hex(),
     }
     if ttl > 0:

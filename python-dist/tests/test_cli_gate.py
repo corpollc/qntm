@@ -525,11 +525,7 @@ class TestBuildSecretPayload:
         assert "secret_id" in payload
 
         # Verify we can decrypt
-        encrypted = base64.b64encode(
-            bytes.fromhex(payload["encrypted_blob"])
-        ) if isinstance(payload["encrypted_blob"], str) else payload["encrypted_blob"]
-        # The encrypted_blob is hex-encoded in our implementation
-        ct = bytes.fromhex(payload["encrypted_blob"])
+        ct = base64.b64decode(payload["encrypted_blob"])
         plaintext = open_secret(gateway["privateKey"], sender["publicKey"], ct)
         assert plaintext == b"sk_test_123"
 

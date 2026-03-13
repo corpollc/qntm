@@ -238,6 +238,47 @@ class TestGatewayState:
             # The decrypted value should be the original secret
             assert cred["value"] == secret_value.decode()
 
+    def test_handle_secret_accepts_legacy_hex_and_urlsafe_encodings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = os.path.join(tmpdir, "gw")
+            init_gateway(config_dir)
+            gw = Gateway(config_dir)
+            identity = gw.load_identity()
+
+            conv_id = _make_conv_id()
+            sender = generate_identity()
+
+            gw.handle_promote(conv_id, {
+                "org_id": "test-org",
+                "signers": [{
+                    "kid": sender["keyID"].hex(),
+                    "public_key": sender["publicKey"].hex(),
+                    "label": "alice",
+                }],
+                "rules": [
+                    {"service": "*", "endpoint": "*", "verb": "*", "m": 1, "n": 1}
+                ],
+            })
+
+            encrypted = seal_secret(
+                sender["privateKey"],
+                identity["publicKey"],
+                b"legacy-secret",
+            )
+            secret_payload = {
+                "secret_id": "cred-legacy",
+                "service": "legacy-api",
+                "header_name": "Authorization",
+                "header_template": "Bearer {value}",
+                "encrypted_blob": base64.urlsafe_b64encode(encrypted).decode().rstrip("="),
+                "sender_kid": sender["keyID"].hex(),
+            }
+
+            gw.handle_secret(conv_id, secret_payload)
+
+            state = gw.get_conversation_state(conv_id)
+            assert state.credentials["legacy-api"]["value"] == "legacy-secret"
+
 
 # ---------------------------------------------------------------------------
 # Message routing

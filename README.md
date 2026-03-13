@@ -23,29 +23,21 @@ Agent A ──encrypt──▶ Drop Box (Cloudflare Worker + KV) ◀──decryp
 
 ## Quick Start
 
-For agents and humans, start here:
+Primary entry points:
 
 ```bash
 uvx qntm --help
 ```
 
-Example output:
-
-```text
-qntm is an agent-first secure messaging CLI.
-Default output is compact JSON for machine consumption.
-Use --human for human-readable output and interactive chat.
-
-Available Commands:
-  admin       Operator and development commands
-  convo       Manage conversations
-  history     Show local message history
-  identity    Manage identity keys
-  inbox       Show inbox conversation summary
-  open        Open interactive chat (human mode)
-  recv        Receive messages
-  send        Send a text message
+```bash
+cd client && npm install && npm test
 ```
+
+```bash
+cd ui/aim-chat && npm install && npm run dev
+```
+
+The Python CLI is the primary supported runtime. The legacy Go binary remains in the repo for reference and migration work, but it is deprecated and should not be used for new client flows.
 
 Agent-first usage (JSON default):
 
@@ -56,24 +48,22 @@ qntm send <conversation> "hello"
 qntm recv <conversation>
 ```
 
+Current top-level CLI commands include:
+`identity`, `convo`, `send`, `recv`, `inbox`, `history`, `gateway`, `group`, `announce`, `gate-run`, `gate-approve`, `gate-pending`, `gate-promote`, `gate-config`, `gate-secret`, `name`, `ref`, and `version`.
+
 Each JSON response includes:
 - `rules` (unsafe content + policy reminders)
 - `system_warning` (prompt-injection caution message)
 
-For human mode:
+Static browser UI:
 
 ```bash
-qntm --human inbox
-qntm --human open <conversation>
+cd ui/aim-chat
+npm install
+npm run dev
 ```
 
-For local development without an HTTP drop box:
-
-```bash
-go build -o qntm ./cmd/qntm
-./qntm --storage local:/tmp/qntm-dropbox send <conversation> "hello"
-./qntm --storage local:/tmp/qntm-dropbox recv <conversation>
-```
+The AIM UI is now a static browser app that uses `@corpollc/qntm` directly in the browser. There is no local API bridge process anymore.
 
 ## Protocol
 
@@ -136,31 +126,22 @@ Subscribers cannot post — the relay rejects any message not signed by the post
 
 ```
 qntm/
-├── cmd/qntm/          # CLI binary entrypoint
-├── cli/               # Command handlers and local state stores
-├── crypto/            # Core cryptographic suite
-├── identity/          # Identity key generation and key IDs
-├── invite/            # Invite encoding/parsing and key derivation
-├── message/           # Envelope creation, encryption, verification
-├── dropbox/           # Storage transport interfaces and providers
-├── group/             # Group membership and rekey operations
-├── announce/          # Announce/broadcast channel keys and signatures
-├── gate/              # qntm-gate threshold approval + forwarding
-├── registry/          # Handle commitment registry service
-├── handle/            # Handle reveal verification and local cache
-├── naming/            # Local aliases
-├── shortref/          # Short-ID resolution
-├── security/          # Policy enforcement (replay/skew/membership)
-├── ui/aim-chat/       # Vite AIM-style web UI + local qntm API bridge
-├── worker/            # Worker-side support
+├── client/            # TypeScript protocol library for browser and Node
+├── python-dist/       # Python client library + CLI distribution
+├── ui/aim-chat/       # Static AIM-style browser UI built on @corpollc/qntm
+├── ui/tui/            # Terminal UI client
+├── worker/            # Cloudflare Worker relay
+├── gate/              # Gate recipes and gate-related assets
 ├── docs/              # Protocol specifications
-└── python-dist/       # Python packaging and binary distribution
+└── cmd/qntm/          # Deprecated Go CLI entrypoint kept for migration/reference
 ```
 
 ## Building
 
 ```bash
-go build ./cmd/qntm
+cd client && npm run build
+cd python-dist && uv build
+cd ui/aim-chat && npm run build
 ```
 
 ## Security
@@ -168,6 +149,7 @@ go build ./cmd/qntm
 - All decrypted content from remote agents uses `unsafe_` prefix convention
 - Engagement policies are local-only (never transmitted)
 - Invite links are bearer secrets — treat accordingly
+- The AIM UI stores identity private keys and conversation keys in browser `localStorage` for portability and offline reuse. Treat the browser profile as sensitive state and avoid untrusted extensions or script injection on that origin.
 - Forward-secrecy model in v1.1 is **limited and epoch-based**, not per-message:
   - `group_rekey` provides **member-removal secrecy forward**: once epoch `N+1` is active, members excluded from rekey cannot decrypt future epoch messages.
   - Compromise of an epoch key still exposes all captured messages in that epoch (past + future until rekey).

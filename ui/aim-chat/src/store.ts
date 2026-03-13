@@ -29,7 +29,8 @@ export interface StoredConversation {
   name: string
   type: string
   keys: StoredConversationKeys
-  participants: string[] // hex public keys
+  participants: string[] // hex key IDs
+  participantPublicKeys?: string[] // hex public keys
   createdAt: string
   currentEpoch: number
 }
@@ -56,6 +57,38 @@ interface StoreData {
   dropboxUrl: string
 }
 
+function normalizeConversation(raw: Partial<StoredConversation> | null | undefined): StoredConversation {
+  return {
+    id: typeof raw?.id === 'string' ? raw.id : '',
+    name: typeof raw?.name === 'string' ? raw.name : '',
+    type: typeof raw?.type === 'string' ? raw.type : 'direct',
+    keys: {
+      root: typeof raw?.keys?.root === 'string' ? raw.keys.root : '',
+      aeadKey: typeof raw?.keys?.aeadKey === 'string' ? raw.keys.aeadKey : '',
+      nonceKey: typeof raw?.keys?.nonceKey === 'string' ? raw.keys.nonceKey : '',
+    },
+    participants: Array.isArray(raw?.participants) ? raw.participants : [],
+    participantPublicKeys: Array.isArray(raw?.participantPublicKeys) ? raw.participantPublicKeys : [],
+    createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
+    currentEpoch: typeof raw?.currentEpoch === 'number' ? raw.currentEpoch : 0,
+  }
+}
+
+function normalizeConversations(
+  raw: Record<string, StoredConversation[]> | null | undefined,
+): Record<string, StoredConversation[]> {
+  if (!raw || typeof raw !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(raw).map(([profileId, conversations]) => [
+      profileId,
+      Array.isArray(conversations) ? conversations.map((conv) => normalizeConversation(conv)) : [],
+    ]),
+  )
+}
+
 function loadStore(): StoreData {
   try {
     const raw = localStorage.getItem(STORE_KEY)
@@ -65,7 +98,7 @@ function loadStore(): StoreData {
         activeProfileId: parsed.activeProfileId || '',
         profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
         identities: parsed.identities || {},
-        conversations: parsed.conversations || {},
+        conversations: normalizeConversations(parsed.conversations),
         history: parsed.history || {},
         contacts: parsed.contacts || {},
         cursors: parsed.cursors || {},
@@ -156,9 +189,27 @@ export function addConversation(profileId: string, conv: StoredConversation): vo
   if (!store.conversations[profileId]) store.conversations[profileId] = []
   const existing = store.conversations[profileId].find(c => c.id === conv.id)
   if (!existing) {
-    store.conversations[profileId].push(conv)
+    store.conversations[profileId].push(normalizeConversation(conv))
     saveStore(store)
   }
+}
+
+export function updateConversation(
+  profileId: string,
+  conversationId: string,
+  updater: (conv: StoredConversation) => StoredConversation,
+): StoredConversation | null {
+  const store = loadStore()
+  const convs = store.conversations[profileId] || []
+  const index = convs.findIndex((conv) => conv.id === conversationId)
+  if (index < 0) {
+    return null
+  }
+
+  const updated = normalizeConversation(updater(convs[index]))
+  convs[index] = updated
+  saveStore(store)
+  return updated
 }
 
 export function findConversation(profileId: string, conversationId: string): StoredConversation | null {

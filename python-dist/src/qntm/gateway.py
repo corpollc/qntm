@@ -6,6 +6,7 @@ executes authorized API requests when M-of-N signature thresholds are met.
 """
 
 import base64
+import binascii
 import json
 import logging
 import os
@@ -70,6 +71,50 @@ def _save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
+
+
+def _decode_public_key(value: str) -> bytes:
+    """Decode a signer public key from base64url or legacy hex."""
+    text = (value or "").strip()
+    if not text:
+        return b""
+
+    try:
+        decoded = base64url_decode(text)
+        if len(decoded) == 32:
+            return decoded
+    except Exception:
+        pass
+
+    try:
+        decoded = bytes.fromhex(text)
+    except ValueError as exc:
+        raise ValueError("invalid signer public key encoding") from exc
+
+    if len(decoded) != 32:
+        raise ValueError(f"invalid signer public key length: {len(decoded)}")
+    return decoded
+
+
+def _decode_encrypted_blob(value: str) -> bytes:
+    """Decode encrypted_blob from base64, base64url, or legacy hex."""
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("encrypted_blob is required")
+
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        pass
+
+    padded = text + ("=" * (-len(text) % 4))
+    try:
+        return base64.b64decode(padded, validate=True)
+    except binascii.Error:
+        try:
+            return base64.urlsafe_b64decode(padded)
+        except binascii.Error as exc:
+            raise ValueError("invalid encrypted_blob encoding") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +230,7 @@ class Gateway:
             kid = s.get("kid", "")
             pub_key_str = s.get("public_key", "")
             if pub_key_str:
-                pub_key = base64url_decode(pub_key_str)
+                pub_key = _decode_public_key(pub_key_str)
             else:
                 pub_key = b""
             if not kid and pub_key:
@@ -249,7 +294,7 @@ class Gateway:
         if sender_pub_key is None:
             raise ValueError(f"unknown sender kid {sender_kid!r} in gate.secret")
 
-        encrypted_blob = base64.b64decode(payload["encrypted_blob"])
+        encrypted_blob = _decode_encrypted_blob(payload["encrypted_blob"])
         decrypted = open_secret(
             self.identity["privateKey"],
             sender_pub_key,

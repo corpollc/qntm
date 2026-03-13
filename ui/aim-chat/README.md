@@ -1,26 +1,18 @@
 # qntm AIM Chat UI
 
-A Vite + React chat interface that drives `qntm` messaging from a local API bridge.
+A Vite + React AIM-style chat interface that uses `@corpollc/qntm` directly in the browser.
 
 ## What it does
 
 - AIM-style chat layout (buddy/room list + message pane)
-- Multiple identity profiles (separate `--config-dir` values)
+- Multiple browser-local identity profiles
 - Invite create/accept workflows
-- Send + receive/poll messages through `qntm`
+- Send + receive/poll messages through the dropbox relay
 - Local history per profile and conversation
 - Per-profile contact aliases for friendly sender names
+- Gate request / approval / secret flows from the browser
 
-## Command resolution
-
-The API bridge runs `qntm` in this order:
-
-1. `QNTM_BIN` env var (if set)
-2. `./qntm` binary at repo root (if present)
-3. Cached UI binary at `ui/aim-chat/.qntm-ui/bin/qntm` (if present)
-4. `qntm` from your system `PATH` (if present)
-5. `go build -o ui/aim-chat/.qntm-ui/bin/qntm ./cmd/qntm` (attempted once per server process)
-6. `go run ./cmd/qntm` fallback
+There is no Express server or local API bridge anymore. The browser app uses the TypeScript library directly for identity, invite, encryption, decryption, and gate message signing.
 
 ## Run
 
@@ -31,20 +23,34 @@ npm run dev
 ```
 
 - Vite UI: `http://localhost:5173`
-- API bridge: `http://localhost:8787`
+- Production build: `npm run build`
+- Tests: `npm test`
+
+## Storage
+
+- Identities, conversation keys, history, and contact aliases are stored in browser `localStorage`.
+- The default relay URL is `https://inbox.qntm.corpo.llc`.
+- You can change the relay URL from the in-app Settings panel.
+
+## Security model
+
+- Private keys and conversation keys remain in the browser; they are not sent to an app server.
+- Those secrets are still recoverable by any script that can execute on the same origin, so treat the browser profile as sensitive.
+- The app ships with a restrictive Content Security Policy to reduce script-injection risk, but that does not make `localStorage` equivalent to hardware-backed key storage.
+- For higher-trust deployments, use a dedicated browser profile and consider a future move to WebCrypto non-exportable keys + IndexedDB.
 
 ## Local two-identity test
 
 1. Open UI profile `Agent 1` and click `Generate keypair`.
 2. Add profile `Agent 2` and generate keypair.
-3. On `Agent 1`, click `Create + self-join`, then copy token.
+3. On `Agent 1`, click `Create invite`, then copy the token.
 4. Switch to `Agent 2`, paste token, click `Accept invite`.
 5. Pick the conversation on both profiles and chat.
 
 ## Testing with an LLM process
 
-Use one profile in this UI and another process (CLI or your LLM agent runtime) with a different `--config-dir` but the same storage/dropbox.
+Use one profile in this UI and another process (CLI or your LLM agent runtime) against the same dropbox relay.
 
-- Default storage for new profiles is the hosted HTTP inbox at `https://inbox.qntm.corpo.llc`.
-- For local dev storage, set `QNTM_UI_DEFAULT_STORAGE=local:/absolute/path/to/dropbox` before starting `npm run dev`.
-- You can override the default HTTP inbox with `QNTM_UI_DEFAULT_DROPBOX_URL`.
+- The browser profile and the CLI keep separate local state.
+- Share invite tokens between them out of band.
+- For local relay development, point the UI Settings panel at your local relay URL.

@@ -6,6 +6,7 @@
 import {
   generateIdentity as clientGenerateIdentity,
   keyIDFromPublicKey,
+  publicKeyToString,
   createInvite,
   inviteToToken,
   inviteFromURL,
@@ -22,12 +23,13 @@ import {
   signApproval,
   hashRequest,
   computePayloadHash,
+  resolveRecipe,
   sealSecret,
   DropboxClient,
 } from '@qntm/client'
 
 import * as store from './store'
-import type { ChatMessage, Conversation, IdentityInfo } from './types'
+import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
 
 // ---- Hex utilities ----
 
@@ -49,15 +51,6 @@ function uint8ToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i])
   }
   return btoa(binary)
-}
-
-function base64ToUint8(s: string): Uint8Array {
-  const binary = atob(s)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
 }
 
 // ---- Identity ----
@@ -100,6 +93,9 @@ export function getIdentityInfo(profileId: string): IdentityInfo {
 function getConvCrypto(profileId: string, conversationId: string) {
   const conv = store.findConversation(profileId, conversationId)
   if (!conv) return null
+  const participants = conv.participants.length > 0
+    ? conv.participants
+    : listParticipantKeyIDs(conv.participantPublicKeys || [])
   return {
     id: hexToBytes(conv.id),
     type: conv.type as 'direct' | 'group' | 'announce',
@@ -108,7 +104,7 @@ function getConvCrypto(profileId: string, conversationId: string) {
       aeadKey: hexToBytes(conv.keys.aeadKey),
       nonceKey: hexToBytes(conv.keys.nonceKey),
     },
-    participants: conv.participants.map(p => hexToBytes(p)),
+    participants: participants.map((p) => hexToBytes(p)),
     createdAt: new Date(conv.createdAt || Date.now()),
     currentEpoch: conv.currentEpoch || 0,
   }
@@ -139,6 +135,56 @@ function formatConversation(conv: store.StoredConversation): Conversation {
   }
 }
 
+function dedupeHex(values: string[]): string[] {
+  const seen = new Set<string>()
+  const deduped: string[] = []
+  for (const value of values) {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized || seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    deduped.push(normalized)
+  }
+  return deduped
+}
+
+function listParticipantKeyIDs(publicKeysHex: string[]): string[] {
+  return dedupeHex(publicKeysHex.map((publicKeyHex) => {
+    const publicKey = hexToBytes(publicKeyHex)
+    return bytesToHex(keyIDFromPublicKey(publicKey))
+  }))
+}
+
+function mergeConversationParticipants(
+  profileId: string,
+  conversationId: string,
+  publicKey: Uint8Array,
+): void {
+  const publicKeyHex = bytesToHex(publicKey)
+  const keyIdHex = bytesToHex(keyIDFromPublicKey(publicKey))
+  store.updateConversation(profileId, conversationId, (conv) => {
+    const participantPublicKeys = dedupeHex([...(conv.participantPublicKeys || []), publicKeyHex])
+    const participants = dedupeHex([...(conv.participants || []), keyIdHex, ...listParticipantKeyIDs(participantPublicKeys)])
+    return {
+      ...conv,
+      participants,
+      participantPublicKeys,
+    }
+  })
+}
+
+function listKnownParticipantPublicKeys(
+  conv: store.StoredConversation | null,
+  identity?: IdentityKeys | null,
+): Uint8Array[] {
+  const allHex = dedupeHex([
+    ...(conv?.participantPublicKeys || []),
+    identity ? bytesToHex(identity.publicKey) : '',
+  ])
+  return allHex.map((publicKeyHex) => hexToBytes(publicKeyHex))
+}
+
 export function createInviteForProfile(
   profileId: string, name: string
 ): { inviteToken: string; conversationId: string; conversations: Conversation[] } {
@@ -162,6 +208,10 @@ export function createInviteForProfile(
       nonceKey: bytesToHex(keys.nonceKey),
     },
     participants: conv.participants.map((p: Uint8Array) => bytesToHex(p)),
+    participantPublicKeys: dedupeHex([
+      bytesToHex(invite.inviter_ik_pk),
+      bytesToHex(identity.publicKey),
+    ]),
     createdAt: new Date().toISOString(),
     currentEpoch: 0,
   }
@@ -208,6 +258,10 @@ export function acceptInviteForProfile(
       nonceKey: bytesToHex(keys.nonceKey),
     },
     participants: conv.participants.map((p: Uint8Array) => bytesToHex(p)),
+    participantPublicKeys: dedupeHex([
+      bytesToHex(invite.inviter_ik_pk),
+      bytesToHex(identity.publicKey),
+    ]),
     createdAt: new Date().toISOString(),
     currentEpoch: 0,
   }
@@ -292,6 +346,8 @@ export async function receiveMessages(
       continue
     }
 
+    mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
+
     const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
     const bodyText = new TextDecoder().decode(new Uint8Array(decrypted.inner.body))
     const bodyType = decrypted.inner.body_type || 'text'
@@ -338,7 +394,7 @@ export async function receiveMessages(
 
 export async function gateRunRequest(
   profileId: string, profileName: string, conversationId: string,
-  recipe: { verb: string; service: string; endpoint: string; target_url: string; body_schema?: Record<string, unknown> },
+  recipe: GateRecipe,
   recipeName: string, orgId: string, _gateUrl: string, args: Record<string, string>
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
@@ -346,20 +402,10 @@ export async function gateRunRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
-  function resolveTemplate(template: string, params: Record<string, string>): string {
-    return template.replace(/\{(\w+)\}/g, (match, key) => params[key] !== undefined ? params[key] : match)
-  }
-
-  const resolvedEndpoint = resolveTemplate(recipe.endpoint, args)
-  const resolvedTargetUrl = resolveTemplate(recipe.target_url, args)
-
+  const resolved = resolveRecipe(recipe, args)
   let requestBody: unknown = null
-  if (recipe.body_schema && (recipe.body_schema as { properties?: unknown }).properties) {
-    const body: Record<string, string> = {}
-    for (const key of Object.keys((recipe.body_schema as { properties: Record<string, unknown> }).properties)) {
-      if (args[key] !== undefined) body[key] = args[key]
-    }
-    if (Object.keys(body).length > 0) requestBody = body
+  if (resolved.body) {
+    requestBody = JSON.parse(new TextDecoder().decode(resolved.body))
   } else if (args._body) {
     try { requestBody = JSON.parse(args._body) } catch { requestBody = args._body }
   }
@@ -368,15 +414,15 @@ export async function gateRunRequest(
   const expiresAt = new Date(Date.now() + 3600000).toISOString()
   const expiresAtUnix = Math.floor(Date.now() / 1000) + 3600
   const kidHex = bytesToHex(identity.keyID)
-  const payloadHash = computePayloadHash(requestBody ? JSON.stringify(requestBody) : null)
+  const payloadHash = computePayloadHash(requestBody ?? null)
 
   const signable = {
     org_id: orgId,
     request_id: requestId,
     verb: recipe.verb,
-    target_endpoint: resolvedEndpoint,
+    target_endpoint: resolved.endpoint,
     target_service: recipe.service,
-    target_url: resolvedTargetUrl,
+    target_url: resolved.target_url,
     expires_at_unix: expiresAtUnix,
     payload_hash: payloadHash,
   }
@@ -390,14 +436,14 @@ export async function gateRunRequest(
     org_id: orgId,
     request_id: requestId,
     verb: recipe.verb,
-    target_endpoint: resolvedEndpoint,
+    target_endpoint: resolved.endpoint,
     target_service: recipe.service,
-    target_url: resolvedTargetUrl,
+    target_url: resolved.target_url,
     expires_at: expiresAt,
     signer_kid: kidHex,
     signature: sigB64,
     arguments: Object.keys(args).length > 0 ? args : undefined,
-    request_body: requestBody || undefined,
+    payload: requestBody ?? undefined,
   }
 
   const bodyText = JSON.stringify(gateMsg)
@@ -426,7 +472,7 @@ export async function gateApproveRequest(
   if (!reqMsg) throw new Error(`Gate request ${requestId} not found in conversation history`)
 
   const kidHex = bytesToHex(identity.keyID)
-  const payloadHash = computePayloadHash((reqMsg.payload as string) || null)
+  const payloadHash = computePayloadHash(reqMsg.payload ?? null)
 
   const signable = {
     org_id: reqMsg.org_id as string,
@@ -474,25 +520,17 @@ export async function gatePromoteRequest(
   const signers: Array<{ kid: string; public_key: string }> = []
   const seen = new Set<string>()
 
-  // Add self
-  const selfKidHex = bytesToHex(identity.keyID)
-  signers.push({ kid: selfKidHex, public_key: bytesToHex(identity.publicKey) })
-  seen.add(selfKidHex)
-
-  // Add other participants
-  if (conv?.participants) {
-    for (const pHex of conv.participants) {
-      const pBytes = hexToBytes(pHex)
-      const pKid = bytesToHex(keyIDFromPublicKey(pBytes))
-      if (!seen.has(pKid)) {
-        signers.push({ kid: pKid, public_key: pHex })
-        seen.add(pKid)
-      }
+  for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
+    const kid = bytesToHex(keyIDFromPublicKey(publicKey))
+    if (!seen.has(kid)) {
+      signers.push({ kid, public_key: publicKeyToString(publicKey) })
+      seen.add(kid)
     }
   }
 
   const n = signers.length
   const promotePayload = {
+    type: 'gate.promote',
     org_id: orgId,
     signers,
     rules: [{ service: '*', endpoint: '*', verb: '*', m: threshold, n }],
@@ -519,13 +557,18 @@ export async function gateSecretRequest(
     gwPubKeyBytes = hexToBytes(gatewayPublicKey)
   } else {
     const conv = store.findConversation(profileId, conversationId)
-    if (conv?.participants) {
-      for (const pHex of conv.participants) {
-        const pBytes = hexToBytes(pHex)
-        const pKid = bytesToHex(keyIDFromPublicKey(pBytes)).toLowerCase()
+    for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
+      const pKid = bytesToHex(keyIDFromPublicKey(publicKey)).toLowerCase()
+      if (pKid !== selfKidHex) {
+        gwPubKeyBytes = publicKey
+        break
+      }
+    }
+    if (!gwPubKeyBytes && conv?.participants) {
+      for (const participantKeyId of conv.participants) {
+        const pKid = participantKeyId.toLowerCase()
         if (pKid !== selfKidHex) {
-          gwPubKeyBytes = pBytes
-          break
+          throw new Error('Gateway participant public key is not known yet; receive a message from that participant first, or provide gatewayPublicKey')
         }
       }
     }
@@ -537,9 +580,10 @@ export async function gateSecretRequest(
   const secretId = crypto.randomUUID()
   const plaintext = new TextEncoder().encode(value)
   const sealed = sealSecret(identity.privateKey, gwPubKeyBytes, plaintext)
-  const encryptedBlob = uint8ToBase64(sealed).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  const encryptedBlob = uint8ToBase64(sealed)
 
   const secretPayload = {
+    type: 'gate.secret',
     secret_id: secretId,
     service,
     header_name: headerName || 'Authorization',
