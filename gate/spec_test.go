@@ -79,7 +79,7 @@ func TestAPI_CreateOrg_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(NewInsecureServerForTests())
 	defer srv.Close()
 
-	resp, _ := http.Post(srv.URL+"/v1/orgs", "application/json", bytes.NewReader([]byte("not json")))
+	resp := postBytesRaw(t, srv.URL+"/v1/orgs", []byte("not json"))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid JSON: expected 400, got %d", resp.StatusCode)
@@ -90,7 +90,7 @@ func TestAPI_CreateOrg_WrongMethod(t *testing.T) {
 	srv := httptest.NewServer(NewInsecureServerForTests())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs")
+	resp := getRaw(t, srv.URL+"/v1/orgs")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET on /v1/orgs: expected 405, got %d", resp.StatusCode)
@@ -114,7 +114,7 @@ func TestAPI_CreateOrg_RequiresAdminToken(t *testing.T) {
 	})
 
 	// No token → 401
-	resp, _ := http.Post(srv.URL+"/v1/orgs", "application/json", bytes.NewReader(body))
+	resp := postBytesRaw(t, srv.URL+"/v1/orgs", body)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no token: expected 401, got %d", resp.StatusCode)
 	}
@@ -124,7 +124,7 @@ func TestAPI_CreateOrg_RequiresAdminToken(t *testing.T) {
 	req, _ := http.NewRequest("POST", srv.URL+"/v1/orgs", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer wrong-token")
-	resp, _ = http.DefaultClient.Do(req)
+	resp = doRaw(t, req)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token: expected 401, got %d", resp.StatusCode)
 	}
@@ -134,7 +134,7 @@ func TestAPI_CreateOrg_RequiresAdminToken(t *testing.T) {
 	req, _ = http.NewRequest("POST", srv.URL+"/v1/orgs", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer secret-token")
-	resp, _ = http.DefaultClient.Do(req)
+	resp = doRaw(t, req)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("correct token: expected 201, got %d", resp.StatusCode)
 	}
@@ -174,7 +174,7 @@ func TestAPI_GetOrg_NotFound(t *testing.T) {
 	srv := httptest.NewServer(NewInsecureServerForTests())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/nonexistent")
+	resp := getRaw(t, srv.URL+"/v1/orgs/nonexistent")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
@@ -238,7 +238,7 @@ func TestAPI_AddCredential_RequiresAdmin(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"id": "k", "service": "s", "value": "v",
 	})
-	resp, _ := http.Post(srv.URL+"/v1/orgs/some-org/credentials", "application/json", bytes.NewReader(body))
+	resp := postBytesRaw(t, srv.URL+"/v1/orgs/some-org/credentials", body)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
@@ -258,7 +258,7 @@ func TestAPI_AddCredential_WrongMethod(t *testing.T) {
 		},
 	})
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/m-org/credentials")
+	resp := getRaw(t, srv.URL+"/v1/orgs/m-org/credentials")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET credentials: expected 405, got %d", resp.StatusCode)
@@ -520,7 +520,7 @@ func TestAPI_PostMessage_WrongMethod(t *testing.T) {
 		},
 	})
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/wm-org/messages")
+	resp := getRaw(t, srv.URL+"/v1/orgs/wm-org/messages")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET messages: expected 405, got %d", resp.StatusCode)
@@ -590,7 +590,7 @@ func TestAPI_Scan_NotFound(t *testing.T) {
 		},
 	})
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/scanmiss-org/scan/nope")
+	resp := getRaw(t, srv.URL+"/v1/orgs/scanmiss-org/scan/nope")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
@@ -601,7 +601,7 @@ func TestAPI_Scan_OrgNotFound(t *testing.T) {
 	srv := httptest.NewServer(NewInsecureServerForTests())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/noorg/scan/req1")
+	resp := getRaw(t, srv.URL+"/v1/orgs/noorg/scan/req1")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
@@ -622,7 +622,7 @@ func TestAPI_Scan_WrongMethod(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(map[string]string{})
-	resp, _ := http.Post(srv.URL+"/v1/orgs/scanm-org/scan/r1", "application/json", bytes.NewReader(body))
+	resp := postBytesRaw(t, srv.URL+"/v1/orgs/scanm-org/scan/r1", body)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST scan: expected 405, got %d", resp.StatusCode)
@@ -704,7 +704,7 @@ func TestAPI_Execute_WrongMethod(t *testing.T) {
 		},
 	})
 
-	resp, _ := http.Get(srv.URL + "/v1/orgs/execm-org/execute/r1")
+	resp := getRaw(t, srv.URL+"/v1/orgs/execm-org/execute/r1")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET execute: expected 405, got %d", resp.StatusCode)
@@ -719,7 +719,7 @@ func TestAPI_Health(t *testing.T) {
 	srv := httptest.NewServer(NewInsecureServerForTests())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/health")
+	resp := getRaw(t, srv.URL+"/health")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -1153,6 +1153,33 @@ func postRaw(t *testing.T, url string, v interface{}) *http.Response {
 	t.Helper()
 	body, _ := json.Marshal(v)
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func postBytesRaw(t *testing.T, url string, body []byte) *http.Response {
+	t.Helper()
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func getRaw(t *testing.T, url string) *http.Response {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func doRaw(t *testing.T, req *http.Request) *http.Response {
+	t.Helper()
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
