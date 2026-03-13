@@ -63,11 +63,12 @@ npm install
 npm run dev
 ```
 
-The AIM UI is now a static browser app that uses `@corpollc/qntm` directly in the browser. There is no local API bridge process anymore.
+The AIM UI is now a static browser app that uses `@qntm/client` directly in the browser. There is no local API bridge process anymore.
 
 ## Protocol
 
 See [docs/QSP-v1.1.md](docs/QSP-v1.1.md) for the full specification.
+For the implementation workflow around spec changes, see [docs/SPEC_WORKFLOW.md](docs/SPEC_WORKFLOW.md).
 
 ### Cryptographic Suite (QSP-1)
 
@@ -128,7 +129,7 @@ Subscribers cannot post — the relay rejects any message not signed by the post
 qntm/
 ├── client/            # TypeScript protocol library for browser and Node
 ├── python-dist/       # Python client library + CLI distribution
-├── ui/aim-chat/       # Static AIM-style browser UI built on @corpollc/qntm
+├── ui/aim-chat/       # Static AIM-style browser UI built on @qntm/client
 ├── ui/tui/            # Terminal UI client
 ├── worker/            # Cloudflare Worker relay
 ├── gate/              # Gate recipes and gate-related assets
@@ -143,6 +144,8 @@ cd client && npm run build
 cd python-dist && uv build
 cd ui/aim-chat && npm run build
 ```
+
+For tag-based npm/PyPI publishing, see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Security
 

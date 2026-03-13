@@ -49,12 +49,11 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Update Python package version
+      - name: Sync release version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           VERSION="${VERSION#v}"  # strip leading v
-          sed -i "s/^version = .*/version = \"${VERSION}\"/" python-dist/pyproject.toml
-          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" python-dist/src/qntm/__init__.py
+          python3 scripts/set_release_version.py "${VERSION}"
 
       - name: Build Python package
         run: python -m build python-dist/

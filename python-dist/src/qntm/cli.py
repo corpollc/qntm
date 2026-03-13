@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
+from .constants import PROTOCOL_VERSION, SPEC_VERSION
 from .identity import (
     base64url_encode,
     generate_identity,
@@ -1989,6 +1990,8 @@ def cmd_gateway_serve(args):
 def cmd_version(args):
     _output("version", {
         "version": __version__,
+        "spec_version": SPEC_VERSION,
+        "protocol_version": PROTOCOL_VERSION,
         "runtime": "python",
         "update_hint": "",
     })

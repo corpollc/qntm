@@ -11,7 +11,7 @@ import {
   defaultTTL,
   type Identity,
   type Conversation,
-} from '@corpollc/qntm';
+} from '@qntm/client';
 import { Store, bytesToHex, type StoredMessage } from './store.js';
 
 export interface PollResult {

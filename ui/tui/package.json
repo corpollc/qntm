@@ -12,7 +12,7 @@
     "qntm-chat": "./dist/index.js"
   },
   "dependencies": {
-    "@corpollc/qntm": "file:../../client",
+    "@qntm/client": "file:../../client",
     "ink": "^5.1.0",
     "ink-text-input": "^6.0.0",
     "react": "^18.3.1"

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
 import {
   QSP1Suite,
   generateIdentity, keyIDFromPublicKey, verifyKeyID,
@@ -22,7 +23,7 @@ import {
   marshalCanonical, unmarshalCanonical,
   ed25519PublicKeyToX25519, ed25519PrivateKeyToX25519,
   generateX25519Keypair, x25519SharedSecret,
-  PROTOCOL_VERSION, DEFAULT_SUITE, PROTO_PREFIX,
+  SPEC_VERSION, PROTOCOL_VERSION, DEFAULT_SUITE, PROTO_PREFIX,
   INFO_ROOT, INFO_AEAD, INFO_NONCE,
   INFO_AEAD_V11, INFO_NONCE_V11, INFO_WRAP_V11,
   DEFAULT_TTL_SECONDS, DEFAULT_HANDSHAKE_TTL_SECONDS,
@@ -35,6 +36,13 @@ import type {
 
 // === 1. Crypto Constants ===
 describe('Crypto Constants', () => {
+  const packageJSON = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+
+  it('has correct spec version', () => {
+    expect(SPEC_VERSION).toBe('QSP-v1.1');
+    expect(packageJSON.qntmSpecVersion).toBe(SPEC_VERSION);
+  });
+
   it('has correct protocol version', () => {
     expect(PROTOCOL_VERSION).toBe(1);
   });

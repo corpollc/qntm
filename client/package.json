@@ -1,14 +1,29 @@
 {
-  "name": "@corpollc/qntm",
+  "name": "@qntm/client",
   "version": "0.4.2",
-  "description": "QSP v1.1 protocol library — identity, invites, encrypted messaging, and threshold gate signing",
+  "qntmSpecVersion": "QSP-v1.1",
+  "description": "QSP v1.1 protocol library \u2014 identity, invites, encrypted messaging, and threshold gate signing",
   "type": "module",
   "license": "BUSL-1.1",
+  "homepage": "https://github.com/corpollc/qntm/tree/main/client",
+  "bugs": {
+    "url": "https://github.com/corpollc/qntm/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/corpollc/qntm.git",
     "directory": "client"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "qntm",
+    "qsp",
+    "messaging",
+    "encryption",
+    "ed25519"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

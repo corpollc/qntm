@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qntm"
-version = "0.4.1"
+version = "0.4.2"
 description = "qntm secure messaging protocol client library and CLI"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -42,3 +42,6 @@ qntm = "qntm.cli:main"
 packages = ["src/qntm"]
 
 [tool.hatch.build.targets.wheel.shared-data]
+
+[tool.qntm]
+spec-version = "QSP-v1.1"

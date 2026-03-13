@@ -1,11 +1,12 @@
-"""Cross-client compatibility tests using shared test vectors."""
+"""Cross-client compatibility tests using shared spec vectors."""
 
 import json
 import os
 
 import pytest
 
-# Load vectors from the shared file
+# Load vectors from the shared file. Regenerate after spec-affecting changes:
+#   go run ./crosstest/generate_vectors.go > client/tests/vectors.json
 VECTORS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "client", "tests", "vectors.json"
 )

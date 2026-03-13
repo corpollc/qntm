@@ -1,10 +1,11 @@
 """qntm - secure messaging protocol client library and CLI."""
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 from .constants import (
     DEFAULT_SUITE,
     DEFAULT_TTL_SECONDS,
+    SPEC_VERSION,
     PROTOCOL_VERSION,
 )
 from .crypto import (

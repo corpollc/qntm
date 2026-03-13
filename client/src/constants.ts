@@ -1,3 +1,4 @@
+export const SPEC_VERSION = 'QSP-v1.1';
 export const PROTOCOL_VERSION = 1;
 export const DEFAULT_SUITE = 'QSP-1';
 export const MAX_GROUP_SIZE = 128;
