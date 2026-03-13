@@ -1,5 +1,5 @@
 {
-  "name": "@qntm/client",
+  "name": "@corpollc/qntm",
   "version": "0.4.2",
   "qntmSpecVersion": "QSP-v1.1",
   "description": "QSP v1.1 protocol library \u2014 identity, invites, encrypted messaging, and threshold gate signing",

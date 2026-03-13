@@ -1,6 +1,6 @@
 # qntm AIM Chat UI
 
-A Vite + React AIM-style chat interface that uses `@qntm/client` directly in the browser.
+A Vite + React AIM-style chat interface that uses `@corpollc/qntm` directly in the browser.
 
 ## What it does
 

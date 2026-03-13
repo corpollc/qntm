@@ -1,4 +1,4 @@
-// Buffer polyfill — cbor-x (used by @qntm/client) calls Buffer.isBuffer()
+// Buffer polyfill — cbor-x (used by @corpollc/qntm) calls Buffer.isBuffer()
 import { Buffer } from 'buffer'
 ;(globalThis as unknown as Record<string, unknown>).Buffer = Buffer
 

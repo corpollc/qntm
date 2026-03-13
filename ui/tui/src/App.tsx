@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import { DropboxClient } from '@qntm/client';
+import { DropboxClient } from '@corpollc/qntm';
 
 import { Store, bytesToHex, type StoredConversation, type StoredMessage } from './lib/store.js';
 import { pollConversation, sendMessage } from './lib/poller.js';
@@ -17,8 +17,8 @@ import ChatPane from './components/ChatPane.js';
 import StatusBar from './components/StatusBar.js';
 import Composer from './components/Composer.js';
 
-import type { Identity } from '@qntm/client';
-import { keyIDToString } from '@qntm/client';
+import type { Identity } from '@corpollc/qntm';
+import { keyIDToString } from '@corpollc/qntm';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

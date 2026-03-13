@@ -1,11 +1,11 @@
-# @qntm/client
+# @corpollc/qntm
 
 TypeScript client library for the qntm secure messaging protocol.
 
 ## Install
 
 ```bash
-npm install @qntm/client
+npm install @corpollc/qntm
 ```
 
 ## What it includes
@@ -20,7 +20,7 @@ npm install @qntm/client
 ## Basic usage
 
 ```ts
-import { generateIdentity, DropboxClient } from '@qntm/client'
+import { generateIdentity, DropboxClient } from '@corpollc/qntm'
 
 const identity = generateIdentity()
 const dropbox = new DropboxClient('https://inbox.qntm.corpo.llc')

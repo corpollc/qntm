@@ -6,7 +6,7 @@ import {
   publicKeyToString,
   verifyApproval,
   verifyRequest,
-} from '@qntm/client'
+} from '@corpollc/qntm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as store from './store'
 import {

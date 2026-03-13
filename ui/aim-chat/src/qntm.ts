@@ -1,5 +1,5 @@
 /**
- * Browser-side crypto operations using @qntm/client directly.
+ * Browser-side crypto operations using @corpollc/qntm directly.
  * Replaces all Express server crypto — keys never leave the browser.
  */
 
@@ -26,7 +26,7 @@ import {
   resolveRecipe,
   sealSecret,
   DropboxClient,
-} from '@qntm/client'
+} from '@corpollc/qntm'
 
 import * as store from './store'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'

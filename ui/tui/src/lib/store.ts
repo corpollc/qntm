@@ -24,7 +24,7 @@ import {
   type Identity,
   type Conversation,
   type ConversationKeys,
-} from '@qntm/client';
+} from '@corpollc/qntm';
 
 // ─── Hex helpers ───────────────────────────────────────────────────────
 
