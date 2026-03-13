@@ -9,6 +9,8 @@ import { ChatPane } from './components/ChatPane'
 import { GatePanel } from './components/GatePanel'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useToast } from './hooks/useToast'
+import { ToastContainer } from './components/ToastContainer'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -64,8 +66,11 @@ export default function App() {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [isWorking, setIsWorking] = useState(false)
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false)
 
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
+
+  const { toasts, addToast, removeToast } = useToast()
 
   const pollingRef = useRef(false)
   const messageTailRef = useRef<HTMLDivElement | null>(null)
@@ -233,7 +238,7 @@ export default function App() {
       return
     }
 
-    void refreshHistory(activeProfileId, selectedConversationId)
+    void refreshHistory(activeProfileId, selectedConversationId, true)
   }, [activeProfileId, selectedConversationId])
 
   useEffect(() => {
@@ -317,9 +322,12 @@ export default function App() {
       setProfiles(nextProfiles)
       setActiveProfileId(nextActiveId)
       setStatus('Ready')
+      addToast('Ready', 'info')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load profiles')
+      const msg = err instanceof Error ? err.message : 'Failed to load profiles'
+      setError(msg)
+      addToast(msg, 'error')
     }
   }
 
@@ -341,9 +349,12 @@ export default function App() {
       setDropboxUrl(response.dropboxUrl)
       setDropboxDraft(response.dropboxUrl)
       setStatus('Settings saved')
+      addToast('Settings saved', 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save settings')
+      const msg = err instanceof Error ? err.message : 'Failed to save settings'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -381,17 +392,24 @@ export default function App() {
 
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to refresh profile data')
+      const msg = err instanceof Error ? err.message : 'Failed to refresh profile data'
+      setError(msg)
+      addToast(msg, 'error')
     }
   }
 
-  async function refreshHistory(profileId: string, conversationId: string) {
+  async function refreshHistory(profileId: string, conversationId: string, initial = false) {
+    if (initial) setIsLoadingMessages(true)
     try {
       const response = await api.getHistory(profileId, conversationId)
       setMessages(response.messages)
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load message history')
+      const msg = err instanceof Error ? err.message : 'Failed to load message history'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      if (initial) setIsLoadingMessages(false)
     }
   }
 
@@ -412,7 +430,9 @@ export default function App() {
       const name = (contactDrafts[key] || '').trim()
       const response = await api.setContact(activeProfileId, key, name)
       setContacts(response.contacts)
-      setStatus(name ? `Saved contact ${name}` : `Removed contact alias for ${shortId(key)}`)
+      const statusMsg = name ? `Saved contact ${name}` : `Removed contact alias for ${shortId(key)}`
+      setStatus(statusMsg)
+      addToast(statusMsg, 'success')
 
       if (selectedConversationId) {
         await refreshHistory(activeProfileId, selectedConversationId)
@@ -420,7 +440,9 @@ export default function App() {
 
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save contact')
+      const msg = err instanceof Error ? err.message : 'Failed to save contact'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -443,17 +465,24 @@ export default function App() {
       if (response.messages.length > 0) {
         await refreshHistory(activeProfileId, selectedConversationId)
         const baseStatus = `Received ${response.messages.length} new message(s)`
-        setStatus(relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus)
+        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
+        setStatus(fullStatus)
+        addToast(fullStatus, 'info')
       } else if (manual) {
         const baseStatus = 'No new messages'
-        setStatus(relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus)
+        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
+        setStatus(fullStatus)
+        addToast(fullStatus, 'info')
       } else if (relayWarning) {
         setStatus(relayWarning)
+        addToast(relayWarning, 'info')
       }
 
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to receive messages')
+      const msg = err instanceof Error ? err.message : 'Failed to receive messages'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       pollingRef.current = false
     }
@@ -475,9 +504,12 @@ export default function App() {
 
       setNewProfileName('')
       setStatus(`Created profile ${created.profile.name}`)
+      addToast(`Created profile ${created.profile.name}`, 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create profile')
+      const msg = err instanceof Error ? err.message : 'Failed to create profile'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -491,11 +523,15 @@ export default function App() {
     try {
       await api.selectProfile(profileId)
       setActiveProfileId(profileId)
-      setStatus(`Switched profile to ${profiles.find((profile) => profile.id === profileId)?.name || profileId}`)
+      const switchMsg = `Switched profile to ${profiles.find((profile) => profile.id === profileId)?.name || profileId}`
+      setStatus(switchMsg)
+      addToast(switchMsg, 'success')
       setCreatedInviteToken('')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to switch profile')
+      const msg = err instanceof Error ? err.message : 'Failed to switch profile'
+      setError(msg)
+      addToast(msg, 'error')
     }
   }
 
@@ -509,9 +545,12 @@ export default function App() {
       const response = await api.generateIdentity(activeProfileId)
       setIdentity(response.identity)
       setStatus('Identity generated')
+      addToast('Identity generated', 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate identity')
+      const msg = err instanceof Error ? err.message : 'Failed to generate identity'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -535,9 +574,12 @@ export default function App() {
       }
 
       setStatus('Invite created. Token copied below.')
+      addToast('Invite created. Token copied below.', 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create invite')
+      const msg = err instanceof Error ? err.message : 'Failed to create invite'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -565,9 +607,12 @@ export default function App() {
 
       setInviteToken('')
       setStatus('Invite accepted')
+      addToast('Invite accepted', 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to accept invite')
+      const msg = err instanceof Error ? err.message : 'Failed to accept invite'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -594,6 +639,7 @@ export default function App() {
   async function onGateRun() {
     if (!activeProfileId || !selectedConversationId || !selectedRecipe) {
       setError('Select an API template')
+      addToast('Select an API template', 'error')
       return
     }
 
@@ -612,9 +658,12 @@ export default function App() {
       )
       setMessages((previous) => [...previous, response.message])
       setStatus(`API request submitted: ${selectedRecipe}`)
+      addToast(`API request submitted: ${selectedRecipe}`, 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit API request')
+      const msg = err instanceof Error ? err.message : 'Failed to submit API request'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -639,9 +688,12 @@ export default function App() {
       )
       setMessages((previous) => [...previous, response.message])
       setStatus(`API Gateway enabled: ${gatePromoteThreshold} approvals required`)
+      addToast(`API Gateway enabled: ${gatePromoteThreshold} approvals required`, 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to enable API Gateway')
+      const msg = err instanceof Error ? err.message : 'Failed to enable API Gateway'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -650,6 +702,7 @@ export default function App() {
   async function onGateSecret() {
     if (!activeProfileId || !selectedConversationId || !secretService.trim() || !secretValue) {
       setError('Enter a service name and API key')
+      addToast('Enter a service name and API key', 'error')
       return
     }
 
@@ -665,11 +718,15 @@ export default function App() {
         secretHeaderTemplate.trim() || undefined,
       )
       setMessages((previous) => [...previous, response.message])
-      setStatus(response.output || `API key added for ${secretService.trim()}`)
+      const secretMsg = response.output || `API key added for ${secretService.trim()}`
+      setStatus(secretMsg)
+      addToast(secretMsg, 'success')
       setSecretValue('')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add API key')
+      const msg = err instanceof Error ? err.message : 'Failed to add API key'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -682,11 +739,14 @@ export default function App() {
     try {
       await api.gateApprove(activeProfileId, activeProfile?.name || '', conversationId, requestId)
       setStatus(`Request approved: ${requestId.slice(0, 8)}...`)
+      addToast(`Request approved: ${requestId.slice(0, 8)}...`, 'success')
       setError('')
       // Refresh to show the new approval message
       await refreshHistory(activeProfileId, conversationId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to approve request')
+      const msg = err instanceof Error ? err.message : 'Failed to approve request'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -710,10 +770,14 @@ export default function App() {
       setMessages((previous) => [...previous, response.message])
       setComposer('')
       const relayWarning = response.warning?.trim() || ''
-      setStatus(relayWarning ? `Message sent · ${relayWarning}` : 'Message sent')
+      const sentMsg = relayWarning ? `Message sent · ${relayWarning}` : 'Message sent'
+      setStatus(sentMsg)
+      addToast(sentMsg, 'success')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send message')
+      const msg = err instanceof Error ? err.message : 'Failed to send message'
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setIsWorking(false)
     }
@@ -790,11 +854,11 @@ export default function App() {
             composer={composer}
             setComposer={setComposer}
             isWorking={isWorking}
+            isLoadingMessages={isLoadingMessages}
             showGatePanel={showGatePanel}
             setShowGatePanel={setShowGatePanel}
             activeProfile={activeProfile}
             status={status}
-            error={error}
             messageTailRef={messageTailRef}
             onSendMessage={onSendMessage}
             onCheckMessages={() => void receiveMessages(true)}
@@ -837,6 +901,7 @@ export default function App() {
           </>
           )}
         </div>
+        <ToastContainer toasts={toasts} removeToast={removeToast} />
       </div>
     </div>
   )

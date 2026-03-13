@@ -355,6 +355,49 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         break;
       }
 
+      case 'search':
+      case 'grep': {
+        const query = args.trim();
+        if (!query) {
+          addSystemMessage('Usage: /search <query>', theme.error);
+          break;
+        }
+        if (!activeConvId) {
+          addSystemMessage('No active conversation to search.', theme.warning);
+          break;
+        }
+        const history = store.loadHistory(activeConvId);
+        const lowerQuery = query.toLowerCase();
+        const matches = history.filter((m) => m.text.toLowerCase().includes(lowerQuery));
+        if (matches.length === 0) {
+          addSystemMessage(`No messages matching '${query}'`, theme.warning);
+        } else {
+          addSystemMessage(`Found ${matches.length} match${matches.length === 1 ? '' : 'es'} for '${query}':`, theme.info);
+          const shown = matches.slice(0, 10);
+          for (const m of shown) {
+            const time = new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            let sender = m.sender;
+            if (m.direction === 'incoming' && m.senderKey) {
+              const alias = store.resolveContact(m.senderKey);
+              if (alias) sender = alias;
+              else sender = m.senderKey.slice(0, 12) + '..';
+            }
+            // Show a snippet around the match (up to 80 chars)
+            const idx = m.text.toLowerCase().indexOf(lowerQuery);
+            const snippetStart = Math.max(0, idx - 30);
+            const snippetEnd = Math.min(m.text.length, idx + query.length + 30);
+            const prefix = snippetStart > 0 ? '...' : '';
+            const suffix = snippetEnd < m.text.length ? '...' : '';
+            const snippet = prefix + m.text.slice(snippetStart, snippetEnd) + suffix;
+            addSystemMessage(`  [${time}] ${sender}: ${snippet}`, theme.text);
+          }
+          if (matches.length > 10) {
+            addSystemMessage(`  ...and ${matches.length - 10} more`, theme.textDim);
+          }
+        }
+        break;
+      }
+
       case 'approve': {
         const reqId = args.trim();
         if (!reqId) {

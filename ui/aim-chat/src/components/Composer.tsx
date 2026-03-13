@@ -1,5 +1,6 @@
 import { FormEvent } from 'react'
 import type { Conversation } from '../types'
+import { Spinner } from './Spinner'
 
 export interface ComposerProps {
   selectedConversation: Conversation | null
@@ -28,7 +29,7 @@ export function Composer({
         disabled={!selectedConversation || isWorking}
       />
       <button className="button" type="submit" disabled={!selectedConversation || isWorking}>
-        Send
+        {isWorking ? <Spinner /> : 'Send'}
       </button>
       <button
         className="button"

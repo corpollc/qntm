@@ -19,11 +19,11 @@ export interface ChatPaneProps {
   composer: string
   setComposer: (value: string) => void
   isWorking: boolean
+  isLoadingMessages: boolean
   showGatePanel: boolean
   setShowGatePanel: (value: boolean) => void
   activeProfile: Profile | null
   status: string
-  error: string
   messageTailRef: React.MutableRefObject<HTMLDivElement | null>
   onSendMessage: (event: FormEvent<HTMLFormElement>) => void
   onCheckMessages: () => void
@@ -51,11 +51,11 @@ export function ChatPane({
   composer,
   setComposer,
   isWorking,
+  isLoadingMessages,
   showGatePanel,
   setShowGatePanel,
   activeProfile,
   status,
-  error,
   messageTailRef,
   onSendMessage,
   onCheckMessages,
@@ -98,7 +98,15 @@ export function ChatPane({
             onOpenInvites={onOpenInvites}
           />
         )}
-        {!showWelcome && messages.length === 0 && <div className="empty">No messages yet.</div>}
+        {!showWelcome && messages.length === 0 && isLoadingMessages && (
+          <>
+            <div className="skeleton skeleton-message" />
+            <div className="skeleton skeleton-message" />
+            <div className="skeleton skeleton-message" />
+            <div className="skeleton skeleton-message" />
+          </>
+        )}
+        {!showWelcome && messages.length === 0 && !isLoadingMessages && <div className="empty">No messages yet.</div>}
         {messages.map((message, index) => {
           const prev = index > 0 ? messages[index - 1] : null
           const showDate = !prev || !isSameDay(prev.createdAt, message.createdAt)
@@ -153,7 +161,6 @@ export function ChatPane({
         <span>{status || 'Idle'}</span>
       </footer>
 
-      {error && <div className="error-banner">{error}</div>}
     </main>
   )
 }

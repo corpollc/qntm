@@ -1,4 +1,5 @@
 import type { GateRecipe } from '../types'
+import { Spinner } from './Spinner'
 import { Tooltip } from './Tooltip'
 
 export interface GatePanelProps {
@@ -100,7 +101,7 @@ export function GatePanel({
           disabled={isWorking}
           onClick={() => void onGatePromote()}
         >
-          Enable API Gateway
+          {isWorking ? <Spinner /> : 'Enable API Gateway'}
         </button>
       </section>
       )}
@@ -225,7 +226,7 @@ export function GatePanel({
           disabled={isWorking || !selectedRecipe}
           onClick={() => void onGateRun()}
         >
-          Submit API request
+          {isWorking ? <Spinner /> : 'Submit API request'}
         </button>
       </section>
       )}
@@ -273,7 +274,7 @@ export function GatePanel({
           disabled={isWorking || !secretService.trim() || !secretValue}
           onClick={() => void onGateSecret()}
         >
-          Add API key
+          {isWorking ? <Spinner /> : 'Add API key'}
         </button>
       </section>
       )}

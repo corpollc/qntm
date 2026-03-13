@@ -69,6 +69,14 @@ export const COMMANDS: CommandDef[] = [
       'Lists all conversations with their type and number.',
   },
   {
+    name: 'search',
+    aliases: ['grep'],
+    usage: '/search <query>',
+    brief: 'Search message history',
+    description:
+      'Searches through messages in the active conversation. Shows up to 10 matching messages with surrounding context. /grep is an alias.',
+  },
+  {
     name: 'help',
     aliases: ['h'],
     usage: '/help [command]',
