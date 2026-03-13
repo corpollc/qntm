@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * qntm TUI — Terminal chat client for the qntm messaging protocol.
+ * qntm Messenger — Terminal client for the qntm messaging protocol.
  *
  * Usage:
  *   npx tsx src/index.tsx [options]
  *
  * Options:
  *   --config-dir <path>    Config directory (default: ~/.qntm-human)
- *   --dropbox-url <url>    Dropbox relay URL (default: https://inbox.qntm.corpo.llc)
+ *   --relay-url <url>      Message relay URL (default: https://inbox.qntm.corpo.llc)
  *   --help                 Show this help message
  */
 
@@ -34,7 +34,7 @@ function parseArgs(argv: string[]): {
       result.help = true;
     } else if (arg === '--config-dir' && i + 1 < argv.length) {
       result.configDir = argv[++i];
-    } else if (arg === '--dropbox-url' && i + 1 < argv.length) {
+    } else if ((arg === '--relay-url' || arg === '--dropbox-url') && i + 1 < argv.length) {
       result.dropboxUrl = argv[++i];
     }
   }
@@ -43,26 +43,27 @@ function parseArgs(argv: string[]): {
 }
 
 const HELP_TEXT = `
-qntm TUI — Terminal chat client
+qntm Messenger — Terminal client
 
 Usage:
   npx tsx src/index.tsx [options]
 
 Options:
   --config-dir <path>    Config directory (default: ~/.qntm-human)
-  --dropbox-url <url>    Dropbox relay URL (default: https://inbox.qntm.corpo.llc)
+  --relay-url <url>      Message relay URL (default: https://inbox.qntm.corpo.llc)
+  --dropbox-url <url>    Alias for --relay-url (deprecated)
   --help, -h             Show this help message
 
 Slash commands (in chat):
   /help                  Show available commands
-  /invite [name]         Create an invite token for a new conversation
-  /join <token>          Accept an invite and join a conversation
+  /invite [name]         Create a new conversation and get an invite token
+  /join <token>          Join a conversation using an invite token
   /name <name>           Set conversation name
   /nick <name>           Set your display name
   /alias <kid> <name>    Set a contact alias
   /identity              Show your identity info
   /conversations         List all conversations
-  /approve <reqid>       Approve a gate request
+  /approve <reqid>       Approve an API Gateway request
   /quit                  Exit the client
 
 Navigation:

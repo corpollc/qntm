@@ -65,7 +65,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
         <Text bold color="yellow">
-          {'\u26a1'} Gate Request {req.recipe_name ? `[${req.recipe_name}]` : ''}
+          {'\u26a1'} API Request {req.recipe_name ? `[${req.recipe_name}]` : ''}
         </Text>
         <Text>
           <Text bold>{req.verb}</Text> {req.target_url || req.target_endpoint}
@@ -97,7 +97,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
     return (
       <Box borderStyle="round" borderColor="green" paddingX={1}>
         <Text color="green">
-          {'\u2714'} Approved req {appr.request_id.slice(0, 12)} by {appr.signer_kid.slice(0, 12)}
+          {'\u2714'} Approved request {appr.request_id.slice(0, 12)} by {appr.signer_kid.slice(0, 12)}
         </Text>
       </Box>
     );
@@ -109,7 +109,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
     return (
       <Box borderStyle="round" borderColor={color} paddingX={1}>
         <Text color={color}>
-          {'\u25b6'} Executed req {exec.request_id.slice(0, 12)} - HTTP {exec.execution_status_code}
+          {'\u25b6'} Request executed {exec.request_id.slice(0, 12)} - HTTP {exec.execution_status_code}
         </Text>
       </Box>
     );
@@ -121,7 +121,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
         <Text color={color}>
-          {'\u2709'} Result for {res.request_id.slice(0, 12)} - HTTP {res.status_code}
+          {'\u2709'} API Response {res.request_id.slice(0, 12)} - HTTP {res.status_code}
         </Text>
         {res.content_type && <Text dimColor>content-type: {res.content_type}</Text>}
         {res.body && (

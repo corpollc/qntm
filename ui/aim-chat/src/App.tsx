@@ -64,7 +64,7 @@ function GateRequestCard({
   return (
     <div className="gate-card gate-request">
       <div className="gate-card-header">
-        Gate Request{parsed.recipe_name ? `: ${parsed.recipe_name}` : ''}
+        API Request{parsed.recipe_name ? `: ${parsed.recipe_name}` : ''}
       </div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
@@ -119,7 +119,7 @@ function GateApprovalCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-approval">
-      <div className="gate-card-header">Gate Approval</div>
+      <div className="gate-card-header">Approval</div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div><strong>Approved by:</strong> {shortId(parsed.signer_kid)}</div>
@@ -134,7 +134,7 @@ function GateExecutedCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-executed">
-      <div className="gate-card-header">Gate Executed</div>
+      <div className="gate-card-header">Request Executed</div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div><strong>HTTP Status:</strong> {parsed.execution_status_code || 'N/A'}</div>
@@ -204,7 +204,7 @@ function GatePromoteCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-promote">
-      <div className="gate-card-header">Gate Promote</div>
+      <div className="gate-card-header">API Gateway Enabled</div>
       <div className="gate-card-body">
         <div><strong>Org:</strong> {parsed.org_id}</div>
         <div><strong>Threshold:</strong> {threshold}-of-{n}</div>
@@ -231,7 +231,7 @@ function GateConfigCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-config">
-      <div className="gate-card-header">Gate Config Update</div>
+      <div className="gate-card-header">Gateway Configuration</div>
       <div className="gate-card-body">
         <div><strong>Rules:</strong> {parsed.rules?.length ?? 0}</div>
         {parsed.rules?.map((r, i) => (
@@ -267,7 +267,7 @@ function GateResultCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className={`gate-card gate-result ${isSuccess ? 'gate-result-ok' : 'gate-result-err'}`}>
-      <div className="gate-card-header">Gate Result</div>
+      <div className="gate-card-header">API Response</div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div>
@@ -814,7 +814,7 @@ export default function App() {
 
   async function onGateRun() {
     if (!activeProfileId || !selectedConversationId || !selectedRecipe) {
-      setError('Select a recipe')
+      setError('Select an API template')
       return
     }
 
@@ -832,10 +832,10 @@ export default function App() {
         Object.keys(gateArgs).length > 0 ? gateArgs : undefined,
       )
       setMessages((previous) => [...previous, response.message])
-      setStatus(`Gate request submitted: ${selectedRecipe}`)
+      setStatus(`API request submitted: ${selectedRecipe}`)
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit gate request')
+      setError(err instanceof Error ? err.message : 'Failed to submit API request')
     } finally {
       setIsWorking(false)
     }
@@ -859,10 +859,10 @@ export default function App() {
         gatePromoteThreshold,
       )
       setMessages((previous) => [...previous, response.message])
-      setStatus(`Gate promoted: threshold=${gatePromoteThreshold}`)
+      setStatus(`API Gateway enabled: ${gatePromoteThreshold} approvals required`)
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to promote conversation')
+      setError(err instanceof Error ? err.message : 'Failed to enable API Gateway')
     } finally {
       setIsWorking(false)
     }
@@ -870,7 +870,7 @@ export default function App() {
 
   async function onGateSecret() {
     if (!activeProfileId || !selectedConversationId || !secretService.trim() || !secretValue) {
-      setError('Enter a service name and secret value')
+      setError('Enter a service name and API key')
       return
     }
 
@@ -886,11 +886,11 @@ export default function App() {
         secretHeaderTemplate.trim() || undefined,
       )
       setMessages((previous) => [...previous, response.message])
-      setStatus(response.output || `Secret provisioned for ${secretService.trim()}`)
+      setStatus(response.output || `API key added for ${secretService.trim()}`)
       setSecretValue('')
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to provision secret')
+      setError(err instanceof Error ? err.message : 'Failed to add API key')
     } finally {
       setIsWorking(false)
     }
@@ -902,12 +902,12 @@ export default function App() {
     setIsWorking(true)
     try {
       await api.gateApprove(activeProfileId, activeProfile?.name || '', conversationId, requestId)
-      setStatus(`Approval sent for ${requestId.slice(0, 8)}...`)
+      setStatus(`Request approved: ${requestId.slice(0, 8)}...`)
       setError('')
       // Refresh to show the new approval message
       await refreshHistory(activeProfileId, conversationId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to approve gate request')
+      setError(err instanceof Error ? err.message : 'Failed to approve request')
     } finally {
       setIsWorking(false)
     }
@@ -944,7 +944,7 @@ export default function App() {
     <div className="aim-desktop">
       <div className="aim-window">
         <header className="title-bar">
-          <span className="title-text">qntm Instant Messenger</span>
+          <span className="title-text">qntm Messenger</span>
           <span className="title-detail">
             <button
               className="settings-toggle"
@@ -960,12 +960,12 @@ export default function App() {
           {showSettings ? (
             <div className="settings-page">
               <section className="panel">
-                <h2>Dropbox Endpoint</h2>
+                <h2>Message Relay</h2>
                 <p className="settings-description">
-                  The dropbox is the relay server that stores and delivers encrypted messages.
+                  The relay server stores and delivers your encrypted messages.
                 </p>
 
-                <label className="label" htmlFor="dropbox-url">Dropbox URL</label>
+                <label className="label" htmlFor="dropbox-url">Relay URL</label>
                 <input
                   id="dropbox-url"
                   className="input"
@@ -1078,7 +1078,7 @@ export default function App() {
               <form className="row" onSubmit={onCreateProfile}>
                 <input
                   className="input"
-                  placeholder="New identity"
+                  placeholder="New profile name"
                   value={newProfileName}
                   onChange={(event) => setNewProfileName(event.target.value)}
                 />
@@ -1096,7 +1096,7 @@ export default function App() {
                   <strong>Status:</strong> {identity.exists ? 'Ready' : 'No keypair yet'}
                 </div>
                 <div>
-                  <strong>KID:</strong> {identity.keyId ? shortId(identity.keyId) : '-'}
+                  <strong>Key ID:</strong> {identity.keyId ? shortId(identity.keyId) : '-'}
                 </div>
                 {identity.publicKey && (
                   <div className="pubkey-row">
@@ -1128,7 +1128,7 @@ export default function App() {
 
               <div className="row">
                 <button className="button full" type="button" onClick={() => void onCreateInvite()} disabled={isWorking || !identity.exists}>
-                  Create + self-join
+                  New Conversation
                 </button>
               </div>
 
@@ -1143,7 +1143,7 @@ export default function App() {
                 onChange={(event) => setInviteToken(event.target.value)}
               />
               <button className="button full" type="button" onClick={() => void onAcceptInvite()} disabled={isWorking || !identity.exists}>
-                Accept invite
+                Join Conversation
               </button>
             </section>
 
@@ -1162,7 +1162,7 @@ export default function App() {
                 )}
               </div>
               <ul className="conversation-list">
-                {visibleConversations.length === 0 && <li className="empty">No conversations</li>}
+                {visibleConversations.length === 0 && <li className="empty">No conversations yet</li>}
                 {visibleConversations.map((conversation) => (
                   <li key={conversation.id}>
                     <div className={`conversation ${conversation.id === selectedConversationId ? 'selected' : ''}`}>
@@ -1192,7 +1192,7 @@ export default function App() {
               <h2>Contacts</h2>
               <div className="contact-list">
                 {visibleContactKeys.length === 0 && (
-                  <div className="empty">No incoming senders yet</div>
+                  <div className="empty">No contacts yet</div>
                 )}
                 {visibleContactKeys.map((key) => (
                   <div className="contact-row" key={key}>
@@ -1286,7 +1286,7 @@ export default function App() {
                 disabled={!selectedConversation || isWorking}
                 onClick={() => void receiveMessages(true)}
               >
-                Check mail
+                Check for messages
               </button>
             </form>
 
@@ -1306,17 +1306,17 @@ export default function App() {
             <section className="panel gate-status-panel">
               {gateStatus.promoted ? (
                 <div className="gate-status-info">
-                  <div className="gate-status-badge promoted">Gate Active</div>
+                  <div className="gate-status-badge promoted">API Gateway Active</div>
                   <div className="meta">
-                    <div><strong>Threshold:</strong> {gateStatus.threshold} of {gateStatus.signerCount} signers</div>
+                    <div><strong>Required approvals:</strong> {gateStatus.threshold} of {gateStatus.signerCount} signers</div>
                     {gateStatus.orgId && <div><strong>Org:</strong> {gateStatus.orgId}</div>}
                   </div>
                 </div>
               ) : (
                 <div className="gate-status-info">
-                  <div className="gate-status-badge inactive">Not Promoted</div>
+                  <div className="gate-status-badge inactive">API Gateway Inactive</div>
                   <div className="meta">
-                    <div>Promote this conversation to enable API gating with multi-party approval.</div>
+                    <div>Enable the API Gateway to make approved API calls as a group.</div>
                   </div>
                 </div>
               )}
@@ -1325,12 +1325,12 @@ export default function App() {
             {/* Promote section — shown when not promoted */}
             {!gateStatus.promoted && (
             <section className="panel">
-              <h2>Promote to Gate</h2>
+              <h2>Enable API Gateway</h2>
               <div className="gate-hint">
                 All conversation participants become signers.
-                The threshold sets how many must approve each API call.
+                Set how many must approve each API call.
               </div>
-              <label className="label" htmlFor="gate-promote-threshold">Approval threshold</label>
+              <label className="label" htmlFor="gate-promote-threshold">Required approvals</label>
               <input
                 id="gate-promote-threshold"
                 className="input"
@@ -1345,7 +1345,7 @@ export default function App() {
                 disabled={isWorking}
                 onClick={() => void onGatePromote()}
               >
-                Promote to Gate
+                Enable API Gateway
               </button>
             </section>
             )}
@@ -1355,14 +1355,14 @@ export default function App() {
             <section className="panel">
               <h2>API Request</h2>
 
-              <label className="label" htmlFor="gate-recipe">Recipe</label>
+              <label className="label" htmlFor="gate-recipe">API Template</label>
               <select
                 id="gate-recipe"
                 className="input"
                 value={selectedRecipe}
                 onChange={(event) => onRecipeChange(event.target.value)}
               >
-                <option value="">Select a recipe...</option>
+                <option value="">Select a template...</option>
                 {gateRecipes.map((recipe) => (
                   <option key={recipe.name} value={recipe.name}>
                     {recipe.name} — {recipe.verb} {recipe.endpoint}
@@ -1370,7 +1370,7 @@ export default function App() {
                 ))}
               </select>
 
-              <label className="label" htmlFor="gate-url">Gate server</label>
+              <label className="label" htmlFor="gate-url">Gateway server</label>
               <input
                 id="gate-url"
                 className="input"
@@ -1470,7 +1470,7 @@ export default function App() {
                 disabled={isWorking || !selectedRecipe}
                 onClick={() => void onGateRun()}
               >
-                Submit gate request
+                Submit API request
               </button>
             </section>
             )}
@@ -1478,7 +1478,7 @@ export default function App() {
             {/* Secrets — only when promoted */}
             {gateStatus.promoted && (
             <section className="panel">
-              <h2>Secrets</h2>
+              <h2>API Keys</h2>
               <label className="label" htmlFor="secret-service">Service</label>
               <input
                 id="secret-service"
@@ -1518,7 +1518,7 @@ export default function App() {
                 disabled={isWorking || !secretService.trim() || !secretValue}
                 onClick={() => void onGateSecret()}
               >
-                Provision secret
+                Add API key
               </button>
             </section>
             )}

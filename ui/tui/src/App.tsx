@@ -215,7 +215,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'identity':
       case 'id':
         if (identity) {
-          addSystemMessage(`KID: ${kidHex}`, 'cyan');
+          addSystemMessage(`Key ID: ${kidHex}`, 'cyan');
           addSystemMessage(`Public key: ${bytesToHex(identity.publicKey)}`, 'cyan');
           addSystemMessage(`Config: ${configDir}`, 'cyan');
         }
@@ -338,7 +338,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           addSystemMessage('Usage: /approve <request-id-prefix>', 'red');
           break;
         }
-        addSystemMessage(`Gate approval for ${reqId} — not yet implemented in TUI`, 'yellow');
+        addSystemMessage(`API Gateway approval for ${reqId} — not yet implemented in TUI`, 'yellow');
         break;
       }
 
@@ -381,7 +381,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     <Box flexDirection="column" height={terminalHeight}>
       {/* Header */}
       <Box paddingX={1} justifyContent="space-between">
-        <Text bold color="cyan">qntm chat</Text>
+        <Text bold color="cyan">qntm messenger</Text>
         <Text dimColor>v0.1.0</Text>
       </Box>
 
