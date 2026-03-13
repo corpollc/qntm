@@ -352,6 +352,13 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showGatePanel, setShowGatePanel] = useState(false)
+  const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(() => {
+    try {
+      const saved = window.localStorage.getItem('aim-hidden-conversations')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch { return new Set() }
+  })
+  const [showHidden, setShowHidden] = useState(false)
   const [dropboxUrl, setDropboxUrl] = useState('')
   const [defaultDropboxUrl, setDefaultDropboxUrl] = useState('')
   const [dropboxDraft, setDropboxDraft] = useState('')
@@ -392,6 +399,46 @@ export default function App() {
     if (queryParts.length > 0) url += (url.includes('?') ? '&' : '?') + queryParts.join('&')
     return url
   }, [activeRecipe, gateArgs])
+
+  // Derive gate status from message history
+  const gateStatus = useMemo(() => {
+    let promoted = false
+    let orgId = ''
+    let threshold = 0
+    let signerCount = 0
+    for (const msg of messages) {
+      if (msg.bodyType === 'gate.promote') {
+        try {
+          const body = JSON.parse(msg.text)
+          promoted = true
+          orgId = body.org_id || ''
+          signerCount = body.signers?.length || 0
+          if (body.rules?.[0]?.m) threshold = body.rules[0].m
+        } catch { /* ignore */ }
+      }
+    }
+    return { promoted, orgId, threshold, signerCount }
+  }, [messages])
+
+  const toggleHideConversation = useCallback((convId: string) => {
+    setHiddenConversations(prev => {
+      const next = new Set(prev)
+      if (next.has(convId)) next.delete(convId)
+      else next.add(convId)
+      window.localStorage.setItem('aim-hidden-conversations', JSON.stringify([...next]))
+      return next
+    })
+  }, [])
+
+  const visibleConversations = useMemo(() => {
+    if (showHidden) return conversations
+    return conversations.filter(c => !hiddenConversations.has(c.id))
+  }, [conversations, hiddenConversations, showHidden])
+
+  const hiddenCount = useMemo(
+    () => conversations.filter(c => hiddenConversations.has(c.id)).length,
+    [conversations, hiddenConversations],
+  )
 
   const contactNameByKey = useMemo(() => {
     const mapping: Record<string, string> = {}
@@ -611,7 +658,7 @@ export default function App() {
 
     pollingRef.current = true
     try {
-      const response = await api.receiveMessages(activeProfileId, selectedConversationId)
+      const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', selectedConversationId)
       const relayWarning = response.warning?.trim() || ''
 
       if (response.messages.length > 0) {
@@ -747,9 +794,9 @@ export default function App() {
     }
   }
 
-  async function loadGateRecipes() {
+  function loadGateRecipes() {
     try {
-      const response = await api.gateRecipes()
+      const response = api.gateRecipes()
       setGateRecipes(response.recipes)
     } catch {
       // Gate recipes not critical
@@ -766,18 +813,21 @@ export default function App() {
   }
 
   async function onGateRun() {
-    if (!activeProfileId || !selectedConversationId || !selectedRecipe || !gateOrgId.trim()) {
-      setError('Select a recipe and enter an org ID')
+    if (!activeProfileId || !selectedConversationId || !selectedRecipe) {
+      setError('Select a recipe')
       return
     }
+
+    const orgId = gateOrgId.trim() || gateStatus.orgId || selectedConversationId
 
     setIsWorking(true)
     try {
       const response = await api.gateRun(
         activeProfileId,
+        activeProfile?.name || '',
         selectedConversationId,
         selectedRecipe,
-        gateOrgId.trim(),
+        orgId,
         gateServerUrl.trim(),
         Object.keys(gateArgs).length > 0 ? gateArgs : undefined,
       )
@@ -792,21 +842,24 @@ export default function App() {
   }
 
   async function onGatePromote() {
-    if (!activeProfileId || !selectedConversationId || !gateOrgId.trim()) {
-      setError('Enter an org ID to promote this conversation')
+    if (!activeProfileId || !selectedConversationId) {
       return
     }
+
+    // Use conversation ID as org ID — the conversation IS the org
+    const orgId = gateOrgId.trim() || selectedConversationId
 
     setIsWorking(true)
     try {
       const response = await api.gatePromote(
         activeProfileId,
+        activeProfile?.name || '',
         selectedConversationId,
-        gateOrgId.trim(),
+        orgId,
         gatePromoteThreshold,
       )
       setMessages((previous) => [...previous, response.message])
-      setStatus(`Gate promote sent: org=${gateOrgId.trim()} threshold=${gatePromoteThreshold}`)
+      setStatus(`Gate promoted: threshold=${gatePromoteThreshold}`)
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to promote conversation')
@@ -825,6 +878,7 @@ export default function App() {
     try {
       const response = await api.gateSecret(
         activeProfileId,
+        activeProfile?.name || '',
         selectedConversationId,
         secretService.trim(),
         secretValue,
@@ -847,7 +901,7 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      await api.gateApprove(activeProfileId, conversationId, requestId)
+      await api.gateApprove(activeProfileId, activeProfile?.name || '', conversationId, requestId)
       setStatus(`Approval sent for ${requestId.slice(0, 8)}...`)
       setError('')
       // Refresh to show the new approval message
@@ -873,7 +927,7 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const response = await api.sendMessage(activeProfileId, selectedConversationId, text)
+      const response = await api.sendMessage(activeProfileId, activeProfile?.name || '', selectedConversationId, text)
       setMessages((previous) => [...previous, response.message])
       setComposer('')
       const relayWarning = response.warning?.trim() || ''
@@ -944,6 +998,56 @@ export default function App() {
                 <div className="meta">
                   <div><strong>Current:</strong> {dropboxUrl}</div>
                   <div><strong>Default:</strong> {defaultDropboxUrl}</div>
+                </div>
+              </section>
+
+              <section className="panel">
+                <h2>Backup &amp; Restore</h2>
+                <p className="settings-description">
+                  All data (identities, conversations, keys, messages) is stored in your browser.
+                  Export a backup to save it, or import to restore.
+                </p>
+                <div className="row">
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() => {
+                      const data = api.exportBackup()
+                      const blob = new Blob([data], { type: 'application/json' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `aim-backup-${new Date().toISOString().slice(0, 10)}.json`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                      setStatus('Backup exported')
+                    }}
+                  >
+                    Export backup
+                  </button>
+                  <label className="button" style={{ cursor: 'pointer' }}>
+                    Import backup
+                    <input
+                      type="file"
+                      accept=".json"
+                      style={{ display: 'none' }}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        if (!file) return
+                        const reader = new FileReader()
+                        reader.onload = () => {
+                          try {
+                            api.importBackup(reader.result as string)
+                            setStatus('Backup restored — reloading...')
+                            setTimeout(() => window.location.reload(), 500)
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : 'Invalid backup file')
+                          }
+                        }
+                        reader.readAsText(file)
+                      }}
+                    />
+                  </label>
                 </div>
               </section>
 
@@ -1044,19 +1148,41 @@ export default function App() {
             </section>
 
             <section className="panel grow">
-              <h2>Conversations</h2>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2>Conversations</h2>
+                {hiddenCount > 0 && (
+                  <button
+                    className="button-small"
+                    type="button"
+                    onClick={() => setShowHidden(v => !v)}
+                    title={showHidden ? 'Hide hidden conversations' : 'Show hidden conversations'}
+                  >
+                    {showHidden ? `Hide (${hiddenCount})` : `${hiddenCount} hidden`}
+                  </button>
+                )}
+              </div>
               <ul className="conversation-list">
-                {conversations.length === 0 && <li className="empty">No conversations</li>}
-                {conversations.map((conversation) => (
+                {visibleConversations.length === 0 && <li className="empty">No conversations</li>}
+                {visibleConversations.map((conversation) => (
                   <li key={conversation.id}>
-                    <button
-                      className={`conversation ${conversation.id === selectedConversationId ? 'selected' : ''}`}
-                      type="button"
-                      onClick={() => setSelectedConversationId(conversation.id)}
-                    >
-                      <span className="conversation-name">{conversation.name}</span>
-                      <span className="conversation-id">{shortId(conversation.id)}</span>
-                    </button>
+                    <div className={`conversation ${conversation.id === selectedConversationId ? 'selected' : ''}`}>
+                      <button
+                        className="conversation-select"
+                        type="button"
+                        onClick={() => setSelectedConversationId(conversation.id)}
+                      >
+                        <span className="conversation-name">{conversation.name}</span>
+                        <span className="conversation-id">{shortId(conversation.id)}</span>
+                      </button>
+                      <button
+                        className="conversation-hide"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleHideConversation(conversation.id) }}
+                        title={hiddenConversations.has(conversation.id) ? 'Unhide' : 'Hide'}
+                      >
+                        {hiddenConversations.has(conversation.id) ? 'Show' : '\u00d7'}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1107,7 +1233,7 @@ export default function App() {
                   type="button"
                   onClick={() => setShowGatePanel(!showGatePanel)}
                 >
-                  Gate
+                  {showGatePanel ? 'API Gateway \u2715' : 'API Gateway \u25B6'}
                 </button>
               )}
             </div>
@@ -1176,6 +1302,56 @@ export default function App() {
 
           {showGatePanel && selectedConversation && (
           <aside className="gate-panel">
+            {/* Gate status banner */}
+            <section className="panel gate-status-panel">
+              {gateStatus.promoted ? (
+                <div className="gate-status-info">
+                  <div className="gate-status-badge promoted">Gate Active</div>
+                  <div className="meta">
+                    <div><strong>Threshold:</strong> {gateStatus.threshold} of {gateStatus.signerCount} signers</div>
+                    {gateStatus.orgId && <div><strong>Org:</strong> {gateStatus.orgId}</div>}
+                  </div>
+                </div>
+              ) : (
+                <div className="gate-status-info">
+                  <div className="gate-status-badge inactive">Not Promoted</div>
+                  <div className="meta">
+                    <div>Promote this conversation to enable API gating with multi-party approval.</div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Promote section — shown when not promoted */}
+            {!gateStatus.promoted && (
+            <section className="panel">
+              <h2>Promote to Gate</h2>
+              <div className="gate-hint">
+                All conversation participants become signers.
+                The threshold sets how many must approve each API call.
+              </div>
+              <label className="label" htmlFor="gate-promote-threshold">Approval threshold</label>
+              <input
+                id="gate-promote-threshold"
+                className="input"
+                type="number"
+                min={1}
+                value={gatePromoteThreshold}
+                onChange={(event) => setGatePromoteThreshold(Number(event.target.value) || 1)}
+              />
+              <button
+                className="button full"
+                type="button"
+                disabled={isWorking}
+                onClick={() => void onGatePromote()}
+              >
+                Promote to Gate
+              </button>
+            </section>
+            )}
+
+            {/* API Request — only when promoted */}
+            {gateStatus.promoted && (
             <section className="panel">
               <h2>API Request</h2>
 
@@ -1193,15 +1369,6 @@ export default function App() {
                   </option>
                 ))}
               </select>
-
-              <label className="label" htmlFor="gate-org">Org ID</label>
-              <input
-                id="gate-org"
-                className="input"
-                placeholder="e.g. acme"
-                value={gateOrgId}
-                onChange={(event) => setGateOrgId(event.target.value)}
-              />
 
               <label className="label" htmlFor="gate-url">Gate server</label>
               <input
@@ -1254,10 +1421,10 @@ export default function App() {
                     </>
                   )}
 
-                  {activeRecipe.body_schema?.properties && (
+                  {(activeRecipe.body_schema as { properties?: Record<string, { description?: string; type?: string }> } | undefined)?.properties != null && (
                     <>
                       <div className="gate-args-heading">Body fields</div>
-                      {Object.entries(activeRecipe.body_schema.properties as Record<string, { description?: string; type?: string }>).map(([key, prop]) => (
+                      {Object.entries((activeRecipe.body_schema as { properties: Record<string, { description?: string; type?: string }> }).properties).map(([key, prop]) => (
                         <div className="gate-arg-field" key={`body-${key}`}>
                           <label className="label" htmlFor={`gate-body-${key}`}>
                             {key}
@@ -1300,34 +1467,16 @@ export default function App() {
               <button
                 className="button full"
                 type="button"
-                disabled={isWorking || !selectedConversation || !selectedRecipe || !gateOrgId.trim()}
+                disabled={isWorking || !selectedRecipe}
                 onClick={() => void onGateRun()}
               >
                 Submit gate request
               </button>
             </section>
+            )}
 
-            <section className="panel">
-              <h2>Promote</h2>
-              <label className="label" htmlFor="gate-promote-threshold">Threshold</label>
-              <input
-                id="gate-promote-threshold"
-                className="input"
-                type="number"
-                min={1}
-                value={gatePromoteThreshold}
-                onChange={(event) => setGatePromoteThreshold(Number(event.target.value) || 1)}
-              />
-              <button
-                className="button full"
-                type="button"
-                disabled={isWorking || !selectedConversation || !gateOrgId.trim()}
-                onClick={() => void onGatePromote()}
-              >
-                Promote to Gate
-              </button>
-            </section>
-
+            {/* Secrets — only when promoted */}
+            {gateStatus.promoted && (
             <section className="panel">
               <h2>Secrets</h2>
               <label className="label" htmlFor="secret-service">Service</label>
@@ -1366,12 +1515,13 @@ export default function App() {
               <button
                 className="button full"
                 type="button"
-                disabled={isWorking || !selectedConversation || !secretService.trim() || !secretValue}
+                disabled={isWorking || !secretService.trim() || !secretValue}
                 onClick={() => void onGateSecret()}
               >
                 Provision secret
               </button>
             </section>
+            )}
           </aside>
           )}
           </>

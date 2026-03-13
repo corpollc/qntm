@@ -212,17 +212,40 @@ def _save_group_state(config_dir, conv_id_hex, state):
     _save_json(path, state.to_dict())
 
 
+def _normalize_conv_id(raw_id):
+    """Normalize a conversation ID to lowercase hex string.
+
+    Handles hex strings, byte arrays (legacy Go CLI format), and bytes.
+    """
+    if isinstance(raw_id, str):
+        return raw_id.lower()
+    if isinstance(raw_id, list):
+        return bytes(raw_id).hex().lower()
+    if isinstance(raw_id, bytes):
+        return raw_id.hex().lower()
+    return str(raw_id).lower()
+
+
 def _find_conversation(conversations, conv_id_hex):
     for conv in conversations:
-        if conv["id"].lower() == conv_id_hex.lower():
+        if _normalize_conv_id(conv["id"]) == conv_id_hex.lower():
             return conv
     return None
+
+
+def _conv_id_to_bytes(raw_id):
+    """Convert a conversation ID (any format) to bytes."""
+    if isinstance(raw_id, bytes):
+        return raw_id
+    if isinstance(raw_id, list):
+        return bytes(raw_id)
+    return bytes.fromhex(raw_id)
 
 
 def _conv_to_crypto(conv_record):
     """Convert a stored conversation record to crypto-ready dict."""
     return {
-        "id": bytes.fromhex(conv_record["id"]),
+        "id": _conv_id_to_bytes(conv_record["id"]),
         "type": conv_record.get("type", "direct"),
         "keys": {
             "root": bytes.fromhex(conv_record["keys"]["root"]),

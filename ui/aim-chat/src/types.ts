@@ -1,10 +1,6 @@
 export interface Profile {
   id: string
   name: string
-  configDir: string
-  storage: string
-  dropboxUrl: string
-  qntmBin: string
 }
 
 export interface IdentityInfo {
