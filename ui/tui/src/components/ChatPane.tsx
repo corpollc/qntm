@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { StoredMessage } from '../lib/store.js';
 import GateCard from './GateCard.js';
+import { theme } from '../lib/theme.js';
 
 interface ChatPaneProps {
   messages: StoredMessage[];
@@ -41,7 +42,7 @@ export default function ChatPane({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box borderStyle="single" borderColor="blue" paddingX={1} flexDirection="column" flexGrow={1}>
+      <Box borderStyle="single" borderColor={theme.borderActive} paddingX={1} flexDirection="column" flexGrow={1}>
         {messages.length > 0 && scrollOffset > 0 && (
           <Box justifyContent="flex-end">
             <Text dimColor>
@@ -72,7 +73,7 @@ export default function ChatPane({
             );
           }
 
-          const senderColor = msg.direction === 'outgoing' ? 'green' : 'magenta';
+          const senderColor = msg.direction === 'outgoing' ? theme.outgoing : theme.incoming;
 
           return (
             <Box key={msg.id} flexDirection="row" marginTop={0}>

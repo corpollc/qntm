@@ -1,7 +1,8 @@
-import { FormEvent } from 'react'
+import { FormEvent, useState } from 'react'
 import type { IdentityInfo, Profile } from '../types'
 import { shortId } from '../utils'
 import { Tooltip } from './Tooltip'
+import { ConfirmDialog } from './ConfirmDialog'
 
 export interface IdentityPanelProps {
   profiles: Profile[]
@@ -28,8 +29,30 @@ export function IdentityPanel({
   onGenerateIdentity,
   setStatus,
 }: IdentityPanelProps) {
+  const [showConfirm, setShowConfirm] = useState(false)
+
+  function handleGenerateClick() {
+    if (identity.exists) {
+      setShowConfirm(true)
+    } else {
+      void onGenerateIdentity()
+    }
+  }
+
   return (
     <>
+      <ConfirmDialog
+        open={showConfirm}
+        title="Replace keypair?"
+        message="This will generate a new keypair and replace your current one. Your existing Key ID will no longer be valid. This cannot be undone."
+        confirmLabel="Replace keypair"
+        danger
+        onConfirm={() => {
+          setShowConfirm(false)
+          void onGenerateIdentity()
+        }}
+        onCancel={() => setShowConfirm(false)}
+      />
       <label className="label" htmlFor="profile-select">
         Active profile
       </label>
@@ -58,7 +81,7 @@ export function IdentityPanel({
         </button>
       </form>
 
-      <button className="button full" type="button" onClick={() => void onGenerateIdentity()} disabled={isWorking || !activeProfileId}>
+      <button className="button full" type="button" onClick={handleGenerateClick} disabled={isWorking || !activeProfileId}>
         Generate keypair
         <Tooltip text="Creates a new cryptographic key pair for signing and encrypting messages." />
       </button>

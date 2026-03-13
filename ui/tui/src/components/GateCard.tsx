@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { theme } from '../lib/theme.js';
 
 interface GateRequestBody {
   type: string;
@@ -44,10 +45,10 @@ function tryParse(text: string): Record<string, unknown> | null {
 }
 
 function statusColor(code: number): string {
-  if (code >= 500) return 'red';
-  if (code >= 400) return 'yellow';
-  if (code >= 300) return 'cyan';
-  return 'green';
+  if (code >= 500) return theme.error;
+  if (code >= 400) return theme.warning;
+  if (code >= 300) return theme.info;
+  return theme.success;
 }
 
 function formatBody(body: string, maxLen: number = 300): string {
@@ -94,18 +95,18 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
         <Box
           flexDirection="column"
           borderStyle="double"
-          borderColor="yellow"
+          borderColor={theme.gateRequest}
           paddingX={1}
         >
           {/* Header */}
-          <Text bold color="yellow">
+          <Text bold color={theme.gateRequest}>
             {'\u26a1'} API Request {req.recipe_name ? `[${req.recipe_name}]` : ''}
           </Text>
 
           {/* Metadata */}
           <Box flexDirection="column" marginTop={1}>
             <Text>
-              <Text bold color="yellow">{req.verb}</Text>
+              <Text bold color={theme.gateRequest}>{req.verb}</Text>
               <Text> {req.target_url || req.target_endpoint}</Text>
             </Text>
             <Field label="Service" value={req.target_service} />
@@ -131,12 +132,12 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
           {/* Expiry / actions */}
           <Box marginTop={1} flexDirection="column">
             {isExpired ? (
-              <Text bold color="red">{'\u2718'} EXPIRED</Text>
+              <Text bold color={theme.gateError}>{'\u2718'} EXPIRED</Text>
             ) : (
               <Field label="Expires" value={req.expires_at} />
             )}
             {direction === 'incoming' && !isExpired && (
-              <Text color="green" bold>
+              <Text color={theme.gateApproval} bold>
                 {'\u279c'} Press &apos;a&apos; to approve | /approve {req.request_id.slice(0, 8)}
               </Text>
             )}
@@ -154,10 +155,10 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
         <Box
           flexDirection="column"
           borderStyle="double"
-          borderColor="green"
+          borderColor={theme.gateApproval}
           paddingX={1}
         >
-          <Text bold color="green">
+          <Text bold color={theme.gateApproval}>
             {'\u2714'} APPROVED
           </Text>
           <Text dimColor>{'\u2500'.repeat(30)}</Text>
@@ -177,10 +178,10 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
         <Box
           flexDirection="column"
           borderStyle="double"
-          borderColor="blue"
+          borderColor={theme.gateExecuted}
           paddingX={1}
         >
-          <Text bold color="blue">
+          <Text bold color={theme.gateExecuted}>
             {'\u25b6'} Executed
           </Text>
           <Field label="Request" value={exec.request_id.slice(0, 12)} />
@@ -197,7 +198,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
   if (type === 'gate.result') {
     const res = parsed as unknown as GateResultBody;
     const color = statusColor(res.status_code);
-    const borderColor = res.status_code < 400 ? 'green' : 'red';
+    const borderColor = res.status_code < 400 ? theme.gateResult : theme.gateError;
 
     return (
       <Box flexDirection="column" marginTop={1}>
@@ -229,7 +230,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
             <Box
               flexDirection="column"
               borderStyle="single"
-              borderColor="gray"
+              borderColor={theme.border}
               paddingX={1}
               marginTop={1}
             >
@@ -244,7 +245,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
   // ── Unknown gate type ─────────────────────────────────────────────
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Box borderStyle="double" borderColor="gray" paddingX={1}>
+      <Box borderStyle="double" borderColor={theme.border} paddingX={1}>
         <Text dimColor>[{type}] {text.slice(0, 200)}</Text>
       </Box>
     </Box>

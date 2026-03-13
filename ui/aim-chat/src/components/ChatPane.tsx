@@ -1,6 +1,6 @@
 import { FormEvent } from 'react'
 import type { ChatMessage, Conversation, Profile } from '../types'
-import { formatTime, shortId } from '../utils'
+import { formatSmartTime, formatDateLabel, isSameDay, isSameGroup, senderColor, shortId } from '../utils'
 import {
   GateRequestCard,
   GateApprovalCard,
@@ -32,6 +32,17 @@ export interface ChatPaneProps {
   conversationCount: number
   onGenerateIdentity: () => void
   onOpenInvites: () => void
+}
+
+function MessageBody({ message, onGateApprove, isWorking }: { message: ChatMessage; onGateApprove: (requestId: string, conversationId: string) => void; isWorking: boolean }) {
+  if (message.bodyType === 'gate.promote') return <GatePromoteCard message={message} />
+  if (message.bodyType === 'gate.config') return <GateConfigCard message={message} />
+  if (message.bodyType === 'gate.request') return <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
+  if (message.bodyType === 'gate.approval') return <GateApprovalCard message={message} />
+  if (message.bodyType === 'gate.executed') return <GateExecutedCard message={message} />
+  if (message.bodyType === 'gate.expired') return <GateExpiredCard message={message} />
+  if (message.bodyType === 'gate.result') return <GateResultCard message={message} />
+  return <div className="message-body">{message.text}</div>
 }
 
 export function ChatPane({
@@ -88,32 +99,41 @@ export function ChatPane({
           />
         )}
         {!showWelcome && messages.length === 0 && <div className="empty">No messages yet.</div>}
-        {messages.map((message) => (
-          <article key={message.id} className={`message ${message.direction}`}>
-            <div className="message-top">
-              <span className="sender">{message.sender}</span>
-              <span className="time">{formatTime(message.createdAt)}</span>
+        {messages.map((message, index) => {
+          const prev = index > 0 ? messages[index - 1] : null
+          const showDate = !prev || !isSameDay(prev.createdAt, message.createdAt)
+          const isGroupFirst = !prev || showDate || !isSameGroup(prev, message)
+          const color = senderColor(message.sender)
+          const initial = message.sender.charAt(0).toUpperCase()
+
+          return (
+            <div key={message.id}>
+              {showDate && (
+                <div className="date-separator">
+                  <span className="date-separator-label">{formatDateLabel(message.createdAt)}</span>
+                </div>
+              )}
+              <div className={`message-group ${message.direction}`}>
+                {isGroupFirst && message.direction === 'incoming' && (
+                  <span className="sender-avatar" style={{ background: color }}>{initial}</span>
+                )}
+                <article className={`message ${message.direction} ${isGroupFirst ? 'message-group-first' : 'message-group-cont'}`}>
+                  {isGroupFirst && (
+                    <div className="message-top">
+                      <span className="sender">{message.sender}</span>
+                      <span className="time">{formatSmartTime(message.createdAt)}</span>
+                    </div>
+                  )}
+                  <MessageBody message={message} onGateApprove={onGateApprove} isWorking={isWorking} />
+                  <div className="message-type">{message.bodyType}</div>
+                </article>
+                {isGroupFirst && message.direction === 'outgoing' && (
+                  <span className="sender-avatar" style={{ background: color }}>{initial}</span>
+                )}
+              </div>
             </div>
-            {message.bodyType === 'gate.promote' ? (
-              <GatePromoteCard message={message} />
-            ) : message.bodyType === 'gate.config' ? (
-              <GateConfigCard message={message} />
-            ) : message.bodyType === 'gate.request' ? (
-              <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
-            ) : message.bodyType === 'gate.approval' ? (
-              <GateApprovalCard message={message} />
-            ) : message.bodyType === 'gate.executed' ? (
-              <GateExecutedCard message={message} />
-            ) : message.bodyType === 'gate.expired' ? (
-              <GateExpiredCard message={message} />
-            ) : message.bodyType === 'gate.result' ? (
-              <GateResultCard message={message} />
-            ) : (
-              <div className="message-body">{message.text}</div>
-            )}
-            <div className="message-type">{message.bodyType}</div>
-          </article>
-        ))}
+          )
+        })}
         <div ref={messageTailRef} />
       </div>
 

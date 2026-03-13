@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { StoredConversation, StoredMessage } from '../lib/store.js';
+import { theme } from '../lib/theme.js';
 
 interface SidebarProps {
   conversations: StoredConversation[];
@@ -58,7 +59,7 @@ export default function Sidebar({
     <Box
       flexDirection="column"
       borderStyle="single"
-      borderColor="gray"
+      borderColor={theme.border}
       paddingX={1}
       width="100%"
     >
@@ -83,14 +84,14 @@ export default function Sidebar({
               <Text dimColor>{num}. </Text>
               <Text dimColor>{icon}</Text>
               {isActive ? (
-                <Text bold color="cyan">{'\u25b6'} {label}</Text>
+                <Text bold color={theme.brand}>{'\u25b6'} {label}</Text>
               ) : hasUnread ? (
                 <Text bold>  {label}</Text>
               ) : (
                 <Text>  {label}</Text>
               )}
               {hasUnread && (
-                <Text color="red" bold> ({unreadCount})</Text>
+                <Text color={theme.error} bold> ({unreadCount})</Text>
               )}
               {timeStr && (
                 <Text dimColor> {timeStr}</Text>

@@ -20,6 +20,7 @@ import Composer from './components/Composer.js';
 import type { Identity } from '@corpollc/qntm';
 import { keyIDToString } from '@corpollc/qntm';
 import { COMMANDS, findCommand } from './lib/commands.js';
+import { theme } from './lib/theme.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
 
   // ── System message helper ──────────────────────────────────────────
 
-  const addSystemMessage = useCallback((text: string, color = 'yellow') => {
+  const addSystemMessage = useCallback((text: string, color: string = theme.system) => {
     setSystemMessages((prev) => {
       const next = [...prev, { text, color }];
       return next.length > 50 ? next.slice(-50) : next;
@@ -78,8 +79,8 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     let id = store.loadIdentity();
     if (!id) {
       id = store.generateIdentity();
-      addSystemMessage('Generated new identity.', 'green');
-      addSystemMessage('Your identity is ready. Use /invite to start a conversation.', 'gray');
+      addSystemMessage('Generated new identity.', theme.success);
+      addSystemMessage('Your identity is ready. Use /invite to start a conversation.', theme.textDim);
     }
     setIdentity(id);
     setKidHex(bytesToHex(id.keyID));
@@ -93,8 +94,8 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       setMessages(store.loadHistory(first.id));
     }
 
-    addSystemMessage(`Identity loaded: ${bytesToHex(id.keyID)}`, 'cyan');
-    addSystemMessage('Type /help for available commands.', 'gray');
+    addSystemMessage(`Identity loaded: ${bytesToHex(id.keyID)}`, theme.info);
+    addSystemMessage('Type /help for available commands.', theme.textDim);
   }, [store, addSystemMessage]);
 
   // ── Polling ────────────────────────────────────────────────────────
@@ -197,7 +198,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       setScrollOffset(0);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      addSystemMessage(`Send failed: ${msg}`, 'red');
+      addSystemMessage(`Send failed: ${msg}`, theme.error);
     }
   }, [identity, activeConvId, store, dropbox, addSystemMessage]);
 
@@ -216,17 +217,17 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         if (helpArg) {
           const def = findCommand(helpArg);
           if (def) {
-            addSystemMessage(def.description, 'cyan');
+            addSystemMessage(def.description, theme.info);
           } else {
-            addSystemMessage(`Unknown command "${helpArg}". Type /help to see available commands.`, 'red');
+            addSystemMessage(`Unknown command "${helpArg}". Type /help to see available commands.`, theme.error);
           }
         } else {
           for (const c of COMMANDS) {
             if (c.name === 'help' || c.name === 'quit') continue;
-            addSystemMessage(`  ${c.usage} — ${c.brief}`, 'cyan');
+            addSystemMessage(`  ${c.usage} — ${c.brief}`, theme.info);
           }
-          addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k', 'cyan');
-          addSystemMessage('Type /help <command> for details.', 'gray');
+          addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k', theme.info);
+          addSystemMessage('Type /help <command> for details.', theme.textDim);
         }
         break;
       }
@@ -234,15 +235,15 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'identity':
       case 'id':
         if (identity) {
-          addSystemMessage(`Key ID: ${kidHex}`, 'cyan');
-          addSystemMessage(`Public key: ${bytesToHex(identity.publicKey)}`, 'cyan');
-          addSystemMessage(`Config: ${configDir}`, 'cyan');
+          addSystemMessage(`Key ID: ${kidHex}`, theme.info);
+          addSystemMessage(`Public key: ${bytesToHex(identity.publicKey)}`, theme.info);
+          addSystemMessage(`Config: ${configDir}`, theme.info);
         }
         break;
 
       case 'invite': {
         if (!identity) {
-          addSystemMessage('No identity loaded.', 'red');
+          addSystemMessage('No identity loaded.', theme.error);
           break;
         }
         const name = args.trim() || undefined;
@@ -251,20 +252,20 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         setActiveConvId(convId);
         setMessages([]);
         setScrollOffset(0);
-        addSystemMessage('Invite created! Share this token:', 'green');
-        addSystemMessage(token, 'white');
-        addSystemMessage('Share this token with your contact. They can join with: /join <token>', 'gray');
+        addSystemMessage('Invite created! Share this token:', theme.success);
+        addSystemMessage(token, theme.text);
+        addSystemMessage('Share this token with your contact. They can join with: /join <token>', theme.textDim);
         break;
       }
 
       case 'join': {
         if (!identity) {
-          addSystemMessage('No identity loaded.', 'red');
+          addSystemMessage('No identity loaded.', theme.error);
           break;
         }
         const token = args.trim();
         if (!token) {
-          addSystemMessage('Usage: /join <invite-token>', 'red');
+          addSystemMessage('Usage: /join <invite-token>', theme.error);
           break;
         }
         try {
@@ -273,11 +274,11 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           setActiveConvId(convId);
           setMessages(store.loadHistory(convId));
           setScrollOffset(0);
-          addSystemMessage(`Joined conversation ${convId.slice(0, 12)}`, 'green');
-          addSystemMessage("You're now in the conversation. Type a message to say hello!", 'gray');
+          addSystemMessage(`Joined conversation ${convId.slice(0, 12)}`, theme.success);
+          addSystemMessage("You're now in the conversation. Type a message to say hello!", theme.textDim);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          addSystemMessage(`Failed to join: ${msg}`, 'red');
+          addSystemMessage(`Failed to join: ${msg}`, theme.error);
         }
         break;
       }
@@ -285,11 +286,11 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'name': {
         const name = args.trim();
         if (!name) {
-          addSystemMessage('Usage: /name <conversation-name>', 'red');
+          addSystemMessage('Usage: /name <conversation-name>', theme.error);
           break;
         }
         if (!activeConvId) {
-          addSystemMessage('No active conversation.', 'red');
+          addSystemMessage('No active conversation.', theme.error);
           break;
         }
         const convs = store.loadConversations();
@@ -298,7 +299,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           conv.name = name;
           store.saveConversations(convs);
           setConversations([...convs]);
-          addSystemMessage(`Conversation renamed to: ${name}`, 'green');
+          addSystemMessage(`Conversation renamed to: ${name}`, theme.success);
         }
         break;
       }
@@ -306,20 +307,20 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'nick': {
         const name = args.trim();
         if (!name) {
-          addSystemMessage('Usage: /nick <display-name>', 'red');
+          addSystemMessage('Usage: /nick <display-name>', theme.error);
           break;
         }
         store.setName(name);
         setDisplayName(name);
-        addSystemMessage(`Display name set to: ${name}`, 'green');
-        addSystemMessage('Your display name is now visible to others in conversations.', 'gray');
+        addSystemMessage(`Display name set to: ${name}`, theme.success);
+        addSystemMessage('Your display name is now visible to others in conversations.', theme.textDim);
         break;
       }
 
       case 'alias': {
         const parts = args.trim().split(/\s+/);
         if (parts.length < 2) {
-          addSystemMessage('Usage: /alias <kid-prefix> <name>', 'red');
+          addSystemMessage('Usage: /alias <kid-prefix> <name>', theme.error);
           break;
         }
         const [kidPrefix, ...nameParts] = parts;
@@ -336,7 +337,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           }
         }
         store.setContact(matchedKid, aliasName);
-        addSystemMessage(`Alias set: ${matchedKid.slice(0, 12)} -> ${aliasName}`, 'green');
+        addSystemMessage(`Alias set: ${matchedKid.slice(0, 12)} -> ${aliasName}`, theme.success);
         break;
       }
 
@@ -344,11 +345,11 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'convs': {
         const convs = store.loadConversations();
         if (convs.length === 0) {
-          addSystemMessage('No conversations. Use /invite to create one.', 'yellow');
+          addSystemMessage('No conversations. Use /invite to create one.', theme.warning);
         } else {
           for (const [i, c] of convs.entries()) {
             const marker = c.id === activeConvId ? '>' : ' ';
-            addSystemMessage(`${marker} ${i + 1}. ${c.name || c.id.slice(0, 12)} [${c.type}]`, 'cyan');
+            addSystemMessage(`${marker} ${i + 1}. ${c.name || c.id.slice(0, 12)} [${c.type}]`, theme.info);
           }
         }
         break;
@@ -357,19 +358,19 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'approve': {
         const reqId = args.trim();
         if (!reqId) {
-          addSystemMessage('Usage: /approve <request-id-prefix>', 'red');
+          addSystemMessage('Usage: /approve <request-id-prefix>', theme.error);
           break;
         }
-        addSystemMessage(`API Gateway approval for ${reqId} — not yet implemented in TUI`, 'yellow');
+        addSystemMessage(`API Gateway approval for ${reqId} — not yet implemented in TUI`, theme.warning);
         break;
       }
 
       case '_no_conv':
-        addSystemMessage('No active conversation. Use /invite or /join first.', 'yellow');
+        addSystemMessage('No active conversation. Use /invite or /join first.', theme.warning);
         break;
 
       default:
-        addSystemMessage(`Unknown command: /${cmd}. Type /help for commands.`, 'red');
+        addSystemMessage(`Unknown command: /${cmd}. Type /help for commands.`, theme.error);
         break;
     }
   }, [identity, kidHex, activeConvId, configDir, store, addSystemMessage, exit]);
@@ -420,13 +421,13 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       <Box paddingX={1} flexDirection="row" justifyContent="space-between">
         <Box width={14}>
           <Text>
-            <Text color={connected ? 'green' : 'red'}>{connected ? '\u25cf' : '\u25cb'}</Text>
+            <Text color={connected ? theme.success : theme.error}>{connected ? '\u25cf' : '\u25cb'}</Text>
             {' '}
             <Text dimColor>{connected ? 'online' : 'offline'}</Text>
           </Text>
         </Box>
         <Box flexGrow={1} justifyContent="center">
-          <Text bold color="cyan">
+          <Text bold color={theme.brand}>
             {activeConvName || 'qntm messenger'}
           </Text>
         </Box>

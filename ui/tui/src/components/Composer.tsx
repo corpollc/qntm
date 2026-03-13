@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import { matchCommands } from '../lib/commands.js';
+import { theme } from '../lib/theme.js';
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -47,8 +48,8 @@ export default function Composer({ onSend, onCommand, activeConversation }: Comp
           </Text>
         </Box>
       )}
-      <Box borderStyle="single" borderColor="green" paddingX={1}>
-        <Text color="green">{'\u276f'} </Text>
+      <Box borderStyle="single" borderColor={theme.borderComposer} paddingX={1}>
+        <Text color={theme.borderComposer}>{'\u276f'} </Text>
         <TextInput
           value={value}
           onChange={setValue}
