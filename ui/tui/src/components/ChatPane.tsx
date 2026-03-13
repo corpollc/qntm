@@ -89,7 +89,7 @@ export default function ChatPane({
 
       {scrollOffset > 0 && (
         <Box justifyContent="center">
-          <Text dimColor>{'\u2191'} j/k to scroll | End to jump to latest</Text>
+          <Text dimColor>Esc to scroll {'\u00b7'} j/k navigate</Text>
         </Box>
       )}
     </Box>

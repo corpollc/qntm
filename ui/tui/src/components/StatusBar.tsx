@@ -7,7 +7,7 @@ interface StatusBarProps {
   activeConversation: string | null;
   activeConversationName: string;
   connected: boolean;
-  mode: string;
+  scrollOffset: number;
 }
 
 export default function StatusBar({
@@ -16,7 +16,7 @@ export default function StatusBar({
   activeConversation,
   activeConversationName,
   connected,
-  mode,
+  scrollOffset,
 }: StatusBarProps) {
   const kidShort = kid ? kid.slice(0, 12) + '..' : 'none';
   const connSymbol = connected ? '\u25cf' : '\u25cb';
@@ -44,7 +44,11 @@ export default function StatusBar({
           <Text dimColor>no conversation</Text>
         )}
       </Text>
-      <Text dimColor>{mode}</Text>
+      {scrollOffset > 0 ? (
+        <Text dimColor>{'\u2195'} scrolling</Text>
+      ) : (
+        <Text dimColor> </Text>
+      )}
     </Box>
   );
 }

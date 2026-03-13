@@ -54,10 +54,9 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   // UI state
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [composerFocus, setComposerFocus] = useState(true);
+  const [scrollMode, setScrollMode] = useState(false);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
   const [connected, setConnected] = useState(false);
-  const [mode, setMode] = useState('chat');
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -150,7 +149,28 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       return;
     }
 
-    // Number keys to switch conversations
+    // Escape enters transient scroll mode
+    if (key.escape) {
+      setScrollMode((m) => !m);
+      return;
+    }
+
+    // In scroll mode: j/k scroll, anything else exits scroll mode
+    if (scrollMode) {
+      if (input === 'j') {
+        setScrollOffset((o) => Math.max(0, o - 1));
+        return;
+      }
+      if (input === 'k') {
+        setScrollOffset((o) => o + 1);
+        return;
+      }
+      // Any other key exits scroll mode (keystroke passes through to composer)
+      setScrollMode(false);
+      return;
+    }
+
+    // Number keys to switch conversations (only outside scroll mode)
     if (/^[1-9]$/.test(input)) {
       const idx = parseInt(input, 10) - 1;
       if (idx < conversations.length) {
@@ -160,23 +180,6 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         setScrollOffset(0);
         setUnread((prev) => ({ ...prev, [conv.id]: 0 }));
       }
-      return;
-    }
-
-    // j/k for scrolling (when not typing — only if input is just j or k)
-    if (input === 'j' && !composerFocus) {
-      setScrollOffset((o) => Math.max(0, o - 1));
-      return;
-    }
-    if (input === 'k' && !composerFocus) {
-      setScrollOffset((o) => o + 1);
-      return;
-    }
-
-    // Escape toggles between scrolling mode and composer
-    if (key.escape) {
-      setComposerFocus((f) => !f);
-      setMode((m) => (m === 'chat' ? 'scroll' : 'chat'));
       return;
     }
   });
@@ -209,7 +212,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       case 'h':
         addSystemMessage('Commands: /invite [name], /join <token>, /name <name>, /nick <name>', 'cyan');
         addSystemMessage('  /alias <kid> <name>, /identity, /conversations, /approve <reqid>, /quit', 'cyan');
-        addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll mode, j/k=scroll', 'cyan');
+        addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k=up/down', 'cyan');
         break;
 
       case 'identity':
@@ -422,14 +425,13 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         activeConversation={activeConvId}
         activeConversationName={activeConvName}
         connected={connected}
-        mode={mode}
+        scrollOffset={scrollOffset}
       />
 
       {/* Composer */}
       <Composer
         onSend={handleSend}
         onCommand={handleCommand}
-        focus={composerFocus}
         activeConversation={activeConvId}
       />
     </Box>

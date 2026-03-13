@@ -5,11 +5,10 @@ import TextInput from 'ink-text-input';
 interface ComposerProps {
   onSend: (text: string) => void;
   onCommand: (cmd: string, args: string) => void;
-  focus: boolean;
   activeConversation: string | null;
 }
 
-export default function Composer({ onSend, onCommand, focus, activeConversation }: ComposerProps) {
+export default function Composer({ onSend, onCommand, activeConversation }: ComposerProps) {
   const [value, setValue] = useState('');
 
   const handleSubmit = (text: string) => {
@@ -40,7 +39,7 @@ export default function Composer({ onSend, onCommand, focus, activeConversation 
         value={value}
         onChange={setValue}
         onSubmit={handleSubmit}
-        focus={focus}
+        focus={true}
         placeholder={activeConversation ? 'Type a message or /help' : '/help for commands'}
       />
     </Box>
