@@ -65,9 +65,8 @@ export default function ChatPane({
 
           if (isGateType(msg.bodyType)) {
             return (
-              <Box key={msg.id} flexDirection="column" marginTop={1}>
-                <Text dimColor>{time} </Text>
-                <Text dimColor>{senderLabel}: </Text>
+              <Box key={msg.id} flexDirection="column">
+                <Text dimColor>{time} {senderLabel}</Text>
                 <GateCard bodyType={msg.bodyType} text={msg.text} direction={msg.direction} />
               </Box>
             );

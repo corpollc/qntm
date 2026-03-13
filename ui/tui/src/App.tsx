@@ -19,6 +19,7 @@ import Composer from './components/Composer.js';
 
 import type { Identity } from '@corpollc/qntm';
 import { keyIDToString } from '@corpollc/qntm';
+import { COMMANDS, findCommand } from './lib/commands.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     if (!id) {
       id = store.generateIdentity();
       addSystemMessage('Generated new identity.', 'green');
+      addSystemMessage('Your identity is ready. Use /invite to start a conversation.', 'gray');
     }
     setIdentity(id);
     setKidHex(bytesToHex(id.keyID));
@@ -209,11 +211,25 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         break;
 
       case 'help':
-      case 'h':
-        addSystemMessage('Commands: /invite [name], /join <token>, /name <name>, /nick <name>', 'cyan');
-        addSystemMessage('  /alias <kid> <name>, /identity, /conversations, /approve <reqid>, /quit', 'cyan');
-        addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k=up/down', 'cyan');
+      case 'h': {
+        const helpArg = args.trim().toLowerCase().replace(/^\//, '');
+        if (helpArg) {
+          const def = findCommand(helpArg);
+          if (def) {
+            addSystemMessage(def.description, 'cyan');
+          } else {
+            addSystemMessage(`Unknown command "${helpArg}". Type /help to see available commands.`, 'red');
+          }
+        } else {
+          for (const c of COMMANDS) {
+            if (c.name === 'help' || c.name === 'quit') continue;
+            addSystemMessage(`  ${c.usage} — ${c.brief}`, 'cyan');
+          }
+          addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k', 'cyan');
+          addSystemMessage('Type /help <command> for details.', 'gray');
+        }
         break;
+      }
 
       case 'identity':
       case 'id':
@@ -237,6 +253,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         setScrollOffset(0);
         addSystemMessage('Invite created! Share this token:', 'green');
         addSystemMessage(token, 'white');
+        addSystemMessage('Share this token with your contact. They can join with: /join <token>', 'gray');
         break;
       }
 
@@ -257,6 +274,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           setMessages(store.loadHistory(convId));
           setScrollOffset(0);
           addSystemMessage(`Joined conversation ${convId.slice(0, 12)}`, 'green');
+          addSystemMessage("You're now in the conversation. Type a message to say hello!", 'gray');
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           addSystemMessage(`Failed to join: ${msg}`, 'red');
@@ -294,6 +312,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         store.setName(name);
         setDisplayName(name);
         addSystemMessage(`Display name set to: ${name}`, 'green');
+        addSystemMessage('Your display name is now visible to others in conversations.', 'gray');
         break;
       }
 

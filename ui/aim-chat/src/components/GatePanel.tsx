@@ -1,4 +1,5 @@
 import type { GateRecipe } from '../types'
+import { Tooltip } from './Tooltip'
 
 export interface GatePanelProps {
   gateStatus: { promoted: boolean; orgId: string; threshold: number; signerCount: number }
@@ -79,12 +80,12 @@ export function GatePanel({
       {/* Promote section — shown when not promoted */}
       {!gateStatus.promoted && (
       <section className="panel">
-        <h2>Enable API Gateway</h2>
+        <h2>Enable API Gateway <Tooltip text="Enables group-approved API calls. All conversation participants become signers." /></h2>
         <div className="gate-hint">
           All conversation participants become signers.
           Set how many must approve each API call.
         </div>
-        <label className="label" htmlFor="gate-promote-threshold">Required approvals</label>
+        <label className="label" htmlFor="gate-promote-threshold">Required approvals <Tooltip text="The number of participants who must approve before an API call executes." /></label>
         <input
           id="gate-promote-threshold"
           className="input"
@@ -109,7 +110,7 @@ export function GatePanel({
       <section className="panel">
         <h2>API Request</h2>
 
-        <label className="label" htmlFor="gate-recipe">API Template</label>
+        <label className="label" htmlFor="gate-recipe">API Template <Tooltip text="Pre-configured API call patterns with endpoints, methods, and parameters." /></label>
         <select
           id="gate-recipe"
           className="input"
@@ -232,7 +233,7 @@ export function GatePanel({
       {/* Secrets — only when promoted */}
       {gateStatus.promoted && (
       <section className="panel">
-        <h2>API Keys</h2>
+        <h2>API Keys <Tooltip text="Credentials stored securely and used automatically when API calls execute." /></h2>
         <label className="label" htmlFor="secret-service">Service</label>
         <input
           id="secret-service"

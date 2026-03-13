@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
+import type { RefObject } from 'react'
 import type { IdentityInfo } from '../types'
+import { Tooltip } from './Tooltip'
 
 export interface InvitePanelProps {
   inviteName: string
@@ -11,6 +13,7 @@ export interface InvitePanelProps {
   isWorking: boolean
   onCreateInvite: () => void
   onAcceptInvite: () => void
+  newConversationInputRef?: RefObject<HTMLInputElement | null>
 }
 
 export function InvitePanel({
@@ -23,6 +26,7 @@ export function InvitePanel({
   isWorking,
   onCreateInvite,
   onAcceptInvite,
+  newConversationInputRef,
 }: InvitePanelProps) {
   const [createName, setCreateName] = useState(inviteName)
   const [joinName, setJoinName] = useState('')
@@ -69,6 +73,7 @@ export function InvitePanel({
       <div className="invite-section">
         <h2>New Conversation</h2>
         <input
+          ref={newConversationInputRef}
           className="input"
           placeholder="Name your conversation"
           value={createName}
@@ -85,7 +90,7 @@ export function InvitePanel({
 
         {createdInviteToken && (
           <div className="invite-success">
-            <span className="invite-success-label">Conversation created! Share this invite token:</span>
+            <span className="invite-success-label">Conversation created! Share this invite token: <Tooltip text="Share this token with someone to let them join your conversation." /></span>
             <div className="invite-token-row">
               <textarea
                 className="token-box"

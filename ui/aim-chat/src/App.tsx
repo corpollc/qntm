@@ -4,8 +4,11 @@ import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo,
 import { shortId } from './utils'
 import { SettingsPage } from './components/SettingsPage'
 import { Sidebar } from './components/Sidebar'
+import type { SidebarHandle } from './components/Sidebar'
 import { ChatPane } from './components/ChatPane'
 import { GatePanel } from './components/GatePanel'
+import { ShortcutsHelp } from './components/ShortcutsHelp'
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -62,8 +65,11 @@ export default function App() {
   const [error, setError] = useState('')
   const [isWorking, setIsWorking] = useState(false)
 
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
+
   const pollingRef = useRef(false)
   const messageTailRef = useRef<HTMLDivElement | null>(null)
+  const sidebarRef = useRef<SidebarHandle>(null)
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) || null,
@@ -172,6 +178,34 @@ export default function App() {
     keys.sort((left, right) => left.localeCompare(right))
     return keys
   }, [messages])
+
+  const shortcutActions = useMemo(() => ({
+    focusConversationFilter() {
+      if (showSettings) setShowSettings(false)
+      sidebarRef.current?.focusConversationFilter()
+    },
+    toggleSettings() {
+      setShowSettings((prev) => !prev)
+    },
+    closeOverlay() {
+      if (showShortcutsHelp) { setShowShortcutsHelp(false); return }
+      if (showGatePanel) { setShowGatePanel(false); return }
+      if (showSettings) { setShowSettings(false); return }
+    },
+    focusNewConversation() {
+      if (showSettings) setShowSettings(false)
+      sidebarRef.current?.focusNewConversation()
+    },
+    switchConversation(index: number) {
+      const conv = visibleConversations[index]
+      if (conv) selectConversation(conv.id)
+    },
+    toggleShortcutsHelp() {
+      setShowShortcutsHelp((prev) => !prev)
+    },
+  }), [showSettings, showShortcutsHelp, showGatePanel, visibleConversations, selectConversation])
+
+  useKeyboardShortcuts(shortcutActions)
 
   useEffect(() => {
     void initializeProfiles()

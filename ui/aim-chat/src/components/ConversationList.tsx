@@ -1,3 +1,4 @@
+import type { RefObject } from 'react'
 import type { Conversation } from '../types'
 import { shortId } from '../utils'
 
@@ -13,6 +14,7 @@ export interface ConversationListProps {
   toggleHideConversation: (convId: string) => void
   conversationFilter: string
   setConversationFilter: (value: string) => void
+  filterInputRef?: RefObject<HTMLInputElement | null>
 }
 
 export function ConversationList({
@@ -24,10 +26,12 @@ export function ConversationList({
   toggleHideConversation,
   conversationFilter,
   setConversationFilter,
+  filterInputRef,
 }: ConversationListProps) {
   return (
     <>
       <input
+        ref={filterInputRef}
         className="input conversation-filter"
         placeholder="Filter conversations..."
         value={conversationFilter}

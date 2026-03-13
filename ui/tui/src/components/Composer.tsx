@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
+import { matchCommands } from '../lib/commands.js';
 
 interface ComposerProps {
   onSend: (text: string) => void;
@@ -32,16 +33,30 @@ export default function Composer({ onSend, onCommand, activeConversation }: Comp
     setValue('');
   };
 
+  // Compute slash-command hints when the input starts with "/"
+  const showHints = value.startsWith('/') && !value.includes(' ');
+  const hintPrefix = value.slice(1).toLowerCase();
+  const hints = showHints ? matchCommands(hintPrefix) : [];
+
   return (
-    <Box borderStyle="single" borderColor="green" paddingX={1}>
-      <Text color="green">{'\u276f'} </Text>
-      <TextInput
-        value={value}
-        onChange={setValue}
-        onSubmit={handleSubmit}
-        focus={true}
-        placeholder={activeConversation ? 'Type a message or /help' : '/help for commands'}
-      />
+    <Box flexDirection="column">
+      {showHints && hints.length > 0 && (
+        <Box paddingX={2}>
+          <Text dimColor>
+            {hints.map((c) => `${c.usage} — ${c.brief}`).join('  |  ')}
+          </Text>
+        </Box>
+      )}
+      <Box borderStyle="single" borderColor="green" paddingX={1}>
+        <Text color="green">{'\u276f'} </Text>
+        <TextInput
+          value={value}
+          onChange={setValue}
+          onSubmit={handleSubmit}
+          focus={true}
+          placeholder={activeConversation ? 'Type a message or /help' : '/help for commands'}
+        />
+      </Box>
     </Box>
   );
 }

@@ -1,6 +1,7 @@
 import { FormEvent } from 'react'
 import type { IdentityInfo, Profile } from '../types'
 import { shortId } from '../utils'
+import { Tooltip } from './Tooltip'
 
 export interface IdentityPanelProps {
   profiles: Profile[]
@@ -59,6 +60,7 @@ export function IdentityPanel({
 
       <button className="button full" type="button" onClick={() => void onGenerateIdentity()} disabled={isWorking || !activeProfileId}>
         Generate keypair
+        <Tooltip text="Creates a new cryptographic key pair for signing and encrypting messages." />
       </button>
 
       <div className="meta">
@@ -66,11 +68,14 @@ export function IdentityPanel({
           <strong>Status:</strong> {identity.exists ? 'Ready' : 'No keypair yet'}
         </div>
         <div>
-          <strong>Key ID:</strong> {identity.keyId ? shortId(identity.keyId) : '-'}
+          <strong>Key ID:</strong>
+          <Tooltip text="Your unique identifier on the network. Share your public key to let others verify your messages." />
+          {' '}{identity.keyId ? shortId(identity.keyId) : '-'}
         </div>
         {identity.publicKey && (
           <div className="pubkey-row">
             <strong>Public key:</strong>
+            <Tooltip text="Your public key can be safely shared. Others use it to encrypt messages only you can read." />
             <code className="pubkey-value">{shortId(identity.publicKey)}</code>
             <button
               className="button-small"

@@ -1,4 +1,4 @@
-import { FormEvent, useState, useCallback } from 'react'
+import { FormEvent, useState, useCallback, useRef, useImperativeHandle, forwardRef } from 'react'
 import type { Conversation, IdentityInfo, Profile } from '../types'
 import { IdentityPanel } from './IdentityPanel'
 import { InvitePanel } from './InvitePanel'
@@ -42,7 +42,12 @@ export interface SidebarProps {
 
 type PanelId = 'identity' | 'invites' | 'conversations' | 'contacts'
 
-export function Sidebar({
+export interface SidebarHandle {
+  focusConversationFilter: () => void
+  focusNewConversation: () => void
+}
+
+export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar({
   profiles,
   activeProfileId,
   identity,
@@ -74,11 +79,25 @@ export function Sidebar({
   onContactDraftChange,
   onSaveContact,
   setStatus,
-}: SidebarProps) {
+}: SidebarProps, ref: React.Ref<SidebarHandle>) {
   const [expandedPanels, setExpandedPanels] = useState<Set<PanelId>>(
     () => new Set(['conversations']),
   )
   const [conversationFilter, setConversationFilter] = useState('')
+  const filterInputRef = useRef<HTMLInputElement>(null)
+  const newConversationInputRef = useRef<HTMLInputElement>(null)
+
+  useImperativeHandle(ref, () => ({
+    focusConversationFilter() {
+      setExpandedPanels((prev) => new Set([...prev, 'conversations']))
+      // Wait for DOM update before focusing
+      requestAnimationFrame(() => filterInputRef.current?.focus())
+    },
+    focusNewConversation() {
+      setExpandedPanels((prev) => new Set([...prev, 'invites']))
+      requestAnimationFrame(() => newConversationInputRef.current?.focus())
+    },
+  }))
 
   const toggle = useCallback((id: PanelId) => {
     setExpandedPanels((prev) => {
@@ -134,6 +153,7 @@ export function Sidebar({
           isWorking={isWorking}
           onCreateInvite={onCreateInvite}
           onAcceptInvite={onAcceptInvite}
+          newConversationInputRef={newConversationInputRef}
         />
       </CollapsiblePanel>
 
@@ -170,6 +190,7 @@ export function Sidebar({
           toggleHideConversation={toggleHideConversation}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
+          filterInputRef={filterInputRef}
         />
       </CollapsiblePanel>
 
@@ -189,4 +210,4 @@ export function Sidebar({
       </CollapsiblePanel>
     </aside>
   )
-}
+})

@@ -43,6 +43,32 @@ function tryParse(text: string): Record<string, unknown> | null {
   }
 }
 
+function statusColor(code: number): string {
+  if (code >= 500) return 'red';
+  if (code >= 400) return 'yellow';
+  if (code >= 300) return 'cyan';
+  return 'green';
+}
+
+function formatBody(body: string, maxLen: number = 300): string {
+  const parsed = tryParse(body);
+  if (parsed) {
+    const pretty = JSON.stringify(parsed, null, 2);
+    return pretty.length > maxLen ? pretty.slice(0, maxLen) + '\u2026' : pretty;
+  }
+  return body.length > maxLen ? body.slice(0, maxLen) + '\u2026' : body;
+}
+
+/** Label + value on one line */
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <Text>
+      <Text bold>{label}: </Text>
+      <Text dimColor>{value}</Text>
+    </Text>
+  );
+}
+
 interface GateCardProps {
   bodyType: string;
   text: string;
@@ -57,84 +83,170 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
 
   const type = (parsed.type as string) || bodyType;
 
+  // ── gate.request ──────────────────────────────────────────────────
   if (type === 'gate.request') {
     const req = parsed as unknown as GateRequestBody;
     const isExpired = req.expires_at ? new Date(req.expires_at) < new Date() : false;
     const hasArgs = req.arguments && Object.keys(req.arguments).length > 0;
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-        <Text bold color="yellow">
-          {'\u26a1'} API Request {req.recipe_name ? `[${req.recipe_name}]` : ''}
-        </Text>
-        <Text>
-          <Text bold>{req.verb}</Text> {req.target_url || req.target_endpoint}
-        </Text>
-        <Text dimColor>service: {req.target_service} | org: {req.org_id.slice(0, 8)}</Text>
-        <Text dimColor>req: {req.request_id.slice(0, 12)}</Text>
-        {hasArgs && (
+      <Box flexDirection="column" marginTop={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="double"
+          borderColor="yellow"
+          paddingX={1}
+        >
+          {/* Header */}
+          <Text bold color="yellow">
+            {'\u26a1'} API Request {req.recipe_name ? `[${req.recipe_name}]` : ''}
+          </Text>
+
+          {/* Metadata */}
           <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>Arguments:</Text>
-            {Object.entries(req.arguments!).map(([k, v]) => (
-              <Text key={k}>  {k}: {v}</Text>
-            ))}
+            <Text>
+              <Text bold color="yellow">{req.verb}</Text>
+              <Text> {req.target_url || req.target_endpoint}</Text>
+            </Text>
+            <Field label="Service" value={req.target_service} />
+            <Field label="Org" value={req.org_id.slice(0, 8)} />
+            <Field label="Request" value={req.request_id.slice(0, 12)} />
+            <Field label="Signer" value={req.signer_kid.slice(0, 12)} />
           </Box>
-        )}
-        {isExpired ? (
-          <Text color="red">EXPIRED</Text>
-        ) : (
-          <Text dimColor>expires: {req.expires_at}</Text>
-        )}
-        {direction === 'incoming' && !isExpired && (
-          <Text color="green">Press 'a' to approve | /approve {req.request_id.slice(0, 8)}</Text>
-        )}
+
+          {/* Arguments */}
+          {hasArgs && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>Arguments:</Text>
+              {Object.entries(req.arguments!).map(([k, v]) => (
+                <Text key={k}>
+                  <Text>  </Text>
+                  <Text bold>{k}</Text>
+                  <Text dimColor> = {v}</Text>
+                </Text>
+              ))}
+            </Box>
+          )}
+
+          {/* Expiry / actions */}
+          <Box marginTop={1} flexDirection="column">
+            {isExpired ? (
+              <Text bold color="red">{'\u2718'} EXPIRED</Text>
+            ) : (
+              <Field label="Expires" value={req.expires_at} />
+            )}
+            {direction === 'incoming' && !isExpired && (
+              <Text color="green" bold>
+                {'\u279c'} Press &apos;a&apos; to approve | /approve {req.request_id.slice(0, 8)}
+              </Text>
+            )}
+          </Box>
+        </Box>
       </Box>
     );
   }
 
+  // ── gate.approval ─────────────────────────────────────────────────
   if (type === 'gate.approval') {
     const appr = parsed as unknown as GateApprovalBody;
     return (
-      <Box borderStyle="round" borderColor="green" paddingX={1}>
-        <Text color="green">
-          {'\u2714'} Approved request {appr.request_id.slice(0, 12)} by {appr.signer_kid.slice(0, 12)}
-        </Text>
+      <Box flexDirection="column" marginTop={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="double"
+          borderColor="green"
+          paddingX={1}
+        >
+          <Text bold color="green">
+            {'\u2714'} APPROVED
+          </Text>
+          <Text dimColor>{'\u2500'.repeat(30)}</Text>
+          <Field label="Request" value={appr.request_id.slice(0, 12)} />
+          <Field label="Signer" value={appr.signer_kid.slice(0, 12)} />
+        </Box>
       </Box>
     );
   }
 
+  // ── gate.executed ─────────────────────────────────────────────────
   if (type === 'gate.executed') {
     const exec = parsed as unknown as GateExecutedBody;
-    const color = exec.execution_status_code < 400 ? 'green' : 'red';
+    const color = statusColor(exec.execution_status_code);
     return (
-      <Box borderStyle="round" borderColor={color} paddingX={1}>
-        <Text color={color}>
-          {'\u25b6'} Request executed {exec.request_id.slice(0, 12)} - HTTP {exec.execution_status_code}
-        </Text>
+      <Box flexDirection="column" marginTop={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="double"
+          borderColor="blue"
+          paddingX={1}
+        >
+          <Text bold color="blue">
+            {'\u25b6'} Executed
+          </Text>
+          <Field label="Request" value={exec.request_id.slice(0, 12)} />
+          <Text>
+            <Text bold>HTTP: </Text>
+            <Text bold color={color}>{String(exec.execution_status_code)}</Text>
+          </Text>
+        </Box>
       </Box>
     );
   }
 
+  // ── gate.result ───────────────────────────────────────────────────
   if (type === 'gate.result') {
     const res = parsed as unknown as GateResultBody;
-    const color = res.status_code < 400 ? 'green' : 'red';
+    const color = statusColor(res.status_code);
+    const borderColor = res.status_code < 400 ? 'green' : 'red';
+
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
-        <Text color={color}>
-          {'\u2709'} API Response {res.request_id.slice(0, 12)} - HTTP {res.status_code}
-        </Text>
-        {res.content_type && <Text dimColor>content-type: {res.content_type}</Text>}
-        {res.body && (
-          <Text>{res.body.length > 500 ? res.body.slice(0, 500) + '...' : res.body}</Text>
-        )}
+      <Box flexDirection="column" marginTop={1}>
+        <Box
+          flexDirection="column"
+          borderStyle="double"
+          borderColor={borderColor}
+          paddingX={1}
+        >
+          {/* Header */}
+          <Text bold color={borderColor}>
+            {'\u2709'} API Response
+          </Text>
+
+          {/* Metadata */}
+          <Box flexDirection="column" marginTop={1}>
+            <Field label="Request" value={res.request_id.slice(0, 12)} />
+            <Text>
+              <Text bold>Status: </Text>
+              <Text bold color={color}>{String(res.status_code)}</Text>
+            </Text>
+            {res.content_type && (
+              <Field label="Content-Type" value={res.content_type} />
+            )}
+          </Box>
+
+          {/* Response body in nested box */}
+          {res.body && (
+            <Box
+              flexDirection="column"
+              borderStyle="single"
+              borderColor="gray"
+              paddingX={1}
+              marginTop={1}
+            >
+              <Text dimColor>{formatBody(res.body)}</Text>
+            </Box>
+          )}
+        </Box>
       </Box>
     );
   }
 
-  // Unknown gate type — render raw
+  // ── Unknown gate type ─────────────────────────────────────────────
   return (
-    <Box borderStyle="round" borderColor="gray" paddingX={1}>
-      <Text dimColor>[{type}] {text.slice(0, 200)}</Text>
+    <Box flexDirection="column" marginTop={1}>
+      <Box borderStyle="double" borderColor="gray" paddingX={1}>
+        <Text dimColor>[{type}] {text.slice(0, 200)}</Text>
+      </Box>
     </Box>
   );
 }
