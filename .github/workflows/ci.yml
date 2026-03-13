@@ -59,6 +59,9 @@ jobs:
         # npm install avoids Rollup's optional dependency bug on Linux runners.
         run: npm install
 
+      - name: Install Rollup Linux binary
+        run: npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
+
       - name: Run tests
         run: npm test
 
