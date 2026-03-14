@@ -146,6 +146,8 @@ export interface StoredGateMessage {
   seq: number;
   type: string;
   request_id?: string;
+  /** Authenticated sender KID from the qntm envelope (base64url).
+   *  This is the ONLY trusted signer identity — not from JSON body fields. */
   signer_kid?: string;
   signature?: string;
   /** Full message body for gate.request (needed for signature verification) */
