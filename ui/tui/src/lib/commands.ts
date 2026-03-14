@@ -77,6 +77,27 @@ export const COMMANDS: CommandDef[] = [
       'Searches through messages in the active conversation. Shows up to 10 matching messages with surrounding context. /grep is an alias.',
   },
   {
+    name: 'notifications',
+    usage: '/notifications [on|off]',
+    brief: 'Toggle notification bell',
+    description:
+      'Toggles the terminal bell for new messages. Usage: /notifications [on|off]. Without arguments, toggles the current state.',
+  },
+  {
+    name: 'mute',
+    usage: '/mute',
+    brief: 'Disable notification bell',
+    description:
+      'Disables the terminal bell for new messages. Alias for /notifications off.',
+  },
+  {
+    name: 'unmute',
+    usage: '/unmute',
+    brief: 'Enable notification bell',
+    description:
+      'Enables the terminal bell for new messages. Alias for /notifications on.',
+  },
+  {
     name: 'help',
     aliases: ['h'],
     usage: '/help [command]',

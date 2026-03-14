@@ -59,6 +59,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const [scrollMode, setScrollMode] = useState(false);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
   const [connected, setConnected] = useState(false);
+  const [bellEnabled, setBellEnabled] = useState(true);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -105,17 +106,17 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
 
     const doPoll = async () => {
       const convs = store.loadConversations();
-      let gotMessages = false;
+      let bellNeeded = false;
 
       for (const conv of convs) {
         try {
           const result = await pollConversation(store, dropbox, identity, conv.id);
           if (result.messages.length > 0) {
-            gotMessages = true;
             if (conv.id === activeConvId) {
               setMessages(store.loadHistory(conv.id));
               setScrollOffset(0);
             } else {
+              bellNeeded = true;
               setUnread((prev) => ({
                 ...prev,
                 [conv.id]: (prev[conv.id] || 0) + result.messages.length,
@@ -126,6 +127,11 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         } catch {
           setConnected(false);
         }
+      }
+
+      // Ring terminal bell for messages in non-active conversations
+      if (bellNeeded && bellEnabled) {
+        process.stdout.write('\x07');
       }
     };
 
@@ -141,7 +147,22 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         pollTimerRef.current = null;
       }
     };
-  }, [identity, activeConvId, store, dropbox]);
+  }, [identity, activeConvId, store, dropbox, bellEnabled]);
+
+  // ── Terminal title with unread count ─────────────────────────────
+
+  const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
+
+  useEffect(() => {
+    process.stdout.write(`\x1b]0;qntm messenger${totalUnread > 0 ? ` (${totalUnread})` : ''}\x07`);
+  }, [totalUnread]);
+
+  // Reset terminal title on unmount
+  useEffect(() => {
+    return () => {
+      process.stdout.write('\x1b]0;\x07');
+    };
+  }, []);
 
   // ── Keyboard navigation ────────────────────────────────────────────
 
@@ -399,6 +420,34 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         }
         break;
       }
+
+      case 'notifications': {
+        const arg = args.trim().toLowerCase();
+        if (arg === 'on') {
+          setBellEnabled(true);
+          addSystemMessage('Notifications: on', theme.success);
+        } else if (arg === 'off') {
+          setBellEnabled(false);
+          addSystemMessage('Notifications: off', theme.warning);
+        } else {
+          setBellEnabled((prev) => {
+            const next = !prev;
+            addSystemMessage(`Notifications: ${next ? 'on' : 'off'}`, next ? theme.success : theme.warning);
+            return next;
+          });
+        }
+        break;
+      }
+
+      case 'mute':
+        setBellEnabled(false);
+        addSystemMessage('Notifications: off', theme.warning);
+        break;
+
+      case 'unmute':
+        setBellEnabled(true);
+        addSystemMessage('Notifications: on', theme.success);
+        break;
 
       case 'approve': {
         const reqId = args.trim();

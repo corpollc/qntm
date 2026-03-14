@@ -8,6 +8,7 @@ import type { SidebarHandle } from './components/Sidebar'
 import { ChatPane } from './components/ChatPane'
 import { GatePanel } from './components/GatePanel'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
+import { HelpPanel } from './components/HelpPanel'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useToast } from './hooks/useToast'
 import { ToastContainer } from './components/ToastContainer'
@@ -49,6 +50,7 @@ export default function App() {
   const [secretHeaderTemplate, setSecretHeaderTemplate] = useState('Bearer {value}')
 
   const [showSettings, setShowSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [showGatePanel, setShowGatePanel] = useState(false)
   const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(() => {
     try {
@@ -195,6 +197,7 @@ export default function App() {
     closeOverlay() {
       if (showShortcutsHelp) { setShowShortcutsHelp(false); return }
       if (showGatePanel) { setShowGatePanel(false); return }
+      if (showHelp) { setShowHelp(false); return }
       if (showSettings) { setShowSettings(false); return }
     },
     focusNewConversation() {
@@ -208,7 +211,7 @@ export default function App() {
     toggleShortcutsHelp() {
       setShowShortcutsHelp((prev) => !prev)
     },
-  }), [showSettings, showShortcutsHelp, showGatePanel, visibleConversations, selectConversation])
+  }), [showSettings, showShortcutsHelp, showGatePanel, showHelp, visibleConversations, selectConversation])
 
   useKeyboardShortcuts(shortcutActions)
 
@@ -795,16 +798,26 @@ export default function App() {
             <button
               className="settings-toggle"
               type="button"
-              onClick={() => setShowSettings(!showSettings)}
+              onClick={() => { setShowHelp(false); setShowSettings(!showSettings) }}
               aria-label={showSettings ? 'Close settings' : 'Open settings'}
             >
               {showSettings ? 'Back to conversations' : 'Settings'}
+            </button>
+            <button
+              className="settings-toggle"
+              type="button"
+              onClick={() => { setShowSettings(false); setShowHelp(!showHelp) }}
+              aria-label={showHelp ? 'Close help' : 'Open help'}
+            >
+              {showHelp ? 'Back to conversations' : 'Help'}
             </button>
           </span>
         </header>
 
         <div className="aim-body">
-          {showSettings ? (
+          {showHelp ? (
+            <HelpPanel />
+          ) : showSettings ? (
             <SettingsPage
               dropboxUrl={dropboxUrl}
               defaultDropboxUrl={defaultDropboxUrl}
@@ -815,6 +828,7 @@ export default function App() {
               error={error}
               setStatus={setStatus}
               setError={setError}
+              onShowShortcuts={() => setShowShortcutsHelp(true)}
             />
           ) : (
           <>

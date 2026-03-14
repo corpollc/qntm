@@ -232,6 +232,8 @@ body {
 .title-detail {
   font-size: var(--text-xs);
   opacity: 0.9;
+  display: flex;
+  gap: 6px;
 }
 
 .aim-body {
@@ -752,14 +754,63 @@ body {
   grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   max-width: 600px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-section-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+  line-height: var(--line-tight);
+}
+
+.settings-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
 }
 
 .settings-description {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+
+.settings-about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.settings-about-link {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.settings-about-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--brand-primary);
+}
+
+.settings-about-link-button:hover {
+  color: var(--brand-dark);
+  text-decoration: underline;
 }
 
 @media (max-width: 980px) {
@@ -1759,6 +1810,97 @@ body {
   }
 }
 
+/* Help page */
+
+.help-page {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 680px;
+  overflow-y: auto;
+}
+
+.help-page .panel-heading {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--brand-dark);
+}
+
+.help-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.help-section h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.help-bullets {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-normal);
+}
+
+.glossary-list {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.glossary-item {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.glossary-term {
+  font-weight: 700;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  flex-shrink: 0;
+  min-width: 140px;
+}
+
+.glossary-definition {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-normal);
+}
+
+.help-links {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-normal);
+}
+
+.help-links code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: var(--text-xs);
+  background: var(--surface-3);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
 @keyframes toastFadeOut {
   from {
     opacity: 1;
@@ -1768,4 +1910,99 @@ body {
     opacity: 0;
     transform: translateX(100%);
   }
+}
+
+/* Gate walkthrough */
+
+.gate-walkthrough {
+  padding: 10px;
+  background: var(--brand-light);
+  border: 1px solid var(--brand-primary);
+  border-radius: 6px;
+}
+
+.gate-walkthrough-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gate-walkthrough-indicator {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.gate-walkthrough-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+
+.gate-walkthrough-dot.active {
+  background: var(--brand-primary);
+}
+
+.gate-walkthrough-dot.done {
+  background: var(--success);
+}
+
+.gate-walkthrough-number {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.gate-walkthrough-heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--brand-dark);
+  line-height: var(--line-tight);
+}
+
+.gate-walkthrough-desc {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.gate-walkthrough-nav {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.gate-walkthrough-btn {
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+}
+
+.gate-walkthrough-btn-next {
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+  border-color: var(--brand-primary);
+}
+
+.gate-walkthrough-btn-next:hover:enabled {
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
+}
+
+.gate-walkthrough-dismiss {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.gate-walkthrough-dismiss input {
+  margin: 0;
 }

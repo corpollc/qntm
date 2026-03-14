@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { GateRecipe } from '../types'
 import { CollapsiblePanel } from './CollapsiblePanel'
+import { GateWalkthrough, isDismissed } from './GateWalkthrough'
 import { Spinner } from './Spinner'
 import { Tooltip } from './Tooltip'
 
@@ -60,6 +61,7 @@ export function GatePanel({
 }: GatePanelProps) {
   const [apiRequestExpanded, setApiRequestExpanded] = useState(true)
   const [apiKeysExpanded, setApiKeysExpanded] = useState(false)
+  const [walkthroughDone, setWalkthroughDone] = useState(isDismissed)
 
   // Determine whether all required params are filled
   const requiredParamsFilled = useMemo(() => {
@@ -86,6 +88,10 @@ export function GatePanel({
             </div>
           </div>
         </section>
+
+        {!walkthroughDone && (
+          <GateWalkthrough onDone={() => setWalkthroughDone(true)} />
+        )}
 
         <section className="panel">
           <h2>Enable API Gateway <Tooltip text="Enables group-approved API calls. All conversation participants become signers." /></h2>
