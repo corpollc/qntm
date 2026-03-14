@@ -5,7 +5,7 @@ import {
 import type { GateSignable, ApprovalSignable } from '@corpollc/qntm';
 import type { StoredGateMessage, ThresholdRuleState, GateRequestMessage } from './types.js';
 
-export type RequestStatus = 'pending' | 'approved' | 'executed' | 'expired';
+export type RequestStatus = 'pending' | 'approved' | 'executed' | 'expired' | 'invalidated';
 
 export interface ScanResult {
   request_id: string;
@@ -35,10 +35,12 @@ export function scanRequestApprovals(
   rules: ThresholdRuleState[],
   now: number = Date.now(),
 ): ScanResult | null {
-  // Find the original request
+  // Find the original request (stored message + parsed body)
   let requestMsg: GateRequestMessage | undefined;
+  let storedReq: StoredGateMessage | undefined;
   for (const msg of messages) {
     if (msg.type === 'gate.request' && msg.request_id === requestId && msg.body) {
+      storedReq = msg;
       requestMsg = JSON.parse(msg.body) as GateRequestMessage;
       break;
     }
@@ -46,12 +48,23 @@ export function scanRequestApprovals(
 
   if (!requestMsg) return null;
 
-  // Check for execution marker
+  // Check for terminal state markers (executed / invalidated)
   for (const msg of messages) {
-    if (msg.type === 'gate.executed' && msg.request_id === requestId) {
+    if (msg.request_id !== requestId) continue;
+    if (msg.type === 'gate.executed') {
       return {
         request_id: requestId,
         status: 'executed',
+        threshold: 0,
+        approvals: 0,
+        votes: {},
+        request: requestMsg,
+      };
+    }
+    if (msg.type === 'gate.invalidated') {
+      return {
+        request_id: requestId,
+        status: 'invalidated',
         threshold: 0,
         approvals: 0,
         votes: {},
@@ -73,32 +86,31 @@ export function scanRequestApprovals(
     };
   }
 
-  // Look up threshold rule
-  const rule = lookupThreshold(
-    rules, requestMsg.target_service, requestMsg.target_endpoint, requestMsg.verb,
+  // Determine threshold: prefer frozen required_approvals, fall back to rules
+  const threshold = requestMsg.required_approvals ?? (
+    lookupThreshold(rules, requestMsg.target_service, requestMsg.target_endpoint, requestMsg.verb)?.m ?? 1
   );
-  const threshold = rule?.m ?? 1;
+
+  // Determine eligible signers roster (null = legacy mode, accept any non-gateway signer)
+  const hasRoster = Array.isArray(requestMsg.eligible_signer_kids) && requestMsg.eligible_signer_kids.length > 0;
+  const eligibleSigners = hasRoster ? new Set(requestMsg.eligible_signer_kids) : null;
 
   // Build votes: last-vote-wins per signer, gateway excluded
   const votes: Record<string, 'approve' | 'disapprove'> = {};
 
-  // The request submitter's signature counts as first approval
-  if (requestMsg.signer_kid && requestMsg.signer_kid !== gatewayKid) {
-    // Verify submitter signature
-    const signable = buildSignable(requestMsg);
-    try {
-      // We trust conversation message integrity from the envelope signature,
-      // but we still record the vote for threshold counting
-      votes[requestMsg.signer_kid] = 'approve';
-    } catch {
-      // Invalid signature — don't count
-    }
+  // The request submitter's authenticated signature counts as first approval.
+  // Use the stored message's signer_kid (envelope-authenticated), not the JSON body field.
+  const submitterKid = storedReq?.signer_kid;
+  if (submitterKid && submitterKid !== gatewayKid && (eligibleSigners === null || eligibleSigners.has(submitterKid))) {
+    votes[submitterKid] = 'approve';
   }
 
   // Process approvals and disapprovals in conversation order
   for (const msg of messages) {
     if (msg.request_id !== requestId) continue;
     if (!msg.signer_kid || msg.signer_kid === gatewayKid) continue;
+    // Skip signers not in the eligible roster (when roster is present)
+    if (eligibleSigners !== null && !eligibleSigners.has(msg.signer_kid)) continue;
 
     if (msg.type === 'gate.approval') {
       votes[msg.signer_kid] = 'approve';
