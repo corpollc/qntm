@@ -56,6 +56,12 @@ export interface ConversationState {
   gate_promoted: boolean;
   /** Threshold rules from gate.promote */
   rules: ThresholdRuleState[];
+  /** Conversation participants: kid (base64url) → public_key (base64url).
+   *  Derived from conversation membership. Gateway excluded. */
+  participants: Record<string, string>;
+  /** Minimum approval threshold floor set by gate.promote.
+   *  Requests with required_approvals below this are rejected. */
+  promotion_floor: number;
 }
 
 /** Threshold rule stored in DO state */
@@ -72,6 +78,12 @@ export interface GatePromoteMessage {
   conv_id: string;
   gateway_kid: string;
   rules: ThresholdRuleState[];
+  /** Current conversation participants (kid → base64url public key).
+   *  Gateway participant is excluded. */
+  participants: Record<string, string>;
+  /** Conversation-wide minimum approval floor. No gate.request may have
+   *  required_approvals below this value. */
+  floor: number;
 }
 
 /** Parsed gate.request message body */
