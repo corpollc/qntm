@@ -70,7 +70,7 @@ export function SettingsPage({
       <section className="panel">
         <h2>Backup &amp; Restore</h2>
         <p className="settings-description">
-          All data (identities, conversations, keys, messages) is stored in your browser.
+          All data (profiles, conversations, keys, messages) is stored in your browser.
           Export a backup to save it, or import to restore.
         </p>
         <div className="row">

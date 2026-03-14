@@ -103,6 +103,7 @@ export function IdentityPanel({
             <button
               className="button-small"
               type="button"
+              aria-label="Copy to clipboard"
               onClick={() => {
                 navigator.clipboard.writeText(identity.publicKey)
                 setStatus('Public key copied to clipboard')

@@ -30,8 +30,15 @@ export function CollapsiblePanel({
 
   return (
     <section className={panelClass}>
-      <div className="collapsible-header" onClick={onToggle}>
-        <span className="collapsible-chevron">{expanded ? '\u25BE' : '\u25B8'}</span>
+      <div
+        className="collapsible-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+      >
+        <span className="collapsible-chevron" aria-hidden="true">{expanded ? '\u25BE' : '\u25B8'}</span>
         <h2>{title}</h2>
         {trailing && <span className="collapsible-trailing">{trailing}</span>}
       </div>

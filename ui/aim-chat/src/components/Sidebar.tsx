@@ -118,9 +118,9 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
     : visibleConversations
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Sidebar navigation">
       <CollapsiblePanel
-        title="Identities"
+        title="Profile"
         expanded={expandedPanels.has('identity')}
         onToggle={() => toggle('identity')}
       >

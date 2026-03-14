@@ -67,7 +67,7 @@ export function ChatPane({
 }: ChatPaneProps) {
   const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
   return (
-    <main className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
+    <main id="chat-pane" className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
       <div className="chat-header">
         <div className="chat-header-left">
           <div>
@@ -82,6 +82,8 @@ export function ChatPane({
             className={`gate-toggle ${showGatePanel ? 'active' : ''}`}
             type="button"
             onClick={() => setShowGatePanel(!showGatePanel)}
+            aria-label={showGatePanel ? 'Close API Gateway panel' : 'Open API Gateway panel'}
+            aria-expanded={showGatePanel}
           >
             {showGatePanel ? 'API Gateway \u2715' : 'API Gateway \u25B6'}
           </button>
@@ -106,7 +108,7 @@ export function ChatPane({
             <div className="skeleton skeleton-message" />
           </>
         )}
-        {!showWelcome && messages.length === 0 && !isLoadingMessages && <div className="empty">No messages yet.</div>}
+        {!showWelcome && messages.length === 0 && !isLoadingMessages && <div className="empty">No messages yet. Type a message below to start the conversation.</div>}
         {messages.map((message, index) => {
           const prev = index > 0 ? messages[index - 1] : null
           const showDate = !prev || !isSameDay(prev.createdAt, message.createdAt)
@@ -154,7 +156,7 @@ export function ChatPane({
         onCheckMessages={onCheckMessages}
       />
 
-      <footer className="status-bar">
+      <footer className="status-bar" aria-live="polite">
         <span>
           Profile: <strong>{activeProfile?.name || '-'}</strong>
         </span>

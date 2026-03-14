@@ -100,6 +100,7 @@ export function InvitePanel({
               <button
                 className="button invite-copy-btn"
                 type="button"
+                aria-label="Copy to clipboard"
                 onClick={() => void handleCopy()}
               >
                 {copied ? 'Copied!' : 'Copy'}

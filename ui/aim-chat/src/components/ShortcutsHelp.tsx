@@ -22,11 +22,11 @@ export interface ShortcutsHelpProps {
 
 export function ShortcutsHelp({ onClose }: ShortcutsHelpProps) {
   return (
-    <div className="shortcuts-backdrop" onClick={onClose}>
+    <div className="shortcuts-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="shortcuts-dialog-title">
       <div className="shortcuts-card" onClick={(e) => e.stopPropagation()}>
         <div className="shortcuts-header">
-          <h2>Keyboard Shortcuts</h2>
-          <button className="shortcuts-close" type="button" onClick={onClose}>
+          <h2 id="shortcuts-dialog-title">Keyboard Shortcuts</h2>
+          <button className="shortcuts-close" type="button" onClick={onClose} aria-label="Close keyboard shortcuts">
             &times;
           </button>
         </div>

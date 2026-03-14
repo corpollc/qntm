@@ -544,11 +544,11 @@ export default function App() {
     try {
       const response = await api.generateIdentity(activeProfileId)
       setIdentity(response.identity)
-      setStatus('Identity generated')
-      addToast('Identity generated', 'success')
+      setStatus('Keypair generated')
+      addToast('Keypair generated', 'success')
       setError('')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate identity'
+      const msg = err instanceof Error ? err.message : 'Failed to generate keypair'
       setError(msg)
       addToast(msg, 'error')
     } finally {
@@ -563,7 +563,7 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Chat'} Room`
+      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Room`
       const response = await api.createInvite(activeProfileId, name)
 
       setCreatedInviteToken(response.inviteToken)
@@ -597,7 +597,7 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Chat'} Link`
+      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Link`
       const response = await api.acceptInvite(activeProfileId, token, name)
       setConversations(response.conversations)
 
@@ -785,6 +785,9 @@ export default function App() {
 
   return (
     <div className="aim-desktop">
+      <a className="sr-only skip-link" href="#chat-pane">
+        Skip to main content
+      </a>
       <div className="aim-window">
         <header className="title-bar">
           <span className="title-text">qntm Messenger</span>
@@ -793,8 +796,9 @@ export default function App() {
               className="settings-toggle"
               type="button"
               onClick={() => setShowSettings(!showSettings)}
+              aria-label={showSettings ? 'Close settings' : 'Open settings'}
             >
-              {showSettings ? 'Back to chat' : 'Settings'}
+              {showSettings ? 'Back to conversations' : 'Settings'}
             </button>
           </span>
         </header>

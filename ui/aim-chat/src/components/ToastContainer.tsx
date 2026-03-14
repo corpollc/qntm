@@ -9,7 +9,7 @@ export function ToastContainer({ toasts, removeToast }: ToastContainerProps) {
   if (toasts.length === 0) return null
 
   return (
-    <div className="toast-container">
+    <div className="toast-container" aria-live="assertive">
       {toasts.map((toast) => (
         <div
           key={toast.id}
@@ -21,7 +21,7 @@ export function ToastContainer({ toasts, removeToast }: ToastContainerProps) {
             className="toast-close"
             type="button"
             onClick={() => removeToast(toast.id)}
-            aria-label="Dismiss"
+            aria-label="Dismiss notification"
           >
             &#x2715;
           </button>

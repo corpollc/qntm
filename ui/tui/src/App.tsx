@@ -19,7 +19,7 @@ import Composer from './components/Composer.js';
 
 import type { Identity } from '@corpollc/qntm';
 import { keyIDToString } from '@corpollc/qntm';
-import { COMMANDS, findCommand } from './lib/commands.js';
+import { COMMANDS, findCommand, matchCommands } from './lib/commands.js';
 import { theme } from './lib/theme.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -79,8 +79,8 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     let id = store.loadIdentity();
     if (!id) {
       id = store.generateIdentity();
-      addSystemMessage('Generated new identity.', theme.success);
-      addSystemMessage('Your identity is ready. Use /invite to start a conversation.', theme.textDim);
+      addSystemMessage('Generated new keypair.', theme.success);
+      addSystemMessage('Your keypair is ready. Use /invite to start a conversation.', theme.textDim);
     }
     setIdentity(id);
     setKidHex(bytesToHex(id.keyID));
@@ -94,7 +94,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       setMessages(store.loadHistory(first.id));
     }
 
-    addSystemMessage(`Identity loaded: ${bytesToHex(id.keyID)}`, theme.info);
+    addSystemMessage(`Keypair loaded: ${bytesToHex(id.keyID)}`, theme.info);
     addSystemMessage('Type /help for available commands.', theme.textDim);
   }, [store, addSystemMessage]);
 
@@ -300,6 +300,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           store.saveConversations(convs);
           setConversations([...convs]);
           addSystemMessage(`Conversation renamed to: ${name}`, theme.success);
+          addSystemMessage('Conversation renamed. Other participants will see the old name.', theme.textDim);
         }
         break;
       }
@@ -338,6 +339,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         }
         store.setContact(matchedKid, aliasName);
         addSystemMessage(`Alias set: ${matchedKid.slice(0, 12)} -> ${aliasName}`, theme.success);
+        addSystemMessage('Contact alias saved. Their messages will now show this name.', theme.textDim);
         break;
       }
 
@@ -412,9 +414,25 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         addSystemMessage('No active conversation. Use /invite or /join first.', theme.warning);
         break;
 
-      default:
-        addSystemMessage(`Unknown command: /${cmd}. Type /help for commands.`, theme.error);
+      default: {
+        const suggestions = matchCommands(cmd.toLowerCase());
+        if (suggestions.length > 0) {
+          const names = suggestions.map((c) => `/${c.name}`).join(', ');
+          addSystemMessage(`Unknown command: /${cmd}. Did you mean ${names}?`, theme.error);
+        } else {
+          // Try substring match as fallback
+          const lower = cmd.toLowerCase();
+          const substringMatch = COMMANDS.find(
+            (c) => c.name.includes(lower) || (c.aliases?.some((a) => a.includes(lower)) ?? false),
+          );
+          if (substringMatch) {
+            addSystemMessage(`Unknown command: /${cmd}. Did you mean /${substringMatch.name}?`, theme.error);
+          } else {
+            addSystemMessage(`Unknown command: /${cmd}. Type /help for commands.`, theme.error);
+          }
+        }
         break;
+      }
     }
   }, [identity, kidHex, activeConvId, configDir, store, addSystemMessage, exit]);
 

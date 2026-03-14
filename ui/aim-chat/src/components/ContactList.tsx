@@ -21,7 +21,7 @@ export function ContactList({
     <>
       <div className="contact-list">
         {visibleContactKeys.length === 0 && (
-          <div className="empty">No contacts yet</div>
+          <div className="empty">Contacts appear automatically when you receive messages from others.</div>
         )}
         {visibleContactKeys.map((key) => (
           <div className="contact-row" key={key}>

@@ -52,7 +52,7 @@ export default function ChatPane({
         )}
 
         {visible.length === 0 && (
-          <Text dimColor>No messages yet. Type a message below to start chatting.</Text>
+          <Text dimColor>No messages yet. Type a message below to start the conversation.</Text>
         )}
 
         {visible.map((msg) => {
