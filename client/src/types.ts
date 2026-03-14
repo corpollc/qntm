@@ -248,6 +248,8 @@ export interface GateSignable {
   target_url: string;
   expires_at_unix: number;
   payload_hash: Uint8Array;
+  eligible_signer_kids: string[];
+  required_approvals: number;
 }
 
 export interface ApprovalSignable {

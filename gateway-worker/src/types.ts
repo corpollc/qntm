@@ -89,6 +89,10 @@ export interface GateRequestMessage {
   payload?: unknown;
   recipe_name?: string;
   arguments?: Record<string, string>;
+  /** Frozen signer roster: kid strings of eligible signers at request-creation time */
+  eligible_signer_kids: string[];
+  /** Frozen threshold: minimum approvals required (must be >= promotion floor) */
+  required_approvals: number;
 }
 
 /** Parsed gate.approval message body */

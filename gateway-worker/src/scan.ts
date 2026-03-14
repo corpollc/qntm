@@ -157,5 +157,7 @@ function buildSignable(req: GateRequestMessage): GateSignable {
     target_url: req.target_url,
     expires_at_unix: Math.floor(new Date(req.expires_at).getTime() / 1000),
     payload_hash: payloadHash,
+    eligible_signer_kids: req.eligible_signer_kids,
+    required_approvals: req.required_approvals,
   };
 }
