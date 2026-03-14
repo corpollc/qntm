@@ -17,7 +17,7 @@ import (
 // Signature binding includes routing and expiry to prevent target substitution
 // or extending execution window after signing.
 type GateSignable struct {
-	OrgID          string `cbor:"org_id"`
+	ConvID         string `cbor:"conv_id"`
 	RequestID      string `cbor:"request_id"`
 	Verb           string `cbor:"verb"`
 	TargetEndpoint string `cbor:"target_endpoint"`
@@ -29,7 +29,7 @@ type GateSignable struct {
 
 // ApprovalSignable is the CBOR structure signed for approvals.
 type ApprovalSignable struct {
-	OrgID       string `cbor:"org_id"`
+	ConvID      string `cbor:"conv_id"`
 	RequestID   string `cbor:"request_id"`
 	RequestHash []byte `cbor:"request_hash"`
 }

@@ -14,7 +14,7 @@ import (
 // using in-memory storage. For production, this would read from qntm group conversations.
 type MemoryConversationStore struct {
 	mu       sync.RWMutex
-	messages map[string][]GateConversationMessage // org_id -> messages
+	messages map[string][]GateConversationMessage // conv_id -> messages
 }
 
 // NewMemoryConversationStore creates a new in-memory conversation store.
@@ -153,7 +153,7 @@ func (s *Server) handleOrgs(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(path, "/", 4)
 
 	if len(parts) < 1 || parts[0] == "" {
-		writeErr(w, http.StatusNotFound, "org_id required")
+		writeErr(w, http.StatusNotFound, "conv_id required")
 		return
 	}
 
@@ -164,20 +164,20 @@ func (s *Server) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// POST /v1/orgs/{org_id}/messages — post a gate message to the conversation
+	// POST /v1/orgs/{conv_id}/messages — post a gate message to the conversation
 	if len(parts) >= 2 && parts[1] == "messages" {
 		s.handlePostMessage(w, r, orgID)
 		return
 	}
 
-	// POST /v1/orgs/{org_id}/execute/{request_id} — scan conversation and execute if threshold met
+	// POST /v1/orgs/{conv_id}/execute/{request_id} — scan conversation and execute if threshold met
 	if len(parts) >= 3 && parts[1] == "execute" {
 		requestID := parts[2]
 		s.handleExecute(w, r, orgID, requestID)
 		return
 	}
 
-	// GET /v1/orgs/{org_id}/scan/{request_id} — scan conversation without executing
+	// GET /v1/orgs/{conv_id}/scan/{request_id} — scan conversation without executing
 	if len(parts) >= 3 && parts[1] == "scan" {
 		requestID := parts[2]
 		s.handleScan(w, r, orgID, requestID)
@@ -246,7 +246,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	msg.OrgID = orgID
+	msg.ConvID = orgID
 
 	// Validate the message
 	if msg.Type == GateMessageRequest {
@@ -258,7 +258,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 		}
 		payloadHash := ComputePayloadHash(msg.Payload)
 		signable := &GateSignable{
-			OrgID: orgID, RequestID: msg.RequestID, Verb: msg.Verb,
+			ConvID: orgID, RequestID: msg.RequestID, Verb: msg.Verb,
 			TargetEndpoint: msg.TargetEndpoint, TargetService: msg.TargetService,
 			TargetURL: msg.TargetURL, ExpiresAtUnix: msg.ExpiresAt.Unix(),
 			PayloadHash: payloadHash,
@@ -313,7 +313,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 
 		payloadHash := ComputePayloadHash(reqMsg.Payload)
 		signable := &GateSignable{
-			OrgID: orgID, RequestID: msg.RequestID, Verb: reqMsg.Verb,
+			ConvID: orgID, RequestID: msg.RequestID, Verb: reqMsg.Verb,
 			TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
 			TargetURL: reqMsg.TargetURL, ExpiresAtUnix: reqMsg.ExpiresAt.Unix(),
 			PayloadHash: payloadHash,
@@ -324,7 +324,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, orgID
 			return
 		}
 		approvalSignable := &ApprovalSignable{
-			OrgID: orgID, RequestID: msg.RequestID, RequestHash: reqHash,
+			ConvID: orgID, RequestID: msg.RequestID, RequestHash: reqHash,
 		}
 		sigBytes, err := decodeBase64Flex(msg.Signature)
 		if err != nil {

@@ -417,7 +417,7 @@ export async function gateRunRequest(
   const payloadHash = computePayloadHash(requestBody ?? null)
 
   const signable = {
-    org_id: orgId,
+    conv_id: conversationId,
     request_id: requestId,
     verb: recipe.verb,
     target_endpoint: resolved.endpoint,
@@ -433,7 +433,7 @@ export async function gateRunRequest(
   const gateMsg = {
     type: 'gate.request',
     recipe_name: recipeName,
-    org_id: orgId,
+    conv_id: conversationId,
     request_id: requestId,
     verb: recipe.verb,
     target_endpoint: resolved.endpoint,
@@ -475,7 +475,7 @@ export async function gateApproveRequest(
   const payloadHash = computePayloadHash(reqMsg.payload ?? null)
 
   const signable = {
-    org_id: reqMsg.org_id as string,
+    conv_id: reqMsg.conv_id as string,
     request_id: requestId,
     verb: reqMsg.verb as string,
     target_endpoint: reqMsg.target_endpoint as string,
@@ -487,7 +487,7 @@ export async function gateApproveRequest(
 
   const reqHash = hashRequest(signable)
   const approvalSignable = {
-    org_id: reqMsg.org_id as string,
+    conv_id: reqMsg.conv_id as string,
     request_id: requestId,
     request_hash: reqHash,
   }
@@ -497,7 +497,7 @@ export async function gateApproveRequest(
 
   const approvalBody = {
     type: 'gate.approval',
-    org_id: reqMsg.org_id,
+    conv_id: reqMsg.conv_id,
     request_id: requestId,
     signer_kid: kidHex,
     signature: sigB64,
@@ -509,31 +509,18 @@ export async function gateApproveRequest(
 
 export async function gatePromoteRequest(
   profileId: string, profileName: string, conversationId: string,
-  orgId: string, threshold: number
+  gatewayKid: string, threshold: number
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
-  const conv = store.findConversation(profileId, conversationId)
-  const signers: Array<{ kid: string; public_key: string }> = []
-  const seen = new Set<string>()
-
-  for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
-    const kid = bytesToHex(keyIDFromPublicKey(publicKey))
-    if (!seen.has(kid)) {
-      signers.push({ kid, public_key: publicKeyToString(publicKey) })
-      seen.add(kid)
-    }
-  }
-
-  const n = signers.length
   const promotePayload = {
     type: 'gate.promote',
-    org_id: orgId,
-    signers,
-    rules: [{ service: '*', endpoint: '*', verb: '*', m: threshold, n }],
+    conv_id: conversationId,
+    gateway_kid: gatewayKid,
+    rules: [{ service: '*', endpoint: '*', verb: '*', m: threshold }],
   }
 
   const bodyText = JSON.stringify(promotePayload)

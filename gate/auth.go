@@ -34,7 +34,7 @@ const (
 // The gate server works with these — it never stores them. The conversation IS the state.
 type GateConversationMessage struct {
 	Type      GateMessageType `json:"type"`
-	OrgID     string          `json:"org_id"`
+	ConvID     string          `json:"conv_id"`
 	RequestID string          `json:"request_id"`
 
 	// Request fields (only for GateMessageRequest)
@@ -76,7 +76,7 @@ type ExecutionResult struct {
 
 // ExecuteResult is the full result returned from ExecuteIfReady.
 type ExecuteResult struct {
-	OrgID           string           `json:"org_id"`
+	ConvID           string           `json:"conv_id"`
 	RequestID       string           `json:"request_id"`
 	Verb            string           `json:"verb"`
 	TargetEndpoint  string           `json:"target_endpoint"`
@@ -93,13 +93,13 @@ type ExecuteResult struct {
 // Implementations read from local storage, dropbox, or any message source.
 type ConversationReader interface {
 	// ReadGateMessages returns all gate messages for the given org's conversation.
-	ReadGateMessages(orgID string) ([]GateConversationMessage, error)
+	ReadGateMessages(convID string) ([]GateConversationMessage, error)
 }
 
 // ConversationWriter posts gate messages to a qntm conversation.
 type ConversationWriter interface {
 	// WriteGateMessage posts a gate message to the org's conversation.
-	WriteGateMessage(orgID string, msg *GateConversationMessage) error
+	WriteGateMessage(convID string, msg *GateConversationMessage) error
 }
 
 // ScanConversation scans conversation messages for a specific request,
@@ -152,7 +152,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 	// Build signable for verification
 	payloadHash := ComputePayloadHash(reqMsg.Payload)
 	signable := &GateSignable{
-		OrgID: reqMsg.OrgID, RequestID: requestID, Verb: reqMsg.Verb,
+		ConvID: reqMsg.ConvID, RequestID: requestID, Verb: reqMsg.Verb,
 		TargetEndpoint: reqMsg.TargetEndpoint, TargetService: reqMsg.TargetService,
 		TargetURL: reqMsg.TargetURL, ExpiresAtUnix: reqMsg.ExpiresAt.Unix(),
 		PayloadHash: payloadHash,
@@ -178,7 +178,7 @@ func ScanConversation(messages []GateConversationMessage, requestID string, org 
 		return nil, fmt.Errorf("hash request: %w", err)
 	}
 	approvalSignable := &ApprovalSignable{
-		OrgID: reqMsg.OrgID, RequestID: requestID, RequestHash: reqHash,
+		ConvID: reqMsg.ConvID, RequestID: requestID, RequestHash: reqHash,
 	}
 
 	for i := range messages {
@@ -234,7 +234,7 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 
 	reqMsg := scan.Request
 	result := &ExecuteResult{
-		OrgID:          reqMsg.OrgID,
+		ConvID:          reqMsg.ConvID,
 		RequestID:      requestID,
 		Verb:           reqMsg.Verb,
 		TargetEndpoint: reqMsg.TargetEndpoint,
@@ -328,7 +328,7 @@ func ExecuteIfReady(requestID string, org *Org, reader ConversationReader, orgSt
 	if writer, ok := reader.(ConversationWriter); ok {
 		if err := writer.WriteGateMessage(org.ID, &GateConversationMessage{
 			Type:                GateMessageExecuted,
-			OrgID:               org.ID,
+			ConvID:               org.ID,
 			RequestID:           requestID,
 			ExecutedAt:          time.Now().UTC(),
 			ExecutionStatusCode: resp.StatusCode,

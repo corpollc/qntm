@@ -183,7 +183,7 @@ describe('browser qntm adapter', () => {
     )
 
     const request = JSON.parse(requestMessage.text) as {
-      org_id: string
+      conv_id: string
       request_id: string
       verb: string
       target_endpoint: string
@@ -200,7 +200,7 @@ describe('browser qntm adapter', () => {
 
     const requestPayloadHash = computePayloadHash(request.payload ?? null)
     const requestSignable = {
-      org_id: request.org_id,
+      conv_id: request.conv_id,
       request_id: request.request_id,
       verb: request.verb,
       target_endpoint: request.target_endpoint,
@@ -218,13 +218,13 @@ describe('browser qntm adapter', () => {
       request.request_id,
     )
     const approval = JSON.parse(approvalMessage.text) as {
-      org_id: string
+      conv_id: string
       request_id: string
       signature: string
     }
     const requestHash = hashRequest(requestSignable)
     const approvalSignable = {
-      org_id: approval.org_id,
+      conv_id: approval.conv_id,
       request_id: approval.request_id,
       request_hash: requestHash,
     }

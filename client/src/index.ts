@@ -34,7 +34,9 @@ export {
   signRequest, verifyRequest, signApproval, verifyApproval,
   hashRequest, computePayloadHash,
   GateClient, GateError, lookupThreshold,
-  GateMessagePromote, GateMessageConfig, GateMessageSecret, GateMessageResult,
+  GateMessageRequest, GateMessageApproval, GateMessageDisapproval,
+  GateMessageExecuted, GateMessagePromote, GateMessageConfig,
+  GateMessageSecret, GateMessageResult,
   resolveRecipe,
 } from './gate/index.js';
 

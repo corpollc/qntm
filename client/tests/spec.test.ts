@@ -811,7 +811,7 @@ describe('Gate Signing', () => {
   it('sign and verify request', () => {
     const id = generateIdentity();
     const signable: GateSignable = {
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       verb: 'POST',
       target_endpoint: '/api/deploy',
@@ -829,7 +829,7 @@ describe('Gate Signing', () => {
   it('rejects tampered request', () => {
     const id = generateIdentity();
     const signable: GateSignable = {
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       verb: 'POST',
       target_endpoint: '/api/deploy',
@@ -847,7 +847,7 @@ describe('Gate Signing', () => {
   it('sign and verify approval', () => {
     const id = generateIdentity();
     const requestSignable: GateSignable = {
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       verb: 'POST',
       target_endpoint: '/api/deploy',
@@ -860,7 +860,7 @@ describe('Gate Signing', () => {
     const reqHash = hashRequest(requestSignable);
 
     const approval: ApprovalSignable = {
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       request_hash: reqHash,
     };

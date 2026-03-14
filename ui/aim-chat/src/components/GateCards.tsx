@@ -50,7 +50,7 @@ export function GateRequestCard({
         </div>
         <div><strong>Endpoint:</strong> {parsed.target_endpoint}</div>
         <div><strong>Service:</strong> {parsed.target_service}</div>
-        <div><strong>Org:</strong> {parsed.org_id}</div>
+        <div><strong>Conv:</strong> {parsed.conv_id}</div>
         <div><strong>Requester:</strong> {shortId(parsed.signer_kid)}</div>
         <div><strong>Expires:</strong> {new Date(parsed.expires_at).toLocaleTimeString()}</div>
         {hasArgs && (
@@ -181,7 +181,7 @@ export function GatePromoteCard({ message }: { message: ChatMessage }) {
     <div className="gate-card gate-promote">
       <div className="gate-card-header">API Gateway Enabled</div>
       <div className="gate-card-body">
-        <div><strong>Org:</strong> {parsed.org_id}</div>
+        <div><strong>Conv:</strong> {parsed.conv_id}</div>
         <div><strong>Threshold:</strong> {threshold}-of-{n}</div>
         <div><strong>Signers:</strong> {parsed.signers?.length ?? 0}</div>
         {parsed.signers?.map((s) => (

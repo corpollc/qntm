@@ -46,14 +46,14 @@ func TestSQLiteStore_PersistenceAcrossRestart(t *testing.T) {
 	payload := json.RawMessage(`{"hello":"world"}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{
-		OrgID: "persist-org", RequestID: "r1", Verb: "POST",
+		ConvID: "persist-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: "https://example.com/echo", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload),
 	}
 	reqSig, _ := SignRequest(signer.priv, signable)
 	if err := store.WriteGateMessage("persist-org", &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: "persist-org", RequestID: "r1",
+		Type: GateMessageRequest, ConvID: "persist-org", RequestID: "r1",
 		Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: "https://example.com/echo", Payload: payload,
 		SignerKID: signer.kid, Signature: base64.RawURLEncoding.EncodeToString(reqSig),
@@ -161,7 +161,7 @@ func TestGateServer_WithSQLiteStore_RetainsExecutedState(t *testing.T) {
 	expiresAt := time.Now().Add(1 * time.Hour)
 	targetURL := echoSrv.URL + "/once"
 	signable := &GateSignable{
-		OrgID: "sqlite-org", RequestID: "req-1", Verb: "POST",
+		ConvID: "sqlite-org", RequestID: "req-1", Verb: "POST",
 		TargetEndpoint: "/once", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload),
@@ -245,17 +245,17 @@ func runStoreParityScenario(t *testing.T, orgStore OrganizationStore, msgStore M
 	payload := json.RawMessage(`{"amount":7}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{
-		OrgID: orgID, RequestID: "req-1", Verb: "POST",
+		ConvID: orgID, RequestID: "req-1", Verb: "POST",
 		TargetEndpoint: "/op", TargetService: "svc",
 		TargetURL: "https://example.com/op", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload),
 	}
 	reqSig, _ := SignRequest(privA, signable)
 	reqHash, _ := HashRequest(signable)
-	appSig, _ := SignApproval(privB, &ApprovalSignable{OrgID: orgID, RequestID: "req-1", RequestHash: reqHash})
+	appSig, _ := SignApproval(privB, &ApprovalSignable{ConvID: orgID, RequestID: "req-1", RequestHash: reqHash})
 
 	if err := msgStore.WriteGateMessage(orgID, &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: orgID, RequestID: "req-1",
+		Type: GateMessageRequest, ConvID: orgID, RequestID: "req-1",
 		Verb: "POST", TargetEndpoint: "/op", TargetService: "svc",
 		TargetURL: "https://example.com/op", Payload: payload,
 		SignerKID: kidA, Signature: base64.RawURLEncoding.EncodeToString(reqSig),
@@ -264,7 +264,7 @@ func runStoreParityScenario(t *testing.T, orgStore OrganizationStore, msgStore M
 		t.Fatal(err)
 	}
 	if err := msgStore.WriteGateMessage(orgID, &GateConversationMessage{
-		Type: GateMessageApproval, OrgID: orgID, RequestID: "req-1",
+		Type: GateMessageApproval, ConvID: orgID, RequestID: "req-1",
 		SignerKID: kidB, Signature: base64.RawURLEncoding.EncodeToString(appSig),
 	}); err != nil {
 		t.Fatal(err)

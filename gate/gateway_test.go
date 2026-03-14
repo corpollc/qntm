@@ -79,12 +79,9 @@ func TestHandlePromote(t *testing.T) {
 	}
 	gw.RegisterConversation(conv)
 
-	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID: "test-org",
-		Signers: []Signer{
-			{KID: signer.kid, PublicKey: signer.pub, Label: "alice"},
-		},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 3},
 		},
@@ -107,8 +104,8 @@ func TestHandlePromote(t *testing.T) {
 	if state == nil {
 		t.Fatal("conversation state not created")
 	}
-	if state.OrgID != "test-org" {
-		t.Fatalf("unexpected org_id: %s", state.OrgID)
+	if state.ConvID != "test-org" {
+		t.Fatalf("unexpected conv_id: %s", state.ConvID)
 	}
 	if len(state.Rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(state.Rules))
@@ -116,11 +113,8 @@ func TestHandlePromote(t *testing.T) {
 	if state.Rules[0].M != 2 {
 		t.Fatalf("expected threshold M=2, got %d", state.Rules[0].M)
 	}
-	if len(state.Participants) != 1 {
-		t.Fatalf("expected 1 participant, got %d", len(state.Participants))
-	}
-	if _, ok := state.Participants[signer.kid]; !ok {
-		t.Fatal("signer not found in participants")
+	if state.GatewayKID != "gw-kid-test" {
+		t.Fatalf("expected gateway_kid=gw-kid-test, got %s", state.GatewayKID)
 	}
 }
 
@@ -134,9 +128,9 @@ func TestHandleConfig(t *testing.T) {
 
 	// First promote the conversation
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -229,7 +223,7 @@ func TestStoreGateMessage(t *testing.T) {
 
 	msg := &GateConversationMessage{
 		Type:           GateMessageRequest,
-		OrgID:          orgID,
+		ConvID:          orgID,
 		RequestID:      "req-1",
 		Verb:           "GET",
 		TargetEndpoint: "/api/data",
@@ -260,7 +254,8 @@ func TestBuildOrg(t *testing.T) {
 
 	signer := newTestSigner()
 	state := &ConversationGateState{
-		OrgID: "org-1",
+		ConvID:     "org-1",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 3},
 		},
@@ -332,12 +327,10 @@ func TestHandleSecret(t *testing.T) {
 	senderPub, senderPriv, _ := ed25519.GenerateKey(nil)
 	senderKID := KIDFromPublicKey(senderPub)
 
-	// Promote the conversation with the sender as a participant
+	// Promote the conversation
 	promotePayload := PromotePayload{
-		OrgID: "test-org",
-		Signers: []Signer{
-			{KID: senderKID, PublicKey: senderPub, Label: "sender"},
-		},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1},
 		},
@@ -346,6 +339,10 @@ func TestHandleSecret(t *testing.T) {
 	_ = gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
+
+	// Add sender as participant (participants derived from conversation membership)
+	state := gw.GetConversationState(convID)
+	state.Participants[senderKID] = senderPub
 
 	// Build and send a gate.secret message
 	payload, err := BuildSecretPayload(
@@ -369,7 +366,7 @@ func TestHandleSecret(t *testing.T) {
 	}
 
 	// Verify the credential was stored
-	state := gw.GetConversationState(convID)
+	state = gw.GetConversationState(convID)
 	if state == nil {
 		t.Fatal("conversation state is nil after secret")
 	}
@@ -433,14 +430,18 @@ func TestHandleSecretWithVault(t *testing.T) {
 	senderKID := KIDFromPublicKey(senderPub)
 
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: senderKID, PublicKey: senderPub}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
+
+	// Add sender as participant
+	state := gw.GetConversationState(convID)
+	state.Participants[senderKID] = senderPub
 
 	payload, _ := BuildSecretPayload(
 		senderPriv, senderPub,
@@ -458,7 +459,7 @@ func TestHandleSecretWithVault(t *testing.T) {
 		t.Fatalf("handleSecret with vault: %v", err)
 	}
 
-	state := gw.GetConversationState(convID)
+	state = gw.GetConversationState(convID)
 	cred := state.Credentials["github"]
 	if cred == nil {
 		t.Fatal("credential not stored")

@@ -125,8 +125,8 @@ export default function App() {
         try {
           const body = JSON.parse(msg.text)
           promoted = true
-          orgId = body.org_id || ''
-          signerCount = body.signers?.length || 0
+          orgId = body.conv_id || ''
+          signerCount = 0 // signers derived from conversation membership
           if (body.rules?.[0]?.m) threshold = body.rules[0].m
         } catch { /* ignore */ }
       }

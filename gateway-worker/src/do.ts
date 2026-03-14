@@ -1,0 +1,418 @@
+import {
+  generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
+  DropboxClient, deserializeEnvelope, decryptMessage,
+  createMessage, serializeEnvelope, defaultTTL,
+} from '@corpollc/qntm';
+import type { Conversation, ConversationKeys, Identity } from '@corpollc/qntm';
+import type {
+  Env, ConversationState, PromoteRequest, PromoteResponse,
+  GatePromoteMessage, GateRequestMessage, GateApprovalMessage,
+  GateDisapprovalMessage, GateSecretMessage, GateConfigMessage,
+  StoredGateMessage, VaultEntry,
+} from './types.js';
+import { scanRequestApprovals, findExecutableRequests } from './scan.js';
+import { processSecret, importVaultKey, isExpired } from './vault.js';
+import { executeRequest } from './execute.js';
+
+/**
+ * GatewayConversationDO — one Durable Object instance per gateway-managed conversation.
+ */
+export class GatewayConversationDO implements DurableObject {
+  private state: DurableObjectState;
+  private env: Env;
+  private messageSeq = 0;
+  private recovered = false;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  /**
+   * Recovery: reconstruct messageSeq from stored gate messages.
+   * Called lazily on first alarm or fetch after DO eviction/restart.
+   * Durable Object storage persists across evictions, so we only
+   * need to recover the in-memory sequence counter.
+   */
+  private async recover(): Promise<void> {
+    if (this.recovered) return;
+    const entries = await this.state.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    let maxSeq = 0;
+    for (const [, msg] of entries) {
+      if (msg.seq > maxSeq) maxSeq = msg.seq;
+    }
+    this.messageSeq = maxSeq;
+    this.recovered = true;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === 'POST' && url.pathname === '/promote') {
+      return this.handlePromote(request);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/status') {
+      return this.handleStatus();
+    }
+
+    return new Response('Not Found', { status: 404 });
+  }
+
+  /**
+   * Bootstrap: create or return the per-conversation keypair.
+   * Idempotent.
+   */
+  private async handlePromote(request: Request): Promise<Response> {
+    const body = await request.json() as PromoteRequest;
+
+    const existing = await this.state.storage.get<ConversationState>('conv_state');
+    if (existing) {
+      if (existing.conv_id !== body.conv_id) {
+        return Response.json(
+          { error: 'conv_id mismatch: this DO instance is already bootstrapped for a different conversation' },
+          { status: 409 },
+        );
+      }
+      return Response.json({
+        conv_id: existing.conv_id,
+        gateway_public_key: existing.public_key,
+        gateway_kid: existing.kid,
+        created: false,
+      } satisfies PromoteResponse);
+    }
+
+    const identity = generateIdentity();
+    const kid = base64UrlEncode(keyIDFromPublicKey(identity.publicKey));
+
+    const convState: ConversationState = {
+      conv_id: body.conv_id,
+      private_key: base64UrlEncode(identity.privateKey),
+      public_key: base64UrlEncode(identity.publicKey),
+      kid,
+      conv_aead_key: body.conv_aead_key,
+      conv_nonce_key: body.conv_nonce_key,
+      conv_epoch: body.conv_epoch,
+      poll_cursor: 0,
+      polling: false,
+      promoted_at: new Date().toISOString(),
+      gate_promoted: false,
+      rules: [],
+    };
+
+    await this.state.storage.put('conv_state', convState);
+    await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
+
+    return Response.json({
+      conv_id: convState.conv_id,
+      gateway_public_key: convState.public_key,
+      gateway_kid: convState.kid,
+      created: true,
+    } satisfies PromoteResponse, { status: 201 });
+  }
+
+  private async handleStatus(): Promise<Response> {
+    const existing = await this.state.storage.get<ConversationState>('conv_state');
+    if (!existing) {
+      return Response.json({ promoted: false });
+    }
+    return Response.json({
+      promoted: true,
+      gate_promoted: existing.gate_promoted,
+      conv_id: existing.conv_id,
+      gateway_kid: existing.kid,
+      polling: existing.polling,
+      poll_cursor: existing.poll_cursor,
+      promoted_at: existing.promoted_at,
+      rules: existing.rules,
+    });
+  }
+
+  /**
+   * Alarm: poll dropbox, decrypt, route, check execution.
+   */
+  async alarm(): Promise<void> {
+    await this.recover();
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) return;
+
+    try {
+      convState.polling = true;
+      await this.state.storage.put('conv_state', convState);
+
+      const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+      const convIdBytes = hexToBytes(convState.conv_id);
+      const result = await dropbox.receiveMessages(convIdBytes, convState.poll_cursor, 100);
+
+      if (result.messages.length > 0) {
+        const conv = this.buildConversation(convState, convIdBytes);
+
+        for (const envelopeBytes of result.messages) {
+          try {
+            const envelope = deserializeEnvelope(envelopeBytes);
+            const msg = decryptMessage(envelope, conv);
+            await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid);
+          } catch {
+            continue;
+          }
+        }
+
+        convState.poll_cursor = result.sequence;
+        await this.state.storage.put('conv_state', convState);
+
+        // After processing new messages, check for executable requests
+        if (convState.gate_promoted) {
+          await this.checkAndExecute(convState);
+        }
+      }
+    } finally {
+      convState.polling = false;
+      await this.state.storage.put('conv_state', convState);
+      await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
+    }
+  }
+
+  /**
+   * Route a decrypted gate message to the appropriate handler.
+   */
+  private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array): Promise<void> {
+    const bodyStr = new TextDecoder().decode(body);
+
+    switch (bodyType) {
+      case 'gate.promote':
+        await this.handleGatePromote(body);
+        break;
+      case 'gate.request':
+        await this.handleGateRequest(bodyStr);
+        break;
+      case 'gate.approval':
+        await this.handleGateApproval(bodyStr);
+        break;
+      case 'gate.disapproval':
+        await this.handleGateDisapproval(bodyStr);
+        break;
+      case 'gate.secret':
+        await this.handleGateSecret(bodyStr, senderKid);
+        break;
+      case 'gate.config':
+        await this.handleGateConfig(bodyStr);
+        break;
+      case 'gate.executed':
+        await this.handleGateExecuted(bodyStr);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private async handleGatePromote(body: Uint8Array): Promise<void> {
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.promote: no bootstrapped state');
+
+    const msg = JSON.parse(new TextDecoder().decode(body)) as GatePromoteMessage;
+
+    if (msg.gateway_kid !== convState.kid) {
+      throw new Error(`gate.promote gateway_kid mismatch: expected ${convState.kid}, got ${msg.gateway_kid}`);
+    }
+    if (msg.conv_id !== convState.conv_id) {
+      throw new Error(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
+    }
+
+    convState.gate_promoted = true;
+    convState.rules = msg.rules || [];
+    await this.state.storage.put('conv_state', convState);
+  }
+
+  private async handleGateRequest(bodyStr: string): Promise<void> {
+    const msg = JSON.parse(bodyStr) as GateRequestMessage;
+    await this.storeGateMessage({
+      seq: ++this.messageSeq,
+      type: 'gate.request',
+      request_id: msg.request_id,
+      signer_kid: msg.signer_kid,
+      signature: msg.signature,
+      body: bodyStr,
+    });
+  }
+
+  private async handleGateApproval(bodyStr: string): Promise<void> {
+    const msg = JSON.parse(bodyStr) as GateApprovalMessage;
+    await this.storeGateMessage({
+      seq: ++this.messageSeq,
+      type: 'gate.approval',
+      request_id: msg.request_id,
+      signer_kid: msg.signer_kid,
+      signature: msg.signature,
+    });
+  }
+
+  private async handleGateDisapproval(bodyStr: string): Promise<void> {
+    const msg = JSON.parse(bodyStr) as GateDisapprovalMessage;
+    await this.storeGateMessage({
+      seq: ++this.messageSeq,
+      type: 'gate.disapproval',
+      request_id: msg.request_id,
+      signer_kid: msg.signer_kid,
+    });
+  }
+
+  private async handleGateExecuted(bodyStr: string): Promise<void> {
+    const msg = JSON.parse(bodyStr) as { request_id: string };
+    await this.storeGateMessage({
+      seq: ++this.messageSeq,
+      type: 'gate.executed',
+      request_id: msg.request_id,
+    });
+  }
+
+  private async handleGateSecret(bodyStr: string, senderKid: Uint8Array): Promise<void> {
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.secret: no bootstrapped state');
+
+    const msg = JSON.parse(bodyStr) as GateSecretMessage;
+
+    // We need the sender's public key for NaCl box decryption.
+    // The sender_kid in the message identifies which participant sent it.
+    // For now, we use the sender_kid from the inner payload (Ed25519 public key
+    // embedded in the conversation envelope signature).
+    // TODO: resolve sender public key from conversation membership
+
+    const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
+    const gatewayPrivateKey = base64UrlDecode(convState.private_key);
+
+    // senderKid is the sender's Ed25519 public key from the envelope
+    // The openSecret function handles Ed25519→X25519 conversion internally
+    const entry = await processSecret(msg, gatewayPrivateKey, senderKid, vaultKey);
+
+    // Store in vault (keyed by service for lookup)
+    await this.state.storage.put(`vault:${msg.service}`, entry);
+  }
+
+  private async handleGateConfig(bodyStr: string): Promise<void> {
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.config: no bootstrapped state');
+
+    const msg = JSON.parse(bodyStr) as GateConfigMessage;
+    convState.rules = msg.rules || [];
+    await this.state.storage.put('conv_state', convState);
+  }
+
+  /**
+   * Check for requests that have met their approval threshold and execute them.
+   */
+  private async checkAndExecute(convState: ConversationState): Promise<void> {
+    const messages = await this.loadGateMessages();
+    const executable = findExecutableRequests(messages, convState.kid, convState.rules);
+
+    for (const scan of executable) {
+      if (!scan.request) continue;
+
+      // Check if credential exists and is not expired
+      const vaultEntry = await this.state.storage.get<VaultEntry>(`vault:${scan.request.target_service}`);
+      if (!vaultEntry) continue;
+      if (isExpired(vaultEntry)) continue;
+
+      // Idempotency: check if we already have an executed marker
+      const alreadyExecuted = messages.some(
+        m => m.type === 'gate.executed' && m.request_id === scan.request_id,
+      );
+      if (alreadyExecuted) continue;
+
+      // Execute the HTTP request
+      const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
+      const result = await executeRequest(scan.request, vaultEntry, vaultKey);
+
+      // Store gate.executed marker locally
+      await this.storeGateMessage({
+        seq: ++this.messageSeq,
+        type: 'gate.executed',
+        request_id: scan.request_id,
+      });
+
+      // Post gate.executed and gate.result back to the conversation
+      const convIdBytes = hexToBytes(convState.conv_id);
+      const conv = this.buildConversation(convState, convIdBytes);
+      const identity = this.buildIdentity(convState);
+      const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+
+      // Send gate.executed
+      const executedBody = JSON.stringify({
+        type: 'gate.executed',
+        request_id: scan.request_id,
+        executed_at: result.executed_at,
+        execution_status_code: result.status_code,
+      });
+      const executedEnv = createMessage(
+        identity, conv, 'gate.executed',
+        new TextEncoder().encode(executedBody), undefined, defaultTTL(),
+      );
+      await dropbox.postMessage(convIdBytes, serializeEnvelope(executedEnv));
+
+      // Send gate.result
+      const resultBody = JSON.stringify({
+        type: 'gate.result',
+        request_id: scan.request_id,
+        status_code: result.status_code,
+        content_type: result.content_type,
+        body: result.body,
+      });
+      const resultEnv = createMessage(
+        identity, conv, 'gate.result',
+        new TextEncoder().encode(resultBody), undefined, defaultTTL(),
+      );
+      await dropbox.postMessage(convIdBytes, serializeEnvelope(resultEnv));
+    }
+  }
+
+  // ---- Storage helpers ----
+
+  private async storeGateMessage(msg: StoredGateMessage): Promise<void> {
+    const key = `msg:${String(msg.seq).padStart(8, '0')}`;
+    await this.state.storage.put(key, msg);
+  }
+
+  private async loadGateMessages(): Promise<StoredGateMessage[]> {
+    const entries = await this.state.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const messages: StoredGateMessage[] = [];
+    for (const [, value] of entries) {
+      messages.push(value);
+    }
+    return messages;
+  }
+
+  private buildIdentity(convState: ConversationState): Identity {
+    return {
+      privateKey: base64UrlDecode(convState.private_key),
+      publicKey: base64UrlDecode(convState.public_key),
+      keyID: base64UrlDecode(convState.kid),
+    };
+  }
+
+  private buildConversation(convState: ConversationState, convIdBytes: Uint8Array): Conversation {
+    const keys: ConversationKeys = {
+      root: new Uint8Array(32),
+      aeadKey: base64UrlDecode(convState.conv_aead_key),
+      nonceKey: base64UrlDecode(convState.conv_nonce_key),
+    };
+    return {
+      id: convIdBytes,
+      type: 'group',
+      keys,
+      participants: [],
+      createdAt: new Date(convState.promoted_at),
+      currentEpoch: convState.conv_epoch,
+    };
+  }
+
+  private pollIntervalMs(): number {
+    return parseInt(this.env.POLL_INTERVAL_MS || '5000', 10);
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}

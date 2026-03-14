@@ -142,7 +142,7 @@ func TestAPI_CreateOrg_RequiresAdminToken(t *testing.T) {
 }
 
 // =============================================================================
-// API: GET /v1/orgs/{org_id} — Get Organization
+// API: GET /v1/orgs/{conv_id} — Get Organization
 // =============================================================================
 
 func TestAPI_GetOrg_Success(t *testing.T) {
@@ -188,7 +188,7 @@ func TestAPI_GetOrg_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// API: POST /v1/orgs/{org_id}/credentials — Add Credential
+// API: POST /v1/orgs/{conv_id}/credentials — Add Credential
 // =============================================================================
 
 func TestAPI_AddCredential_Success(t *testing.T) {
@@ -266,7 +266,7 @@ func TestAPI_AddCredential_WrongMethod(t *testing.T) {
 }
 
 // =============================================================================
-// API: POST /v1/orgs/{org_id}/messages — Post Gate Message
+// API: POST /v1/orgs/{conv_id}/messages — Post Gate Message
 // =============================================================================
 
 func TestAPI_PostMessage_Request_Pending(t *testing.T) {
@@ -291,7 +291,7 @@ func TestAPI_PostMessage_Request_Pending(t *testing.T) {
 
 	payload := json.RawMessage(`{"x":1}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "msg-org", RequestID: "r1", Verb: "POST",
+	signable := &GateSignable{ConvID: "msg-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/api", TargetService: "echo",
 		TargetURL: "http://localhost:9999/api", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -349,7 +349,7 @@ func TestAPI_PostMessage_Request_AutoExecute(t *testing.T) {
 
 	payload := json.RawMessage(`{"auto":true}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "auto-org", RequestID: "auto-1", Verb: "POST",
+	signable := &GateSignable{ConvID: "auto-org", RequestID: "auto-1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: echoSrv.URL + "/echo", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -404,7 +404,7 @@ func TestAPI_PostMessage_UnknownSigner(t *testing.T) {
 	unknown := newTestSigner()
 	payload := json.RawMessage(`{}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "signer-org", RequestID: "r1", Verb: "GET",
+	signable := &GateSignable{ConvID: "signer-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/x", TargetService: "echo",
 		TargetURL: "http://localhost/x", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -528,7 +528,7 @@ func TestAPI_PostMessage_WrongMethod(t *testing.T) {
 }
 
 // =============================================================================
-// API: GET /v1/orgs/{org_id}/scan/{request_id} — Scan Request Status
+// API: GET /v1/orgs/{conv_id}/scan/{request_id} — Scan Request Status
 // =============================================================================
 
 func TestAPI_Scan_Success(t *testing.T) {
@@ -548,7 +548,7 @@ func TestAPI_Scan_Success(t *testing.T) {
 
 	payload := json.RawMessage(`{}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "scan-org", RequestID: "scan-1", Verb: "GET",
+	signable := &GateSignable{ConvID: "scan-org", RequestID: "scan-1", Verb: "GET",
 		TargetEndpoint: "/x", TargetService: "echo",
 		TargetURL: "http://localhost/x", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -630,7 +630,7 @@ func TestAPI_Scan_WrongMethod(t *testing.T) {
 }
 
 // =============================================================================
-// API: POST /v1/orgs/{org_id}/execute/{request_id} — Execute Request
+// API: POST /v1/orgs/{conv_id}/execute/{request_id} — Execute Request
 // =============================================================================
 
 func TestAPI_Execute_ThresholdNotMet(t *testing.T) {
@@ -657,14 +657,14 @@ func TestAPI_Execute_ThresholdNotMet(t *testing.T) {
 	// Add only request (no approval)
 	payload := json.RawMessage(`{}`)
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "execpend-org", RequestID: "ep-1", Verb: "POST",
+	signable := &GateSignable{ConvID: "execpend-org", RequestID: "ep-1", Verb: "POST",
 		TargetEndpoint: "/x", TargetService: "echo",
 		TargetURL: "http://localhost/x", ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	sig, _ := SignRequest(a.priv, signable)
 
 	s.ConvStore.WriteGateMessage("execpend-org", &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: "execpend-org", RequestID: "ep-1",
+		Type: GateMessageRequest, ConvID: "execpend-org", RequestID: "ep-1",
 		Verb: "POST", TargetEndpoint: "/x", TargetService: "echo",
 		TargetURL: "http://localhost/x", Payload: payload, ExpiresAt: expiresAt,
 		SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(sig),
@@ -760,7 +760,7 @@ func TestSpec_Gate_PayloadHash(t *testing.T) {
 func TestSpec_Gate_SignRequest_CBOR_Canonical(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	s := &GateSignable{
-		OrgID: "org1", RequestID: "req1", Verb: "POST",
+		ConvID: "org1", RequestID: "req1", Verb: "POST",
 		TargetEndpoint: "/api", TargetService: "svc",
 		TargetURL:     "https://api.example.com/api",
 		ExpiresAtUnix: 1700000000,
@@ -778,7 +778,7 @@ func TestSpec_Gate_SignRequest_CBOR_Canonical(t *testing.T) {
 
 func TestSpec_Gate_HashRequest_Deterministic(t *testing.T) {
 	s := &GateSignable{
-		OrgID: "org1", RequestID: "req1", Verb: "POST",
+		ConvID: "org1", RequestID: "req1", Verb: "POST",
 		TargetEndpoint: "/api", TargetService: "svc",
 		TargetURL:     "https://api.example.com/api",
 		ExpiresAtUnix: 1700000000,
@@ -1026,11 +1026,11 @@ func TestSpec_Gate_SQLiteStore_Messages(t *testing.T) {
 
 	// Write messages
 	store.WriteGateMessage("msg-sql-org", &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: "msg-sql-org", RequestID: "r1",
+		Type: GateMessageRequest, ConvID: "msg-sql-org", RequestID: "r1",
 		Verb: "POST", SignerKID: a.kid,
 	})
 	store.WriteGateMessage("msg-sql-org", &GateConversationMessage{
-		Type: GateMessageApproval, OrgID: "msg-sql-org", RequestID: "r1",
+		Type: GateMessageApproval, ConvID: "msg-sql-org", RequestID: "r1",
 		SignerKID: a.kid,
 	})
 
@@ -1096,7 +1096,7 @@ func TestSpec_Gate_FullFlow_SQLite(t *testing.T) {
 	payload := json.RawMessage(`{"flow":"test"}`)
 	targetURL := echoSrv.URL + "/echo"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "flow-org", RequestID: "flow-1", Verb: "POST",
+	signable := &GateSignable{ConvID: "flow-org", RequestID: "flow-1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -1122,7 +1122,7 @@ func TestSpec_Gate_FullFlow_SQLite(t *testing.T) {
 	// Step 3: Approve
 	reqHash, _ := HashRequest(signable)
 	appSig, _ := SignApproval(b.priv, &ApprovalSignable{
-		OrgID: "flow-org", RequestID: "flow-1", RequestHash: reqHash,
+		ConvID: "flow-org", RequestID: "flow-1", RequestHash: reqHash,
 	})
 	resp2 := post(t, gateSrv.URL+"/v1/orgs/flow-org/messages", map[string]interface{}{
 		"type": "gate.approval", "request_id": "flow-1",

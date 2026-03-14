@@ -1,0 +1,24 @@
+name = "qntm-gateway"
+main = "src/index.ts"
+compatibility_date = "2024-02-08"
+
+# Gateway has its own domain — separate trust boundary from dropbox relay
+# routes = [
+#   { pattern = "gateway.qntm.corpo.llc", custom_domain = true }
+# ]
+
+[[kv_namespaces]]
+binding = "GATEWAY_KV"
+id = "placeholder-fill-after-kv-create"
+
+[[durable_objects.bindings]]
+name = "GATEWAY_CONVO_DO"
+class_name = "GatewayConversationDO"
+
+[[migrations]]
+tag = "gateway-convo-v1"
+new_sqlite_classes = ["GatewayConversationDO"]
+
+[vars]
+DROPBOX_URL = "https://inbox.qntm.corpo.llc"
+POLL_INTERVAL_MS = "5000"

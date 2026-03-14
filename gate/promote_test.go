@@ -8,12 +8,9 @@ import (
 )
 
 func TestPromotePayloadMarshalRoundTrip(t *testing.T) {
-	signer := newTestSigner()
 	payload := PromotePayload{
-		OrgID: "test-org",
-		Signers: []Signer{
-			{KID: signer.kid, PublicKey: signer.pub, Label: "alice"},
-		},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 3},
 		},
@@ -29,14 +26,11 @@ func TestPromotePayloadMarshalRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if decoded.OrgID != "test-org" {
-		t.Fatalf("expected org_id=test-org, got %s", decoded.OrgID)
+	if decoded.ConvID != "test-org" {
+		t.Fatalf("expected conv_id=test-org, got %s", decoded.ConvID)
 	}
-	if len(decoded.Signers) != 1 {
-		t.Fatalf("expected 1 signer, got %d", len(decoded.Signers))
-	}
-	if decoded.Signers[0].KID != signer.kid {
-		t.Fatalf("expected kid=%s, got %s", signer.kid, decoded.Signers[0].KID)
+	if decoded.GatewayKID != "gw-kid-test" {
+		t.Fatalf("expected gateway_kid=gw-kid-test, got %s", decoded.GatewayKID)
 	}
 	if len(decoded.Rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(decoded.Rules))
@@ -77,7 +71,7 @@ func TestConfigPayloadMarshalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPromotePayloadRequiresOrgID(t *testing.T) {
+func TestPromotePayloadRequiresConvID(t *testing.T) {
 	id := newTestIdentity()
 	gw := NewGateway(id)
 
@@ -85,11 +79,11 @@ func TestPromotePayloadRequiresOrgID(t *testing.T) {
 	conv := &types.Conversation{ID: convID}
 	gw.RegisterConversation(conv)
 
-	// Promote without org_id should fail
+	// Promote without conv_id should fail
 	payload := PromotePayload{
-		OrgID:   "",
-		Signers: []Signer{},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	body, _ := json.Marshal(payload)
 
@@ -97,11 +91,11 @@ func TestPromotePayloadRequiresOrgID(t *testing.T) {
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: body},
 	})
 	if err == nil {
-		t.Fatal("expected error for promote without org_id")
+		t.Fatal("expected error for promote without conv_id")
 	}
 }
 
-func TestPromoteWithMultipleSigners(t *testing.T) {
+func TestPromoteWithGatewayKID(t *testing.T) {
 	id := newTestIdentity()
 	gw := NewGateway(id)
 
@@ -109,17 +103,9 @@ func TestPromoteWithMultipleSigners(t *testing.T) {
 	conv := &types.Conversation{ID: convID}
 	gw.RegisterConversation(conv)
 
-	signer1 := newTestSigner()
-	signer2 := newTestSigner()
-	signer3 := newTestSigner()
-
 	payload := PromotePayload{
-		OrgID: "multi-org",
-		Signers: []Signer{
-			{KID: signer1.kid, PublicKey: signer1.pub, Label: "alice"},
-			{KID: signer2.kid, PublicKey: signer2.pub, Label: "bob"},
-			{KID: signer3.kid, PublicKey: signer3.pub, Label: "charlie"},
-		},
+		ConvID:     "multi-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 3},
 		},
@@ -137,20 +123,15 @@ func TestPromoteWithMultipleSigners(t *testing.T) {
 	if state == nil {
 		t.Fatal("conversation state not created")
 	}
-	if state.OrgID != "multi-org" {
-		t.Fatalf("unexpected org_id: %s", state.OrgID)
+	if state.ConvID != "multi-org" {
+		t.Fatalf("unexpected conv_id: %s", state.ConvID)
 	}
-	if len(state.Participants) != 3 {
-		t.Fatalf("expected 3 participants, got %d", len(state.Participants))
+	if state.GatewayKID != "gw-kid-test" {
+		t.Fatalf("unexpected gateway_kid: %s", state.GatewayKID)
 	}
-	if _, ok := state.Participants[signer1.kid]; !ok {
-		t.Fatal("signer1 not found in participants")
-	}
-	if _, ok := state.Participants[signer2.kid]; !ok {
-		t.Fatal("signer2 not found in participants")
-	}
-	if _, ok := state.Participants[signer3.kid]; !ok {
-		t.Fatal("signer3 not found in participants")
+	// Participants are derived from conversation membership, not from promote payload
+	if len(state.Participants) != 0 {
+		t.Fatalf("expected 0 participants (populated from membership), got %d", len(state.Participants))
 	}
 }
 
@@ -163,11 +144,10 @@ func TestPromoteOverwritesExistingState(t *testing.T) {
 	gw.RegisterConversation(conv)
 
 	// First promote
-	signer1 := newTestSigner()
 	payload1 := PromotePayload{
-		OrgID:   "org-v1",
-		Signers: []Signer{{KID: signer1.kid, PublicKey: signer1.pub}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "org-v1",
+		GatewayKID: "gw-kid-v1",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	body1, _ := json.Marshal(payload1)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -175,11 +155,10 @@ func TestPromoteOverwritesExistingState(t *testing.T) {
 	})
 
 	// Second promote replaces state
-	signer2 := newTestSigner()
 	payload2 := PromotePayload{
-		OrgID:   "org-v2",
-		Signers: []Signer{{KID: signer2.kid, PublicKey: signer2.pub}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 2}},
+		ConvID:     "org-v2",
+		GatewayKID: "gw-kid-v2",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 2, N: 2}},
 	}
 	body2, _ := json.Marshal(payload2)
 	err := gw.handlePromote(conv, &types.Message{
@@ -190,14 +169,11 @@ func TestPromoteOverwritesExistingState(t *testing.T) {
 	}
 
 	state := gw.GetConversationState(convID)
-	if state.OrgID != "org-v2" {
-		t.Fatalf("expected org-v2, got %s", state.OrgID)
+	if state.ConvID != "org-v2" {
+		t.Fatalf("expected org-v2, got %s", state.ConvID)
 	}
-	if len(state.Participants) != 1 {
-		t.Fatalf("expected 1 participant, got %d", len(state.Participants))
-	}
-	if _, ok := state.Participants[signer2.kid]; !ok {
-		t.Fatal("signer2 not found after re-promote")
+	if state.GatewayKID != "gw-kid-v2" {
+		t.Fatalf("expected gw-kid-v2, got %s", state.GatewayKID)
 	}
 	if state.Rules[0].M != 2 {
 		t.Fatalf("expected M=2, got %d", state.Rules[0].M)
@@ -214,9 +190,9 @@ func TestConfigUpdatesRulesOnPromotedConversation(t *testing.T) {
 
 	// Promote first
 	promotePayload := PromotePayload{
-		OrgID:   "cfg-org",
-		Signers: []Signer{},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "cfg-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -263,14 +239,11 @@ func TestGateMessageTypeConstants(t *testing.T) {
 	}
 }
 
-func TestSignerKIDAutoPopulatedFromPublicKey(t *testing.T) {
-	signer := newTestSigner()
+func TestPromoteGatewayKIDStored(t *testing.T) {
 	payload := PromotePayload{
-		OrgID: "auto-kid-org",
-		Signers: []Signer{
-			{PublicKey: signer.pub}, // KID intentionally left empty
-		},
-		Rules: []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "auto-kid-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 
 	id := newTestIdentity()
@@ -288,16 +261,7 @@ func TestSignerKIDAutoPopulatedFromPublicKey(t *testing.T) {
 	}
 
 	state := gw.GetConversationState(convID)
-	// The handlePromote computes KID from public key when KID is empty
-	expectedKID := KIDFromPublicKey(signer.pub)
-	if _, ok := state.Participants[expectedKID]; !ok {
-		t.Fatalf("expected participant with auto-computed KID %s, got keys: %v",
-			expectedKID, func() []string {
-				keys := make([]string, 0)
-				for k := range state.Participants {
-					keys = append(keys, k)
-				}
-				return keys
-			}())
+	if state.GatewayKID != "gw-kid-test" {
+		t.Fatalf("expected gateway_kid=gw-kid-test, got %s", state.GatewayKID)
 	}
 }

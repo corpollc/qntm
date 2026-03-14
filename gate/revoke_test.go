@@ -131,10 +131,8 @@ func setupGatewayWithSecret(t *testing.T) (*Gateway, *types.Conversation, types.
 
 	// Promote the conversation
 	promotePayload := PromotePayload{
-		OrgID: "test-org",
-		Signers: []Signer{
-			{KID: senderKID, PublicKey: senderPub, Label: "sender"},
-		},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1},
 		},
@@ -143,6 +141,10 @@ func setupGatewayWithSecret(t *testing.T) (*Gateway, *types.Conversation, types.
 	_ = gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
+
+	// Add sender as participant
+	state := gw.GetConversationState(convID)
+	state.Participants[senderKID] = senderPub
 
 	// Store secrets via handleSecret
 	for _, s := range []struct {

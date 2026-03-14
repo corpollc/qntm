@@ -22,11 +22,10 @@ func TestExpiredSecretGeneratesNotification(t *testing.T) {
 	gw.RegisterConversation(conv)
 
 	// Promote the conversation
-	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: signer.kid, PublicKey: signer.pub, Label: "alice"}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -101,8 +100,8 @@ func TestExpiredSecretPreventsExecution(t *testing.T) {
 
 	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: signer.kid, PublicKey: signer.pub, Label: "alice"}},
+		ConvID:   "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules:   []ThresholdRule{{Service: "stripe", Endpoint: "*", Verb: "GET", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
@@ -110,8 +109,11 @@ func TestExpiredSecretPreventsExecution(t *testing.T) {
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
 
-	// Store an expired credential
+	// Add signer as participant
 	state := gw.GetConversationState(convID)
+	state.Participants[signer.kid] = signer.pub
+
+	// Store an expired credential
 	state.Credentials["stripe"] = &Credential{
 		ID:          "cred-stripe",
 		Service:     "stripe",
@@ -126,7 +128,7 @@ func TestExpiredSecretPreventsExecution(t *testing.T) {
 	targetURL := "https://api.stripe.com/v1/charges"
 	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{
-		OrgID: "test-org", RequestID: "req-exp", Verb: "GET",
+		ConvID: "test-org", RequestID: "req-exp", Verb: "GET",
 		TargetEndpoint: "/v1/charges", TargetService: "stripe",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload),
@@ -135,7 +137,7 @@ func TestExpiredSecretPreventsExecution(t *testing.T) {
 
 	reqMsg := &GateConversationMessage{
 		Type:           GateMessageRequest,
-		OrgID:          "test-org",
+		ConvID:          "test-org",
 		RequestID:      "req-exp",
 		Verb:           "GET",
 		TargetEndpoint: "/v1/charges",
@@ -169,11 +171,10 @@ func TestNonExpiredSecretAllowsExecution(t *testing.T) {
 	conv := &types.Conversation{ID: convID}
 	gw.RegisterConversation(conv)
 
-	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: signer.kid, PublicKey: signer.pub, Label: "alice"}},
-		Rules:   []ThresholdRule{{Service: "stripe", Endpoint: "*", Verb: "GET", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "stripe", Endpoint: "*", Verb: "GET", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -216,11 +217,10 @@ func TestGatewayDoesNotAutoRefreshSecrets(t *testing.T) {
 	conv := &types.Conversation{ID: convID}
 	gw.RegisterConversation(conv)
 
-	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: signer.kid, PublicKey: signer.pub, Label: "alice"}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -266,11 +266,10 @@ func TestExpiredNotificationNotDuplicated(t *testing.T) {
 	conv := &types.Conversation{ID: convID}
 	gw.RegisterConversation(conv)
 
-	signer := newTestSigner()
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: signer.kid, PublicKey: signer.pub, Label: "alice"}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
@@ -343,14 +342,18 @@ func TestHandleSecretWithTTL(t *testing.T) {
 	senderKID := KIDFromPublicKey(senderPub)
 
 	promotePayload := PromotePayload{
-		OrgID:   "test-org",
-		Signers: []Signer{{KID: senderKID, PublicKey: senderPub}},
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	promoteBody, _ := json.Marshal(promotePayload)
 	_ = gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
+
+	// Add sender as participant (participants are now derived from conversation membership)
+	state := gw.GetConversationState(convID)
+	state.Participants[senderKID] = senderPub
 
 	payload, _ := BuildSecretPayload(
 		senderPriv, senderPub,
@@ -372,7 +375,7 @@ func TestHandleSecretWithTTL(t *testing.T) {
 		t.Fatalf("handleSecret with TTL: %v", err)
 	}
 
-	state := gw.GetConversationState(convID)
+	state = gw.GetConversationState(convID)
 	cred := state.Credentials["stripe"]
 	if cred == nil {
 		t.Fatal("credential not stored")

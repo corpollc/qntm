@@ -1,7 +1,7 @@
 export interface GateRequestBody {
   type: string
   recipe_name?: string
-  org_id: string
+  conv_id: string
   request_id: string
   verb: string
   target_endpoint: string
@@ -42,7 +42,7 @@ export interface GateExpiredBody {
 }
 
 export interface GatePromoteBody {
-  org_id: string
+  conv_id: string
   signers: Array<{ kid: string; public_key: string }>
   rules: Array<{ service: string; endpoint: string; verb: string; m: number; n: number }>
 }

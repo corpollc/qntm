@@ -5,7 +5,7 @@ import { theme } from '../lib/theme.js';
 interface GateRequestBody {
   type: string;
   recipe_name?: string;
-  org_id: string;
+  conv_id: string;
   request_id: string;
   verb: string;
   target_endpoint: string;
@@ -110,7 +110,7 @@ export default function GateCard({ bodyType, text, direction }: GateCardProps) {
               <Text> {req.target_url || req.target_endpoint}</Text>
             </Text>
             <Field label="Service" value={req.target_service} />
-            <Field label="Org" value={req.org_id.slice(0, 8)} />
+            <Field label="Conv" value={req.conv_id.slice(0, 8)} />
             <Field label="Request" value={req.request_id.slice(0, 12)} />
             <Field label="Signer" value={req.signer_kid.slice(0, 12)} />
           </Box>

@@ -398,20 +398,18 @@ describe('resolveRecipe', () => {
 
 // === 4. Payload Types ===
 describe('Payload Types', () => {
-  it('PromotePayload structure matches Go', () => {
+  it('PromotePayload structure is conversation-scoped', () => {
     const payload: PromotePayload = {
       type: 'gate.promote',
-      org_id: 'test-org',
-      signers: [
-        { kid: 'kid1', public_key: new Uint8Array(32), label: 'Alice' },
-      ],
+      conv_id: 'test-conv',
+      gateway_kid: 'gw-kid1',
       rules: [
         { service: '*', endpoint: '', verb: '', m: 1 },
       ],
     };
     expect(payload.type).toBe('gate.promote');
-    expect(payload.org_id).toBe('test-org');
-    expect(payload.signers).toHaveLength(1);
+    expect(payload.conv_id).toBe('test-conv');
+    expect(payload.gateway_kid).toBe('gw-kid1');
     expect(payload.rules).toHaveLength(1);
   });
 
@@ -445,10 +443,8 @@ describe('Payload Types', () => {
   it('PromotePayload JSON serialization', () => {
     const payload: PromotePayload = {
       type: 'gate.promote',
-      org_id: 'org-1',
-      signers: [
-        { kid: 'kid1', public_key: new Uint8Array(32), label: 'Alice' },
-      ],
+      conv_id: 'conv-1',
+      gateway_kid: 'gw-kid1',
       rules: [
         { service: '*', endpoint: '', verb: '', m: 1 },
       ],
@@ -456,9 +452,8 @@ describe('Payload Types', () => {
     const json = JSON.stringify(payload);
     const parsed = JSON.parse(json);
     expect(parsed.type).toBe('gate.promote');
-    expect(parsed.org_id).toBe('org-1');
-    expect(parsed.signers).toHaveLength(1);
-    expect(parsed.signers[0].kid).toBe('kid1');
+    expect(parsed.conv_id).toBe('conv-1');
+    expect(parsed.gateway_kid).toBe('gw-kid1');
   });
 
   it('ConfigPayload JSON serialization', () => {
@@ -480,7 +475,7 @@ describe('GateConversationMessage recipe fields', () => {
   it('supports recipe_name and arguments', () => {
     const msg: GateConversationMessage = {
       type: 'gate.request',
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       verb: 'GET',
       target_endpoint: '/users/octocat/repos',
@@ -498,7 +493,7 @@ describe('GateConversationMessage recipe fields', () => {
   it('recipe_name and arguments are optional', () => {
     const msg: GateConversationMessage = {
       type: 'gate.request',
-      org_id: 'test-org',
+      conv_id: 'test-conv',
       request_id: 'req-1',
       signer_kid: 'kid1',
       signature: 'sig123',

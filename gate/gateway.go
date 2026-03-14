@@ -8,9 +8,9 @@
 // Message Types
 //
 //   gate.promote   — Sent by a conversation admin to register the conversation
-//                    as gate-enabled. Contains the org_id, list of authorized
-//                    signers (KID + Ed25519 public key), and threshold rules.
-//                    The gateway builds its per-conversation state from this.
+//                    as gate-enabled. Contains the conv_id, gateway_kid, and
+//                    threshold rules. Signers are derived from conversation
+//                    membership (all participants except the gateway).
 //
 //   gate.secret    — Provisions an API credential to the gateway. The secret
 //                    value is encrypted to the gateway's public key using NaCl
@@ -34,7 +34,7 @@
 //
 // Promotion Flow
 //
-//   1. Admin sends gate.promote with org_id, signers, and threshold rules.
+//   1. Admin sends gate.promote with conv_id, gateway_kid, and threshold rules.
 //   2. Gateway stores per-conversation state (participants, rules, credentials).
 //   3. Admin sends gate.secret messages to provision API credentials.
 //
@@ -127,7 +127,8 @@ type MembershipProposal struct {
 // ConversationGateState holds per-conversation gate state.
 type ConversationGateState struct {
 	ConversationID             types.ConversationID
-	OrgID                      string
+	ConvID                     string // hex-encoded conversation ID
+	GatewayKID                 string // the gateway's own KID for this conversation
 	Rules                      []ThresholdRule
 	Credentials                map[string]*Credential
 	Participants               map[string]ed25519.PublicKey // kid (base64url) -> pubkey
@@ -136,9 +137,9 @@ type ConversationGateState struct {
 
 // PromotePayload is the body of a gate.promote message.
 type PromotePayload struct {
-	OrgID   string          `json:"org_id"`
-	Signers []Signer        `json:"signers"`
-	Rules   []ThresholdRule `json:"rules"`
+	ConvID     string          `json:"conv_id"`
+	GatewayKID string          `json:"gateway_kid"`
+	Rules      []ThresholdRule `json:"rules"`
 }
 
 // ConfigPayload is the body of a gate.config message.
@@ -260,7 +261,7 @@ func (gw *Gateway) checkAllExpiredCredentials() {
 		expired := gw.checkExpiredCredentials(convID, state)
 		for _, ep := range expired {
 			log.Printf("[gateway] EXPIRED conv=%x org=%s service=%s secret_id=%s expired_at=%s",
-				convID[:4], state.OrgID, ep.Service, ep.SecretID, ep.ExpiredAt)
+				convID[:4], state.ConvID, ep.Service, ep.SecretID, ep.ExpiredAt)
 		}
 	}
 }
@@ -316,7 +317,7 @@ func (gw *Gateway) processMessage(conv *types.Conversation, msg *types.Message, 
 		gw.mu.RUnlock()
 		if state != nil {
 			log.Printf("[gateway] REJECTED direct %s in promoted conversation conv=%x org=%s",
-				msg.Inner.BodyType, conv.ID[:4], state.OrgID)
+				msg.Inner.BodyType, conv.ID[:4], state.ConvID)
 			return fmt.Errorf("direct %s not allowed in promoted conversation; use gate.membership_proposal", msg.Inner.BodyType)
 		}
 		// Non-promoted: silently ignore (not our concern)
@@ -353,22 +354,18 @@ func (gw *Gateway) handlePromote(conv *types.Conversation, msg *types.Message) e
 		return fmt.Errorf("unmarshal promote payload: %w", err)
 	}
 
-	if payload.OrgID == "" {
-		return fmt.Errorf("promote message missing org_id")
+	if payload.ConvID == "" {
+		return fmt.Errorf("promote message missing conv_id")
 	}
 
+	// Signers are derived from conversation membership, not the promote payload.
+	// The gateway participant (identified by gateway_kid) is excluded from signing.
 	participants := make(map[string]ed25519.PublicKey)
-	for _, s := range payload.Signers {
-		kid := s.KID
-		if kid == "" && len(s.PublicKey) > 0 {
-			kid = KIDFromPublicKey(s.PublicKey)
-		}
-		participants[kid] = s.PublicKey
-	}
 
 	state := &ConversationGateState{
 		ConversationID:             conv.ID,
-		OrgID:                      payload.OrgID,
+		ConvID:                     payload.ConvID,
+		GatewayKID:                 payload.GatewayKID,
 		Rules:                      payload.Rules,
 		Credentials:                make(map[string]*Credential),
 		Participants:               participants,
@@ -379,8 +376,8 @@ func (gw *Gateway) handlePromote(conv *types.Conversation, msg *types.Message) e
 	gw.Conversations[conv.ID] = state
 	gw.mu.Unlock()
 
-	log.Printf("[gateway] PROMOTE conv=%x org=%s signers=%d rules=%d",
-		conv.ID[:4], payload.OrgID, len(payload.Signers), len(payload.Rules))
+	log.Printf("[gateway] PROMOTE conv=%x conv_id=%s gateway_kid=%s rules=%d",
+		conv.ID[:4], payload.ConvID, payload.GatewayKID, len(payload.Rules))
 	return nil
 }
 
@@ -450,11 +447,11 @@ func (gw *Gateway) handleSecret(conv *types.Conversation, msg *types.Message) er
 
 	if payload.TTL > 0 {
 		log.Printf("[gateway] SECRET stored conv=%x org=%s service=%s secret_id=%s sender=%s expires_at=%s",
-			conv.ID[:4], state.OrgID, payload.Service, payload.SecretID, payload.SenderKID,
+			conv.ID[:4], state.ConvID, payload.Service, payload.SecretID, payload.SenderKID,
 			cred.ExpiresAt.UTC().Format(time.RFC3339))
 	} else {
 		log.Printf("[gateway] SECRET stored conv=%x org=%s service=%s secret_id=%s sender=%s ttl=none",
-			conv.ID[:4], state.OrgID, payload.Service, payload.SecretID, payload.SenderKID)
+			conv.ID[:4], state.ConvID, payload.Service, payload.SecretID, payload.SenderKID)
 	}
 	return nil
 }
@@ -479,7 +476,7 @@ func (gw *Gateway) handleConfig(conv *types.Conversation, msg *types.Message) er
 	gw.mu.Unlock()
 
 	log.Printf("[gateway] CONFIG updated conv=%x org=%s rules=%d",
-		conv.ID[:4], state.OrgID, len(payload.Rules))
+		conv.ID[:4], state.ConvID, len(payload.Rules))
 	return nil
 }
 
@@ -506,7 +503,7 @@ func (gw *Gateway) handleRevoke(conv *types.Conversation, msg *types.Message) er
 	if payload.Service != "" {
 		delete(state.Credentials, payload.Service)
 		log.Printf("[gateway] REVOKE conv=%x org=%s service=%s",
-			conv.ID[:4], state.OrgID, payload.Service)
+			conv.ID[:4], state.ConvID, payload.Service)
 	}
 
 	if payload.SecretID != "" {
@@ -515,7 +512,7 @@ func (gw *Gateway) handleRevoke(conv *types.Conversation, msg *types.Message) er
 			if cred.ID == payload.SecretID {
 				delete(state.Credentials, svc)
 				log.Printf("[gateway] REVOKE conv=%x org=%s secret_id=%s service=%s",
-					conv.ID[:4], state.OrgID, payload.SecretID, svc)
+					conv.ID[:4], state.ConvID, payload.SecretID, svc)
 				break
 			}
 		}
@@ -539,14 +536,14 @@ func (gw *Gateway) handleRequest(conv *types.Conversation, msg *types.Message, d
 	if err := json.Unmarshal(msg.Inner.Body, &gateMsg); err != nil {
 		return fmt.Errorf("unmarshal gate.request body: %w", err)
 	}
-	gateMsg.OrgID = state.OrgID
+	gateMsg.ConvID = state.ConvID
 
 	log.Printf("[gateway] REQUEST conv=%x org=%s req=%s verb=%s service=%s by=%s",
-		conv.ID[:4], state.OrgID, gateMsg.RequestID, gateMsg.Verb,
+		conv.ID[:4], state.ConvID, gateMsg.RequestID, gateMsg.Verb,
 		gateMsg.TargetService, gateMsg.SignerKID)
 
 	// Store in per-conversation message store for threshold scanning
-	if err := gw.StoreGateMessage(conv.ID, state.OrgID, &gateMsg); err != nil {
+	if err := gw.StoreGateMessage(conv.ID, state.ConvID, &gateMsg); err != nil {
 		return fmt.Errorf("store gate message: %w", err)
 	}
 
@@ -569,10 +566,10 @@ func (gw *Gateway) handleApproval(conv *types.Conversation, msg *types.Message, 
 	}
 
 	log.Printf("[gateway] APPROVAL conv=%x org=%s req=%s by=%s",
-		conv.ID[:4], state.OrgID, gateMsg.RequestID, gateMsg.SignerKID)
+		conv.ID[:4], state.ConvID, gateMsg.RequestID, gateMsg.SignerKID)
 
 	// Store in per-conversation message store for threshold scanning
-	if err := gw.StoreGateMessage(conv.ID, state.OrgID, &gateMsg); err != nil {
+	if err := gw.StoreGateMessage(conv.ID, state.ConvID, &gateMsg); err != nil {
 		return fmt.Errorf("store gate message: %w", err)
 	}
 
@@ -597,7 +594,7 @@ func (gw *Gateway) checkAndExecute(
 	gw.mu.RUnlock()
 
 	// Use the existing ScanConversation + ExecuteIfReady infrastructure
-	messages, err := msgStore.ReadGateMessages(state.OrgID)
+	messages, err := msgStore.ReadGateMessages(state.ConvID)
 	if err != nil {
 		return fmt.Errorf("read gate messages: %w", err)
 	}
@@ -657,7 +654,7 @@ func (gw *Gateway) checkAndExecute(
 		// Post gate.executed back to the conversation
 		executedMsg := GateConversationMessage{
 			Type:                GateMessageExecuted,
-			OrgID:               state.OrgID,
+			ConvID:              state.ConvID,
 			RequestID:           requestID,
 			ExecutedAt:          time.Now().UTC(),
 			ExecutionStatusCode: result.ExecutionResult.StatusCode,
@@ -705,7 +702,7 @@ func (gw *Gateway) handleMembershipProposal(conv *types.Conversation, msg *types
 	gw.mu.Unlock()
 
 	log.Printf("[gateway] MEMBERSHIP_PROPOSAL conv=%x org=%s proposal=%s action=%s member=%s proposer=%s",
-		conv.ID[:4], state.OrgID, payload.ProposalID, payload.Action, payload.MemberKID, payload.ProposerKID)
+		conv.ID[:4], state.ConvID, payload.ProposalID, payload.Action, payload.MemberKID, payload.ProposerKID)
 
 	// Check if unanimous already (single-signer case)
 	return gw.checkAndExecuteMembership(conv, state, payload.ProposalID)
@@ -736,7 +733,7 @@ func (gw *Gateway) handleMembershipApproval(conv *types.Conversation, msg *types
 	gw.mu.Unlock()
 
 	log.Printf("[gateway] MEMBERSHIP_APPROVAL conv=%x org=%s proposal=%s approver=%s approvals=%d/%d",
-		conv.ID[:4], state.OrgID, payload.ProposalID, payload.ApproverKID,
+		conv.ID[:4], state.ConvID, payload.ProposalID, payload.ApproverKID,
 		len(proposal.Approvals), len(state.Participants))
 
 	return gw.checkAndExecuteMembership(conv, state, payload.ProposalID)
@@ -769,12 +766,12 @@ func (gw *Gateway) checkAndExecuteMembership(conv *types.Conversation, state *Co
 		}
 		state.Participants[proposal.MemberKID] = ed25519.PublicKey(pubBytes)
 		log.Printf("[gateway] MEMBERSHIP_EXECUTED conv=%x org=%s action=add member=%s",
-			conv.ID[:4], state.OrgID, proposal.MemberKID)
+			conv.ID[:4], state.ConvID, proposal.MemberKID)
 
 	case "remove":
 		delete(state.Participants, proposal.MemberKID)
 		log.Printf("[gateway] MEMBERSHIP_EXECUTED conv=%x org=%s action=remove member=%s",
-			conv.ID[:4], state.OrgID, proposal.MemberKID)
+			conv.ID[:4], state.ConvID, proposal.MemberKID)
 	}
 
 	delete(state.PendingMembershipProposals, proposalID)
@@ -820,7 +817,7 @@ func (gw *Gateway) buildOrg(state *ConversationGateState) *Org {
 	}
 
 	return &Org{
-		ID:          state.OrgID,
+		ID:          state.ConvID,
 		Signers:     signers,
 		Rules:       state.Rules,
 		Credentials: creds,

@@ -11,15 +11,20 @@ import (
 func promoteConv(t *testing.T, gw *Gateway, conv *types.Conversation, orgID string, signers []Signer) {
 	t.Helper()
 	payload := PromotePayload{
-		OrgID:   orgID,
-		Signers: signers,
-		Rules:   []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
+		ConvID:     orgID,
+		GatewayKID: "gw-kid-test",
+		Rules:      []ThresholdRule{{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1}},
 	}
 	body, _ := json.Marshal(payload)
 	if err := gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: body},
 	}); err != nil {
 		t.Fatalf("promoteConv: %v", err)
+	}
+	// Add signers as participants (participants are now derived from conversation membership)
+	state := gw.GetConversationState(conv.ID)
+	for _, s := range signers {
+		state.Participants[s.KID] = s.PublicKey
 	}
 }
 

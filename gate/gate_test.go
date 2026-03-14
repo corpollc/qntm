@@ -28,7 +28,7 @@ func newTestSigner() testSigner {
 
 func TestSignVerifyRequest(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	s := &GateSignable{OrgID: "o", RequestID: "r", Verb: "POST",
+	s := &GateSignable{ConvID: "o", RequestID: "r", Verb: "POST",
 		TargetEndpoint: "/e", TargetService: "s",
 		TargetURL: "https://example.com/e", ExpiresAtUnix: 1735689600,
 		PayloadHash: ComputePayloadHash([]byte(`{}`))}
@@ -48,7 +48,7 @@ func TestSignVerifyRequest(t *testing.T) {
 
 func TestSignVerifyApproval(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	s := &ApprovalSignable{OrgID: "o", RequestID: "r", RequestHash: []byte("h")}
+	s := &ApprovalSignable{ConvID: "o", RequestID: "r", RequestHash: []byte("h")}
 	sig, _ := SignApproval(priv, s)
 	if err := VerifyApproval(pub, s, sig); err != nil {
 		t.Fatal(err)
@@ -142,17 +142,17 @@ func TestScanConversation_ThresholdMet(t *testing.T) {
 	payload := json.RawMessage(`{"test":true}`)
 	targetURL := "https://example.com/echo"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
-	appSig, _ := SignApproval(b.priv, &ApprovalSignable{OrgID: "test-org", RequestID: "r1", RequestHash: reqHash})
+	appSig, _ := SignApproval(b.priv, &ApprovalSignable{ConvID: "test-org", RequestID: "r1", RequestHash: reqHash})
 
 	messages := []GateConversationMessage{
 		{
-			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageRequest, ConvID: "test-org", RequestID: "r1",
 			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
 			TargetURL: targetURL,
 			Payload:   payload, SignerKID: a.kid,
@@ -160,7 +160,7 @@ func TestScanConversation_ThresholdMet(t *testing.T) {
 			ExpiresAt: expiresAt,
 		},
 		{
-			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageApproval, ConvID: "test-org", RequestID: "r1",
 			SignerKID: b.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
 		},
 	}
@@ -189,7 +189,7 @@ func TestScanConversation_ThresholdNotMet(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "https://example.com/echo"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "POST",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "r1", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -197,7 +197,7 @@ func TestScanConversation_ThresholdNotMet(t *testing.T) {
 
 	messages := []GateConversationMessage{
 		{
-			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageRequest, ConvID: "test-org", RequestID: "r1",
 			Verb: "POST", TargetEndpoint: "/echo", TargetService: "echo",
 			TargetURL: targetURL,
 			Payload:   payload, SignerKID: a.kid,
@@ -230,7 +230,7 @@ func TestScanConversation_Expired(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "https://example.com/t"
 	expiresAt := time.Now().Add(-1 * time.Second)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -238,7 +238,7 @@ func TestScanConversation_Expired(t *testing.T) {
 
 	messages := []GateConversationMessage{
 		{
-			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageRequest, ConvID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
 			TargetURL: targetURL,
 			Payload:   payload, SignerKID: a.kid,
@@ -272,7 +272,7 @@ func TestScanConversation_BadSignature(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "https://example.com/t"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -280,7 +280,7 @@ func TestScanConversation_BadSignature(t *testing.T) {
 
 	messages := []GateConversationMessage{
 		{
-			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageRequest, ConvID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
 			TargetURL: targetURL,
 			Payload:   payload, SignerKID: a.kid,
@@ -313,17 +313,17 @@ func TestScanConversation_DuplicateSigner(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "https://example.com/t"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "r1", Verb: "GET",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
-	appSig, _ := SignApproval(a.priv, &ApprovalSignable{OrgID: "test-org", RequestID: "r1", RequestHash: reqHash})
+	appSig, _ := SignApproval(a.priv, &ApprovalSignable{ConvID: "test-org", RequestID: "r1", RequestHash: reqHash})
 
 	messages := []GateConversationMessage{
 		{
-			Type: GateMessageRequest, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageRequest, ConvID: "test-org", RequestID: "r1",
 			Verb: "GET", TargetEndpoint: "/t", TargetService: "echo",
 			TargetURL: targetURL,
 			Payload:   payload, SignerKID: a.kid,
@@ -331,7 +331,7 @@ func TestScanConversation_DuplicateSigner(t *testing.T) {
 			ExpiresAt: expiresAt,
 		},
 		{
-			Type: GateMessageApproval, OrgID: "test-org", RequestID: "r1",
+			Type: GateMessageApproval, ConvID: "test-org", RequestID: "r1",
 			SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
 		},
 	}
@@ -399,7 +399,7 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 	payload := json.RawMessage(`{"test":true}`)
 	targetURL := echoSrv.URL + "/echo"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "test-org", RequestID: "req-001", Verb: "POST",
+	signable := &GateSignable{ConvID: "test-org", RequestID: "req-001", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -421,7 +421,7 @@ func TestIntegration_2of3_Echo(t *testing.T) {
 	// B approves via conversation message
 	reqHash, _ := HashRequest(signable)
 	appSig, _ := SignApproval(b.priv, &ApprovalSignable{
-		OrgID: "test-org", RequestID: "req-001", RequestHash: reqHash,
+		ConvID: "test-org", RequestID: "req-001", RequestHash: reqHash,
 	})
 	resp = post(t, gateSrv.URL+"/v1/orgs/test-org/messages", map[string]interface{}{
 		"type": "gate.approval", "request_id": "req-001",
@@ -467,7 +467,7 @@ func TestIntegration_1of2_AutoExecute(t *testing.T) {
 	payload := json.RawMessage(`null`)
 	targetURL := echoSrv.URL + "/balance"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "low-org", RequestID: "r1", Verb: "GET",
+	signable := &GateSignable{ConvID: "low-org", RequestID: "r1", Verb: "GET",
 		TargetEndpoint: "/balance", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -516,7 +516,7 @@ func TestIntegration_Expiration(t *testing.T) {
 	expiresAt := time.Now().Add(2 * time.Second)
 	targetURL := "http://localhost:9999/echo"
 	payload := json.RawMessage(`{"x":1}`)
-	signable := &GateSignable{OrgID: "exp-org", RequestID: "r-exp", Verb: "POST",
+	signable := &GateSignable{ConvID: "exp-org", RequestID: "r-exp", Verb: "POST",
 		TargetEndpoint: "/echo", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -540,7 +540,7 @@ func TestIntegration_Expiration(t *testing.T) {
 	// Try to approve — should fail (expired)
 	reqHash, _ := HashRequest(signable)
 	appSig, _ := SignApproval(b.priv, &ApprovalSignable{
-		OrgID: "exp-org", RequestID: "r-exp", RequestHash: reqHash,
+		ConvID: "exp-org", RequestID: "r-exp", RequestHash: reqHash,
 	})
 	body, _ := json.Marshal(map[string]interface{}{
 		"type": "gate.approval", "request_id": "r-exp",
@@ -581,7 +581,7 @@ func TestIntegration_BadSignature(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "http://localhost:9999/t"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "sig-org", RequestID: "r-bad", Verb: "GET",
+	signable := &GateSignable{ConvID: "sig-org", RequestID: "r-bad", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -632,7 +632,7 @@ func TestIntegration_DuplicateRequest(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 	targetURL := "http://localhost:9999/t"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "dup-org", RequestID: "r-dup", Verb: "GET",
+	signable := &GateSignable{ConvID: "dup-org", RequestID: "r-dup", Verb: "GET",
 		TargetEndpoint: "/t", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
@@ -684,23 +684,23 @@ func TestIntegration_ExplicitExecute(t *testing.T) {
 	payload := json.RawMessage(`{"action":"test"}`)
 	targetURL := echoSrv.URL + "/action"
 	expiresAt := time.Now().Add(1 * time.Hour)
-	signable := &GateSignable{OrgID: "exec-org", RequestID: "r-exec", Verb: "POST",
+	signable := &GateSignable{ConvID: "exec-org", RequestID: "r-exec", Verb: "POST",
 		TargetEndpoint: "/action", TargetService: "echo",
 		TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 		PayloadHash: ComputePayloadHash(payload)}
 	reqSig, _ := SignRequest(a.priv, signable)
 	reqHash, _ := HashRequest(signable)
-	appSig, _ := SignApproval(b.priv, &ApprovalSignable{OrgID: "exec-org", RequestID: "r-exec", RequestHash: reqHash})
+	appSig, _ := SignApproval(b.priv, &ApprovalSignable{ConvID: "exec-org", RequestID: "r-exec", RequestHash: reqHash})
 
 	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: "exec-org", RequestID: "r-exec",
+		Type: GateMessageRequest, ConvID: "exec-org", RequestID: "r-exec",
 		Verb: "POST", TargetEndpoint: "/action", TargetService: "echo",
 		TargetURL: targetURL, Payload: payload,
 		SignerKID: a.kid, Signature: base64.RawURLEncoding.EncodeToString(reqSig),
 		ExpiresAt: expiresAt,
 	})
 	srv.ConvStore.WriteGateMessage("exec-org", &GateConversationMessage{
-		Type: GateMessageApproval, OrgID: "exec-org", RequestID: "r-exec",
+		Type: GateMessageApproval, ConvID: "exec-org", RequestID: "r-exec",
 		SignerKID: b.kid, Signature: base64.RawURLEncoding.EncodeToString(appSig),
 	})
 
@@ -756,7 +756,7 @@ func TestIntegration_AlreadyExecutedNotReexecuted(t *testing.T) {
 	targetURL := echoSrv.URL + "/once"
 	expiresAt := time.Now().Add(1 * time.Hour)
 	signable := &GateSignable{
-		OrgID:          "idempotent-org",
+		ConvID:          "idempotent-org",
 		RequestID:      "once-1",
 		Verb:           "POST",
 		TargetEndpoint: "/once",
@@ -829,14 +829,14 @@ func TestExecuteIfReady_CredentialStillUsableAcrossRequests(t *testing.T) {
 		targetURL := echoSrv.URL + "/auth"
 		expiresAt := time.Now().Add(1 * time.Hour)
 		signable := &GateSignable{
-			OrgID: "cred-org", RequestID: requestID, Verb: "POST",
+			ConvID: "cred-org", RequestID: requestID, Verb: "POST",
 			TargetEndpoint: "/auth", TargetService: "echo",
 			TargetURL: targetURL, ExpiresAtUnix: expiresAt.Unix(),
 			PayloadHash: ComputePayloadHash(payload),
 		}
 		sig, _ := SignRequest(signer.priv, signable)
 		if err := conv.WriteGateMessage("cred-org", &GateConversationMessage{
-			Type: GateMessageRequest, OrgID: "cred-org", RequestID: requestID,
+			Type: GateMessageRequest, ConvID: "cred-org", RequestID: requestID,
 			Verb: "POST", TargetEndpoint: "/auth", TargetService: "echo",
 			TargetURL: targetURL, Payload: payload, ExpiresAt: expiresAt,
 			SignerKID: signer.kid, Signature: base64.RawURLEncoding.EncodeToString(sig),

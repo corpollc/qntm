@@ -2,12 +2,15 @@ import { QSP1Suite } from '../crypto/qsp1.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { base64UrlEncode, base64UrlDecode } from '../identity/index.js';
 import type {
-  GateConversationMessage, GateSignable, ApprovalSignable,
-  ThresholdRule, Credential, Signer, Org, ScanResult, ExecuteResult,
-  Recipe,
+  GateSignable, ApprovalSignable,
+  ThresholdRule, Recipe,
 } from '../types.js';
 
 // Gate message type constants (mirrors Go gate package constants)
+export const GateMessageRequest = 'gate.request' as const;
+export const GateMessageApproval = 'gate.approval' as const;
+export const GateMessageDisapproval = 'gate.disapproval' as const;
+export const GateMessageExecuted = 'gate.executed' as const;
 export const GateMessagePromote = 'gate.promote' as const;
 export const GateMessageConfig = 'gate.config' as const;
 export const GateMessageSecret = 'gate.secret' as const;
@@ -84,69 +87,35 @@ export class GateClient {
     return h;
   }
 
-  async createOrg(org: { id: string; signers: Signer[]; rules: ThresholdRule[] }): Promise<Org> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs`, {
-      method: 'POST',
-      headers: this.headers(true),
-      body: JSON.stringify(org),
-    });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<Org>;
-  }
-
-  async getOrg(orgID: string): Promise<Org> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs/${orgID}`, {
-      headers: this.headers(true),
-    });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<Org>;
-  }
-
-  async addCredential(orgID: string, credential: Credential): Promise<void> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs/${orgID}/credentials`, {
-      method: 'POST',
-      headers: this.headers(true),
-      body: JSON.stringify(credential),
-    });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-  }
-
-  async submitMessage(orgID: string, message: GateConversationMessage): Promise<void> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs/${orgID}/messages`, {
+  /**
+   * POST /v1/promote — bootstrap a conversation for gate use.
+   * Returns the gateway's per-conversation public key and KID.
+   */
+  async promote(convId: string, convAeadKey: string, convNonceKey: string, convEpoch: number): Promise<{
+    conv_id: string;
+    gateway_public_key: string;
+    gateway_kid: string;
+    created: boolean;
+  }> {
+    const resp = await fetch(`${this.baseURL}/v1/promote`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify(message),
+      body: JSON.stringify({
+        conv_id: convId,
+        conv_aead_key: convAeadKey,
+        conv_nonce_key: convNonceKey,
+        conv_epoch: convEpoch,
+      }),
     });
     if (!resp.ok) {
       throw new GateError(resp.status, await resp.text());
     }
-  }
-
-  async scanRequest(orgID: string, requestID: string): Promise<ScanResult> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs/${orgID}/scan/${requestID}`, {
-      headers: this.headers(),
-    });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<ScanResult>;
-  }
-
-  async executeRequest(orgID: string, requestID: string): Promise<ExecuteResult> {
-    const resp = await fetch(`${this.baseURL}/v1/orgs/${orgID}/execute/${requestID}`, {
-      method: 'POST',
-      headers: this.headers(true),
-    });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<ExecuteResult>;
+    return resp.json() as Promise<{
+      conv_id: string;
+      gateway_public_key: string;
+      gateway_kid: string;
+      created: boolean;
+    }>;
   }
 
   async health(): Promise<{ status: string }> {

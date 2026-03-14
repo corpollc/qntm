@@ -63,7 +63,7 @@ func (s *SQLiteStore) bootstrap() error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS gate_credentials (
-			org_id TEXT NOT NULL,
+			conv_id TEXT NOT NULL,
 			id TEXT NOT NULL,
 			service TEXT NOT NULL,
 			value TEXT NOT NULL,
@@ -71,18 +71,18 @@ func (s *SQLiteStore) bootstrap() error {
 			header_value TEXT,
 			description TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY(org_id, id),
-			FOREIGN KEY(org_id) REFERENCES gate_orgs(id) ON DELETE CASCADE
+			PRIMARY KEY(conv_id, id),
+			FOREIGN KEY(conv_id) REFERENCES gate_orgs(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS gate_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			org_id TEXT NOT NULL,
+			conv_id TEXT NOT NULL,
 			message_json BLOB NOT NULL,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY(org_id) REFERENCES gate_orgs(id) ON DELETE CASCADE
+			FOREIGN KEY(conv_id) REFERENCES gate_orgs(id) ON DELETE CASCADE
 		);`,
-		`CREATE INDEX IF NOT EXISTS idx_gate_messages_org_id_id
-			ON gate_messages(org_id, id ASC);`,
+		`CREATE INDEX IF NOT EXISTS idx_gate_messages_conv_id_id
+			ON gate_messages(conv_id, id ASC);`,
 		`INSERT INTO gate_meta(key, value)
 		 VALUES ('schema_version', ?)
 		 ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
@@ -197,7 +197,7 @@ func (s *SQLiteStore) Get(orgID string) (*Org, error) {
 	rows, err := s.db.Query(`
 		SELECT id, service, value, header_name, header_value, description
 		FROM gate_credentials
-		WHERE org_id = ?
+		WHERE conv_id = ?
 		ORDER BY id ASC`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("query credentials for %q: %w", orgID, err)
@@ -270,7 +270,7 @@ func (s *SQLiteStore) GetCredentialByService(orgID, service string) (*Credential
 	row := s.db.QueryRow(`
 		SELECT id, service, value, header_name, header_value, description
 		FROM gate_credentials
-		WHERE org_id = ? AND service = ?
+		WHERE conv_id = ? AND service = ?
 		ORDER BY id ASC
 		LIMIT 1`, orgID, service)
 
@@ -289,7 +289,7 @@ func (s *SQLiteStore) ReadGateMessages(orgID string) ([]GateConversationMessage,
 	rows, err := s.db.Query(`
 		SELECT message_json
 		FROM gate_messages
-		WHERE org_id = ?
+		WHERE conv_id = ?
 		ORDER BY id ASC`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("query messages for %q: %w", orgID, err)
@@ -324,7 +324,7 @@ func (s *SQLiteStore) WriteGateMessage(orgID string, msg *GateConversationMessag
 		return fmt.Errorf("marshal message: %w", err)
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO gate_messages(org_id, message_json) VALUES (?, ?)`,
+		`INSERT INTO gate_messages(conv_id, message_json) VALUES (?, ?)`,
 		orgID, raw,
 	)
 	if err != nil {
@@ -338,9 +338,9 @@ func upsertCredential(tx *sql.Tx, orgID string, cred *Credential) error {
 		return fmt.Errorf("credential is required")
 	}
 	_, err := tx.Exec(`
-		INSERT INTO gate_credentials(org_id, id, service, value, header_name, header_value, description)
+		INSERT INTO gate_credentials(conv_id, id, service, value, header_name, header_value, description)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(org_id, id) DO UPDATE SET
+		ON CONFLICT(conv_id, id) DO UPDATE SET
 			service=excluded.service,
 			value=excluded.value,
 			header_name=excluded.header_name,

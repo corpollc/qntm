@@ -55,10 +55,8 @@ func setupGatewayForSafetyTest(t *testing.T, useVault bool) (*Gateway, *types.Co
 	senderKID := KIDFromPublicKey(senderPub)
 
 	promotePayload := PromotePayload{
-		OrgID: "test-org",
-		Signers: []Signer{
-			{KID: senderKID, PublicKey: senderPub, Label: "sender"},
-		},
+		ConvID:     "test-org",
+		GatewayKID: "gw-kid-test",
 		Rules: []ThresholdRule{
 			{Service: "*", Endpoint: "*", Verb: "*", M: 1, N: 1},
 		},
@@ -67,6 +65,10 @@ func setupGatewayForSafetyTest(t *testing.T, useVault bool) (*Gateway, *types.Co
 	_ = gw.handlePromote(conv, &types.Message{
 		Inner: &types.InnerPayload{BodyType: string(GateMessagePromote), Body: promoteBody},
 	})
+
+	// Add sender as participant
+	state := gw.GetConversationState(convID)
+	state.Participants[senderKID] = senderPub
 
 	secretValue := "test_fake_NOTAREALSECRET_0000000"
 
@@ -129,7 +131,7 @@ func TestExecutedMessage_NoCredentialValues(t *testing.T) {
 
 	executedMsg := GateConversationMessage{
 		Type:                GateMessageExecuted,
-		OrgID:               "test-org",
+		ConvID:               "test-org",
 		RequestID:           "req-1",
 		ExecutedAt:          time.Now().UTC(),
 		ExecutionStatusCode: 200,
@@ -156,7 +158,7 @@ func TestExecuteResult_NoCredentialValues(t *testing.T) {
 	secretValue := "test_fake_NOTAREALSECRET_0000000"
 
 	result := &ExecuteResult{
-		OrgID:          "test-org",
+		ConvID:          "test-org",
 		RequestID:      "req-1",
 		Verb:           "GET",
 		TargetEndpoint: "/api/test",
@@ -209,7 +211,7 @@ func TestExecuteIfReady_AuditLogNoCredentials(t *testing.T) {
 
 	// Build a signed request
 	signable := &GateSignable{
-		OrgID: "test-org", RequestID: "req-1", Verb: "GET",
+		ConvID: "test-org", RequestID: "req-1", Verb: "GET",
 		TargetEndpoint: "/api/test", TargetService: "stripe",
 		TargetURL: "https://api.stripe.com/v1/charges",
 		ExpiresAtUnix: time.Now().Add(time.Hour).Unix(),
@@ -219,7 +221,7 @@ func TestExecuteIfReady_AuditLogNoCredentials(t *testing.T) {
 
 	convStore := NewMemoryConversationStore()
 	_ = convStore.WriteGateMessage("test-org", &GateConversationMessage{
-		Type: GateMessageRequest, OrgID: "test-org", RequestID: "req-1",
+		Type: GateMessageRequest, ConvID: "test-org", RequestID: "req-1",
 		Verb: "GET", TargetEndpoint: "/api/test", TargetService: "stripe",
 		TargetURL: "https://api.stripe.com/v1/charges",
 		ExpiresAt: time.Now().Add(time.Hour),

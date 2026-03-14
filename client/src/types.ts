@@ -137,6 +137,7 @@ export type RequestStatus = 'pending' | 'approved' | 'executed' | 'expired';
 export type GateMessageType =
   | 'gate.request'
   | 'gate.approval'
+  | 'gate.disapproval'
   | 'gate.executed'
   | 'gate.expired'
   | 'gate.promote'
@@ -147,7 +148,7 @@ export type GateMessageType =
 
 export interface GateConversationMessage {
   type: GateMessageType;
-  org_id: string;
+  conv_id: string;
   request_id: string;
   verb?: string;
   target_endpoint?: string;
@@ -200,8 +201,8 @@ export interface RecipeCatalog {
 
 export interface PromotePayload {
   type: 'gate.promote';
-  org_id: string;
-  signers: Array<{ kid: string; public_key: Uint8Array; label: string }>;
+  conv_id: string;
+  gateway_kid: string;
   rules: ThresholdRule[];
 }
 
@@ -239,7 +240,7 @@ export interface ExpiredPayload {
 }
 
 export interface GateSignable {
-  org_id: string;
+  conv_id: string;
   request_id: string;
   verb: string;
   target_endpoint: string;
@@ -250,7 +251,7 @@ export interface GateSignable {
 }
 
 export interface ApprovalSignable {
-  org_id: string;
+  conv_id: string;
   request_id: string;
   request_hash: Uint8Array;
 }
@@ -272,7 +273,7 @@ export interface ExecutionResult {
 }
 
 export interface ExecuteResult {
-  org_id: string;
+  conv_id: string;
   request_id: string;
   verb: string;
   target_endpoint: string;
