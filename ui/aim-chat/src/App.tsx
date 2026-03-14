@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import { shortId } from './utils'
@@ -22,6 +23,12 @@ const EMPTY_IDENTITY: IdentityInfo = {
 }
 
 export default function App() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const isSettings = location.pathname === '/settings'
+  const isHelp = location.pathname === '/help'
+  const isChat = !isSettings && !isHelp
+
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [activeProfileId, setActiveProfileId] = useState('')
   const [identity, setIdentity] = useState<IdentityInfo>(EMPTY_IDENTITY)
@@ -49,8 +56,6 @@ export default function App() {
   const [secretHeaderName, setSecretHeaderName] = useState('Authorization')
   const [secretHeaderTemplate, setSecretHeaderTemplate] = useState('Bearer {value}')
 
-  const [showSettings, setShowSettings] = useState(false)
-  const [showHelp, setShowHelp] = useState(false)
   const [showGatePanel, setShowGatePanel] = useState(false)
   const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(() => {
     try {
@@ -188,20 +193,19 @@ export default function App() {
 
   const shortcutActions = useMemo(() => ({
     focusConversationFilter() {
-      if (showSettings) setShowSettings(false)
+      if (!isChat) navigate('/')
       sidebarRef.current?.focusConversationFilter()
     },
     toggleSettings() {
-      setShowSettings((prev) => !prev)
+      navigate(isSettings ? '/' : '/settings')
     },
     closeOverlay() {
       if (showShortcutsHelp) { setShowShortcutsHelp(false); return }
       if (showGatePanel) { setShowGatePanel(false); return }
-      if (showHelp) { setShowHelp(false); return }
-      if (showSettings) { setShowSettings(false); return }
+      if (!isChat) { navigate('/'); return }
     },
     focusNewConversation() {
-      if (showSettings) setShowSettings(false)
+      if (!isChat) navigate('/')
       sidebarRef.current?.focusNewConversation()
     },
     switchConversation(index: number) {
@@ -211,7 +215,7 @@ export default function App() {
     toggleShortcutsHelp() {
       setShowShortcutsHelp((prev) => !prev)
     },
-  }), [showSettings, showShortcutsHelp, showGatePanel, showHelp, visibleConversations, selectConversation])
+  }), [isChat, isSettings, showShortcutsHelp, showGatePanel, visibleConversations, selectConversation, navigate])
 
   useKeyboardShortcuts(shortcutActions)
 
@@ -798,26 +802,26 @@ export default function App() {
             <button
               className="settings-toggle"
               type="button"
-              onClick={() => { setShowHelp(false); setShowSettings(!showSettings) }}
-              aria-label={showSettings ? 'Close settings' : 'Open settings'}
+              onClick={() => navigate(isSettings ? '/' : '/settings')}
+              aria-label={isSettings ? 'Close settings' : 'Open settings'}
             >
-              {showSettings ? 'Back to conversations' : 'Settings'}
+              {isSettings ? 'Back to conversations' : 'Settings'}
             </button>
             <button
               className="settings-toggle"
               type="button"
-              onClick={() => { setShowSettings(false); setShowHelp(!showHelp) }}
-              aria-label={showHelp ? 'Close help' : 'Open help'}
+              onClick={() => navigate(isHelp ? '/' : '/help')}
+              aria-label={isHelp ? 'Close help' : 'Open help'}
             >
-              {showHelp ? 'Back to conversations' : 'Help'}
+              {isHelp ? 'Back to conversations' : 'Help'}
             </button>
           </span>
         </header>
 
         <div className="aim-body">
-          {showHelp ? (
-            <HelpPanel />
-          ) : showSettings ? (
+          <Routes>
+          <Route path="/help" element={<HelpPanel />} />
+          <Route path="/settings" element={
             <SettingsPage
               dropboxUrl={dropboxUrl}
               defaultDropboxUrl={defaultDropboxUrl}
@@ -830,7 +834,8 @@ export default function App() {
               setError={setError}
               onShowShortcuts={() => setShowShortcutsHelp(true)}
             />
-          ) : (
+          } />
+          <Route path="*" element={
           <>
           <Sidebar
             profiles={profiles}
@@ -917,7 +922,8 @@ export default function App() {
             />
           )}
           </>
-          )}
+          } />
+          </Routes>
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </div>
