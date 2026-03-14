@@ -62,11 +62,13 @@
 
 .collapsible-body-open {
   pointer-events: auto;
+  max-height: none;
 }
 
 .collapsible-panel.grow .collapsible-body-open {
   flex: 1;
   overflow: hidden;
+  max-height: none;
 }
 
 .collapsible-panel.grow {

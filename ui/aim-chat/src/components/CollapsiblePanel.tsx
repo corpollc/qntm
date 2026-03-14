@@ -21,10 +21,17 @@ export function CollapsiblePanel({
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
 
   useEffect(() => {
-    if (contentRef.current) {
-      setContentHeight(contentRef.current.scrollHeight)
-    }
-  }, [children, expanded])
+    const el = contentRef.current
+    if (!el) return
+
+    setContentHeight(el.scrollHeight)
+
+    const observer = new ResizeObserver(() => {
+      setContentHeight(el.scrollHeight)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [expanded])
 
   const panelClass = `panel collapsible-panel${grow && expanded ? ' grow' : ''}`
 
@@ -45,7 +52,7 @@ export function CollapsiblePanel({
       <div
         className={`collapsible-body${expanded ? ' collapsible-body-open' : ''}`}
         style={{
-          maxHeight: expanded ? (grow ? undefined : (contentHeight ?? 800)) : 0,
+          maxHeight: expanded ? (grow ? 'none' : (contentHeight ?? 800)) : 0,
         }}
       >
         <div ref={contentRef} className="collapsible-inner">

@@ -1,6 +1,7 @@
-import { FormEvent } from 'react'
+import { FormEvent, useMemo } from 'react'
 import type { ChatMessage, Conversation, Profile } from '../types'
-import { formatSmartTime, formatDateLabel, isSameDay, isSameGroup, senderColor, shortId } from '../utils'
+import { formatSmartTime, formatDateLabel, isSameDay, isSameGroup, senderColor, shortId, parseGateMessage } from '../utils'
+import type { GateApprovalBody, GatePromoteBody } from '../gate-types'
 import {
   GateRequestCard,
   GateApprovalCard,
@@ -35,11 +36,26 @@ export interface ChatPaneProps {
   onOpenInvites: () => void
 }
 
-function MessageBody({ message, onGateApprove, isWorking }: { message: ChatMessage; onGateApprove: (requestId: string, conversationId: string) => void; isWorking: boolean }) {
+function MessageBody({ message, onGateApprove, isWorking, approvalCounts, requiredApprovals, approvedByMe }: {
+  message: ChatMessage
+  onGateApprove: (requestId: string, conversationId: string) => void
+  isWorking: boolean
+  approvalCounts: Record<string, number>
+  requiredApprovals: number
+  approvedByMe: Set<string>
+}) {
   if (message.bodyType === 'gate.promote') return <GatePromoteCard message={message} />
   if (message.bodyType === 'gate.config') return <GateConfigCard message={message} />
-  if (message.bodyType === 'gate.request') return <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} />
-  if (message.bodyType === 'gate.approval') return <GateApprovalCard message={message} />
+  if (message.bodyType === 'gate.request') {
+    const parsed = parseGateMessage(message.text) as import('../gate-types').GateRequestBody | null
+    const requestId = parsed?.request_id || ''
+    return <GateRequestCard message={message} onApprove={onGateApprove} isWorking={isWorking} alreadyApproved={approvedByMe.has(requestId)} approvalCount={approvalCounts[requestId] || 0} requiredApprovals={requiredApprovals} />
+  }
+  if (message.bodyType === 'gate.approval') {
+    const parsed = parseGateMessage(message.text) as GateApprovalBody | null
+    const requestId = parsed?.request_id || ''
+    return <GateApprovalCard message={message} approvalCount={approvalCounts[requestId] || 0} requiredApprovals={requiredApprovals} />
+  }
   if (message.bodyType === 'gate.executed') return <GateExecutedCard message={message} />
   if (message.bodyType === 'gate.expired') return <GateExpiredCard message={message} />
   if (message.bodyType === 'gate.result') return <GateResultCard message={message} />
@@ -73,6 +89,40 @@ export function ChatPane({
     }
     return -1
   })()
+
+  // Count approvals per request_id and track which ones current user approved
+  const { approvalCounts, requiredApprovals, approvedByMe } = useMemo(() => {
+    const counts: Record<string, number> = {}
+    const myApprovals = new Set<string>()
+    let threshold = 0
+    for (const msg of messages) {
+      if (msg.bodyType === 'gate.request') {
+        const parsed = parseGateMessage(msg.text)
+        if (parsed && 'request_id' in parsed) {
+          const requestId = parsed.request_id as string
+          counts[requestId] = 1 // submission = first approval
+          // If this is an outgoing message, the current user submitted (and thus approved) it
+          if (msg.direction === 'outgoing') {
+            myApprovals.add(requestId)
+          }
+        }
+      } else if (msg.bodyType === 'gate.approval') {
+        const parsed = parseGateMessage(msg.text) as GateApprovalBody | null
+        if (parsed?.request_id) {
+          counts[parsed.request_id] = (counts[parsed.request_id] || 0) + 1
+          if (msg.direction === 'outgoing') {
+            myApprovals.add(parsed.request_id)
+          }
+        }
+      } else if (msg.bodyType === 'gate.promote') {
+        try {
+          const body = JSON.parse(msg.text) as GatePromoteBody
+          if (body.rules?.[0]?.m) threshold = body.rules[0].m
+        } catch { /* ignore */ }
+      }
+    }
+    return { approvalCounts: counts, requiredApprovals: threshold, approvedByMe: myApprovals }
+  }, [messages])
 
   const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
   return (
@@ -133,9 +183,6 @@ export function ChatPane({
                 </div>
               )}
               <div className={`message-group ${message.direction}`}>
-                {isGroupFirst && message.direction === 'incoming' && (
-                  <span className="sender-avatar" style={{ background: color }}>{initial}</span>
-                )}
                 <article className={`message ${message.direction} ${isGroupFirst ? 'message-group-first' : 'message-group-cont'}`}>
                   {isGroupFirst && (
                     <div className="message-top">
@@ -150,12 +197,9 @@ export function ChatPane({
                       </span>
                     </div>
                   )}
-                  <MessageBody message={message} onGateApprove={onGateApprove} isWorking={isWorking} />
+                  <MessageBody message={message} onGateApprove={onGateApprove} isWorking={isWorking} approvalCounts={approvalCounts} requiredApprovals={requiredApprovals} approvedByMe={approvedByMe} />
                   <div className="message-type">{message.bodyType}</div>
                 </article>
-                {isGroupFirst && message.direction === 'outgoing' && (
-                  <span className="sender-avatar" style={{ background: color }}>{initial}</span>
-                )}
               </div>
             </div>
           )

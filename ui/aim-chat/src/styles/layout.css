@@ -99,7 +99,7 @@
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 2px;
 }
 
 @media (max-width: 980px) {

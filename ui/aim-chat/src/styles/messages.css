@@ -1,3 +1,23 @@
+.message-group {
+  display: flex;
+}
+
+.message-group.incoming {
+  justify-content: flex-start;
+}
+
+.message-group.outgoing {
+  justify-content: flex-end;
+}
+
+.message-group-first {
+  margin-top: 8px;
+}
+
+.message-group-cont {
+  margin-top: 2px;
+}
+
 .message {
   max-width: min(72%, 620px);
   padding: 8px 10px;
@@ -7,12 +27,10 @@
 }
 
 .message.incoming {
-  align-self: flex-start;
   background: var(--msg-incoming);
 }
 
 .message.outgoing {
-  align-self: flex-end;
   background: var(--msg-outgoing);
 }
 

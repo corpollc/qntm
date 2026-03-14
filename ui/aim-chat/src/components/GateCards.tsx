@@ -13,10 +13,16 @@ export function GateRequestCard({
   message,
   onApprove,
   isWorking,
+  alreadyApproved,
+  approvalCount,
+  requiredApprovals,
 }: {
   message: ChatMessage
   onApprove: (requestId: string, conversationId: string) => void
   isWorking: boolean
+  alreadyApproved?: boolean
+  approvalCount?: number
+  requiredApprovals?: number
 }) {
   const parsed = parseGateMessage(message.text) as GateRequestBody | null
   if (!parsed) return <div className="message-body">{message.text}</div>
@@ -24,11 +30,17 @@ export function GateRequestCard({
   const isExpired = new Date(parsed.expires_at) < new Date()
   const hasArgs = parsed.arguments && Object.keys(parsed.arguments).length > 0
   const hasBody = parsed.request_body !== undefined && parsed.request_body !== null
+  const thresholdMet = approvalCount != null && requiredApprovals != null && approvalCount >= requiredApprovals
 
   return (
     <div className="gate-card gate-request">
       <div className="gate-card-header">
         API Request{parsed.recipe_name ? `: ${parsed.recipe_name}` : ''}
+        {approvalCount != null && requiredApprovals != null && (
+          <span style={{ fontWeight: 400, marginLeft: 8 }}>
+            ({approvalCount} of {requiredApprovals} approvals{thresholdMet ? ' — ready to execute' : ''})
+          </span>
+        )}
       </div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
@@ -62,7 +74,7 @@ export function GateRequestCard({
           </div>
         )}
       </div>
-      {!isExpired && (
+      {!isExpired && !alreadyApproved && !thresholdMet && (
         <button
           className="gate-approve-btn"
           type="button"
@@ -72,18 +84,31 @@ export function GateRequestCard({
           Approve
         </button>
       )}
+      {!isExpired && alreadyApproved && !thresholdMet && (
+        <div style={{ marginTop: 8, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>You have already approved this request.</div>
+      )}
       {isExpired && <div className="gate-expired">Expired</div>}
     </div>
   )
 }
 
-export function GateApprovalCard({ message }: { message: ChatMessage }) {
+export function GateApprovalCard({ message, approvalCount, requiredApprovals }: { message: ChatMessage; approvalCount?: number; requiredApprovals?: number }) {
   const parsed = parseGateMessage(message.text) as GateApprovalBody | null
   if (!parsed) return <div className="message-body">{message.text}</div>
 
+  const showCount = approvalCount != null && requiredApprovals != null
+  const thresholdMet = showCount && approvalCount >= requiredApprovals
+
   return (
     <div className="gate-card gate-approval">
-      <div className="gate-card-header">Approval</div>
+      <div className="gate-card-header">
+        Approval
+        {showCount && (
+          <span style={{ fontWeight: 400, marginLeft: 8 }}>
+            ({approvalCount} of {requiredApprovals}{thresholdMet ? ' — threshold met' : ''})
+          </span>
+        )}
+      </div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div><strong>Approved by:</strong> {shortId(parsed.signer_kid)}</div>
