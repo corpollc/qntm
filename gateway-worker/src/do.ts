@@ -1,7 +1,7 @@
 import {
   generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   DropboxClient, deserializeEnvelope, decryptMessage,
-  createMessage, serializeEnvelope, defaultTTL,
+  createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, Identity } from '@corpollc/qntm';
 import type {
@@ -98,6 +98,8 @@ export class GatewayConversationDO implements DurableObject {
       promoted_at: new Date().toISOString(),
       gate_promoted: false,
       rules: [],
+      participants: {},
+      promotion_floor: 1,
     };
 
     await this.state.storage.put('conv_state', convState);
@@ -176,26 +178,35 @@ export class GatewayConversationDO implements DurableObject {
    * Route a decrypted gate message to the appropriate handler.
    */
   private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array): Promise<void> {
+    const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
+
+    // Reject gate actions before promotion (except gate.promote and gate.executed)
+    if (bodyType !== 'gate.promote' && bodyType !== 'gate.executed') {
+      const convState = await this.state.storage.get<ConversationState>('conv_state');
+      if (!convState?.gate_promoted) {
+        throw new Error(`${bodyType} rejected: conversation not yet promoted`);
+      }
+    }
 
     switch (bodyType) {
       case 'gate.promote':
-        await this.handleGatePromote(body);
+        await this.handleGatePromote(body, authenticatedKid);
         break;
       case 'gate.request':
-        await this.handleGateRequest(bodyStr);
+        await this.handleGateRequest(bodyStr, authenticatedKid);
         break;
       case 'gate.approval':
-        await this.handleGateApproval(bodyStr);
+        await this.handleGateApproval(bodyStr, authenticatedKid);
         break;
       case 'gate.disapproval':
-        await this.handleGateDisapproval(bodyStr);
+        await this.handleGateDisapproval(bodyStr, authenticatedKid);
         break;
       case 'gate.secret':
         await this.handleGateSecret(bodyStr, senderKid);
         break;
       case 'gate.config':
-        await this.handleGateConfig(bodyStr);
+        await this.handleGateConfig(bodyStr, authenticatedKid);
         break;
       case 'gate.executed':
         await this.handleGateExecuted(bodyStr);
@@ -205,7 +216,7 @@ export class GatewayConversationDO implements DurableObject {
     }
   }
 
-  private async handleGatePromote(body: Uint8Array): Promise<void> {
+  private async handleGatePromote(body: Uint8Array, authenticatedKid: string): Promise<void> {
     const convState = await this.state.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.promote: no bootstrapped state');
 
@@ -218,41 +229,117 @@ export class GatewayConversationDO implements DurableObject {
       throw new Error(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
     }
 
+    // Invalidate pending requests if participants changed on re-promotion
+    if (convState.gate_promoted) {
+      const oldParticipants = JSON.stringify(Object.keys(convState.participants).sort());
+      const newParticipants = JSON.stringify(Object.keys(msg.participants || {}).sort());
+      if (oldParticipants !== newParticipants) {
+        await this.invalidatePendingRequests();
+      }
+    }
+
     convState.gate_promoted = true;
     convState.rules = msg.rules || [];
+    convState.participants = msg.participants || {};
+    convState.promotion_floor = msg.floor ?? 1;
     await this.state.storage.put('conv_state', convState);
   }
 
-  private async handleGateRequest(bodyStr: string): Promise<void> {
+  private async handleGateRequest(bodyStr: string, authenticatedKid: string): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateRequestMessage;
+
+    // Validate JSON signer_kid matches authenticated envelope sender
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gate.request rejected: signer_kid does not match authenticated sender');
+    }
+
+    // Validate sender is a participant
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.request: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gate.request rejected: sender is not a participant');
+    }
+
+    // Check required_approvals >= promotion floor
+    if (msg.required_approvals < convState.promotion_floor) {
+      throw new Error(`gate.request rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
+    }
+
+    // Check required_approvals >= applicable rule threshold
+    const rule = lookupThreshold(convState.rules, msg.target_service, msg.target_endpoint, msg.verb);
+    if (rule && msg.required_approvals < rule.m) {
+      throw new Error(`gate.request rejected: required_approvals ${msg.required_approvals} below rule threshold ${rule.m}`);
+    }
+
+    // Check eligible_signer_kids matches current participants
+    const currentParticipantKids = new Set(Object.keys(convState.participants));
+    const requestedSigners = new Set(msg.eligible_signer_kids);
+
+    for (const kid of requestedSigners) {
+      if (!currentParticipantKids.has(kid)) {
+        throw new Error(`gate.request rejected: eligible signer ${kid} is not a current participant`);
+      }
+    }
+    for (const kid of currentParticipantKids) {
+      if (!requestedSigners.has(kid)) {
+        throw new Error(`gate.request rejected: current participant ${kid} missing from eligible_signer_kids`);
+      }
+    }
+
     await this.storeGateMessage({
       seq: ++this.messageSeq,
       type: 'gate.request',
       request_id: msg.request_id,
-      signer_kid: msg.signer_kid,
+      signer_kid: authenticatedKid,
       signature: msg.signature,
       body: bodyStr,
     });
   }
 
-  private async handleGateApproval(bodyStr: string): Promise<void> {
+  private async handleGateApproval(bodyStr: string, authenticatedKid: string): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateApprovalMessage;
+
+    // Validate JSON signer_kid matches authenticated envelope sender
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gate.approval rejected: signer_kid does not match authenticated sender');
+    }
+
+    // Validate sender is a participant
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.approval: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gate.approval rejected: sender is not a participant');
+    }
+
     await this.storeGateMessage({
       seq: ++this.messageSeq,
       type: 'gate.approval',
       request_id: msg.request_id,
-      signer_kid: msg.signer_kid,
+      signer_kid: authenticatedKid,
       signature: msg.signature,
     });
   }
 
-  private async handleGateDisapproval(bodyStr: string): Promise<void> {
+  private async handleGateDisapproval(bodyStr: string, authenticatedKid: string): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateDisapprovalMessage;
+
+    // Validate JSON signer_kid matches authenticated envelope sender
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gate.disapproval rejected: signer_kid does not match authenticated sender');
+    }
+
+    // Validate sender is a participant
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.disapproval: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gate.disapproval rejected: sender is not a participant');
+    }
+
     await this.storeGateMessage({
       seq: ++this.messageSeq,
       type: 'gate.disapproval',
       request_id: msg.request_id,
-      signer_kid: msg.signer_kid,
+      signer_kid: authenticatedKid,
     });
   }
 
@@ -288,7 +375,7 @@ export class GatewayConversationDO implements DurableObject {
     await this.state.storage.put(`vault:${msg.service}`, entry);
   }
 
-  private async handleGateConfig(bodyStr: string): Promise<void> {
+  private async handleGateConfig(bodyStr: string, _authenticatedKid: string): Promise<void> {
     const convState = await this.state.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.config: no bootstrapped state');
 
@@ -364,6 +451,25 @@ export class GatewayConversationDO implements DurableObject {
     }
   }
 
+  private async invalidatePendingRequests(): Promise<void> {
+    const messages = await this.loadGateMessages();
+    const terminalIds = new Set<string>();
+    for (const msg of messages) {
+      if ((msg.type === 'gate.executed' || msg.type === 'gate.invalidated') && msg.request_id) {
+        terminalIds.add(msg.request_id);
+      }
+    }
+    for (const msg of messages) {
+      if (msg.type === 'gate.request' && msg.request_id && !terminalIds.has(msg.request_id)) {
+        await this.storeGateMessage({
+          seq: ++this.messageSeq,
+          type: 'gate.invalidated',
+          request_id: msg.request_id,
+        });
+      }
+    }
+  }
+
   // ---- Storage helpers ----
 
   private async storeGateMessage(msg: StoredGateMessage): Promise<void> {
@@ -398,7 +504,7 @@ export class GatewayConversationDO implements DurableObject {
       id: convIdBytes,
       type: 'group',
       keys,
-      participants: [],
+      participants: Object.keys(convState.participants).map(kid => base64UrlDecode(kid)),
       createdAt: new Date(convState.promoted_at),
       currentEpoch: convState.conv_epoch,
     };
