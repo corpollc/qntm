@@ -62,6 +62,7 @@ Slash commands (in chat):
   /nick <name>           Set your display name
   /alias <kid> <name>    Set a contact alias
   /identity              Show your identity info
+  /settings              Show current configuration (alias: /config)
   /conversations         List all conversations
   /approve <reqid>       Approve an API Gateway request
   /quit                  Exit the client

@@ -1,0 +1,463 @@
+/* Gate toggle button in chat header */
+
+.gate-toggle {
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.gate-toggle:hover {
+  background: var(--brand-light);
+  border-color: var(--brand-primary);
+}
+
+.gate-toggle.active {
+  background: var(--brand-light);
+  border-color: var(--brand-primary);
+  color: var(--brand-dark);
+}
+
+/* Gate right panel */
+
+.gate-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Gate status */
+
+.gate-status-panel {
+  padding: 10px;
+}
+
+.gate-status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gate-status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 6px;
+  width: fit-content;
+}
+
+.gate-status-badge.promoted {
+  background: var(--tint-success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.gate-status-badge.inactive {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.gate-hint {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* Gate message cards */
+
+.gate-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  font-size: var(--text-base);
+}
+
+.gate-card-header {
+  font-weight: 700;
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: var(--line-tight);
+}
+
+.gate-request {
+  background: var(--tint-warning-bg);
+  border-color: var(--warning);
+}
+
+.gate-request .gate-card-header {
+  color: var(--tint-warning-text);
+}
+
+.gate-approval {
+  background: var(--tint-success-bg);
+  border-color: var(--approval-border);
+}
+
+.gate-approval .gate-card-header {
+  color: var(--success);
+}
+
+.gate-executed {
+  background: var(--brand-light);
+  border-color: var(--brand-primary);
+}
+
+.gate-executed .gate-card-header {
+  color: var(--brand-dark);
+}
+
+.gate-card-body div {
+  margin-bottom: 2px;
+}
+
+.gate-card-body strong {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.gate-approve-btn {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 16px;
+  background: var(--success);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--text-base);
+  transition: background 0.15s;
+}
+
+.gate-approve-btn:hover {
+  background: var(--approve-hover);
+}
+
+.gate-approve-btn:disabled {
+  background: var(--approve-disabled);
+  cursor: default;
+}
+
+.gate-expired {
+  margin-top: 6px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+/* Gate argument form */
+
+.gate-args {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.gate-args-heading {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+  line-height: var(--line-tight);
+}
+
+.gate-args-heading:first-child {
+  margin-top: 0;
+}
+
+/* Progressive disclosure steps */
+
+.gate-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity 0.25s ease, max-height 0.3s ease;
+}
+
+.gate-step-visible {
+  opacity: 1;
+  max-height: 1200px;
+}
+
+.gate-arg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gate-url-preview {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  word-break: break-all;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.gate-url-preview code {
+  font-size: var(--text-xs);
+}
+
+.gate-verb {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate-verb-get {
+  background: var(--brand-light);
+  color: var(--brand-dark);
+}
+
+.gate-verb-post {
+  background: var(--tint-success-bg);
+  color: var(--success);
+}
+
+.gate-verb-put {
+  background: var(--tint-orange-bg);
+  color: var(--tint-warning-text);
+}
+
+.gate-verb-patch {
+  background: var(--tint-warning-bg);
+  color: var(--warning);
+}
+
+.gate-verb-delete {
+  background: var(--tint-danger-bg);
+  color: var(--danger);
+}
+
+/* Enhanced gate request card */
+
+.gate-verb-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.gate-url-resolved {
+  font-size: var(--text-xs);
+  word-break: break-all;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  background: var(--tint-code-overlay);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.gate-args-display {
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: var(--tint-args-overlay);
+  border-radius: 4px;
+}
+
+.gate-arg-item {
+  font-size: var(--text-xs);
+  margin-left: 8px;
+}
+
+.gate-arg-item code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: var(--text-xs);
+  color: var(--brand-dark);
+}
+
+.gate-body-preview {
+  margin-top: 4px;
+}
+
+.gate-body-content {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  background: var(--tint-code-overlay);
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* Gate result card */
+
+.gate-result {
+  border-color: var(--border-strong);
+}
+
+.gate-result-ok {
+  background: var(--tint-success-bg);
+  border-color: var(--approval-border);
+}
+
+.gate-result-ok .gate-card-header {
+  color: var(--success);
+}
+
+.gate-result-err {
+  background: var(--tint-danger-bg);
+  border-color: var(--danger);
+}
+
+.gate-result-err .gate-card-header {
+  color: var(--danger);
+}
+
+.gate-status-ok {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.gate-status-err {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.gate-result-body-section {
+  margin-top: 4px;
+}
+
+.gate-result-body {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--tint-result-overlay);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Gate walkthrough */
+
+.gate-walkthrough {
+  padding: 10px;
+  background: var(--brand-light);
+  border: 1px solid var(--brand-primary);
+  border-radius: 6px;
+}
+
+.gate-walkthrough-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gate-walkthrough-indicator {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.gate-walkthrough-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+
+.gate-walkthrough-dot.active {
+  background: var(--brand-primary);
+}
+
+.gate-walkthrough-dot.done {
+  background: var(--success);
+}
+
+.gate-walkthrough-number {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.gate-walkthrough-heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--brand-dark);
+  line-height: var(--line-tight);
+}
+
+.gate-walkthrough-desc {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.gate-walkthrough-nav {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.gate-walkthrough-btn {
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+}
+
+.gate-walkthrough-btn-next {
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+  border-color: var(--brand-primary);
+}
+
+.gate-walkthrough-btn-next:hover:enabled {
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
+}
+
+.gate-walkthrough-dismiss {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.gate-walkthrough-dismiss input {
+  margin: 0;
+}

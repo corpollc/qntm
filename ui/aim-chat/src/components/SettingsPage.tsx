@@ -34,6 +34,9 @@ export function SettingsPage({
           <p className="settings-description">
             The relay server stores and delivers your encrypted messages.
           </p>
+          <p className="settings-description" style={{ fontSize: '0.85em', opacity: 0.7 }}>
+            Configuration is stored in your browser's local storage.
+          </p>
 
           <label className="label" htmlFor="dropbox-url">Relay URL</label>
           <input

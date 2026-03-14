@@ -19,6 +19,7 @@ export interface ChatPaneProps {
   composer: string
   setComposer: (value: string) => void
   isWorking: boolean
+  isSending: boolean
   isLoadingMessages: boolean
   showGatePanel: boolean
   setShowGatePanel: (value: boolean) => void
@@ -51,6 +52,7 @@ export function ChatPane({
   composer,
   setComposer,
   isWorking,
+  isSending,
   isLoadingMessages,
   showGatePanel,
   setShowGatePanel,
@@ -65,6 +67,13 @@ export function ChatPane({
   onGenerateIdentity,
   onOpenInvites,
 }: ChatPaneProps) {
+  const lastOutgoingIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].direction === 'outgoing') return i
+    }
+    return -1
+  })()
+
   const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
   return (
     <main id="chat-pane" className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
@@ -131,7 +140,14 @@ export function ChatPane({
                   {isGroupFirst && (
                     <div className="message-top">
                       <span className="sender">{message.sender}</span>
-                      <span className="time">{formatSmartTime(message.createdAt)}</span>
+                      <span className="time">
+                        {formatSmartTime(message.createdAt)}
+                        {message.direction === 'outgoing' && (
+                          isSending && index === lastOutgoingIndex
+                            ? <span className="message-status message-status-pending"> sending\u2026</span>
+                            : <span className="message-status message-status-sent"> \u2713</span>
+                        )}
+                      </span>
                     </div>
                   )}
                   <MessageBody message={message} onGateApprove={onGateApprove} isWorking={isWorking} />

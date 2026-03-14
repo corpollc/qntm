@@ -98,6 +98,22 @@ export const COMMANDS: CommandDef[] = [
       'Enables the terminal bell for new messages. Alias for /notifications on.',
   },
   {
+    name: 'select',
+    aliases: ['sel'],
+    usage: '/select <number>',
+    brief: 'Switch to conversation by number',
+    description:
+      'Switches to the conversation at the given number (1-9). Same as pressing the number key directly. Usage: /select <number>',
+  },
+  {
+    name: 'settings',
+    aliases: ['config'],
+    usage: '/settings',
+    brief: 'Show current configuration',
+    description:
+      'Shows current configuration including config directory, relay URL, bell notifications status, and display name.',
+  },
+  {
     name: 'help',
     aliases: ['h'],
     usage: '/help [command]',

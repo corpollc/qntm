@@ -60,6 +60,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [bellEnabled, setBellEnabled] = useState(true);
+  const [sidebarFocusIdx, setSidebarFocusIdx] = useState(0);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -164,6 +165,19 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     };
   }, []);
 
+  // ── Conversation selection helper ─────────────────────────────────
+
+  const selectConversationByIndex = useCallback((idx: number) => {
+    if (idx >= 0 && idx < conversations.length) {
+      const conv = conversations[idx];
+      setActiveConvId(conv.id);
+      setMessages(store.loadHistory(conv.id));
+      setScrollOffset(0);
+      setSidebarFocusIdx(idx);
+      setUnread((prev) => ({ ...prev, [conv.id]: 0 }));
+    }
+  }, [conversations, store]);
+
   // ── Keyboard navigation ────────────────────────────────────────────
 
   useInput((input, key) => {
@@ -194,16 +208,25 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       return;
     }
 
+    // Up/Down arrows navigate sidebar focus (when sidebar is visible)
+    if (sidebarVisible && conversations.length > 0) {
+      if (key.upArrow) {
+        setSidebarFocusIdx((i) => (i > 0 ? i - 1 : conversations.length - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSidebarFocusIdx((i) => (i < conversations.length - 1 ? i + 1 : 0));
+        return;
+      }
+      if (key.return) {
+        selectConversationByIndex(sidebarFocusIdx);
+        return;
+      }
+    }
+
     // Number keys to switch conversations (only outside scroll mode)
     if (/^[1-9]$/.test(input)) {
-      const idx = parseInt(input, 10) - 1;
-      if (idx < conversations.length) {
-        const conv = conversations[idx];
-        setActiveConvId(conv.id);
-        setMessages(store.loadHistory(conv.id));
-        setScrollOffset(0);
-        setUnread((prev) => ({ ...prev, [conv.id]: 0 }));
-      }
+      selectConversationByIndex(parseInt(input, 10) - 1);
       return;
     }
   });
@@ -247,7 +270,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
             if (c.name === 'help' || c.name === 'quit') continue;
             addSystemMessage(`  ${c.usage} — ${c.brief}`, theme.info);
           }
-          addSystemMessage('Navigation: Tab=sidebar, 1-9=switch conv, Esc=scroll j/k', theme.info);
+          addSystemMessage('Navigation: Tab=sidebar, Up/Down+Enter=select, 1-9=switch, Esc=scroll j/k', theme.info);
           addSystemMessage('Type /help <command> for details.', theme.textDim);
         }
         break;
@@ -259,6 +282,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           addSystemMessage(`Key ID: ${kidHex}`, theme.info);
           addSystemMessage(`Public key: ${bytesToHex(identity.publicKey)}`, theme.info);
           addSystemMessage(`Config: ${configDir}`, theme.info);
+          addSystemMessage('Version: v0.2.0', 'cyan');
         }
         break;
 
@@ -449,6 +473,33 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         addSystemMessage('Notifications: on', theme.success);
         break;
 
+      case 'select':
+      case 'sel': {
+        const num = parseInt(args.trim(), 10);
+        if (isNaN(num) || num < 1) {
+          addSystemMessage('Usage: /select <number> (1-9)', theme.error);
+          break;
+        }
+        const selIdx = num - 1;
+        if (selIdx >= conversations.length) {
+          addSystemMessage(`No conversation at position ${num}. You have ${conversations.length} conversation(s).`, theme.error);
+        } else {
+          selectConversationByIndex(selIdx);
+          const selConv = conversations[selIdx];
+          addSystemMessage(`Switched to: ${selConv.name || selConv.id.slice(0, 12)}`, theme.success);
+        }
+        break;
+      }
+
+      case 'settings':
+      case 'config':
+        addSystemMessage('Current configuration:', theme.info);
+        addSystemMessage(`  Config directory: ${configDir}`, theme.info);
+        addSystemMessage(`  Relay URL: ${dropboxUrl}`, theme.info);
+        addSystemMessage(`  Bell notifications: ${bellEnabled ? 'on' : 'off'}`, theme.info);
+        addSystemMessage(`  Display name: ${displayName || '(not set)'}`, theme.info);
+        break;
+
       case 'approve': {
         const reqId = args.trim();
         if (!reqId) {
@@ -483,7 +534,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         break;
       }
     }
-  }, [identity, kidHex, activeConvId, configDir, store, addSystemMessage, exit]);
+  }, [identity, kidHex, activeConvId, configDir, dropboxUrl, bellEnabled, displayName, conversations, store, addSystemMessage, exit, selectConversationByIndex]);
 
   // ── Last message per conversation ─────────────────────────────────
 
@@ -557,6 +608,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
               activeId={activeConvId}
               unread={unread}
               lastMessages={lastMessages}
+              focusIndex={sidebarFocusIdx}
               onSelect={(id) => {
                 setActiveConvId(id);
                 setMessages(store.loadHistory(id));

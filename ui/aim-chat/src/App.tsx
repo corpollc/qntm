@@ -74,6 +74,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [isWorking, setIsWorking] = useState(false)
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
+  const [isSending, setIsSending] = useState(false)
 
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
 
@@ -772,6 +773,7 @@ export default function App() {
     }
 
     setIsWorking(true)
+    setIsSending(true)
     try {
       const response = await api.sendMessage(activeProfileId, activeProfile?.name || '', selectedConversationId, text)
       setMessages((previous) => [...previous, response.message])
@@ -787,6 +789,7 @@ export default function App() {
       addToast(msg, 'error')
     } finally {
       setIsWorking(false)
+      setIsSending(false)
     }
   }
 
@@ -877,6 +880,7 @@ export default function App() {
             composer={composer}
             setComposer={setComposer}
             isWorking={isWorking}
+            isSending={isSending}
             isLoadingMessages={isLoadingMessages}
             showGatePanel={showGatePanel}
             setShowGatePanel={setShowGatePanel}

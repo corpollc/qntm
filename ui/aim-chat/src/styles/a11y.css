@@ -1,0 +1,34 @@
+/* Screen-reader only utility */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link:focus {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 300;
+  width: auto;
+  height: auto;
+  padding: 8px 16px;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+  font-size: var(--text-base);
+  font-weight: 700;
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}

@@ -8,6 +8,7 @@ interface SidebarProps {
   activeId: string | null;
   unread: Record<string, number>;
   lastMessages: Record<string, StoredMessage>;
+  focusIndex?: number;
   onSelect: (id: string) => void;
   visible: boolean;
 }
@@ -51,6 +52,7 @@ export default function Sidebar({
   activeId,
   unread,
   lastMessages,
+  focusIndex,
   visible,
 }: SidebarProps) {
   if (!visible) return null;
@@ -69,6 +71,7 @@ export default function Sidebar({
       )}
       {conversations.map((conv, idx) => {
         const isActive = conv.id === activeId;
+        const isFocused = focusIndex === idx;
         const unreadCount = unread[conv.id] || 0;
         const hasUnread = unreadCount > 0;
         const rawLabel = conv.name || conv.id.slice(0, 12);
@@ -85,13 +88,18 @@ export default function Sidebar({
               <Text dimColor>{icon}</Text>
               {isActive ? (
                 <Text bold color={theme.brand}>{'\u25b6'} {label}</Text>
+              ) : isFocused ? (
+                <Text bold inverse>{hasUnread ? '' : '  '}{label}</Text>
               ) : hasUnread ? (
                 <Text bold>  {label}</Text>
               ) : (
                 <Text>  {label}</Text>
               )}
-              {hasUnread && (
+              {hasUnread && !isFocused && (
                 <Text color={theme.error} bold> ({unreadCount})</Text>
+              )}
+              {hasUnread && isFocused && (
+                <Text bold inverse> ({unreadCount})</Text>
               )}
               {timeStr && (
                 <Text dimColor> {timeStr}</Text>
@@ -106,7 +114,7 @@ export default function Sidebar({
         );
       })}
       <Box marginTop={1}>
-        <Text dimColor>Tab: toggle sidebar | 1-9: switch conv</Text>
+        <Text dimColor>{'\u2191\u2193'}: navigate | Enter: select | 1-9: switch</Text>
       </Box>
     </Box>
   );
