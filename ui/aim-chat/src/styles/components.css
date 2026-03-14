@@ -57,6 +57,11 @@
   overflow: hidden;
   transition: max-height 0.25s ease;
   max-height: 0;
+  pointer-events: none;
+}
+
+.collapsible-body-open {
+  pointer-events: auto;
 }
 
 .collapsible-panel.grow .collapsible-body-open {
