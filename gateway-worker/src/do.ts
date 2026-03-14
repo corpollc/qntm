@@ -356,13 +356,13 @@ export class GatewayConversationDO implements DurableObject {
     const convState = await this.state.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.secret: no bootstrapped state');
 
-    const msg = JSON.parse(bodyStr) as GateSecretMessage;
+    // Validate sender is a participant
+    const senderKidStr = base64UrlEncode(senderKid);
+    if (!convState.participants[senderKidStr]) {
+      throw new Error('gate.secret rejected: sender is not a participant');
+    }
 
-    // We need the sender's public key for NaCl box decryption.
-    // The sender_kid in the message identifies which participant sent it.
-    // For now, we use the sender_kid from the inner payload (Ed25519 public key
-    // embedded in the conversation envelope signature).
-    // TODO: resolve sender public key from conversation membership
+    const msg = JSON.parse(bodyStr) as GateSecretMessage;
 
     const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
     const gatewayPrivateKey = base64UrlDecode(convState.private_key);
@@ -375,9 +375,14 @@ export class GatewayConversationDO implements DurableObject {
     await this.state.storage.put(`vault:${msg.service}`, entry);
   }
 
-  private async handleGateConfig(bodyStr: string, _authenticatedKid: string): Promise<void> {
+  private async handleGateConfig(bodyStr: string, authenticatedKid: string): Promise<void> {
     const convState = await this.state.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.config: no bootstrapped state');
+
+    // Validate sender is a participant
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gate.config rejected: sender is not a participant');
+    }
 
     const msg = JSON.parse(bodyStr) as GateConfigMessage;
     convState.rules = msg.rules || [];
