@@ -153,7 +153,7 @@ export class GatewayConversationDO implements DurableObject {
           try {
             const envelope = deserializeEnvelope(envelopeBytes);
             const msg = decryptMessage(envelope, conv);
-            await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid);
+            await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
           } catch {
             continue;
           }
@@ -167,6 +167,10 @@ export class GatewayConversationDO implements DurableObject {
           await this.checkAndExecute(convState);
         }
       }
+      // Sweep expired secrets every poll cycle
+      if (convState.gate_promoted) {
+        await this.sweepExpiredSecrets(convState);
+      }
     } finally {
       convState.polling = false;
       await this.state.storage.put('conv_state', convState);
@@ -177,7 +181,7 @@ export class GatewayConversationDO implements DurableObject {
   /**
    * Route a decrypted gate message to the appropriate handler.
    */
-  private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array): Promise<void> {
+  private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
     const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
 
@@ -203,7 +207,7 @@ export class GatewayConversationDO implements DurableObject {
         await this.handleGateDisapproval(bodyStr, authenticatedKid);
         break;
       case 'gate.secret':
-        await this.handleGateSecret(bodyStr, senderKid);
+        await this.handleGateSecret(bodyStr, senderKid, senderPublicKey);
         break;
       case 'gate.config':
         await this.handleGateConfig(bodyStr, authenticatedKid);
@@ -352,7 +356,7 @@ export class GatewayConversationDO implements DurableObject {
     });
   }
 
-  private async handleGateSecret(bodyStr: string, senderKid: Uint8Array): Promise<void> {
+  private async handleGateSecret(bodyStr: string, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
     const convState = await this.state.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.secret: no bootstrapped state');
 
@@ -367,9 +371,9 @@ export class GatewayConversationDO implements DurableObject {
     const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
     const gatewayPrivateKey = base64UrlDecode(convState.private_key);
 
-    // senderKid is the sender's Ed25519 public key from the envelope
+    // senderPublicKey is the sender's 32-byte Ed25519 public key (sender_ik_pk)
     // The openSecret function handles Ed25519→X25519 conversion internally
-    const entry = await processSecret(msg, gatewayPrivateKey, senderKid, vaultKey);
+    const entry = await processSecret(msg, gatewayPrivateKey, senderPublicKey, vaultKey);
 
     // Store in vault (keyed by service for lookup)
     await this.state.storage.put(`vault:${msg.service}`, entry);
@@ -387,6 +391,47 @@ export class GatewayConversationDO implements DurableObject {
     const msg = JSON.parse(bodyStr) as GateConfigMessage;
     convState.rules = msg.rules || [];
     await this.state.storage.put('conv_state', convState);
+  }
+
+  /**
+   * Sweep expired vault credentials, delete them, and post gate.expired
+   * notifications to the conversation so participants know to re-provision.
+   */
+  private async sweepExpiredSecrets(convState: ConversationState): Promise<void> {
+    const entries = await this.state.storage.list<VaultEntry>({ prefix: 'vault:' });
+    const now = Date.now();
+
+    for (const [key, entry] of entries) {
+      if (!isExpired(entry, now)) continue;
+
+      // Delete the expired entry
+      await this.state.storage.delete(key);
+
+      // Post gate.expired notification to conversation
+      const convIdBytes = hexToBytes(convState.conv_id);
+      const conv = this.buildConversation(convState, convIdBytes);
+      const identity = this.buildIdentity(convState);
+      const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+
+      const expiredBody = JSON.stringify({
+        type: 'gate.expired',
+        secret_id: entry.secret_id,
+        service: entry.service,
+        expired_at: entry.expires_at,
+        message: `Credential for ${entry.service} has expired. Please re-provision.`,
+      });
+      const expiredEnv = createMessage(
+        identity, conv, 'gate.expired',
+        new TextEncoder().encode(expiredBody), undefined, defaultTTL(),
+      );
+
+      try {
+        await dropbox.postMessage(convIdBytes, serializeEnvelope(expiredEnv));
+      } catch {
+        // Best effort: if post fails, the entry is still deleted.
+        // Next sweep will not see it again.
+      }
+    }
   }
 
   /**
@@ -414,14 +459,8 @@ export class GatewayConversationDO implements DurableObject {
       const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
       const result = await executeRequest(scan.request, vaultEntry, vaultKey);
 
-      // Store gate.executed marker locally
-      await this.storeGateMessage({
-        seq: ++this.messageSeq,
-        type: 'gate.executed',
-        request_id: scan.request_id,
-      });
-
-      // Post gate.executed and gate.result back to the conversation
+      // Post gate.executed and gate.result to the conversation FIRST
+      // The conversation is the canonical record of execution.
       const convIdBytes = hexToBytes(convState.conv_id);
       const conv = this.buildConversation(convState, convIdBytes);
       const identity = this.buildIdentity(convState);
@@ -453,6 +492,15 @@ export class GatewayConversationDO implements DurableObject {
         new TextEncoder().encode(resultBody), undefined, defaultTTL(),
       );
       await dropbox.postMessage(convIdBytes, serializeEnvelope(resultEnv));
+
+      // Only store the local marker AFTER successful conversation post.
+      // If this fails, the next poll will see the gate.executed from the conversation
+      // and create the local marker then (via handleGateExecuted).
+      await this.storeGateMessage({
+        seq: ++this.messageSeq,
+        type: 'gate.executed',
+        request_id: scan.request_id,
+      });
     }
   }
 
