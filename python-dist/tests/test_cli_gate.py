@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from qntm.identity import generate_identity, base64url_encode, key_id_to_string
+from qntm.identity import generate_identity, base64url_encode, base64url_decode, key_id_to_string
 from qntm.gate import (
     Recipe,
     RecipeParam,
@@ -49,7 +49,7 @@ def _make_config_dir_with_identity():
     ident_data = {
         "private_key": ident["privateKey"].hex(),
         "public_key": ident["publicKey"].hex(),
-        "key_id": ident["keyID"].hex(),
+        "key_id": base64url_encode(ident["keyID"]),
     }
     with open(os.path.join(tmpdir, "identity.json"), "w") as f:
         json.dump(ident_data, f)
@@ -181,11 +181,11 @@ class TestBuildGateRequestMessage:
         assert msg["target_endpoint"] == "/"
         assert msg["target_service"] == "dadjokes"
         assert msg["target_url"] == "https://icanhazdadjoke.com/"
-        assert msg["signer_kid"] == ident["keyID"].hex()
+        assert msg["signer_kid"] == base64url_encode(ident["keyID"])
         assert "signature" in msg
         assert "expires_at" in msg
         assert msg["request_id"] == request_id
-        assert msg["eligible_signer_kids"] == [ident["keyID"].hex()]
+        assert msg["eligible_signer_kids"] == [base64url_encode(ident["keyID"])]
         assert msg["required_approvals"] == 1
 
     def test_resolves_path_params(self):
@@ -253,7 +253,7 @@ class TestBuildGateRequestMessage:
             args=None,
         )
         # Verify the signature
-        sig = bytes.fromhex(msg["signature"])
+        sig = base64url_decode(msg["signature"])
         from datetime import datetime, timezone
         expires_dt = datetime.fromisoformat(msg["expires_at"].replace("Z", "+00:00"))
         expires_unix = int(expires_dt.timestamp())
@@ -327,7 +327,7 @@ class TestBuildGateApprovalMessage:
         assert approval_msg["type"] == GATE_MESSAGE_APPROVAL
         assert approval_msg["conv_id"] == "test-conv-id"
         assert approval_msg["request_id"] == request_id
-        assert approval_msg["signer_kid"] == approver["keyID"].hex()
+        assert approval_msg["signer_kid"] == base64url_encode(approver["keyID"])
         assert "signature" in approval_msg
 
     def test_approval_signature_is_valid(self):
@@ -363,7 +363,7 @@ class TestBuildGateApprovalMessage:
             eligible_signer_kids=req_msg.get("eligible_signer_kids", []),
             required_approvals=req_msg.get("required_approvals", 1),
         )
-        sig = bytes.fromhex(approval_msg["signature"])
+        sig = base64url_decode(approval_msg["signature"])
         assert verify_approval(
             approver["publicKey"],
             sig,
@@ -474,7 +474,7 @@ class TestBuildPromotePayload:
         )
         assert payload["conv_id"] == "abc123"
         assert payload["gateway_kid"] == "gw-kid-1"
-        assert ident["keyID"].hex() in payload["participants"]
+        assert base64url_encode(ident["keyID"]) in payload["participants"]
         assert payload["rules"][0]["m"] == 2
         assert payload["rules"][0]["service"] == "*"
         assert payload["floor"] == 2
@@ -507,12 +507,12 @@ class TestBuildSecretPayload:
         assert payload["service"] == "stripe"
         assert payload["header_name"] == "Authorization"
         assert payload["header_template"] == "Bearer {value}"
-        assert payload["sender_kid"] == sender["keyID"].hex()
+        assert payload["sender_kid"] == base64url_encode(sender["keyID"])
         assert "encrypted_blob" in payload
         assert "secret_id" in payload
 
         # Verify we can decrypt
-        ct = base64.b64decode(payload["encrypted_blob"])
+        ct = base64url_decode(payload["encrypted_blob"])
         plaintext = open_secret(gateway["privateKey"], sender["publicKey"], ct)
         assert plaintext == b"sk_test_123"
 

@@ -592,10 +592,10 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     const { doInstance, storage } = makeDO();
     await storage.put('conv_state', promotedState());
 
-    // Both WAL and gate.executed exist (normal completion, WAL cleanup failed)
+    // Both WAL and gateway-authored gate.executed exist (normal completion, WAL cleanup failed)
     await storage.put('wal:req-ok', { request_id: 'req-ok', started_at: new Date().toISOString() });
     await storage.put('msg:00000001', {
-      seq: 1, type: 'gate.executed', request_id: 'req-ok',
+      seq: 1, type: 'gate.executed', request_id: 'req-ok', signer_kid: gatewayKid,
     } satisfies StoredGateMessage);
 
     const recover = (doInstance as unknown as { recover: () => Promise<void> }).recover.bind(doInstance);

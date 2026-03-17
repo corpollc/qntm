@@ -1348,7 +1348,7 @@ def _build_gate_request_message(identity, recipe, conv_id, args,
     payload_hash = compute_payload_hash(payload)
 
     if eligible_signer_kids is None:
-        eligible_signer_kids = [identity["keyID"].hex()]
+        eligible_signer_kids = [base64url_encode(identity["keyID"])]
     if required_approvals is None:
         required_approvals = recipe.threshold
 
@@ -1376,8 +1376,8 @@ def _build_gate_request_message(identity, recipe, conv_id, args,
         "target_url": target_url,
         "payload": payload,
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "signer_kid": identity["keyID"].hex(),
-        "signature": sig.hex(),
+        "signer_kid": base64url_encode(identity["keyID"]),
+        "signature": base64url_encode(sig),
         "eligible_signer_kids": eligible_signer_kids,
         "required_approvals": required_approvals,
         "recipe_name": recipe.name,
@@ -1418,8 +1418,8 @@ def _build_gate_approval_message(identity, request_msg):
         "type": GATE_MESSAGE_APPROVAL,
         "conv_id": request_msg["conv_id"],
         "request_id": request_msg["request_id"],
-        "signer_kid": identity["keyID"].hex(),
-        "signature": sig.hex(),
+        "signer_kid": base64url_encode(identity["keyID"]),
+        "signature": base64url_encode(sig),
     }
 
 
@@ -1488,7 +1488,7 @@ def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold):
         "conv_id": conv_id_hex,
         "gateway_kid": gateway_kid,
         "participants": {
-            identity["keyID"].hex(): base64url_encode(identity["publicKey"]),
+            base64url_encode(identity["keyID"]): base64url_encode(identity["publicKey"]),
         },
         "rules": [
             {
@@ -1526,8 +1526,8 @@ def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
         "service": service,
         "header_name": header_name,
         "header_template": header_template,
-        "encrypted_blob": base64.b64encode(ct).decode(),
-        "sender_kid": identity["keyID"].hex(),
+        "encrypted_blob": base64url_encode(ct),
+        "sender_kid": base64url_encode(identity["keyID"]),
     }
     if ttl > 0:
         payload["ttl"] = ttl
@@ -1621,7 +1621,7 @@ def cmd_gate_run(args):
         "verb": recipe.verb,
         "endpoint": msg["target_endpoint"],
         "service": recipe.service,
-        "signer_kid": identity["keyID"].hex(),
+        "signer_kid": base64url_encode(identity["keyID"]),
         "expires_at": msg["expires_at"],
     })
 
@@ -1668,7 +1668,7 @@ def cmd_gate_approve(args):
     _output("gate.approve", {
         "conversation_id": conv_id_hex,
         "request_id": request_id,
-        "signer_kid": identity["keyID"].hex(),
+        "signer_kid": base64url_encode(identity["keyID"]),
     })
 
 
@@ -1843,71 +1843,6 @@ def cmd_gate_secret(args):
         "header_name": header_name,
         "encrypted": True,
     })
-
-
-def cmd_gateway_init(args):
-    from .gateway import init_gateway
-
-    config_dir = getattr(args, "gateway_config_dir", None) or os.path.expanduser(
-        "~/.qntm-gateway"
-    )
-    force = getattr(args, "force", False)
-
-    try:
-        result = init_gateway(config_dir, force=force)
-    except FileExistsError as e:
-        _error(str(e))
-
-    _output("gateway.init", {
-        "config_dir": result["config_dir"],
-        "key_id": result["key_id"],
-        "public_key": result["public_key"],
-        "vault_dir": result["vault_dir"],
-        "identity": result["identity_path"],
-    })
-
-
-def cmd_gateway_serve(args):
-    import logging
-
-    from .gateway import Gateway
-
-    config_dir = getattr(args, "gateway_config_dir", None) or os.path.expanduser(
-        "~/.qntm-gateway"
-    )
-    poll_interval = getattr(args, "poll_interval", 5)
-    dropbox_url = _get_dropbox_url(args)
-
-    # Set up logging for gateway
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        stream=sys.stderr,
-    )
-
-    try:
-        gw = Gateway(config_dir)
-        gw.load_identity()
-    except FileNotFoundError as e:
-        _error(str(e))
-
-    conversations = gw.load_conversations()
-    if not conversations:
-        _error(
-            f"no conversations found in {config_dir}\n"
-            f"The gateway needs at least one conversation to poll.\n"
-            f"Join one with: qntm --config-dir {config_dir} convo join <token>"
-        )
-
-    try:
-        gw.run(
-            dropbox_url=dropbox_url,
-            poll_interval=poll_interval,
-            conversations=conversations,
-        )
-    except KeyboardInterrupt:
-        pass
 
 
 def cmd_version(args):
@@ -2101,31 +2036,6 @@ quick start:
     history_p = subparsers.add_parser("history", help="Show message history")
     history_p.add_argument("conversation", help="Conversation ID or prefix")
 
-    # gateway
-    gateway_parser = subparsers.add_parser("gateway", help="Run a standalone qntm gateway")
-    gateway_parser.add_argument(
-        "--config-dir", dest="gateway_config_dir", default=None,
-        help="Gateway configuration directory (default: ~/.qntm-gateway)")
-    gateway_sub = gateway_parser.add_subparsers(dest="gateway_command")
-
-    gw_init_p = gateway_sub.add_parser("init", help="Generate gateway identity and config")
-    gw_init_p.add_argument("--force", action="store_true",
-                           help="Overwrite existing identity if present")
-    gw_init_p.add_argument(
-        "--config-dir", dest="gateway_config_dir", default=None,
-        help="Gateway configuration directory (default: ~/.qntm-gateway)")
-
-    gw_serve_p = gateway_sub.add_parser("serve", help="Start the gateway polling loop")
-    gw_serve_p.add_argument(
-        "--config-dir", dest="gateway_config_dir", default=None,
-        help="Gateway configuration directory (default: ~/.qntm-gateway)")
-    gw_serve_p.add_argument(
-        "--poll-interval", dest="poll_interval", type=int, default=5,
-        help="Poll interval in seconds (default: 5)")
-    gw_serve_p.add_argument(
-        "--health-addr", dest="health_addr", default="",
-        help="Address for HTTP health endpoint (e.g. :8081)")
-
     # group
     group_parser = subparsers.add_parser("group", help="Manage group conversations")
     group_sub = group_parser.add_subparsers(dest="group_command")
@@ -2279,13 +2189,6 @@ quick start:
             cmd_group_list(args)
         else:
             group_parser.print_help()
-    elif args.command == "gateway":
-        if args.gateway_command == "init":
-            cmd_gateway_init(args)
-        elif args.gateway_command == "serve":
-            cmd_gateway_serve(args)
-        else:
-            gateway_parser.print_help()
     elif args.command == "send":
         cmd_send(args)
     elif args.command == "recv":

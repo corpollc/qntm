@@ -57,7 +57,8 @@ export class GatewayConversationDO implements DurableObject {
       const gwKid = convState?.kid;
       const executedIds = new Set<string>();
       for (const [, msg] of entries) {
-        if (msg.type === 'gate.executed' && msg.request_id) {
+        // Only trust gateway-authored executed markers (qntm-iv57)
+        if (msg.type === 'gate.executed' && msg.request_id && msg.signer_kid === gwKid) {
           executedIds.add(msg.request_id);
         }
       }
@@ -539,9 +540,10 @@ export class GatewayConversationDO implements DurableObject {
       if (!vaultEntry) continue;
       if (isExpired(vaultEntry)) continue;
 
-      // Idempotency: check if we already have an executed marker
+      // Idempotency: only skip if a GATEWAY-AUTHORED executed marker exists (qntm-iv57).
+      // A poisoned/legacy marker without the gateway's signer_kid must not suppress execution.
       const alreadyExecuted = messages.some(
-        m => m.type === 'gate.executed' && m.request_id === scan.request_id,
+        m => m.type === 'gate.executed' && m.request_id === scan.request_id && m.signer_kid === convState.kid,
       );
       if (alreadyExecuted) continue;
 

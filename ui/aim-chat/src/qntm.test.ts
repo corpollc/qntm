@@ -259,9 +259,12 @@ describe('browser qntm adapter', () => {
     expect(payload.rules[0]).toMatchObject({ m: 2 })
     expect(payload.floor).toBe(2)
 
+    // Participant map keys must be base64url KIDs (matching gateway-worker wire format)
+    const aliceKidB64 = publicKeyToString(hexToBytes(aliceIdentity.keyId))  // publicKeyToString is base64UrlEncode
+    const bobKidB64 = publicKeyToString(hexToBytes(bobIdentity.keyId))
     expect(payload.participants).toEqual({
-      [aliceIdentity.keyId.toLowerCase()]: publicKeyToString(hexToBytes(aliceIdentity.publicKey)),
-      [bobIdentity.keyId.toLowerCase()]: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
+      [aliceKidB64]: publicKeyToString(hexToBytes(aliceIdentity.publicKey)),
+      [bobKidB64]: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
     })
   })
 
@@ -289,12 +292,14 @@ describe('browser qntm adapter', () => {
     }
 
     expect(payload.type).toBe('gate.secret')
-    expect(payload.sender_kid).toBe(aliceIdentity.keyId.toLowerCase())
+    // sender_kid is now base64url, not hex
+    const aliceSenderKidB64 = publicKeyToString(hexToBytes(aliceIdentity.keyId))
+    expect(payload.sender_kid).toBe(aliceSenderKidB64)
 
     const decrypted = openSecret(
       hexToBytes(bobIdentity.privateKey),
       hexToBytes(aliceIdentity.publicKey),
-      decodeBase64(payload.encrypted_blob),
+      base64UrlDecode(payload.encrypted_blob),
     )
     expect(new TextDecoder().decode(decrypted)).toBe('sk_test_123')
   })

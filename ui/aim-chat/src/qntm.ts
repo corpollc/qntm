@@ -413,17 +413,15 @@ export async function gateRunRequest(
   const requestId = crypto.randomUUID()
   const expiresAt = new Date(Date.now() + 3600000).toISOString()
   const expiresAtUnix = Math.floor(Date.now() / 1000) + 3600
-  const kidHex = bytesToHex(identity.keyID)
+  const kidB64 = base64UrlEncode(identity.keyID)
   const payloadHash = computePayloadHash(requestBody ?? null)
 
-  // Build eligible signer roster from conversation participants
+  // Build eligible signer roster from conversation participants (base64url KIDs)
   const conv = store.findConversation(profileId, conversationId)
-  const selfKidHex = kidHex.toLowerCase()
   const eligibleSignerKids: string[] = []
   const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
   for (const pk of knownPublicKeys) {
-    const pKid = bytesToHex(keyIDFromPublicKey(pk)).toLowerCase()
-    eligibleSignerKids.push(pKid)
+    eligibleSignerKids.push(base64UrlEncode(keyIDFromPublicKey(pk)))
   }
   // Determine threshold from recipe or default to participant count
   const requiredApprovals = recipe.threshold ?? eligibleSignerKids.length
@@ -454,7 +452,7 @@ export async function gateRunRequest(
     target_service: recipe.service,
     target_url: resolved.target_url,
     expires_at: expiresAt,
-    signer_kid: kidHex,
+    signer_kid: kidB64,
     signature: sigB64,
     arguments: Object.keys(args).length > 0 ? args : undefined,
     payload: requestBody ?? undefined,
@@ -487,7 +485,7 @@ export async function gateApproveRequest(
 
   if (!reqMsg) throw new Error(`Gate request ${requestId} not found in conversation history`)
 
-  const kidHex = bytesToHex(identity.keyID)
+  const kidB64 = base64UrlEncode(identity.keyID)
   const payloadHash = computePayloadHash(reqMsg.payload ?? null)
 
   const signable = {
@@ -517,7 +515,7 @@ export async function gateApproveRequest(
     type: 'gate.approval',
     conv_id: reqMsg.conv_id,
     request_id: requestId,
-    signer_kid: kidHex,
+    signer_kid: kidB64,
     signature: sigB64,
   }
 
@@ -534,14 +532,13 @@ export async function gatePromoteRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
-  // Build participants map: kid → base64url public key (gateway excluded)
+  // Build participants map: base64url kid → base64url public key (gateway excluded)
   const conv = store.findConversation(profileId, conversationId)
   const participants: Record<string, string> = {}
-  const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
   const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
   for (const pk of knownPublicKeys) {
-    const kid = bytesToHex(keyIDFromPublicKey(pk)).toLowerCase()
-    if (kid === gatewayKid.toLowerCase()) continue // Exclude gateway
+    const kid = base64UrlEncode(keyIDFromPublicKey(pk))
+    if (kid === gatewayKid) continue // Exclude gateway
     participants[kid] = base64UrlEncode(pk)
   }
 
@@ -569,23 +566,22 @@ export async function gateSecretRequest(
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
   let gwPubKeyBytes: Uint8Array | undefined
-  const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
+  const selfKidB64 = base64UrlEncode(identity.keyID)
 
   if (gatewayPublicKey) {
     gwPubKeyBytes = hexToBytes(gatewayPublicKey)
   } else {
     const conv = store.findConversation(profileId, conversationId)
     for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
-      const pKid = bytesToHex(keyIDFromPublicKey(publicKey)).toLowerCase()
-      if (pKid !== selfKidHex) {
+      const pKid = base64UrlEncode(keyIDFromPublicKey(publicKey))
+      if (pKid !== selfKidB64) {
         gwPubKeyBytes = publicKey
         break
       }
     }
     if (!gwPubKeyBytes && conv?.participants) {
       for (const participantKeyId of conv.participants) {
-        const pKid = participantKeyId.toLowerCase()
-        if (pKid !== selfKidHex) {
+        if (participantKeyId !== selfKidB64) {
           throw new Error('Gateway participant public key is not known yet; receive a message from that participant first, or provide gatewayPublicKey')
         }
       }
@@ -598,7 +594,7 @@ export async function gateSecretRequest(
   const secretId = crypto.randomUUID()
   const plaintext = new TextEncoder().encode(value)
   const sealed = sealSecret(identity.privateKey, gwPubKeyBytes, plaintext)
-  const encryptedBlob = uint8ToBase64(sealed)
+  const encryptedBlob = base64UrlEncode(sealed)
 
   const secretPayload = {
     type: 'gate.secret',
@@ -607,7 +603,7 @@ export async function gateSecretRequest(
     header_name: headerName || 'Authorization',
     header_template: headerTemplate || 'Bearer {value}',
     encrypted_blob: encryptedBlob,
-    sender_kid: bytesToHex(identity.keyID),
+    sender_kid: selfKidB64,
   }
 
   const bodyText = JSON.stringify(secretPayload)
