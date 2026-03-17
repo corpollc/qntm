@@ -2,7 +2,7 @@
 
 This package provides a provider-agnostic interface for human signature workflows.
 
-Path: `esign/`
+Archived Go reference path: `attic/go/esign/`
 
 ## Providers
 
@@ -17,7 +17,7 @@ Each provider implements:
 - Poll provider request status.
 - Verify webhook authenticity.
 
-## Go usage
+## Archived Go Usage
 
 ```go
 import "github.com/corpo/qntm/esign"

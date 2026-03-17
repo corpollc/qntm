@@ -8,7 +8,7 @@
 
 const DEFAULT_BASE_URL = 'https://inbox.qntm.corpo.llc';
 
-// ---------- wire types (match Go structs in dropbox/http.go) ----------
+// ---------- wire types (match archived Go structs in attic/go/dropbox/http.go) ----------
 
 interface SendEnvelopeRequest {
   conv_id: string;

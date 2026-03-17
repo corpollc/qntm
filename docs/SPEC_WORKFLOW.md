@@ -13,7 +13,8 @@
 3. Regenerate shared vectors after any spec-affecting change:
 
 ```bash
-go run ./crosstest/generate_vectors.go > client/tests/vectors.json
+cd attic/go
+go run ./crosstest/generate_vectors.go > ../../client/tests/vectors.json
 ```
 
 4. Update both client suites that consume the shared vectors:

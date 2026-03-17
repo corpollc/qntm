@@ -37,7 +37,7 @@ cd client && npm install && npm test
 cd ui/aim-chat && npm install && npm run dev
 ```
 
-The Python CLI is the primary supported runtime. The legacy Go binary remains in the repo for reference and migration work, but it is deprecated and should not be used for new client flows.
+The Python CLI is the primary supported runtime. The legacy Go implementation has been archived under `attic/go/` for reference and migration work; it is deprecated and should not be used for new client flows.
 
 Agent-first usage (JSON default):
 
@@ -128,13 +128,14 @@ Subscribers cannot post — the relay rejects any message not signed by the post
 ```
 qntm/
 ├── client/            # TypeScript protocol library for browser and Node
+├── gate/recipes/      # Shared starter gateway recipe catalog
 ├── python-dist/       # Python client library + CLI distribution
+├── gateway-worker/    # Cloudflare Worker-based gateway executor
 ├── ui/aim-chat/       # Static AIM-style browser UI built on @corpollc/qntm
 ├── ui/tui/            # Terminal UI client
 ├── worker/            # Cloudflare Worker relay
-├── gate/              # Gate recipes and gate-related assets
 ├── docs/              # Protocol specifications
-└── cmd/qntm/          # Deprecated Go CLI entrypoint kept for migration/reference
+└── attic/go/          # Archived Go module kept only for reference
 ```
 
 ## Building

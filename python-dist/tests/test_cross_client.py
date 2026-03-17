@@ -6,7 +6,7 @@ import os
 import pytest
 
 # Load vectors from the shared file. Regenerate after spec-affecting changes:
-#   go run ./crosstest/generate_vectors.go > client/tests/vectors.json
+#   (cd attic/go && go run ./crosstest/generate_vectors.go > ../../client/tests/vectors.json)
 VECTORS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "client", "tests", "vectors.json"
 )

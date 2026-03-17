@@ -1,7 +1,8 @@
 """Group conversation management for QSP.
 
 Implements group genesis, member add/remove, rekey, and group state tracking.
-Follows the Go reference implementation in group/group.go and group/rekey.go.
+Follows the archived Go reference implementation in attic/go/group/group.go and
+attic/go/group/rekey.go.
 """
 
 import time
