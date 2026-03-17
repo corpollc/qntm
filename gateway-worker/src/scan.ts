@@ -49,9 +49,12 @@ export function scanRequestApprovals(
   if (!requestMsg) return null;
 
   // Check for terminal state markers (executed / invalidated)
+  // qntm-iv57: Only trust gate.executed markers authored by the gateway itself.
+  // A stored marker missing signer_kid or bearing a non-gateway signer_kid is
+  // ignored — it cannot suppress execution.
   for (const msg of messages) {
     if (msg.request_id !== requestId) continue;
-    if (msg.type === 'gate.executed') {
+    if (msg.type === 'gate.executed' && msg.signer_kid === gatewayKid) {
       return {
         request_id: requestId,
         status: 'executed',

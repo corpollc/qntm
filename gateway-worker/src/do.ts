@@ -45,13 +45,16 @@ export class GatewayConversationDO implements DurableObject {
     this.messageSeq = maxSeq;
     this.recovered = true;
 
-    // qntm-qtw2: Resolve incomplete executions from write-ahead log.
+    // qntm-qtw2 + qntm-iv57: Resolve incomplete executions from write-ahead log.
     // If a WAL entry exists without a corresponding gate.executed marker,
     // the execution likely completed but the marker wasn't durably posted.
-    // Store a local executed marker to prevent re-execution; the next poll
-    // cycle will pick up the gateway-authored gate.executed from conversation.
+    // Store a local executed marker WITH the gateway's signer_kid so that
+    // scan trusts it as gateway-authored. Without signer_kid the marker
+    // would be ignored by scanRequestApprovals.
     const walEntries = await this.state.storage.list<{ request_id: string }>({ prefix: 'wal:' });
     if (walEntries.size > 0) {
+      const convState = await this.state.storage.get<ConversationState>('conv_state');
+      const gwKid = convState?.kid;
       const executedIds = new Set<string>();
       for (const [, msg] of entries) {
         if (msg.type === 'gate.executed' && msg.request_id) {
@@ -64,6 +67,7 @@ export class GatewayConversationDO implements DurableObject {
             seq: ++this.messageSeq,
             type: 'gate.executed',
             request_id: wal.request_id,
+            signer_kid: gwKid,
           });
         }
         await this.state.storage.delete(key);
@@ -260,6 +264,13 @@ export class GatewayConversationDO implements DurableObject {
       throw new Error(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
     }
 
+    // qntm-d9qb / qntm-qko0: After initial promotion, reject all further
+    // gate.promote messages. Policy and membership changes must go through a
+    // governed request/approval workflow. Fail closed until that path exists.
+    if (convState.gate_promoted) {
+      throw new Error('gate.promote rejected: conversation already promoted; policy and membership changes require governed approval');
+    }
+
     // qntm-qko0: Gateway KID must not appear in the participant set
     if (msg.participants && convState.kid in msg.participants) {
       throw new Error('gate.promote rejected: gateway KID must not be included in participants');
@@ -268,15 +279,6 @@ export class GatewayConversationDO implements DurableObject {
     // qntm-qko0: Floor must be >= 1
     if (msg.floor !== undefined && msg.floor < 1) {
       throw new Error('gate.promote rejected: floor must be >= 1');
-    }
-
-    // Invalidate pending requests if participants changed on re-promotion
-    if (convState.gate_promoted) {
-      const oldParticipants = JSON.stringify(Object.keys(convState.participants).sort());
-      const newParticipants = JSON.stringify(Object.keys(msg.participants || {}).sort());
-      if (oldParticipants !== newParticipants) {
-        await this.invalidatePendingRequests();
-      }
     }
 
     convState.gate_promoted = true;
@@ -599,25 +601,6 @@ export class GatewayConversationDO implements DurableObject {
 
       // Clean up WAL entry
       await this.state.storage.delete(`wal:${scan.request_id}`);
-    }
-  }
-
-  private async invalidatePendingRequests(): Promise<void> {
-    const messages = await this.loadGateMessages();
-    const terminalIds = new Set<string>();
-    for (const msg of messages) {
-      if ((msg.type === 'gate.executed' || msg.type === 'gate.invalidated') && msg.request_id) {
-        terminalIds.add(msg.request_id);
-      }
-    }
-    for (const msg of messages) {
-      if (msg.type === 'gate.request' && msg.request_id && !terminalIds.has(msg.request_id)) {
-        await this.storeGateMessage({
-          seq: ++this.messageSeq,
-          type: 'gate.invalidated',
-          request_id: msg.request_id,
-        });
-      }
     }
   }
 

@@ -109,14 +109,36 @@ describe('scanRequestApprovals', () => {
     expect(result!.status).toBe('expired');
   });
 
-  it('marks executed requests', () => {
+  it('marks executed requests when gate.executed has gateway signer_kid', () => {
     const messages: StoredGateMessage[] = [
       makeRequest({}),
-      { seq: 2, type: 'gate.executed', request_id: 'req-1' },
+      { seq: 2, type: 'gate.executed', request_id: 'req-1', signer_kid: gatewayKid },
     ];
     const result = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules);
     expect(result).not.toBeNull();
     expect(result!.status).toBe('executed');
+  });
+
+  it('ignores gate.executed without signer_kid (qntm-iv57 regression)', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ eligible_signer_kids: [signerA], required_approvals: 1 }),
+      { seq: 2, type: 'gate.executed', request_id: 'req-1' }, // no signer_kid
+    ];
+    const result = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules);
+    expect(result).not.toBeNull();
+    // Without gateway signer_kid, the executed marker is NOT trusted
+    expect(result!.status).toBe('approved');
+  });
+
+  it('ignores gate.executed with non-gateway signer_kid (qntm-iv57 forgery)', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ eligible_signer_kids: [signerA], required_approvals: 1 }),
+      { seq: 2, type: 'gate.executed', request_id: 'req-1', signer_kid: signerA },
+    ];
+    const result = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules);
+    expect(result).not.toBeNull();
+    // Participant-authored gate.executed is not trusted — request still approved
+    expect(result!.status).toBe('approved');
   });
 
   it('marks invalidated requests', () => {

@@ -372,45 +372,23 @@ describe('qntm-3gde: signature verification', () => {
     ).rejects.toThrow('referenced request not found');
   });
 
-  it('rejects gate.approval from signer not in eligible roster', async () => {
+  it('rejects gate.approval from non-participant (mallory not in initial roster)', async () => {
     const { storage, process } = makeDO();
-    // Add mallory as participant so she can send messages
-    const threeParticipants = {
-      [aliceKid]: base64UrlEncode(alice.publicKey),
-      [bobKid]: base64UrlEncode(bob.publicKey),
-      [malloryKid]: base64UrlEncode(mallory.publicKey),
-    };
-    await storage.put('conv_state', promotedState({
-      participants: threeParticipants,
-      promotion_floor: 2,
-    }));
+    // Only alice+bob are participants; mallory is not
+    await storage.put('conv_state', promotedState());
 
-    // Alice creates a request with all 3 participants eligible (to pass validation)
-    const { body: reqBody } = buildSignedRequest(alice, {
-      eligible_signer_kids: [aliceKid, bobKid, malloryKid],
-      required_approvals: 2,
-    });
+    // Alice creates a request with alice+bob eligible
+    const { body: reqBody, signable, requestId } = buildSignedRequest(alice);
     await process('gate.request', encode(reqBody), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
 
-    // Now create a second request with only alice+bob eligible
-    // This must list all current participants per the handler check,
-    // so we need to re-promote to remove mallory first
-    const promoteBody = encode({
-      type: 'gate.promote',
+    // Mallory tries to approve — rejected as non-participant
+    const approvalBody = {
+      type: 'gate.approval',
       conv_id: 'a'.repeat(32),
-      gateway_kid: gatewayKid,
-      participants: { [aliceKid]: base64UrlEncode(alice.publicKey), [bobKid]: base64UrlEncode(bob.publicKey) },
-      rules: [{ service: '*', endpoint: '', verb: '', m: 2 }],
-      floor: 2,
-    });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Alice creates request with alice+bob only (matches new participant set)
-    const { body: reqBody2, signable: signable2, requestId: requestId2 } = buildSignedRequest(alice);
-    await process('gate.request', encode(reqBody2), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Mallory (now removed) tries to approve — rejected as non-participant
-    const { body: approvalBody } = buildSignedApproval(mallory, signable2, requestId2, 'a'.repeat(32));
+      request_id: requestId,
+      signer_kid: malloryKid,
+      signature: base64UrlEncode(new Uint8Array(64)),
+    };
     await expect(
       process('gate.approval', encode(approvalBody), keyIDFromPublicKey(mallory.publicKey), mallory.publicKey),
     ).rejects.toThrow('sender is not a participant');
@@ -525,18 +503,10 @@ describe('qntm-qko0: promotion and membership invariants', () => {
     ).rejects.toThrow('is not a current participant');
   });
 
-  it('invalidates pending requests when participants change on re-promotion', async () => {
+  it('rejects re-promotion after conversation is already promoted (qntm-d9qb)', async () => {
     const { storage, process } = makeDO();
-    const state = promotedState();
-    await storage.put('conv_state', state);
+    await storage.put('conv_state', promotedState()); // gate_promoted: true
 
-    // Store a pending request
-    await storage.put('msg:00000001', {
-      seq: 1, type: 'gate.request', request_id: 'req-pending',
-      signer_kid: aliceKid, body: '{}',
-    } satisfies StoredGateMessage);
-
-    // Re-promote with different participants (add mallory)
     const promoteBody = encode({
       type: 'gate.promote',
       conv_id: 'a'.repeat(32),
@@ -545,16 +515,53 @@ describe('qntm-qko0: promotion and membership invariants', () => {
         [aliceKid]: base64UrlEncode(alice.publicKey),
         [malloryKid]: base64UrlEncode(mallory.publicKey),
       },
-      rules: [],
+      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
       floor: 1,
     });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+    await expect(
+      process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conversation already promoted');
+  });
 
-    // Verify the pending request was invalidated
-    const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    const invalidated = [...messages.values()].find(m => m.type === 'gate.invalidated');
-    expect(invalidated).toBeDefined();
-    expect(invalidated!.request_id).toBe('req-pending');
+  it('re-promotion cannot lower floor (fail closed, qntm-d9qb)', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState({ promotion_floor: 3 }));
+
+    // Attacker tries to re-promote with floor=1
+    const promoteBody = encode({
+      type: 'gate.promote',
+      conv_id: 'a'.repeat(32),
+      gateway_kid: gatewayKid,
+      participants: { [aliceKid]: base64UrlEncode(alice.publicKey) },
+      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
+      floor: 1,
+    });
+    await expect(
+      process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conversation already promoted');
+  });
+
+  it('re-promotion cannot rewrite participants (fail closed, qntm-qko0)', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState());
+
+    // Attacker tries to re-promote with only themselves
+    const promoteBody = encode({
+      type: 'gate.promote',
+      conv_id: 'a'.repeat(32),
+      gateway_kid: gatewayKid,
+      participants: { [aliceKid]: base64UrlEncode(alice.publicKey) },
+      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
+      floor: 1,
+    });
+    await expect(
+      process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conversation already promoted');
+
+    // Verify original participants unchanged
+    const state = await storage.get<ConversationState>('conv_state');
+    expect(Object.keys(state!.participants)).toHaveLength(2);
+    expect(state!.participants).toHaveProperty(bobKid);
   });
 });
 
@@ -574,10 +581,11 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     const walEntries = await storage.list({ prefix: 'wal:' });
     expect(walEntries.size).toBe(0);
 
-    // An executed marker should exist
+    // An executed marker should exist with gateway signer_kid (qntm-iv57)
     const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
     const executed = [...messages.values()].find(m => m.type === 'gate.executed' && m.request_id === 'req-crashed');
     expect(executed).toBeDefined();
+    expect(executed!.signer_kid).toBe(gatewayKid);
   });
 
   it('recover() does not duplicate executed marker if gate.executed already exists', async () => {
@@ -604,123 +612,36 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
   });
 });
 
-describe('participant addition/removal governance', () => {
-  it('re-promotion with removed participant invalidates their pending requests', async () => {
+describe('participant governance (post-promotion immutability)', () => {
+  it('non-participant cannot submit requests (direct state test)', async () => {
     const { storage, process } = makeDO();
+    // State has only alice+bob; mallory is not a participant
     await storage.put('conv_state', promotedState());
 
-    // Bob has a pending request
-    await storage.put('msg:00000001', {
-      seq: 1, type: 'gate.request', request_id: 'req-bobs',
-      signer_kid: bobKid, body: '{}',
-    } satisfies StoredGateMessage);
-
-    // Re-promote without Bob (removal)
-    const promoteBody = encode({
-      type: 'gate.promote',
-      conv_id: 'a'.repeat(32),
-      gateway_kid: gatewayKid,
-      participants: {
-        [aliceKid]: base64UrlEncode(alice.publicKey),
-      },
-      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
-      floor: 1,
-    });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Bob's request should be invalidated
-    const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    const invalidated = [...messages.values()].find(m => m.type === 'gate.invalidated');
-    expect(invalidated).toBeDefined();
-    expect(invalidated!.request_id).toBe('req-bobs');
-
-    // Verify Bob is no longer a participant
-    const state = await storage.get<ConversationState>('conv_state');
-    expect(state!.participants).not.toHaveProperty(bobKid);
-  });
-
-  it('re-promotion with added participant invalidates pending requests', async () => {
-    const { storage, process } = makeDO();
-    await storage.put('conv_state', promotedState());
-
-    // Alice has a pending request with eligible=[alice, bob]
-    await storage.put('msg:00000001', {
-      seq: 1, type: 'gate.request', request_id: 'req-stale',
-      signer_kid: aliceKid, body: JSON.stringify({
-        eligible_signer_kids: [aliceKid, bobKid],
-        required_approvals: 2,
-      }),
-    } satisfies StoredGateMessage);
-
-    // Re-promote adding mallory — roster changed, pending requests stale
-    const promoteBody = encode({
-      type: 'gate.promote',
-      conv_id: 'a'.repeat(32),
-      gateway_kid: gatewayKid,
-      participants: {
-        [aliceKid]: base64UrlEncode(alice.publicKey),
-        [bobKid]: base64UrlEncode(bob.publicKey),
-        [malloryKid]: base64UrlEncode(mallory.publicKey),
-      },
-      rules: [{ service: '*', endpoint: '', verb: '', m: 2 }],
-      floor: 2,
-    });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Pending request should be invalidated because participant set changed
-    const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    const invalidated = [...messages.values()].find(m => m.type === 'gate.invalidated');
-    expect(invalidated).toBeDefined();
-    expect(invalidated!.request_id).toBe('req-stale');
-  });
-
-  it('removed participant cannot submit new requests after re-promotion', async () => {
-    const { storage, process } = makeDO();
-    await storage.put('conv_state', promotedState());
-
-    // Re-promote without Bob
-    const promoteBody = encode({
-      type: 'gate.promote',
-      conv_id: 'a'.repeat(32),
-      gateway_kid: gatewayKid,
-      participants: {
-        [aliceKid]: base64UrlEncode(alice.publicKey),
-      },
-      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
-      floor: 1,
-    });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Bob tries to submit a request
-    const { body } = buildSignedRequest(bob, {
-      signer_kid: bobKid,
-      eligible_signer_kids: [aliceKid],
-      required_approvals: 1,
+    const { body } = buildSignedRequest(mallory, {
+      signer_kid: malloryKid,
+      eligible_signer_kids: [aliceKid, bobKid],
     });
     await expect(
-      process('gate.request', encode(body), keyIDFromPublicKey(bob.publicKey), bob.publicKey),
+      process('gate.request', encode(body), keyIDFromPublicKey(mallory.publicKey), mallory.publicKey),
     ).rejects.toThrow('sender is not a participant');
   });
 
-  it('removed participant cannot approve pending requests', async () => {
+  it('non-participant cannot approve requests (direct state test)', async () => {
     const { storage, process } = makeDO();
-    // Only alice is a participant (bob was removed), floor=1, rule m=1
+    // State has only alice; bob is not a participant
     await storage.put('conv_state', promotedState({
-      participants: {
-        [aliceKid]: base64UrlEncode(alice.publicKey),
-      },
+      participants: { [aliceKid]: base64UrlEncode(alice.publicKey) },
       promotion_floor: 1,
       rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
     }));
 
-    // Alice has a pending request with only herself eligible
     const { body: reqBody, signable, requestId } = buildSignedRequest(alice, {
       eligible_signer_kids: [aliceKid],
       required_approvals: 1,
     });
     await process('gate.request', encode(reqBody), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
 
-    // Bob tries to approve
     const approvalBody = {
       type: 'gate.approval',
       conv_id: 'a'.repeat(32),
@@ -733,33 +654,21 @@ describe('participant addition/removal governance', () => {
     ).rejects.toThrow('sender is not a participant');
   });
 
-  it('re-promotion without participant changes does NOT invalidate pending requests', async () => {
+  it('re-promotion is rejected — membership is immutable after promotion', async () => {
     const { storage, process } = makeDO();
     await storage.put('conv_state', promotedState());
 
-    // Store a pending request
-    await storage.put('msg:00000001', {
-      seq: 1, type: 'gate.request', request_id: 'req-active',
-      signer_kid: aliceKid, body: '{}',
-    } satisfies StoredGateMessage);
-
-    // Re-promote with SAME participants but different rules
+    // Any re-promote attempt is rejected, regardless of content
     const promoteBody = encode({
       type: 'gate.promote',
       conv_id: 'a'.repeat(32),
       gateway_kid: gatewayKid,
-      participants: {
-        [aliceKid]: base64UrlEncode(alice.publicKey),
-        [bobKid]: base64UrlEncode(bob.publicKey),
-      },
-      rules: [{ service: '*', endpoint: '', verb: '', m: 1 }],
+      participants: { [aliceKid]: base64UrlEncode(alice.publicKey) },
+      rules: [],
       floor: 1,
     });
-    await process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey);
-
-    // Pending request should NOT be invalidated
-    const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    const invalidated = [...messages.values()].find(m => m.type === 'gate.invalidated');
-    expect(invalidated).toBeUndefined();
+    await expect(
+      process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conversation already promoted');
   });
 });
