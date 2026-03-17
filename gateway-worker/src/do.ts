@@ -2,12 +2,13 @@ import {
   generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   DropboxClient, deserializeEnvelope, decryptMessage,
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
+  verifyRequest, verifyApproval, hashRequest, computePayloadHash,
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, Identity } from '@corpollc/qntm';
 import type {
   Env, ConversationState, PromoteRequest, PromoteResponse,
   GatePromoteMessage, GateRequestMessage, GateApprovalMessage,
-  GateDisapprovalMessage, GateSecretMessage, GateConfigMessage,
+  GateDisapprovalMessage, GateSecretMessage,
   StoredGateMessage, VaultEntry,
 } from './types.js';
 import { scanRequestApprovals, findExecutableRequests } from './scan.js';
@@ -43,6 +44,31 @@ export class GatewayConversationDO implements DurableObject {
     }
     this.messageSeq = maxSeq;
     this.recovered = true;
+
+    // qntm-qtw2: Resolve incomplete executions from write-ahead log.
+    // If a WAL entry exists without a corresponding gate.executed marker,
+    // the execution likely completed but the marker wasn't durably posted.
+    // Store a local executed marker to prevent re-execution; the next poll
+    // cycle will pick up the gateway-authored gate.executed from conversation.
+    const walEntries = await this.state.storage.list<{ request_id: string }>({ prefix: 'wal:' });
+    if (walEntries.size > 0) {
+      const executedIds = new Set<string>();
+      for (const [, msg] of entries) {
+        if (msg.type === 'gate.executed' && msg.request_id) {
+          executedIds.add(msg.request_id);
+        }
+      }
+      for (const [key, wal] of walEntries) {
+        if (!executedIds.has(wal.request_id)) {
+          await this.storeGateMessage({
+            seq: ++this.messageSeq,
+            type: 'gate.executed',
+            request_id: wal.request_id,
+          });
+        }
+        await this.state.storage.delete(key);
+      }
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -185,8 +211,8 @@ export class GatewayConversationDO implements DurableObject {
     const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
 
-    // Reject gate actions before promotion (except gate.promote and gate.executed)
-    if (bodyType !== 'gate.promote' && bodyType !== 'gate.executed') {
+    // Reject gate actions before promotion (only gate.promote allowed pre-promotion)
+    if (bodyType !== 'gate.promote') {
       const convState = await this.state.storage.get<ConversationState>('conv_state');
       if (!convState?.gate_promoted) {
         throw new Error(`${bodyType} rejected: conversation not yet promoted`);
@@ -198,10 +224,10 @@ export class GatewayConversationDO implements DurableObject {
         await this.handleGatePromote(body, authenticatedKid);
         break;
       case 'gate.request':
-        await this.handleGateRequest(bodyStr, authenticatedKid);
+        await this.handleGateRequest(bodyStr, authenticatedKid, senderPublicKey);
         break;
       case 'gate.approval':
-        await this.handleGateApproval(bodyStr, authenticatedKid);
+        await this.handleGateApproval(bodyStr, authenticatedKid, senderPublicKey);
         break;
       case 'gate.disapproval':
         await this.handleGateDisapproval(bodyStr, authenticatedKid);
@@ -210,10 +236,11 @@ export class GatewayConversationDO implements DurableObject {
         await this.handleGateSecret(bodyStr, senderKid, senderPublicKey);
         break;
       case 'gate.config':
-        await this.handleGateConfig(bodyStr, authenticatedKid);
-        break;
+        // qntm-d9qb: gate.config is rejected. Policy changes must go through
+        // governed request/approval path. Fail closed.
+        throw new Error('gate.config rejected: direct policy mutation is not allowed; use governed request/approval workflow');
       case 'gate.executed':
-        await this.handleGateExecuted(bodyStr);
+        await this.handleGateExecuted(bodyStr, authenticatedKid);
         break;
       default:
         break;
@@ -233,6 +260,16 @@ export class GatewayConversationDO implements DurableObject {
       throw new Error(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
     }
 
+    // qntm-qko0: Gateway KID must not appear in the participant set
+    if (msg.participants && convState.kid in msg.participants) {
+      throw new Error('gate.promote rejected: gateway KID must not be included in participants');
+    }
+
+    // qntm-qko0: Floor must be >= 1
+    if (msg.floor !== undefined && msg.floor < 1) {
+      throw new Error('gate.promote rejected: floor must be >= 1');
+    }
+
     // Invalidate pending requests if participants changed on re-promotion
     if (convState.gate_promoted) {
       const oldParticipants = JSON.stringify(Object.keys(convState.participants).sort());
@@ -249,7 +286,7 @@ export class GatewayConversationDO implements DurableObject {
     await this.state.storage.put('conv_state', convState);
   }
 
-  private async handleGateRequest(bodyStr: string, authenticatedKid: string): Promise<void> {
+  private async handleGateRequest(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateRequestMessage;
 
     // Validate JSON signer_kid matches authenticated envelope sender
@@ -262,6 +299,24 @@ export class GatewayConversationDO implements DurableObject {
     if (!convState) throw new Error('gate.request: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.request rejected: sender is not a participant');
+    }
+
+    // qntm-3gde: Verify the Ed25519 request signature against the authenticated sender's public key
+    const signable = {
+      conv_id: msg.conv_id,
+      request_id: msg.request_id,
+      verb: msg.verb,
+      target_endpoint: msg.target_endpoint,
+      target_service: msg.target_service,
+      target_url: msg.target_url,
+      expires_at_unix: Math.floor(new Date(msg.expires_at).getTime() / 1000),
+      payload_hash: computePayloadHash(msg.payload ?? null),
+      eligible_signer_kids: msg.eligible_signer_kids,
+      required_approvals: msg.required_approvals,
+    };
+    const signature = base64UrlDecode(msg.signature);
+    if (!verifyRequest(senderPublicKey, signable, signature)) {
+      throw new Error('gate.request rejected: invalid request signature');
     }
 
     // Check required_approvals >= promotion floor
@@ -300,7 +355,7 @@ export class GatewayConversationDO implements DurableObject {
     });
   }
 
-  private async handleGateApproval(bodyStr: string, authenticatedKid: string): Promise<void> {
+  private async handleGateApproval(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateApprovalMessage;
 
     // Validate JSON signer_kid matches authenticated envelope sender
@@ -313,6 +368,41 @@ export class GatewayConversationDO implements DurableObject {
     if (!convState) throw new Error('gate.approval: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.approval rejected: sender is not a participant');
+    }
+
+    // qntm-3gde: Verify the approval signature against the referenced request
+    const messages = await this.loadGateMessages();
+    const reqStored = messages.find(m => m.type === 'gate.request' && m.request_id === msg.request_id && m.body);
+    if (!reqStored || !reqStored.body) {
+      throw new Error('gate.approval rejected: referenced request not found');
+    }
+    const reqMsg = JSON.parse(reqStored.body) as GateRequestMessage;
+    const reqSignable = {
+      conv_id: reqMsg.conv_id,
+      request_id: reqMsg.request_id,
+      verb: reqMsg.verb,
+      target_endpoint: reqMsg.target_endpoint,
+      target_service: reqMsg.target_service,
+      target_url: reqMsg.target_url,
+      expires_at_unix: Math.floor(new Date(reqMsg.expires_at).getTime() / 1000),
+      payload_hash: computePayloadHash(reqMsg.payload ?? null),
+      eligible_signer_kids: reqMsg.eligible_signer_kids,
+      required_approvals: reqMsg.required_approvals,
+    };
+    const reqHash = hashRequest(reqSignable);
+    const approvalSignable = {
+      conv_id: msg.conv_id,
+      request_id: msg.request_id,
+      request_hash: reqHash,
+    };
+    const approvalSig = base64UrlDecode(msg.signature);
+    if (!verifyApproval(senderPublicKey, approvalSignable, approvalSig)) {
+      throw new Error('gate.approval rejected: invalid approval signature');
+    }
+
+    // Validate approver is in the request's eligible signer roster
+    if (Array.isArray(reqMsg.eligible_signer_kids) && !reqMsg.eligible_signer_kids.includes(authenticatedKid)) {
+      throw new Error('gate.approval rejected: sender is not in the request eligible_signer_kids roster');
     }
 
     await this.storeGateMessage({
@@ -347,12 +437,21 @@ export class GatewayConversationDO implements DurableObject {
     });
   }
 
-  private async handleGateExecuted(bodyStr: string): Promise<void> {
+  private async handleGateExecuted(bodyStr: string, authenticatedKid: string): Promise<void> {
+    // qntm-iv57: Only accept gate.executed from the gateway's own identity.
+    // This prevents participants from forging terminal markers to suppress execution.
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gate.executed: no bootstrapped state');
+    if (authenticatedKid !== convState.kid) {
+      throw new Error('gate.executed rejected: only gateway-authored terminal markers are accepted');
+    }
+
     const msg = JSON.parse(bodyStr) as { request_id: string };
     await this.storeGateMessage({
       seq: ++this.messageSeq,
       type: 'gate.executed',
       request_id: msg.request_id,
+      signer_kid: authenticatedKid,
     });
   }
 
@@ -379,19 +478,8 @@ export class GatewayConversationDO implements DurableObject {
     await this.state.storage.put(`vault:${msg.service}`, entry);
   }
 
-  private async handleGateConfig(bodyStr: string, authenticatedKid: string): Promise<void> {
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.config: no bootstrapped state');
-
-    // Validate sender is a participant
-    if (!convState.participants[authenticatedKid]) {
-      throw new Error('gate.config rejected: sender is not a participant');
-    }
-
-    const msg = JSON.parse(bodyStr) as GateConfigMessage;
-    convState.rules = msg.rules || [];
-    await this.state.storage.put('conv_state', convState);
-  }
+  // handleGateConfig removed (qntm-d9qb): direct policy mutation is not allowed.
+  // Config changes must go through governed request/approval workflow.
 
   /**
    * Sweep expired vault credentials, delete them, and post gate.expired
@@ -455,11 +543,19 @@ export class GatewayConversationDO implements DurableObject {
       );
       if (alreadyExecuted) continue;
 
+      // qntm-qtw2: Write-ahead log — record execution intent before performing it.
+      // If the DO crashes between execution and posting gate.executed, recovery
+      // will find this marker and avoid re-execution.
+      await this.state.storage.put(`wal:${scan.request_id}`, {
+        request_id: scan.request_id,
+        started_at: new Date().toISOString(),
+      });
+
       // Execute the HTTP request
       const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
       const result = await executeRequest(scan.request, vaultEntry, vaultKey);
 
-      // Post gate.executed and gate.result to the conversation FIRST
+      // Post gate.executed and gate.result to the conversation FIRST.
       // The conversation is the canonical record of execution.
       const convIdBytes = hexToBytes(convState.conv_id);
       const conv = this.buildConversation(convState, convIdBytes);
@@ -493,14 +589,16 @@ export class GatewayConversationDO implements DurableObject {
       );
       await dropbox.postMessage(convIdBytes, serializeEnvelope(resultEnv));
 
-      // Only store the local marker AFTER successful conversation post.
-      // If this fails, the next poll will see the gate.executed from the conversation
-      // and create the local marker then (via handleGateExecuted).
+      // Store local marker AFTER successful conversation post.
       await this.storeGateMessage({
         seq: ++this.messageSeq,
         type: 'gate.executed',
         request_id: scan.request_id,
+        signer_kid: convState.kid,
       });
+
+      // Clean up WAL entry
+      await this.state.storage.delete(`wal:${scan.request_id}`);
     }
   }
 

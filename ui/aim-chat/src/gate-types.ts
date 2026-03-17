@@ -9,14 +9,20 @@ export interface GateRequestBody {
   target_url: string
   expires_at: string
   signer_kid: string
+  signature: string
   arguments?: Record<string, string>
-  request_body?: unknown
+  payload?: unknown
+  /** Frozen signer roster: kid strings of eligible signers at request-creation time */
+  eligible_signer_kids: string[]
+  /** Frozen threshold: minimum approvals required (must be >= promotion floor) */
+  required_approvals: number
 }
 
 export interface GateApprovalBody {
   type: string
   request_id: string
   signer_kid: string
+  signature: string
 }
 
 export interface GateExecutedBody {
@@ -42,7 +48,12 @@ export interface GateExpiredBody {
 }
 
 export interface GatePromoteBody {
+  type: string
   conv_id: string
-  signers: Array<{ kid: string; public_key: string }>
-  rules: Array<{ service: string; endpoint: string; verb: string; m: number; n: number }>
+  gateway_kid: string
+  /** Conversation participants: kid → base64url public key (gateway excluded) */
+  participants: Record<string, string>
+  rules: Array<{ service: string; endpoint: string; verb: string; m: number }>
+  /** Minimum approval threshold floor */
+  floor: number
 }

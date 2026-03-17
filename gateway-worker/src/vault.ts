@@ -92,22 +92,6 @@ export async function importVaultKey(keyHex: string): Promise<CryptoKey> {
   );
 }
 
-/**
- * Find and return expired vault entries from storage, removing them.
- */
-export function sweepExpired(
-  entries: Map<string, VaultEntry>,
-  now: number = Date.now(),
-): VaultEntry[] {
-  const expired: VaultEntry[] = [];
-  for (const [key, entry] of entries) {
-    if (isExpired(entry, now)) {
-      expired.push(entry);
-      entries.delete(key);
-    }
-  }
-  return expired;
-}
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);

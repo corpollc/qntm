@@ -157,6 +157,30 @@ describe('scanRequestApprovals', () => {
     expect(result!.threshold).toBe(1);
     expect(result!.status).toBe('approved'); // signerA's submission counts
   });
+
+  // Regression: forged gate.executed from non-gateway signer_kid is still stored
+  // but the scan treats it as terminal. The DO handler (qntm-iv57) prevents storage
+  // of non-gateway gate.executed messages, so this tests the defense-in-depth assumption
+  // that only gateway-authored markers reach the stored message set.
+  it('treats gateway-authored gate.executed as terminal (regression qntm-iv57)', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ required_approvals: 1 }),
+      { seq: 2, type: 'gate.executed', request_id: 'req-1', signer_kid: gatewayKid },
+    ];
+    const result = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe('executed');
+  });
+
+  it('submitter vote counted even when eligible_signer_kids includes only submitter', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ eligible_signer_kids: [signerA], required_approvals: 1 }),
+    ];
+    const result = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules);
+    expect(result).not.toBeNull();
+    expect(result!.approvals).toBe(1);
+    expect(result!.status).toBe('approved');
+  });
 });
 
 describe('findExecutableRequests', () => {
@@ -168,5 +192,14 @@ describe('findExecutableRequests', () => {
     const results = findExecutableRequests(messages, gatewayKid, defaultRules);
     expect(results).toHaveLength(1);
     expect(results[0].request_id).toBe('req-1');
+  });
+
+  it('does not return executed requests (regression qntm-iv57)', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ request_id: 'req-1', eligible_signer_kids: [signerA], required_approvals: 1 }),
+      { seq: 2, type: 'gate.executed', request_id: 'req-1', signer_kid: gatewayKid },
+    ];
+    const results = findExecutableRequests(messages, gatewayKid, defaultRules);
+    expect(results).toHaveLength(0);
   });
 });

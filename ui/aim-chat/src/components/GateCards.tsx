@@ -29,7 +29,7 @@ export function GateRequestCard({
 
   const isExpired = new Date(parsed.expires_at) < new Date()
   const hasArgs = parsed.arguments && Object.keys(parsed.arguments).length > 0
-  const hasBody = parsed.request_body !== undefined && parsed.request_body !== null
+  const hasBody = parsed.payload !== undefined && parsed.payload !== null
   const thresholdMet = approvalCount != null && requiredApprovals != null && approvalCount >= requiredApprovals
 
   return (
@@ -67,9 +67,9 @@ export function GateRequestCard({
           <div className="gate-body-preview">
             <strong>Request body:</strong>
             <pre className="gate-body-content">
-              {typeof parsed.request_body === 'string'
-                ? parsed.request_body
-                : JSON.stringify(parsed.request_body, null, 2)}
+              {typeof parsed.payload === 'string'
+                ? parsed.payload
+                : JSON.stringify(parsed.payload, null, 2)}
             </pre>
           </div>
         )}
@@ -174,19 +174,20 @@ export function GatePromoteCard({ message }: { message: ChatMessage }) {
   }
   if (!parsed) return <div className="message-body">{message.text}</div>
 
-  const threshold = parsed.rules?.[0]?.m ?? '?'
-  const n = parsed.signers?.length ?? '?'
+  const participantKids = Object.keys(parsed.participants || {})
+  const threshold = parsed.floor ?? parsed.rules?.[0]?.m ?? '?'
+  const n = participantKids.length
 
   return (
     <div className="gate-card gate-promote">
       <div className="gate-card-header">API Gateway Enabled</div>
       <div className="gate-card-body">
         <div><strong>Conv:</strong> {parsed.conv_id}</div>
-        <div><strong>Threshold:</strong> {threshold}-of-{n}</div>
-        <div><strong>Signers:</strong> {parsed.signers?.length ?? 0}</div>
-        {parsed.signers?.map((s) => (
-          <div key={s.kid} className="gate-signer-item">
-            <code>{shortId(s.kid)}</code>
+        <div><strong>Floor:</strong> {threshold}-of-{n}</div>
+        <div><strong>Participants:</strong> {n}</div>
+        {participantKids.map((kid) => (
+          <div key={kid} className="gate-signer-item">
+            <code>{shortId(kid)}</code>
           </div>
         ))}
         <div><strong>Rules:</strong> {parsed.rules?.length ?? 0}</div>
@@ -196,7 +197,7 @@ export function GatePromoteCard({ message }: { message: ChatMessage }) {
 }
 
 export function GateConfigCard({ message }: { message: ChatMessage }) {
-  let parsed: { rules?: Array<{ service: string; endpoint: string; verb: string; m: number; n: number }> } | null = null
+  let parsed: { rules?: Array<{ service: string; endpoint: string; verb: string; m: number }> } | null = null
   try {
     parsed = JSON.parse(message.text)
   } catch {
@@ -206,7 +207,7 @@ export function GateConfigCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-config">
-      <div className="gate-card-header">Gateway Configuration</div>
+      <div className="gate-card-header">Gateway Configuration (read-only)</div>
       <div className="gate-card-body">
         <div><strong>Rules:</strong> {parsed.rules?.length ?? 0}</div>
         {parsed.rules?.map((r, i) => (

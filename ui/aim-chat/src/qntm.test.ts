@@ -192,11 +192,14 @@ describe('browser qntm adapter', () => {
       expires_at: string
       signature: string
       payload?: unknown
-      request_body?: unknown
+      eligible_signer_kids: string[]
+      required_approvals: number
     }
     expect(request.payload).toEqual({ version: '1.2.3', force: 'true' })
     expect(request).not.toHaveProperty('request_body')
     expect(request.target_url).toBe('https://api.example.test/apps/qntm/deploy?env=prod')
+    expect(request.eligible_signer_kids).toBeDefined()
+    expect(request.required_approvals).toBeDefined()
 
     const requestPayloadHash = computePayloadHash(request.payload ?? null)
     const requestSignable = {
@@ -208,6 +211,8 @@ describe('browser qntm adapter', () => {
       target_url: request.target_url,
       expires_at_unix: Math.floor(new Date(request.expires_at).getTime() / 1000),
       payload_hash: requestPayloadHash,
+      eligible_signer_kids: request.eligible_signer_kids,
+      required_approvals: request.required_approvals,
     }
     expect(verifyRequest(alicePublicKey, requestSignable, base64UrlDecode(request.signature))).toBe(true)
 
@@ -222,6 +227,7 @@ describe('browser qntm adapter', () => {
       request_id: string
       signature: string
     }
+    // Build the same signable used for signing (includes eligible_signer_kids and required_approvals)
     const requestHash = hashRequest(requestSignable)
     const approvalSignable = {
       conv_id: approval.conv_id,
@@ -232,7 +238,7 @@ describe('browser qntm adapter', () => {
     expect(verifyApproval(alicePublicKey, approvalSignable, base64UrlDecode(approval.signature))).toBe(true)
   })
 
-  it('learns participant public keys and emits base64url signer keys on promote', async () => {
+  it('learns participant public keys and emits participants map on promote', async () => {
     const { alice, bob, conversationId } = await createConversationPair()
     const aliceIdentity = identityFor(alice.id)
     const bobIdentity = identityFor(bob.id)
@@ -240,18 +246,20 @@ describe('browser qntm adapter', () => {
     await sendMessageToConversation(bob.id, bob.name, conversationId, 'hello from bob')
     await receiveMessages(alice.id, alice.name, conversationId)
 
-    const promoteMessage = await gatePromoteRequest(alice.id, alice.name, conversationId, 'org-1', 2)
+    const gatewayKid = 'gateway-kid-placeholder'
+    const promoteMessage = await gatePromoteRequest(alice.id, alice.name, conversationId, gatewayKid, 2)
     const payload = JSON.parse(promoteMessage.text) as {
       type: string
-      signers: Array<{ kid: string; public_key: string }>
-      rules: Array<{ m: number; n: number }>
+      participants: Record<string, string>
+      rules: Array<{ m: number }>
+      floor: number
     }
 
     expect(payload.type).toBe('gate.promote')
-    expect(payload.rules[0]).toMatchObject({ m: 2, n: 2 })
+    expect(payload.rules[0]).toMatchObject({ m: 2 })
+    expect(payload.floor).toBe(2)
 
-    const signers = Object.fromEntries(payload.signers.map((signer) => [signer.kid, signer.public_key]))
-    expect(signers).toEqual({
+    expect(payload.participants).toEqual({
       [aliceIdentity.keyId.toLowerCase()]: publicKeyToString(hexToBytes(aliceIdentity.publicKey)),
       [bobIdentity.keyId.toLowerCase()]: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
     })

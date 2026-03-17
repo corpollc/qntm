@@ -416,6 +416,18 @@ export async function gateRunRequest(
   const kidHex = bytesToHex(identity.keyID)
   const payloadHash = computePayloadHash(requestBody ?? null)
 
+  // Build eligible signer roster from conversation participants
+  const conv = store.findConversation(profileId, conversationId)
+  const selfKidHex = kidHex.toLowerCase()
+  const eligibleSignerKids: string[] = []
+  const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
+  for (const pk of knownPublicKeys) {
+    const pKid = bytesToHex(keyIDFromPublicKey(pk)).toLowerCase()
+    eligibleSignerKids.push(pKid)
+  }
+  // Determine threshold from recipe or default to participant count
+  const requiredApprovals = recipe.threshold ?? eligibleSignerKids.length
+
   const signable = {
     conv_id: conversationId,
     request_id: requestId,
@@ -425,6 +437,8 @@ export async function gateRunRequest(
     target_url: resolved.target_url,
     expires_at_unix: expiresAtUnix,
     payload_hash: payloadHash,
+    eligible_signer_kids: eligibleSignerKids,
+    required_approvals: requiredApprovals,
   }
 
   const sig = signRequest(identity.privateKey, signable)
@@ -444,6 +458,8 @@ export async function gateRunRequest(
     signature: sigB64,
     arguments: Object.keys(args).length > 0 ? args : undefined,
     payload: requestBody ?? undefined,
+    eligible_signer_kids: eligibleSignerKids,
+    required_approvals: requiredApprovals,
   }
 
   const bodyText = JSON.stringify(gateMsg)
@@ -483,6 +499,8 @@ export async function gateApproveRequest(
     target_url: reqMsg.target_url as string,
     expires_at_unix: Math.floor(new Date(reqMsg.expires_at as string).getTime() / 1000),
     payload_hash: payloadHash,
+    eligible_signer_kids: (reqMsg.eligible_signer_kids as string[]) || [],
+    required_approvals: (reqMsg.required_approvals as number) || 1,
   }
 
   const reqHash = hashRequest(signable)
@@ -516,11 +534,24 @@ export async function gatePromoteRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
+  // Build participants map: kid → base64url public key (gateway excluded)
+  const conv = store.findConversation(profileId, conversationId)
+  const participants: Record<string, string> = {}
+  const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
+  const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
+  for (const pk of knownPublicKeys) {
+    const kid = bytesToHex(keyIDFromPublicKey(pk)).toLowerCase()
+    if (kid === gatewayKid.toLowerCase()) continue // Exclude gateway
+    participants[kid] = base64UrlEncode(pk)
+  }
+
   const promotePayload = {
     type: 'gate.promote',
     conv_id: conversationId,
     gateway_kid: gatewayKid,
+    participants,
     rules: [{ service: '*', endpoint: '*', verb: '*', m: threshold }],
+    floor: threshold,
   }
 
   const bodyText = JSON.stringify(promotePayload)
