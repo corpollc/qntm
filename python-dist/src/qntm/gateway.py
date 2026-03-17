@@ -238,7 +238,8 @@ class Gateway:
                 endpoint=r.get("endpoint", "*"),
                 verb=r.get("verb", "*"),
                 m=r.get("m", 1),
-                n=r.get("n", 0),
+
+
             )
             for r in payload.get("rules", [])
         ]
@@ -267,7 +268,8 @@ class Gateway:
                 endpoint=r.get("endpoint", "*"),
                 verb=r.get("verb", "*"),
                 m=r.get("m", 1),
-                n=r.get("n", 0),
+
+
             )
             for r in payload.get("rules", [])
         ]

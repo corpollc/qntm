@@ -21,7 +21,7 @@ def _signable_kwargs(identity, payload=None):
     """Helper to build common signable keyword args."""
     payload_hash = compute_payload_hash(payload)
     return {
-        "org_id": "test-org",
+        "conv_id": "test-conv-id",
         "request_id": "req-001",
         "verb": "POST",
         "target_endpoint": "/v1/transfers",
@@ -29,6 +29,8 @@ def _signable_kwargs(identity, payload=None):
         "target_url": "https://api.bank.test/v1/transfers",
         "expires_at_unix": int(time.time()) + 3600,
         "payload_hash": payload_hash,
+        "eligible_signer_kids": [identity["keyID"].hex()],
+        "required_approvals": 1,
     }
 
 
@@ -78,7 +80,7 @@ class TestApprovalSigning:
 
         sig = sign_approval(
             ident["privateKey"],
-            org_id="test-org",
+            conv_id="test-conv-id",
             request_id="req-001",
             request_hash=req_hash,
         )
@@ -86,7 +88,7 @@ class TestApprovalSigning:
         assert verify_approval(
             ident["publicKey"],
             sig,
-            org_id="test-org",
+            conv_id="test-conv-id",
             request_id="req-001",
             request_hash=req_hash,
         )
@@ -98,14 +100,14 @@ class TestApprovalSigning:
 
         sig = sign_approval(
             ident["privateKey"],
-            org_id="test-org",
+            conv_id="test-conv-id",
             request_id="req-001",
             request_hash=req_hash,
         )
         assert not verify_approval(
             ident["publicKey"],
             sig,
-            org_id="test-org",
+            conv_id="test-conv-id",
             request_id="req-001",
             request_hash=b"\x00" * 32,
         )
@@ -152,10 +154,10 @@ class TestPayloadHash:
 class TestThresholdMatching:
     def _rules(self):
         return [
-            ThresholdRule(service="*", endpoint="*", verb="*", m=2, n=4),
-            ThresholdRule(service="bank-api", endpoint="*", verb="*", m=3, n=4),
-            ThresholdRule(service="bank-api", endpoint="/v1/transfers", verb="*", m=3, n=4),
-            ThresholdRule(service="bank-api", endpoint="/v1/transfers", verb="POST", m=4, n=4),
+            ThresholdRule(service="*", endpoint="*", verb="*", m=2),
+            ThresholdRule(service="bank-api", endpoint="*", verb="*", m=3),
+            ThresholdRule(service="bank-api", endpoint="/v1/transfers", verb="*", m=3),
+            ThresholdRule(service="bank-api", endpoint="/v1/transfers", verb="POST", m=4),
         ]
 
     def test_exact_match(self):

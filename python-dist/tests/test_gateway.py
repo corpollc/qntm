@@ -419,7 +419,7 @@ class TestMessageRouting:
 
             sig = sign_request(
                 signer["privateKey"],
-                org_id="test-org",
+                conv_id="test-conv",
                 request_id="req-001",
                 verb="GET",
                 target_endpoint="/health",
@@ -427,6 +427,8 @@ class TestMessageRouting:
                 target_url="https://api.test/health",
                 expires_at_unix=expires_at_unix,
                 payload_hash=payload_hash,
+                eligible_signer_kids=[signer["keyID"].hex()],
+                required_approvals=1,
             )
 
             request_body = json.dumps({
@@ -488,7 +490,7 @@ class TestMessageRouting:
             # Request from signer1
             sig1 = sign_request(
                 signer1["privateKey"],
-                org_id="test-org",
+                conv_id="test-conv",
                 request_id="req-002",
                 verb="GET",
                 target_endpoint="/health",
@@ -496,6 +498,8 @@ class TestMessageRouting:
                 target_url="https://api.test/health",
                 expires_at_unix=expires_at_unix,
                 payload_hash=payload_hash,
+                eligible_signer_kids=[signer1["keyID"].hex(), signer2["keyID"].hex()],
+                required_approvals=2,
             )
 
             gw.process_message(conv_id, GATE_MESSAGE_REQUEST, json.dumps({
@@ -513,7 +517,7 @@ class TestMessageRouting:
 
             # Approval from signer2
             req_hash = hash_request(
-                org_id="test-org",
+                conv_id="test-conv",
                 request_id="req-002",
                 verb="GET",
                 target_endpoint="/health",
@@ -521,11 +525,13 @@ class TestMessageRouting:
                 target_url="https://api.test/health",
                 expires_at_unix=expires_at_unix,
                 payload_hash=payload_hash,
+                eligible_signer_kids=[signer1["keyID"].hex(), signer2["keyID"].hex()],
+                required_approvals=2,
             )
 
             sig2 = sign_approval(
                 signer2["privateKey"],
-                org_id="test-org",
+                conv_id="test-conv",
                 request_id="req-002",
                 request_hash=req_hash,
             )

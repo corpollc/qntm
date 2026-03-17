@@ -48,7 +48,6 @@ class ThresholdRule:
     endpoint: str
     verb: str
     m: int
-    n: int = 0
 
 
 @dataclass
@@ -59,54 +58,6 @@ class Credential:
     header_name: str
     header_value: str
     description: str = ""
-
-
-@dataclass
-class Signer:
-    kid: str
-    public_key: str  # base64url
-    label: str
-
-
-@dataclass
-class Org:
-    id: str
-    signers: list[Signer]
-    rules: list[ThresholdRule]
-    credentials: Optional[dict[str, Credential]] = None
-
-
-@dataclass
-class ScanResult:
-    found: bool
-    threshold_met: bool
-    expired: bool
-    signer_kids: list[str]
-    threshold: int
-    status: str  # pending | approved | executed | expired
-    request: Optional[dict] = None
-
-
-@dataclass
-class ExecutionResult:
-    status_code: int
-    content_type: Optional[str] = None
-    content_length: int = 0
-
-
-@dataclass
-class ExecuteResult:
-    org_id: str
-    request_id: str
-    verb: str
-    target_endpoint: str
-    target_service: str
-    status: str
-    signature_count: int
-    signer_kids: list[str]
-    threshold: int
-    expires_at: str
-    execution_result: Optional[ExecutionResult] = None
 
 
 # ---------------------------------------------------------------------------
@@ -146,14 +97,11 @@ class Recipe:
 
 @dataclass
 class PromotePayload:
-    org_id: str
-    signers: list[Signer]
+    conv_id: str
+    gateway_kid: str
+    participants: dict[str, str]  # kid -> base64url public key
     rules: list[ThresholdRule]
-
-
-@dataclass
-class ConfigPayload:
-    rules: list[ThresholdRule]
+    floor: int
 
 
 @dataclass
@@ -194,7 +142,7 @@ class ExpiredPayload:
 @dataclass
 class GateConversationMessage:
     type: str
-    org_id: str
+    conv_id: str
     request_id: str
     signer_kid: str
     signature: str
@@ -207,6 +155,8 @@ class GateConversationMessage:
     expires_at: Optional[str] = None
     executed_at: Optional[str] = None
     execution_status_code: Optional[int] = None
+    eligible_signer_kids: Optional[list[str]] = None
+    required_approvals: Optional[int] = None
     # Recipe fields (optional -- populated when request originates from a recipe)
     recipe_name: Optional[str] = None
     arguments: Optional[dict[str, str]] = None
@@ -217,7 +167,7 @@ class GateConversationMessage:
 # ---------------------------------------------------------------------------
 
 def _gate_signable_map(
-    org_id: str,
+    conv_id: str,
     request_id: str,
     verb: str,
     target_endpoint: str,
@@ -225,10 +175,12 @@ def _gate_signable_map(
     target_url: str,
     expires_at_unix: int,
     payload_hash: bytes,
+    eligible_signer_kids: list[str],
+    required_approvals: int,
 ) -> dict:
     """Build the canonical CBOR map for a gate request."""
     return {
-        "org_id": org_id,
+        "conv_id": conv_id,
         "request_id": request_id,
         "verb": verb,
         "target_endpoint": target_endpoint,
@@ -236,17 +188,19 @@ def _gate_signable_map(
         "target_url": target_url,
         "expires_at_unix": expires_at_unix,
         "payload_hash": payload_hash,
+        "eligible_signer_kids": eligible_signer_kids,
+        "required_approvals": required_approvals,
     }
 
 
 def _approval_signable_map(
-    org_id: str,
+    conv_id: str,
     request_id: str,
     request_hash: bytes,
 ) -> dict:
     """Build the canonical CBOR map for an approval."""
     return {
-        "org_id": org_id,
+        "conv_id": conv_id,
         "request_id": request_id,
         "request_hash": request_hash,
     }
@@ -263,7 +217,7 @@ def compute_payload_hash(payload: Any) -> bytes:
 def sign_request(
     private_key: bytes,
     *,
-    org_id: str,
+    conv_id: str,
     request_id: str,
     verb: str,
     target_endpoint: str,
@@ -271,11 +225,14 @@ def sign_request(
     target_url: str,
     expires_at_unix: int,
     payload_hash: bytes,
+    eligible_signer_kids: list[str],
+    required_approvals: int,
 ) -> bytes:
     """Sign a gate request. Returns 64-byte Ed25519 signature."""
     m = _gate_signable_map(
-        org_id, request_id, verb, target_endpoint,
+        conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
+        eligible_signer_kids, required_approvals,
     )
     tbs = marshal_canonical(m)
     return _suite.sign(private_key, tbs)
@@ -285,7 +242,7 @@ def verify_request(
     public_key: bytes,
     signature: bytes,
     *,
-    org_id: str,
+    conv_id: str,
     request_id: str,
     verb: str,
     target_endpoint: str,
@@ -293,11 +250,14 @@ def verify_request(
     target_url: str,
     expires_at_unix: int,
     payload_hash: bytes,
+    eligible_signer_kids: list[str],
+    required_approvals: int,
 ) -> bool:
     """Verify a gate request signature."""
     m = _gate_signable_map(
-        org_id, request_id, verb, target_endpoint,
+        conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
+        eligible_signer_kids, required_approvals,
     )
     tbs = marshal_canonical(m)
     return _suite.verify(public_key, tbs, signature)
@@ -305,7 +265,7 @@ def verify_request(
 
 def hash_request(
     *,
-    org_id: str,
+    conv_id: str,
     request_id: str,
     verb: str,
     target_endpoint: str,
@@ -313,11 +273,14 @@ def hash_request(
     target_url: str,
     expires_at_unix: int,
     payload_hash: bytes,
+    eligible_signer_kids: list[str],
+    required_approvals: int,
 ) -> bytes:
     """SHA-256 of the CBOR-encoded GateSignable."""
     m = _gate_signable_map(
-        org_id, request_id, verb, target_endpoint,
+        conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
+        eligible_signer_kids, required_approvals,
     )
     tbs = marshal_canonical(m)
     return hashlib.sha256(tbs).digest()
@@ -326,12 +289,12 @@ def hash_request(
 def sign_approval(
     private_key: bytes,
     *,
-    org_id: str,
+    conv_id: str,
     request_id: str,
     request_hash: bytes,
 ) -> bytes:
     """Sign an approval. Returns 64-byte Ed25519 signature."""
-    m = _approval_signable_map(org_id, request_id, request_hash)
+    m = _approval_signable_map(conv_id, request_id, request_hash)
     tbs = marshal_canonical(m)
     return _suite.sign(private_key, tbs)
 
@@ -340,12 +303,12 @@ def verify_approval(
     public_key: bytes,
     signature: bytes,
     *,
-    org_id: str,
+    conv_id: str,
     request_id: str,
     request_hash: bytes,
 ) -> bool:
     """Verify an approval signature."""
-    m = _approval_signable_map(org_id, request_id, request_hash)
+    m = _approval_signable_map(conv_id, request_id, request_hash)
     tbs = marshal_canonical(m)
     return _suite.verify(public_key, tbs, signature)
 
@@ -569,57 +532,23 @@ class GateClient:
         if resp.status_code >= 400:
             raise GateError(resp.status_code, resp.text)
 
-    def create_org(
+    def promote(
         self,
-        org_id: str,
-        signers: list[dict],
-        rules: list[dict],
+        conv_id: str,
+        conv_aead_key: str,
+        conv_nonce_key: str,
+        conv_epoch: int,
     ) -> dict:
+        """POST to /v1/promote to register gateway for a conversation."""
         resp = self._client.post(
-            f"{self.base_url}/v1/orgs",
+            f"{self.base_url}/v1/promote",
             headers=self._headers(with_auth=True),
-            json={"id": org_id, "signers": signers, "rules": rules},
-        )
-        self._check(resp)
-        return resp.json()
-
-    def get_org(self, org_id: str) -> dict:
-        resp = self._client.get(
-            f"{self.base_url}/v1/orgs/{org_id}",
-            headers=self._headers(with_auth=True),
-        )
-        self._check(resp)
-        return resp.json()
-
-    def add_credential(self, org_id: str, credential: dict) -> None:
-        resp = self._client.post(
-            f"{self.base_url}/v1/orgs/{org_id}/credentials",
-            headers=self._headers(with_auth=True),
-            json=credential,
-        )
-        self._check(resp)
-
-    def submit_message(self, org_id: str, message: dict) -> dict:
-        resp = self._client.post(
-            f"{self.base_url}/v1/orgs/{org_id}/messages",
-            headers=self._headers(),
-            json=message,
-        )
-        self._check(resp)
-        return resp.json()
-
-    def scan_request(self, org_id: str, request_id: str) -> dict:
-        resp = self._client.get(
-            f"{self.base_url}/v1/orgs/{org_id}/scan/{request_id}",
-            headers=self._headers(),
-        )
-        self._check(resp)
-        return resp.json()
-
-    def execute_request(self, org_id: str, request_id: str) -> dict:
-        resp = self._client.post(
-            f"{self.base_url}/v1/orgs/{org_id}/execute/{request_id}",
-            headers=self._headers(with_auth=True),
+            json={
+                "conv_id": conv_id,
+                "conv_aead_key": conv_aead_key,
+                "conv_nonce_key": conv_nonce_key,
+                "conv_epoch": conv_epoch,
+            },
         )
         self._check(resp)
         return resp.json()

@@ -47,7 +47,6 @@ from .announce import (
 )
 from .gate import (
     GATE_MESSAGE_APPROVAL,
-    GATE_MESSAGE_CONFIG,
     GATE_MESSAGE_EXECUTED,
     GATE_MESSAGE_PROMOTE,
     GATE_MESSAGE_REQUEST,
@@ -1334,7 +1333,9 @@ def _load_starter_catalog():
     return recipes
 
 
-def _build_gate_request_message(identity, recipe, org_id, args):
+def _build_gate_request_message(identity, recipe, conv_id, args,
+                                eligible_signer_kids=None,
+                                required_approvals=None):
     """Build a gate.request message dict. Returns (msg_dict, request_id)."""
     from datetime import timedelta
 
@@ -1346,9 +1347,14 @@ def _build_gate_request_message(identity, recipe, org_id, args):
     payload = json.loads(body.decode()) if body else None
     payload_hash = compute_payload_hash(payload)
 
+    if eligible_signer_kids is None:
+        eligible_signer_kids = [identity["keyID"].hex()]
+    if required_approvals is None:
+        required_approvals = recipe.threshold
+
     sig = sign_request(
         identity["privateKey"],
-        org_id=org_id,
+        conv_id=conv_id,
         request_id=request_id,
         verb=recipe.verb,
         target_endpoint=endpoint,
@@ -1356,11 +1362,13 @@ def _build_gate_request_message(identity, recipe, org_id, args):
         target_url=target_url,
         expires_at_unix=expires_at_unix,
         payload_hash=payload_hash,
+        eligible_signer_kids=eligible_signer_kids,
+        required_approvals=required_approvals,
     )
 
     msg = {
         "type": GATE_MESSAGE_REQUEST,
-        "org_id": org_id,
+        "conv_id": conv_id,
         "request_id": request_id,
         "verb": recipe.verb,
         "target_endpoint": endpoint,
@@ -1370,6 +1378,8 @@ def _build_gate_request_message(identity, recipe, org_id, args):
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "signer_kid": identity["keyID"].hex(),
         "signature": sig.hex(),
+        "eligible_signer_kids": eligible_signer_kids,
+        "required_approvals": required_approvals,
         "recipe_name": recipe.name,
         "arguments": args if args else None,
     }
@@ -1385,7 +1395,7 @@ def _build_gate_approval_message(identity, request_msg):
     payload_hash = compute_payload_hash(request_msg.get("payload"))
 
     req_hash = hash_request(
-        org_id=request_msg["org_id"],
+        conv_id=request_msg["conv_id"],
         request_id=request_msg["request_id"],
         verb=request_msg["verb"],
         target_endpoint=request_msg["target_endpoint"],
@@ -1393,18 +1403,20 @@ def _build_gate_approval_message(identity, request_msg):
         target_url=request_msg["target_url"],
         expires_at_unix=expires_unix,
         payload_hash=payload_hash,
+        eligible_signer_kids=request_msg.get("eligible_signer_kids", []),
+        required_approvals=request_msg.get("required_approvals", 1),
     )
 
     sig = sign_approval(
         identity["privateKey"],
-        org_id=request_msg["org_id"],
+        conv_id=request_msg["conv_id"],
         request_id=request_msg["request_id"],
         request_hash=req_hash,
     )
 
     return {
         "type": GATE_MESSAGE_APPROVAL,
-        "org_id": request_msg["org_id"],
+        "conv_id": request_msg["conv_id"],
         "request_id": request_msg["request_id"],
         "signer_kid": identity["keyID"].hex(),
         "signature": sig.hex(),
@@ -1467,48 +1479,28 @@ def _find_gate_request_in_history(history_entries, request_id):
     )
 
 
-def _build_promote_payload(identity, org_id, threshold):
+def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold):
     """Build a gate.promote payload dict."""
     if threshold < 1:
         raise ValueError("threshold must be at least 1")
     return {
         "type": GATE_MESSAGE_PROMOTE,
-        "org_id": org_id,
-        "signers": [
-            {
-                "kid": identity["keyID"].hex(),
-                "public_key": base64url_encode(identity["publicKey"]),
-                "label": "",
-            }
-        ],
+        "conv_id": conv_id_hex,
+        "gateway_kid": gateway_kid,
+        "participants": {
+            identity["keyID"].hex(): base64url_encode(identity["publicKey"]),
+        },
         "rules": [
             {
                 "service": "*",
                 "endpoint": "*",
                 "verb": "*",
                 "m": threshold,
-                "n": 1,
             }
         ],
+        "floor": threshold,
     }
 
-
-def _build_config_payload(threshold):
-    """Build a gate.config payload dict."""
-    if threshold < 1:
-        raise ValueError("threshold must be at least 1")
-    return {
-        "type": GATE_MESSAGE_CONFIG,
-        "rules": [
-            {
-                "service": "*",
-                "endpoint": "*",
-                "verb": "*",
-                "m": threshold,
-                "n": 0,
-            }
-        ],
-    }
 
 
 def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
@@ -1552,24 +1544,6 @@ def _send_gate_message_to_conv(identity, conv_crypto, conv_id_hex, body_type,
     return result, envelope
 
 
-def _post_to_gate_server(gate_url, org_id, payload_dict):
-    """POST a gate message to the gate server. Returns response dict or None."""
-    body = json.dumps(payload_dict, separators=(",", ":")).encode()
-    req = urllib.request.Request(
-        f"{gate_url}/v1/orgs/{org_id}/messages",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": f"qntm-python/{__version__}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None
-
 
 # --- Gate CLI commands ---
 
@@ -1577,7 +1551,6 @@ def _post_to_gate_server(gate_url, org_id, payload_dict):
 def cmd_gate_run(args):
     config_dir = _get_config_dir(args)
     dropbox_url = _get_dropbox_url(args)
-    gate_url = getattr(args, "gate_url", None)
 
     identity = _load_identity(config_dir)
     if not identity:
@@ -1592,7 +1565,6 @@ def cmd_gate_run(args):
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
 
-    org_id = args.org
     recipe_name = args.recipe
 
     try:
@@ -1612,12 +1584,18 @@ def cmd_gate_run(args):
         k, v = kv.split("=", 1)
         recipe_args[k] = v
 
+    # Build eligible signer kids from sender's own KID
+    eligible_signer_kids = [identity["keyID"].hex()]
+    required_approvals = recipe.threshold
+
     try:
         msg, request_id = _build_gate_request_message(
             identity=identity,
             recipe=recipe,
-            org_id=org_id,
+            conv_id=conv_id_hex,
             args=recipe_args or None,
+            eligible_signer_kids=eligible_signer_kids,
+            required_approvals=required_approvals,
         )
     except ValueError as e:
         _error(str(e))
@@ -1636,10 +1614,6 @@ def cmd_gate_run(args):
     })
     _save_history(config_dir, conv_id_hex, history)
 
-    gate_result = None
-    if gate_url:
-        gate_result = _post_to_gate_server(gate_url, org_id, msg)
-
     _output("gate.run", {
         "conversation_id": conv_id_hex,
         "request_id": request_id,
@@ -1647,17 +1621,14 @@ def cmd_gate_run(args):
         "verb": recipe.verb,
         "endpoint": msg["target_endpoint"],
         "service": recipe.service,
-        "org_id": org_id,
         "signer_kid": identity["keyID"].hex(),
         "expires_at": msg["expires_at"],
-        "gate_server_result": gate_result,
     })
 
 
 def cmd_gate_approve(args):
     config_dir = _get_config_dir(args)
     dropbox_url = _get_dropbox_url(args)
-    gate_url = getattr(args, "gate_url", None)
 
     identity = _load_identity(config_dir)
     if not identity:
@@ -1694,15 +1665,10 @@ def cmd_gate_approve(args):
     })
     _save_history(config_dir, conv_id_hex, history)
 
-    gate_result = None
-    if gate_url:
-        gate_result = _post_to_gate_server(gate_url, req_msg["org_id"], approval_msg)
-
     _output("gate.approve", {
         "conversation_id": conv_id_hex,
         "request_id": request_id,
         "signer_kid": identity["keyID"].hex(),
-        "gate_server_result": gate_result,
     })
 
 
@@ -1752,7 +1718,6 @@ def cmd_gate_pending(args):
                 "verb": req.get("verb", ""),
                 "target_endpoint": req.get("target_endpoint", ""),
                 "target_service": req.get("target_service", ""),
-                "org_id": req.get("org_id", ""),
                 "requester_kid": req.get("signer_kid", ""),
                 "approval_count": total_sigs,
                 "approver_kids": approvals.get(req_id, []),
@@ -1784,11 +1749,11 @@ def cmd_gate_promote(args):
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
 
-    org_id = getattr(args, "org", None) or ""
+    gateway_kid = getattr(args, "gateway_kid", None) or ""
     threshold = args.threshold
 
     try:
-        payload = _build_promote_payload(identity, org_id, threshold)
+        payload = _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold)
     except ValueError as e:
         _error(str(e))
 
@@ -1808,53 +1773,11 @@ def cmd_gate_promote(args):
 
     _output("gate.promote", {
         "conversation_id": conv_id_hex,
-        "org_id": org_id,
+        "gateway_kid": gateway_kid,
         "threshold": threshold,
-        "signers": len(payload["signers"]),
+        "participants": len(payload["participants"]),
     })
 
-
-def cmd_gate_config(args):
-    config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
-    identity = _load_identity(config_dir)
-    if not identity:
-        _error("no identity found; run 'qntm identity generate' first")
-
-    conv_id_input = args.conversation
-    conversations = _load_conversations(config_dir)
-    conv_record = _resolve_conversation(conversations, conv_id_input)
-    if not conv_record:
-        _error(f"conversation {conv_id_input} not found")
-
-    conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
-    threshold = args.threshold
-
-    try:
-        payload = _build_config_payload(threshold)
-    except ValueError as e:
-        _error(str(e))
-
-    result, envelope = _send_gate_message_to_conv(
-        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_CONFIG, payload, dropbox_url,
-    )
-
-    history = _load_history(config_dir, conv_id_hex)
-    history.append({
-        "msg_id": envelope["msg_id"].hex(),
-        "direction": "outgoing",
-        "body_type": GATE_MESSAGE_CONFIG,
-        "unsafe_body": json.dumps(payload),
-        "created_ts": envelope["created_ts"],
-    })
-    _save_history(config_dir, conv_id_hex, history)
-
-    _output("gate.config", {
-        "conversation_id": conv_id_hex,
-        "threshold": threshold,
-    })
 
 
 def cmd_gate_secret(args):
@@ -2255,9 +2178,6 @@ quick start:
     gate_run_p.add_argument("recipe", help="Recipe name (e.g. jokes.dad, hn.get-item)")
     gate_run_p.add_argument("-c", "--conversation", required=True,
                             help="Conversation ID or prefix")
-    gate_run_p.add_argument("-o", "--org", required=True, help="Gate org ID")
-    gate_run_p.add_argument("--gate-url", dest="gate_url", default=None,
-                            help="Gate server URL for execution tracking")
     gate_run_p.add_argument("--arg", action="append", metavar="KEY=VALUE",
                             help="Recipe argument (repeatable)")
 
@@ -2266,8 +2186,6 @@ quick start:
     gate_approve_p.add_argument("request_id", help="Request ID to approve")
     gate_approve_p.add_argument("-c", "--conversation", required=True,
                                 help="Conversation ID or prefix")
-    gate_approve_p.add_argument("--gate-url", dest="gate_url", default=None,
-                                help="Gate server URL for auto-execution")
 
     # gate-pending
     gate_pending_p = subparsers.add_parser("gate-pending", help="List pending gate requests")
@@ -2280,17 +2198,8 @@ quick start:
                                 help="Conversation ID or prefix")
     gate_promote_p.add_argument("--threshold", type=int, required=True,
                                 help="Approval threshold (M-of-N)")
-    gate_promote_p.add_argument("-o", "--org", default="",
-                                help="Gate org ID")
     gate_promote_p.add_argument("--gateway-kid", default="",
-                                help="KID of gateway participant (optional)")
-
-    # gate-config
-    gate_config_p = subparsers.add_parser("gate-config", help="Update gate threshold rules")
-    gate_config_p.add_argument("-c", "--conversation", required=True,
-                               help="Conversation ID or prefix")
-    gate_config_p.add_argument("--threshold", type=int, required=True,
-                               help="New approval threshold")
+                                help="KID of gateway participant")
 
     # gate-secret
     gate_secret_p = subparsers.add_parser("gate-secret", help="Provision a secret to gate conversation")
@@ -2406,8 +2315,6 @@ quick start:
         cmd_gate_pending(args)
     elif args.command == "gate-promote":
         cmd_gate_promote(args)
-    elif args.command == "gate-config":
-        cmd_gate_config(args)
     elif args.command == "gate-secret":
         cmd_gate_secret(args)
     elif args.command == "name":

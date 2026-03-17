@@ -16,11 +16,9 @@ from qntm.gate import (
     RecipeParam,
     Recipe,
     PromotePayload,
-    ConfigPayload,
     SecretPayload,
     GateConversationMessage,
     ThresholdRule,
-    Signer,
     # Functions
     resolve_recipe,
     seal_secret,
@@ -226,20 +224,16 @@ class TestResolveRecipe:
 class TestPayloadDataclasses:
     def test_promote_payload(self):
         p = PromotePayload(
-            org_id="org-1",
-            signers=[Signer(kid="kid1", public_key="pk1", label="alice")],
+            conv_id="a" * 32,
+            gateway_kid="gw-kid",
+            participants={"kid1": "pk1"},
             rules=[ThresholdRule(service="*", endpoint="*", verb="*", m=2)],
+            floor=2,
         )
-        assert p.org_id == "org-1"
-        assert len(p.signers) == 1
+        assert p.conv_id == "a" * 32
+        assert len(p.participants) == 1
         assert len(p.rules) == 1
-
-    def test_config_payload(self):
-        p = ConfigPayload(
-            rules=[ThresholdRule(service="api", endpoint="/v1", verb="POST", m=3)],
-        )
-        assert len(p.rules) == 1
-        assert p.rules[0].m == 3
+        assert p.floor == 2
 
     def test_secret_payload(self):
         p = SecretPayload(
@@ -262,18 +256,18 @@ class TestGateConversationMessage:
     def test_basic_fields(self):
         m = GateConversationMessage(
             type=GATE_MESSAGE_REQUEST,
-            org_id="org-1",
+            conv_id="conv-1",
             request_id="req-1",
             signer_kid="kid1",
             signature="sig1",
         )
         assert m.type == "gate.request"
-        assert m.org_id == "org-1"
+        assert m.conv_id == "conv-1"
 
     def test_recipe_fields(self):
         m = GateConversationMessage(
             type=GATE_MESSAGE_REQUEST,
-            org_id="org-1",
+            conv_id="conv-1",
             request_id="req-1",
             signer_kid="kid1",
             signature="sig1",
@@ -286,7 +280,7 @@ class TestGateConversationMessage:
     def test_recipe_fields_default_none(self):
         m = GateConversationMessage(
             type=GATE_MESSAGE_REQUEST,
-            org_id="org-1",
+            conv_id="conv-1",
             request_id="req-1",
             signer_kid="kid1",
             signature="sig1",
@@ -297,7 +291,7 @@ class TestGateConversationMessage:
     def test_request_fields(self):
         m = GateConversationMessage(
             type=GATE_MESSAGE_REQUEST,
-            org_id="org-1",
+            conv_id="conv-1",
             request_id="req-1",
             verb="POST",
             target_endpoint="/v1/transfers",

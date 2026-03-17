@@ -31,13 +31,10 @@ from qntm.gate import (
     GATE_MESSAGE_APPROVAL,
     GATE_MESSAGE_EXECUTED,
     GATE_MESSAGE_PROMOTE,
-    GATE_MESSAGE_CONFIG,
     GATE_MESSAGE_SECRET,
     PromotePayload,
-    ConfigPayload,
     SecretPayload,
     ThresholdRule,
-    Signer,
 )
 
 
@@ -175,11 +172,11 @@ class TestBuildGateRequestMessage:
         msg, request_id = _build_gate_request_message(
             identity=ident,
             recipe=recipe,
-            org_id="test-org",
+            conv_id="test-conv-id",
             args=None,
         )
         assert msg["type"] == GATE_MESSAGE_REQUEST
-        assert msg["org_id"] == "test-org"
+        assert msg["conv_id"] == "test-conv-id"
         assert msg["verb"] == "GET"
         assert msg["target_endpoint"] == "/"
         assert msg["target_service"] == "dadjokes"
@@ -188,6 +185,8 @@ class TestBuildGateRequestMessage:
         assert "signature" in msg
         assert "expires_at" in msg
         assert msg["request_id"] == request_id
+        assert msg["eligible_signer_kids"] == [ident["keyID"].hex()]
+        assert msg["required_approvals"] == 1
 
     def test_resolves_path_params(self):
         from qntm.cli import _build_gate_request_message
@@ -206,7 +205,7 @@ class TestBuildGateRequestMessage:
         msg, _ = _build_gate_request_message(
             identity=ident,
             recipe=recipe,
-            org_id="test-org",
+            conv_id="test-conv-id",
             args={"id": "12345"},
         )
         assert msg["target_endpoint"] == "/item/12345.json"
@@ -230,7 +229,7 @@ class TestBuildGateRequestMessage:
             _build_gate_request_message(
                 identity=ident,
                 recipe=recipe,
-                org_id="test-org",
+                conv_id="test-conv-id",
                 args={},
             )
 
@@ -250,7 +249,7 @@ class TestBuildGateRequestMessage:
         msg, _ = _build_gate_request_message(
             identity=ident,
             recipe=recipe,
-            org_id="test-org",
+            conv_id="test-conv-id",
             args=None,
         )
         # Verify the signature
@@ -262,7 +261,7 @@ class TestBuildGateRequestMessage:
         assert verify_request(
             ident["publicKey"],
             sig,
-            org_id=msg["org_id"],
+            conv_id=msg["conv_id"],
             request_id=msg["request_id"],
             verb=msg["verb"],
             target_endpoint=msg["target_endpoint"],
@@ -270,6 +269,8 @@ class TestBuildGateRequestMessage:
             target_url=msg["target_url"],
             expires_at_unix=expires_unix,
             payload_hash=payload_hash,
+            eligible_signer_kids=msg["eligible_signer_kids"],
+            required_approvals=msg["required_approvals"],
         )
 
     def test_recipe_name_and_arguments_included(self):
@@ -289,7 +290,7 @@ class TestBuildGateRequestMessage:
         msg, _ = _build_gate_request_message(
             identity=ident,
             recipe=recipe,
-            org_id="test-org",
+            conv_id="test-conv-id",
             args={"id": "42"},
         )
         assert msg["recipe_name"] == "hn.get-item"
@@ -315,7 +316,7 @@ class TestBuildGateApprovalMessage:
             threshold=1,
         )
         req_msg, request_id = _build_gate_request_message(
-            identity=ident, recipe=recipe, org_id="test-org", args=None,
+            identity=ident, recipe=recipe, conv_id="test-conv-id", args=None,
         )
         # Different identity approves
         approver = generate_identity()
@@ -324,7 +325,7 @@ class TestBuildGateApprovalMessage:
             request_msg=req_msg,
         )
         assert approval_msg["type"] == GATE_MESSAGE_APPROVAL
-        assert approval_msg["org_id"] == "test-org"
+        assert approval_msg["conv_id"] == "test-conv-id"
         assert approval_msg["request_id"] == request_id
         assert approval_msg["signer_kid"] == approver["keyID"].hex()
         assert "signature" in approval_msg
@@ -339,7 +340,7 @@ class TestBuildGateApprovalMessage:
             risk_tier="read", threshold=1,
         )
         req_msg, _ = _build_gate_request_message(
-            identity=ident, recipe=recipe, org_id="test-org", args=None,
+            identity=ident, recipe=recipe, conv_id="test-conv-id", args=None,
         )
         approver = generate_identity()
         approval_msg = _build_gate_approval_message(
@@ -351,7 +352,7 @@ class TestBuildGateApprovalMessage:
         expires_unix = int(expires_dt.timestamp())
         payload_hash = compute_payload_hash(req_msg.get("payload"))
         req_hash = hash_request(
-            org_id=req_msg["org_id"],
+            conv_id=req_msg["conv_id"],
             request_id=req_msg["request_id"],
             verb=req_msg["verb"],
             target_endpoint=req_msg["target_endpoint"],
@@ -359,12 +360,14 @@ class TestBuildGateApprovalMessage:
             target_url=req_msg["target_url"],
             expires_at_unix=expires_unix,
             payload_hash=payload_hash,
+            eligible_signer_kids=req_msg.get("eligible_signer_kids", []),
+            required_approvals=req_msg.get("required_approvals", 1),
         )
         sig = bytes.fromhex(approval_msg["signature"])
         assert verify_approval(
             approver["publicKey"],
             sig,
-            org_id=approval_msg["org_id"],
+            conv_id=approval_msg["conv_id"],
             request_id=approval_msg["request_id"],
             request_hash=req_hash,
         )
@@ -375,7 +378,7 @@ class TestBuildGateApprovalMessage:
 # ---------------------------------------------------------------------------
 
 class TestScanGateHistory:
-    def _make_request_entry(self, ident, org_id="test-org"):
+    def _make_request_entry(self, ident, conv_id="test-conv-id"):
         from qntm.cli import _build_gate_request_message
         recipe = Recipe(
             name="jokes.dad", description="", service="dadjokes",
@@ -384,7 +387,7 @@ class TestScanGateHistory:
             risk_tier="read", threshold=1,
         )
         msg, request_id = _build_gate_request_message(
-            identity=ident, recipe=recipe, org_id=org_id, args=None,
+            identity=ident, recipe=recipe, conv_id=conv_id, args=None,
         )
         return {
             "msg_id": uuid.uuid4().hex,
@@ -410,7 +413,7 @@ class TestScanGateHistory:
     def _make_executed_entry(self, request_msg):
         exec_msg = {
             "type": GATE_MESSAGE_EXECUTED,
-            "org_id": request_msg["org_id"],
+            "conv_id": request_msg["conv_id"],
             "request_id": request_msg["request_id"],
         }
         return {
@@ -467,37 +470,21 @@ class TestBuildPromotePayload:
         from qntm.cli import _build_promote_payload
         ident = generate_identity()
         payload = _build_promote_payload(
-            identity=ident, org_id="test-org", threshold=2,
+            identity=ident, conv_id_hex="abc123", gateway_kid="gw-kid-1", threshold=2,
         )
-        assert payload["org_id"] == "test-org"
-        assert len(payload["signers"]) == 1
-        assert payload["signers"][0]["kid"] == ident["keyID"].hex()
+        assert payload["conv_id"] == "abc123"
+        assert payload["gateway_kid"] == "gw-kid-1"
+        assert ident["keyID"].hex() in payload["participants"]
         assert payload["rules"][0]["m"] == 2
         assert payload["rules"][0]["service"] == "*"
+        assert payload["floor"] == 2
 
     def test_threshold_minimum(self):
         from qntm.cli import _build_promote_payload
         ident = generate_identity()
         with pytest.raises(ValueError, match="threshold must be at least 1"):
-            _build_promote_payload(identity=ident, org_id="test-org", threshold=0)
+            _build_promote_payload(identity=ident, conv_id_hex="abc123", gateway_kid="gw-kid-1", threshold=0)
 
-
-# ---------------------------------------------------------------------------
-# Test: build_config_payload
-# ---------------------------------------------------------------------------
-
-class TestBuildConfigPayload:
-    def test_builds_payload(self):
-        from qntm.cli import _build_config_payload
-        payload = _build_config_payload(threshold=3)
-        assert len(payload["rules"]) == 1
-        assert payload["rules"][0]["m"] == 3
-        assert payload["rules"][0]["service"] == "*"
-
-    def test_threshold_minimum(self):
-        from qntm.cli import _build_config_payload
-        with pytest.raises(ValueError, match="threshold must be at least 1"):
-            _build_config_payload(threshold=0)
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +543,7 @@ class TestFindGateRequest:
             risk_tier="read", threshold=1,
         )
         msg, request_id = _build_gate_request_message(
-            identity=ident, recipe=recipe, org_id="test-org", args=None,
+            identity=ident, recipe=recipe, conv_id="test-conv-id", args=None,
         )
         history = [{
             "msg_id": "abc",
