@@ -49,7 +49,9 @@ qntm recv <conversation>
 ```
 
 Current top-level CLI commands include:
-`identity`, `convo`, `send`, `recv`, `inbox`, `history`, `gateway`, `group`, `announce`, `gate-run`, `gate-approve`, `gate-pending`, `gate-promote`, `gate-config`, `gate-secret`, `name`, `ref`, and `version`.
+`identity`, `convo`, `send`, `recv`, `inbox`, `history`, `group`, `announce`, `gate-run`, `gate-approve`, `gate-pending`, `gate-promote`, `gate-secret`, `name`, `ref`, and `version`.
+
+The gateway is a Cloudflare Workers Durable Object (`gateway-worker/`). The Python CLI is a gate client — it does not run a local gateway. All gateway wire fields that represent bytes (KIDs, public keys, signatures, encrypted blobs) use RFC 4648 base64url without padding.
 
 Each JSON response includes:
 - `rules` (unsafe content + policy reminders)

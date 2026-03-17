@@ -18,7 +18,9 @@ from .constants import PROTOCOL_VERSION, SPEC_VERSION
 from .identity import (
     base64url_encode,
     generate_identity,
+    key_id_from_public_key,
 )
+from .wire import kid_to_wire, pubkey_to_wire, sig_to_wire, blob_to_wire, kid_from_pubkey
 from .invite import (
     add_participant,
     create_conversation,
@@ -240,6 +242,35 @@ def _conv_id_to_bytes(raw_id):
     if isinstance(raw_id, list):
         return bytes(raw_id)
     return bytes.fromhex(raw_id)
+
+
+def _merge_participant_public_key(config_dir, conv_id_hex, public_key: bytes):
+    """Record a participant's public key so gate commands can build the full roster."""
+    pk_path = os.path.join(config_dir, "participant_keys.json")
+    try:
+        with open(pk_path) as f:
+            pk_store = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pk_store = {}
+    conv_keys = pk_store.setdefault(conv_id_hex.lower(), {})
+    kid_hex = key_id_from_public_key(public_key).hex().lower()
+    pk_hex = public_key.hex()
+    if conv_keys.get(kid_hex) != pk_hex:
+        conv_keys[kid_hex] = pk_hex
+        with open(pk_path, "w") as f:
+            json.dump(pk_store, f)
+
+
+def _load_participant_public_keys(config_dir, conv_id_hex) -> dict[str, bytes]:
+    """Load known participant public keys for a conversation. Returns {kid_hex: pk_bytes}."""
+    pk_path = os.path.join(config_dir, "participant_keys.json")
+    try:
+        with open(pk_path) as f:
+            pk_store = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    conv_keys = pk_store.get(conv_id_hex.lower(), {})
+    return {k: bytes.fromhex(v) for k, v in conv_keys.items()}
 
 
 def _conv_to_crypto(conv_record):
@@ -599,8 +630,12 @@ def cmd_recv(args):
         inner = msg["inner"]
 
         sender_kid_hex = bytes(inner["sender_kid"]).hex().lower()
+        sender_pk = bytes(inner["sender_ik_pk"])
         body_bytes = bytes(inner["body"])
         body_type = inner["body_type"]
+
+        # Track participant public keys for gate promote/request roster construction
+        _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
 
         entry = {
             "conversation_id": conv_id_hex,
@@ -1348,7 +1383,7 @@ def _build_gate_request_message(identity, recipe, conv_id, args,
     payload_hash = compute_payload_hash(payload)
 
     if eligible_signer_kids is None:
-        eligible_signer_kids = [base64url_encode(identity["keyID"])]
+        eligible_signer_kids = [kid_to_wire(identity["keyID"])]
     if required_approvals is None:
         required_approvals = recipe.threshold
 
@@ -1376,8 +1411,8 @@ def _build_gate_request_message(identity, recipe, conv_id, args,
         "target_url": target_url,
         "payload": payload,
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "signer_kid": base64url_encode(identity["keyID"]),
-        "signature": base64url_encode(sig),
+        "signer_kid": kid_to_wire(identity["keyID"]),
+        "signature": sig_to_wire(sig),
         "eligible_signer_kids": eligible_signer_kids,
         "required_approvals": required_approvals,
         "recipe_name": recipe.name,
@@ -1418,8 +1453,8 @@ def _build_gate_approval_message(identity, request_msg):
         "type": GATE_MESSAGE_APPROVAL,
         "conv_id": request_msg["conv_id"],
         "request_id": request_msg["request_id"],
-        "signer_kid": base64url_encode(identity["keyID"]),
-        "signature": base64url_encode(sig),
+        "signer_kid": kid_to_wire(identity["keyID"]),
+        "signature": sig_to_wire(sig),
     }
 
 
@@ -1479,17 +1514,36 @@ def _find_gate_request_in_history(history_entries, request_id):
     )
 
 
-def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold):
-    """Build a gate.promote payload dict."""
+def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
+                           known_participant_pks=None):
+    """Build a gate.promote payload dict.
+
+    known_participant_pks: dict of {kid_hex: pk_bytes} from conversation state.
+    If provided, all participants are included; otherwise only the local identity.
+    The gateway KID is excluded from the participant map.
+    """
     if threshold < 1:
         raise ValueError("threshold must be at least 1")
+
+    # Build participant map: base64url kid → base64url public key
+    participants = {}
+    # Always include self
+    self_kid_wire = kid_to_wire(identity["keyID"])
+    if self_kid_wire != gateway_kid:
+        participants[self_kid_wire] = pubkey_to_wire(identity["publicKey"])
+    # Include all known conversation participants
+    if known_participant_pks:
+        for kid_hex, pk_bytes in known_participant_pks.items():
+            kid_wire = kid_from_pubkey(pk_bytes)
+            if kid_wire == gateway_kid:
+                continue
+            participants[kid_wire] = pubkey_to_wire(pk_bytes)
+
     return {
         "type": GATE_MESSAGE_PROMOTE,
         "conv_id": conv_id_hex,
         "gateway_kid": gateway_kid,
-        "participants": {
-            base64url_encode(identity["keyID"]): base64url_encode(identity["publicKey"]),
-        },
+        "participants": participants,
         "rules": [
             {
                 "service": "*",
@@ -1526,8 +1580,8 @@ def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
         "service": service,
         "header_name": header_name,
         "header_template": header_template,
-        "encrypted_blob": base64url_encode(ct),
-        "sender_kid": base64url_encode(identity["keyID"]),
+        "encrypted_blob": blob_to_wire(ct),
+        "sender_kid": kid_to_wire(identity["keyID"]),
     }
     if ttl > 0:
         payload["ttl"] = ttl
@@ -1584,8 +1638,16 @@ def cmd_gate_run(args):
         k, v = kv.split("=", 1)
         recipe_args[k] = v
 
-    # Build eligible signer kids from sender's own KID
-    eligible_signer_kids = [identity["keyID"].hex()]
+    # Build eligible signer roster from ALL known conversation participants
+    known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+    eligible_signer_kids = []
+    # Add self
+    eligible_signer_kids.append(kid_to_wire(identity["keyID"]))
+    # Add other known participants
+    for _kid_hex, pk_bytes in known_pks.items():
+        kid_wire = kid_from_pubkey(pk_bytes)
+        if kid_wire not in eligible_signer_kids:
+            eligible_signer_kids.append(kid_wire)
     required_approvals = recipe.threshold
 
     try:
@@ -1621,7 +1683,7 @@ def cmd_gate_run(args):
         "verb": recipe.verb,
         "endpoint": msg["target_endpoint"],
         "service": recipe.service,
-        "signer_kid": base64url_encode(identity["keyID"]),
+        "signer_kid": kid_to_wire(identity["keyID"]),
         "expires_at": msg["expires_at"],
     })
 
@@ -1668,7 +1730,7 @@ def cmd_gate_approve(args):
     _output("gate.approve", {
         "conversation_id": conv_id_hex,
         "request_id": request_id,
-        "signer_kid": base64url_encode(identity["keyID"]),
+        "signer_kid": kid_to_wire(identity["keyID"]),
     })
 
 
@@ -1753,7 +1815,9 @@ def cmd_gate_promote(args):
     threshold = args.threshold
 
     try:
-        payload = _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold)
+        known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+        payload = _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
+                                         known_participant_pks=known_pks)
     except ValueError as e:
         _error(str(e))
 
