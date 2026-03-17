@@ -13,7 +13,8 @@ import {
   ed25519PublicKeyToX25519, ed25519PrivateKeyToX25519,
   deriveConversationKeys,
   decryptMessage, deserializeEnvelope,
-  keyIDFromPublicKey,
+  keyIDFromPublicKey, keyIDToString,
+  signRequest, hashRequest, signApproval, verifyRequest, verifyApproval,
 } from '../src/index.js';
 import { ed25519 } from '@noble/curves/ed25519';
 
@@ -236,5 +237,114 @@ describe('Cross-Client: E2E Message', () => {
     expect(message.inner.body_type).toBe(vectors.e2e_vector.body_type);
     expect(bytesToHex(new Uint8Array(message.inner.body))).toBe(vectors.e2e_vector.body);
     expect(bytesToHex(new Uint8Array(message.inner.sender_ik_pk))).toBe(vectors.e2e_vector.sender_pub_key);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-Client: Gate Signing
+// Verifies that TypeScript gate signing produces identical CBOR-encoded bytes
+// and Ed25519 signatures as the Python client for the same inputs.
+// Expected values were computed from this (canonical) TypeScript implementation.
+// ---------------------------------------------------------------------------
+
+describe('Cross-Client: Gate Signing', () => {
+  // Deterministic seed shared with Python test (0x01..0x20)
+  const gateSeed = hexToBytes(
+    '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20',
+  );
+  const gatePubKey = ed25519.getPublicKey(gateSeed);
+  const gatePrivKey = new Uint8Array(64);
+  gatePrivKey.set(gateSeed, 0);
+  gatePrivKey.set(gatePubKey, 32);
+
+  const EXPECTED_KID = 'ZbYGc9btiEvwHCwiLYKtoA';
+  const EXPECTED_PAYLOAD_HASH =
+    '4d4bbe59c6aad22442cde199a6a8a5f034405fcd78fb5a81c24ef249de1c45f1';
+  const EXPECTED_REQUEST_HASH =
+    '29c92653c04007fbabf1feae1e42ba3a16a00bc3e83d099763bfe60d5c85e94c';
+  const EXPECTED_REQUEST_SIG =
+    'ed6474e054e9b30a51c0c672f51bbb068251ef70bfdf87bd1b09757eaf3cabe3100de97271ae9bc9b71b0043ebf03af1088f36bb2c6402a705c5f0a5bbb31803';
+  const EXPECTED_APPROVAL_SIG =
+    'ad0a0eb3fb501b9c3c33996ce9eba67a28a581f41af1f57ca0f37777f200569105f0f0598c76f77ede439f9c9252df592e347a2301e25da90d4d2b951ee15005';
+
+  it('derives same KID as Python', () => {
+    const kid = keyIDFromPublicKey(gatePubKey);
+    expect(keyIDToString(kid)).toBe(EXPECTED_KID);
+  });
+
+  it('produces same payload hash as Python', () => {
+    const hash = suite.hash(new TextEncoder().encode('{"amount":100}'));
+    expect(bytesToHex(hash)).toBe(EXPECTED_PAYLOAD_HASH);
+  });
+
+  it('produces same request hash as Python', () => {
+    const signable = {
+      conv_id: 'test-conv',
+      request_id: 'req-001',
+      verb: 'POST',
+      target_endpoint: '/v1/transfers',
+      target_service: 'bank-api',
+      target_url: 'https://api.bank.test/v1/transfers',
+      expires_at_unix: 1700000000,
+      payload_hash: hexToBytes(EXPECTED_PAYLOAD_HASH),
+      eligible_signer_kids: [EXPECTED_KID],
+      required_approvals: 1,
+    };
+    const h = hashRequest(signable);
+    expect(bytesToHex(h)).toBe(EXPECTED_REQUEST_HASH);
+  });
+
+  it('produces same request signature as Python', () => {
+    const signable = {
+      conv_id: 'test-conv',
+      request_id: 'req-001',
+      verb: 'POST',
+      target_endpoint: '/v1/transfers',
+      target_service: 'bank-api',
+      target_url: 'https://api.bank.test/v1/transfers',
+      expires_at_unix: 1700000000,
+      payload_hash: hexToBytes(EXPECTED_PAYLOAD_HASH),
+      eligible_signer_kids: [EXPECTED_KID],
+      required_approvals: 1,
+    };
+    const sig = signRequest(gatePrivKey, signable);
+    expect(bytesToHex(sig)).toBe(EXPECTED_REQUEST_SIG);
+  });
+
+  it('verifies request signature from Python', () => {
+    const signable = {
+      conv_id: 'test-conv',
+      request_id: 'req-001',
+      verb: 'POST',
+      target_endpoint: '/v1/transfers',
+      target_service: 'bank-api',
+      target_url: 'https://api.bank.test/v1/transfers',
+      expires_at_unix: 1700000000,
+      payload_hash: hexToBytes(EXPECTED_PAYLOAD_HASH),
+      eligible_signer_kids: [EXPECTED_KID],
+      required_approvals: 1,
+    };
+    const sig = hexToBytes(EXPECTED_REQUEST_SIG);
+    expect(verifyRequest(gatePubKey, signable, sig)).toBe(true);
+  });
+
+  it('produces same approval signature as Python', () => {
+    const approval = {
+      conv_id: 'test-conv',
+      request_id: 'req-001',
+      request_hash: hexToBytes(EXPECTED_REQUEST_HASH),
+    };
+    const sig = signApproval(gatePrivKey, approval);
+    expect(bytesToHex(sig)).toBe(EXPECTED_APPROVAL_SIG);
+  });
+
+  it('verifies approval signature from Python', () => {
+    const approval = {
+      conv_id: 'test-conv',
+      request_id: 'req-001',
+      request_hash: hexToBytes(EXPECTED_REQUEST_HASH),
+    };
+    const sig = hexToBytes(EXPECTED_APPROVAL_SIG);
+    expect(verifyApproval(gatePubKey, approval, sig)).toBe(true);
   });
 });

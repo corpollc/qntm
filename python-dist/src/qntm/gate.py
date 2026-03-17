@@ -92,7 +92,7 @@ class Recipe:
 
 
 # ---------------------------------------------------------------------------
-# Gateway payload types (mirrors Go PromotePayload, ConfigPayload, SecretPayload)
+# Gateway payload types (PromotePayload, SecretPayload, etc.)
 # ---------------------------------------------------------------------------
 
 @dataclass
