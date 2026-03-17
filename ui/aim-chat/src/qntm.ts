@@ -580,8 +580,10 @@ export async function gateSecretRequest(
       }
     }
     if (!gwPubKeyBytes && conv?.participants) {
+      // conv.participants stores hex key IDs; compare in hex
+      const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
       for (const participantKeyId of conv.participants) {
-        if (participantKeyId !== selfKidB64) {
+        if (participantKeyId.toLowerCase() !== selfKidHex) {
           throw new Error('Gateway participant public key is not known yet; receive a message from that participant first, or provide gatewayPublicKey')
         }
       }
