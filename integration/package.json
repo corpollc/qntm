@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "echo 'Integration tests are opt-in. Run: bun run test:long' && exit 0",
-    "test:long": "vitest run --reporter=verbose long-flow.test.ts",
+    "test:long": "vitest run --reporter=verbose --maxWorkers=3 long-ui-flow.test.ts long-cli-policy.test.ts long-cli-membership.test.ts",
     "test:model": "vitest run --reporter=verbose harness.test.ts phase1.test.ts phase2.test.ts phase3.test.ts phase4.test.ts"
   },
   "dependencies": {

@@ -507,8 +507,8 @@ export interface LongHarness {
   recipeCatalogPath: string;
   gatewayBootstrap: { gateway_public_key: string; gateway_kid: string };
   fixture: FixtureServer;
-  browser: Browser;
-  ui: AimUiAgent;
+  browser: Browser | null;
+  ui: AimUiAgent | null;
   alice: CliAgent;
   charlie: CliAgent;
   dave: CliAgent;
@@ -519,6 +519,10 @@ export interface LongHarness {
   restartGateway(): Promise<void>;
   getCounterExecutions(): number;
   resetCounterExecutions(): void;
+}
+
+export interface LongHarnessOptions {
+  withUi?: boolean;
 }
 
 function writeRecipeCatalog(path: string, baseUrl: string): void {
@@ -638,7 +642,8 @@ async function createPythonVenv(rootDir: string, repoRoot: string): Promise<stri
   return join(venvDir, 'bin', 'qntm');
 }
 
-export async function createLongHarness(): Promise<LongHarness> {
+export async function createLongHarness(options: LongHarnessOptions = {}): Promise<LongHarness> {
+  const withUi = options.withUi ?? true;
   const repoRoot = REPO_ROOT;
   const integrationDir = join(repoRoot, 'integration');
   const rootDir = mkdtempSync(join(tmpdir(), 'qntm-long-'));
@@ -659,7 +664,7 @@ export async function createLongHarness(): Promise<LongHarness> {
   const qntmBin = await createPythonVenv(rootDir, repoRoot);
   const relayUrl = `http://127.0.0.1:${relayPort}`;
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
-  const uiUrl = `http://127.0.0.1:${uiPort}`;
+  const uiUrl = withUi ? `http://127.0.0.1:${uiPort}` : '';
 
   const relayProcess = new ManagedProcess(
       'relay',
@@ -688,13 +693,15 @@ export async function createLongHarness(): Promise<LongHarness> {
       join(repoRoot, 'gateway-worker'),
       { ...process.env },
     );
-  const uiProcess = new ManagedProcess(
-      'aim-ui',
-      [bunCommand(), 'run', 'dev', '--host', '127.0.0.1', '--port', String(uiPort)],
-      join(repoRoot, 'ui/aim-chat'),
-      { ...process.env },
-    );
-  const processes = [relayProcess, gatewayProcess, uiProcess];
+  const uiProcess = withUi
+    ? new ManagedProcess(
+        'aim-ui',
+        [bunCommand(), 'run', 'dev', '--host', '127.0.0.1', '--port', String(uiPort)],
+        join(repoRoot, 'ui/aim-chat'),
+        { ...process.env },
+      )
+    : null;
+  const processes = [relayProcess, gatewayProcess, uiProcess].filter((process): process is ManagedProcess => process !== null);
 
   await waitForHttp(`${relayUrl}/v1/poll`, {
     method: 'POST',
@@ -702,11 +709,17 @@ export async function createLongHarness(): Promise<LongHarness> {
     body: JSON.stringify({ conversations: [{ conv_id: '00000000000000000000000000000000', from_seq: 0 }] }),
   });
   await waitForHttp(`${gatewayUrl}/health`);
-  await waitForHttp(uiUrl);
+  if (withUi) {
+    await waitForHttp(uiUrl);
+  }
 
-  await ensureChromiumInstalled(integrationDir);
-  const browser = await chromium.launch({ headless: true });
-  const ui = await AimUiAgent.launch(browser, uiUrl, relayUrl);
+  let browser: Browser | null = null;
+  let ui: AimUiAgent | null = null;
+  if (withUi) {
+    await ensureChromiumInstalled(integrationDir);
+    browser = await chromium.launch({ headless: true });
+    ui = await AimUiAgent.launch(browser, uiUrl, relayUrl);
+  }
   const alice = new CliAgent('alice', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
   const charlie = new CliAgent('charlie', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
   const dave = new CliAgent('dave', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
@@ -726,8 +739,12 @@ export async function createLongHarness(): Promise<LongHarness> {
     dave,
     processes,
     async stop() {
-      await ui.close();
-      await browser.close();
+      if (ui) {
+        await ui.close();
+      }
+      if (browser) {
+        await browser.close();
+      }
       await fixture.close();
       for (const process of processes.reverse()) {
         await process.stop();
