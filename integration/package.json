@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "echo 'Integration tests are opt-in. Run: npm run test:long' && exit 0",
+    "test": "echo 'Integration tests are opt-in. Run: bun run test:long' && exit 0",
     "test:long": "vitest run --reporter=verbose long-flow.test.ts",
     "test:model": "vitest run --reporter=verbose harness.test.ts phase1.test.ts phase2.test.ts phase3.test.ts phase4.test.ts"
   },

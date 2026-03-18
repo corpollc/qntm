@@ -13,6 +13,9 @@ import { GateClient } from '@corpollc/qntm';
 const execFileAsync = promisify(execFile);
 const EXEC_MAX_BUFFER = 10 * 1024 * 1024;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const RETRY_INTERVAL_MS = 250;
+const RATE_LIMIT_RETRY_MS = 500;
+const GATEWAY_POLL_INTERVAL_MS = 250;
 
 export interface JsonResult {
   ok: boolean;
@@ -120,12 +123,12 @@ export class ManagedProcess {
   }
 }
 
-function npmCommand(): string {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+function bunCommand(): string {
+  return process.platform === 'win32' ? 'bun.exe' : 'bun';
 }
 
-function npxCommand(): string {
-  return process.platform === 'win32' ? 'npx.cmd' : 'npx';
+function bunxCommand(): string {
+  return process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
 }
 
 export class CliAgent {
@@ -198,7 +201,7 @@ async function ensureChromiumInstalled(integrationDir: string): Promise<void> {
   if (executablePath && existsSync(executablePath)) {
     return;
   }
-  await execFileAsync(npxCommand(), ['playwright', 'install', 'chromium'], {
+  await execFileAsync(bunxCommand(), ['playwright', 'install', 'chromium'], {
     cwd: integrationDir,
     env: { ...process.env },
     maxBuffer: EXEC_MAX_BUFFER,
@@ -323,7 +326,7 @@ export async function waitForUiText(ui: AimUiAgent, text: string, timeoutMs = 20
   while (Date.now() < deadline) {
     if (await ui.hasText(text)) return;
     await ui.checkMessages();
-    await delay(500);
+    await delay(RETRY_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for UI text: ${text}`);
 }
@@ -340,7 +343,7 @@ export async function waitForUiStoredHistory(
     await ui.checkMessages();
     const entry = (await ui.readStoredHistory(convId)).find(predicate);
     if (entry) return entry;
-    await delay(500);
+    await delay(RETRY_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for ${description} in AIM UI`);
 }
@@ -362,14 +365,14 @@ export async function waitForCliHistory(
       await agent.run(['recv', convId]);
     } catch (error) {
       if (isRateLimited(error)) {
-        await delay(1_000);
+        await delay(RATE_LIMIT_RETRY_MS);
         continue;
       }
       throw error;
     }
     const entry = agent.readHistory(convId).find(predicate);
     if (entry) return entry;
-    await delay(500);
+    await delay(RETRY_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for ${description} in ${agent.name}`);
 }
@@ -386,7 +389,7 @@ export async function assertNoCliHistory(
       await agent.run(['recv', convId]);
     } catch (error) {
       if (isRateLimited(error)) {
-        await delay(1_000);
+        await delay(RATE_LIMIT_RETRY_MS);
         continue;
       }
       throw error;
@@ -394,7 +397,7 @@ export async function assertNoCliHistory(
     if (agent.readHistory(convId).some(predicate)) {
       throw new Error(`Unexpected history entry in ${agent.name}`);
     }
-    await delay(500);
+    await delay(RETRY_INTERVAL_MS);
   }
 }
 
@@ -587,7 +590,7 @@ export async function createLongHarness(): Promise<LongHarness> {
     new ManagedProcess(
       'relay',
       [
-        npxCommand(), 'wrangler', 'dev', '--local',
+        bunxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
         '--var', 'RATE_LIMIT_PER_MIN:5000',
@@ -598,11 +601,11 @@ export async function createLongHarness(): Promise<LongHarness> {
     new ManagedProcess(
       'gateway',
       [
-        npxCommand(), 'wrangler', 'dev', '--local',
+        bunxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(gatewayPort),
         '--ip', '127.0.0.1',
         '--var', `DROPBOX_URL:${relayUrl}`,
-        '--var', 'POLL_INTERVAL_MS:500',
+        '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
         '--var', 'ENABLE_DEBUG_ROUTES:1',
       ],
@@ -611,7 +614,7 @@ export async function createLongHarness(): Promise<LongHarness> {
     ),
     new ManagedProcess(
       'aim-ui',
-      [npmCommand(), 'run', 'dev', '--', '--host', '127.0.0.1', '--port', String(uiPort)],
+      [bunCommand(), 'run', 'dev', '--host', '127.0.0.1', '--port', String(uiPort)],
       join(repoRoot, 'ui/aim-chat'),
       { ...process.env },
     ),
