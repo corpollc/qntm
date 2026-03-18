@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { chromium } from 'playwright';
 import { GateClient } from '@corpollc/qntm';
+import { TslibAgent } from './ts-agent.js';
 
 const execFileAsync = promisify(execFile);
 const EXEC_MAX_BUFFER = 10 * 1024 * 1024;
@@ -22,6 +23,16 @@ export interface JsonResult {
   kind: string;
   data?: Record<string, unknown>;
   error?: string;
+}
+
+export interface HistoryAgent {
+  name: string;
+  run(args: string[], extraEnv?: Record<string, string>): Promise<JsonResult>;
+  readHistory(convId: string): Array<Record<string, unknown>>;
+}
+
+export interface ConversationAgent extends HistoryAgent {
+  readConversation(convId: string): Record<string, unknown>;
 }
 
 async function isHttpReady(url: string, init?: RequestInit): Promise<boolean> {
@@ -203,7 +214,13 @@ export class CliAgent {
   readHistory(convId: string): Array<Record<string, unknown>> {
     const path = join(this.configDir, 'chats', `${convId}.json`);
     if (!existsSync(path)) return [];
-    return JSON.parse(readFileSync(path, 'utf8')) as Array<Record<string, unknown>>;
+    const rawEntries = JSON.parse(readFileSync(path, 'utf8')) as Array<Record<string, unknown>>;
+    return rawEntries.map((entry) => {
+      const messageId = entry.message_id ?? entry.msg_id;
+      return messageId === undefined
+        ? { ...entry }
+        : { ...entry, message_id: messageId };
+    });
   }
 }
 
@@ -289,6 +306,68 @@ export class AimUiAgent {
     await this.page.locator('.conversation-select').first().click();
   }
 
+  async openGatewayPanel(): Promise<void> {
+    const panel = this.page.locator('.gate-panel').first();
+    if (await panel.count() > 0 && await panel.isVisible()) {
+      return;
+    }
+    await this.page.getByRole('button', { name: /API Gateway/ }).click();
+    await panel.waitFor({ state: 'visible', timeout: 10_000 });
+  }
+
+  async enableGateway(gatewayUrl: string, threshold: number): Promise<void> {
+    await this.openGatewayPanel();
+    await this.page.locator('#gate-promote-url').fill(gatewayUrl);
+    await this.page.locator('#gate-promote-threshold').fill(String(threshold));
+    await this.page.getByRole('button', { name: 'Enable API Gateway' }).click();
+    await this.page.getByText('API Gateway Active').waitFor({ timeout: 15_000 });
+  }
+
+  async addApiKey(
+    service: string,
+    value: string,
+    headerName = 'Authorization',
+    headerTemplate = 'Bearer {value}',
+  ): Promise<void> {
+    await this.openGatewayPanel();
+    await this.ensurePanel('API Keys');
+    await this.page.locator('#secret-service').fill(service);
+    await this.page.locator('#secret-header-name').fill(headerName);
+    await this.page.locator('#secret-header-template').fill(headerTemplate);
+    await this.page.locator('#secret-value').fill(value);
+    await this.page.getByRole('button', { name: 'Add API key' }).click();
+  }
+
+  async submitGateRequest(recipeName: string, args: Record<string, string> = {}): Promise<void> {
+    await this.openGatewayPanel();
+    await this.ensurePanel('API Request');
+    await this.page.locator('#gate-recipe').selectOption(recipeName);
+    for (const [key, value] of Object.entries(args)) {
+      const selectors = [
+        `#gate-path-${key}`,
+        `#gate-query-${key}`,
+        `#gate-body-${key}`,
+      ];
+      let filled = false;
+      for (const selector of selectors) {
+        const locator = this.page.locator(selector);
+        if (await locator.count() > 0) {
+          await locator.fill(value);
+          filled = true;
+          break;
+        }
+      }
+      if (!filled) {
+        throw new Error(`No AIM gate input found for argument ${key}`);
+      }
+    }
+    await this.page.getByRole('button', { name: 'Submit API request' }).click();
+  }
+
+  async countRequestCardsContaining(text: string): Promise<number> {
+    return await this.page.locator('.gate-card.gate-request', { hasText: text }).count();
+  }
+
   async sendText(text: string): Promise<void> {
     await this.page.locator('.composer input').fill(text);
     await this.page.getByRole('button', { name: 'Send' }).click();
@@ -364,7 +443,7 @@ function isRateLimited(error: unknown): boolean {
 }
 
 export async function waitForCliHistory(
-  agent: CliAgent,
+  agent: HistoryAgent,
   convId: string,
   predicate: (entry: Record<string, unknown>) => boolean,
   description: string,
@@ -389,7 +468,7 @@ export async function waitForCliHistory(
 }
 
 export async function assertNoCliHistory(
-  agent: CliAgent,
+  agent: HistoryAgent,
   convId: string,
   predicate: (entry: Record<string, unknown>) => boolean,
   timeoutMs = 5_000,
@@ -510,11 +589,11 @@ export interface LongHarness {
   browser: Browser | null;
   ui: AimUiAgent | null;
   alice: CliAgent;
-  charlie: CliAgent;
+  charlie: TslibAgent;
   dave: CliAgent;
   processes: ManagedProcess[];
   stop(): Promise<void>;
-  bootstrapGateway(convId: string, agent: CliAgent): Promise<{ gateway_public_key: string; gateway_kid: string }>;
+  bootstrapGateway(convId: string, agent: ConversationAgent): Promise<{ gateway_public_key: string; gateway_kid: string }>;
   pumpGateway(convId: string): Promise<void>;
   restartGateway(): Promise<void>;
   getCounterExecutions(): number;
@@ -656,6 +735,10 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const uiPort = await getFreePort();
   const relayInspectorPort = await getFreePort();
   const gatewayInspectorPort = await getFreePort();
+  const relayPersistDir = join(rootDir, 'relay-state');
+  const gatewayPersistDir = join(rootDir, 'gateway-state');
+  mkdirSync(relayPersistDir, { recursive: true });
+  mkdirSync(gatewayPersistDir, { recursive: true });
 
   const fixture = await FixtureServer.start(fixturePort);
   const recipeCatalogPath = join(rootDir, 'recipes.json');
@@ -673,6 +756,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(relayInspectorPort),
+        '--persist-to', relayPersistDir,
         '--var', 'RATE_LIMIT_PER_MIN:5000',
       ],
       join(repoRoot, 'worker'),
@@ -685,6 +769,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--port', String(gatewayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(gatewayInspectorPort),
+        '--persist-to', gatewayPersistDir,
         '--var', `DROPBOX_URL:${relayUrl}`,
         '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
@@ -721,7 +806,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     ui = await AimUiAgent.launch(browser, uiUrl, relayUrl);
   }
   const alice = new CliAgent('alice', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
-  const charlie = new CliAgent('charlie', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
+  const charlie = new TslibAgent('charlie', relayUrl);
   const dave = new CliAgent('dave', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
 
   return {

@@ -8,12 +8,15 @@ import {
   historyContainsText,
   historyMatchesProposal,
   historyMatchesRequest,
+  historyMatchesRequestRecipe,
+  historyMatchesService,
   parseUnsafeBody,
   printDiagnostics,
   requireUi,
   setupUiConversation,
   traceGateResultDelivery,
   uiHistoryMatchesRequest,
+  uiHistoryMatchesRequestRecipe,
   waitForCliHistory,
   waitForUiStoredHistory,
   waitForUiText,
@@ -25,8 +28,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
   let harness: LongHarness;
   let convId = '';
   let inviteToken = '';
-  let gatewayPublicKey = '';
-  let gatewayKid = '';
   let charlieKeyId = '';
   let charliePublicKey = '';
   let phase2FloorProposalId = '';
@@ -53,33 +54,52 @@ describe.sequential('real long-running gateway integration UI flow', () => {
     const ui = requireUi(harness);
 
     try {
-      const bootstrap = await harness.bootstrapGateway(convId, harness.alice);
-      gatewayPublicKey = bootstrap.gateway_public_key;
-      gatewayKid = bootstrap.gateway_kid;
+      await ui.enableGateway(harness.gatewayUrl, 2);
+      const promoteEntry = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => entry.body_type === 'gate.promote',
+        'phase 1 ui gate.promote',
+        30_000,
+      );
+      const promoteBody = parseUnsafeBody(promoteEntry);
+      expect(promoteBody.gateway_kid).not.toBe(convId);
+      expect(Object.keys((promoteBody.participants as Record<string, string>) || {})).toHaveLength(2);
 
-      await harness.alice.run(['gate-promote', '-c', convId, '--threshold', '2', `--gateway-kid=${gatewayKid}`]);
-      await harness.alice.run([
-        'gate-secret', '-c', convId,
-        '--service', 'hackernews',
-        `--gateway-pubkey=${gatewayPublicKey}`,
-        '--value', 'dummy-hackernews-token',
-        '--header-name', 'X-Test',
-        '--header-template', '{value}',
-      ]);
-      await harness.alice.run([
-        'gate-secret', '-c', convId,
-        '--service', 'fun',
-        `--gateway-pubkey=${gatewayPublicKey}`,
-        '--value', 'dummy-fun-token',
-        '--header-name', 'X-Test',
-        '--header-template', '{value}',
-      ]);
+      await ui.addApiKey('hackernews', 'hn-smoke-token', 'X-Test', '{value}');
+      await harness.pumpGateway(convId);
+      await waitForCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesService('gate.secret', 'hackernews'),
+        'phase 1 hackernews gate.secret',
+        30_000,
+      );
 
-      const request = await harness.alice.run(['gate-run', 'hn.top-stories', '-c', convId]);
-      phase1TopStoriesRequestId = String(request.data?.request_id);
+      const seenTopStoriesMessages = new Set(
+        harness.alice.readHistory(convId).map((entry) => String(entry.message_id ?? '')),
+      );
+      await ui.submitGateRequest('hn.top-stories');
+      await waitForUiStoredHistory(
+        ui,
+        convId,
+        uiHistoryMatchesRequestRecipe('hn.top-stories'),
+        'phase 1 UI hn.top-stories gate.request',
+        30_000,
+      );
 
-      await waitForUiText(ui, 'hn.top-stories');
-      await ui.approveLatestRequest();
+      const requestEntry = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => !seenTopStoriesMessages.has(String(entry.message_id ?? '')) && historyMatchesRequestRecipe('hn.top-stories')(entry),
+        'phase 1 hn.top-stories gate.request',
+        30_000,
+      );
+      phase1TopStoriesRequestId = String(parseUnsafeBody(requestEntry).request_id);
+      expect(
+        (await ui.readStoredHistory(convId)).filter(uiHistoryMatchesRequest('gate.request', phase1TopStoriesRequestId)),
+      ).toHaveLength(1);
+      await harness.alice.run(['gate-approve', phase1TopStoriesRequestId, '-c', convId]);
       await harness.pumpGateway(convId);
 
       const resultEntry = await waitForCliHistory(
@@ -108,18 +128,26 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         `Top story ID selected for follow-up: ${topStoryId}`,
       ]);
 
-      const itemRequest = await harness.alice.run([
-        'gate-run',
-        'hn.get-item',
-        '-c',
+      const seenItemMessages = new Set(
+        harness.alice.readHistory(convId).map((entry) => String(entry.message_id ?? '')),
+      );
+      await ui.submitGateRequest('hn.get-item', { id: String(topStoryId) });
+      await waitForUiStoredHistory(
+        ui,
         convId,
-        '--arg',
-        `id=${topStoryId}`,
-      ]);
-      phase1TopStoryItemRequestId = String(itemRequest.data?.request_id);
-
-      await waitForUiText(ui, 'hn.get-item');
-      await ui.approveLatestRequest();
+        uiHistoryMatchesRequestRecipe('hn.get-item'),
+        'phase 1 UI hn.get-item gate.request',
+        30_000,
+      );
+      const itemRequest = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => !seenItemMessages.has(String(entry.message_id ?? '')) && historyMatchesRequestRecipe('hn.get-item')(entry),
+        'phase 1 hn.get-item gate.request',
+        30_000,
+      );
+      phase1TopStoryItemRequestId = String(parseUnsafeBody(itemRequest).request_id);
+      await harness.alice.run(['gate-approve', phase1TopStoryItemRequestId, '-c', convId]);
       await harness.pumpGateway(convId);
 
       const itemResultEntry = await waitForCliHistory(
@@ -158,8 +186,25 @@ describe.sequential('real long-running gateway integration UI flow', () => {
     try {
       await harness.charlie.run(['group', 'join', '--name', UI_LABEL, '--', inviteToken]);
 
-      const stale = await harness.alice.run(['gate-run', 'hn.top-stories', '-c', convId]);
-      staleRequestId = String(stale.data?.request_id);
+      const seenTopStoriesMessages = new Set(
+        harness.alice.readHistory(convId).map((entry) => String(entry.message_id ?? '')),
+      );
+      await ui.submitGateRequest('hn.top-stories');
+      await waitForUiStoredHistory(
+        ui,
+        convId,
+        uiHistoryMatchesRequestRecipe('hn.top-stories'),
+        'phase 2 UI stale hn.top-stories gate.request',
+        30_000,
+      );
+      const stale = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => !seenTopStoriesMessages.has(String(entry.message_id ?? '')) && historyMatchesRequestRecipe('hn.top-stories')(entry),
+        'stale hn.top-stories gate.request',
+        30_000,
+      );
+      staleRequestId = String(parseUnsafeBody(stale).request_id);
 
       const floorProposal = await harness.alice.run([
         'gov', 'propose-floor', '-c', convId, '--floor', '3', '--required-approvals', '2',
@@ -203,16 +248,16 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         30_000,
       );
 
-      await harness.alice.run(['send', convId, 'welcome charlie']);
+      await harness.charlie.run(['send', convId, 'hello from charlie ts']);
       await waitForCliHistory(
-        harness.charlie,
+        harness.alice,
         convId,
-        historyContainsText('welcome charlie'),
-        'post-add text for charlie',
+        historyContainsText('hello from charlie ts'),
+        'post-add text from charlie',
         20_000,
       );
 
-      await ui.approveLatestRequest();
+      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -228,10 +273,26 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
       await waitForUiText(ui, 'Pending request invalidated');
 
-      const strict = await harness.alice.run(['gate-run', 'hn.top-stories.strict', '-c', convId]);
-      strictRequestId = String(strict.data?.request_id);
-      await waitForUiText(ui, 'hn.top-stories.strict');
-      await ui.approveLatestRequest();
+      const seenStrictMessages = new Set(
+        harness.alice.readHistory(convId).map((entry) => String(entry.message_id ?? '')),
+      );
+      await ui.submitGateRequest('hn.top-stories');
+      await waitForUiStoredHistory(
+        ui,
+        convId,
+        uiHistoryMatchesRequestRecipe('hn.top-stories'),
+        'phase 2 UI threshold-3 hn.top-stories gate.request',
+        30_000,
+      );
+      const strict = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => !seenStrictMessages.has(String(entry.message_id ?? '')) && historyMatchesRequestRecipe('hn.top-stories')(entry),
+        'threshold-3 hn.top-stories gate.request',
+        30_000,
+      );
+      strictRequestId = String(parseUnsafeBody(strict).request_id);
+      await harness.alice.run(['gate-approve', strictRequestId, '-c', convId]);
       await waitForCliHistory(
         harness.charlie,
         convId,
@@ -250,6 +311,7 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
       assertLiveHnTopStoriesPayload(parseUnsafeBody(strictResult));
       await waitForUiText(ui, '1 member added');
+      await waitForUiText(ui, 'hello from charlie ts');
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;
@@ -276,6 +338,13 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
 
       await harness.alice.run(['send', convId, 'after charlie removal']);
+      await waitForCliHistory(
+        harness.charlie,
+        convId,
+        (entry) => entry.body_type === 'group_remove',
+        'charlie remove marker',
+        30_000,
+      );
       await assertNoCliHistory(
         harness.charlie,
         convId,
@@ -309,10 +378,26 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         30_000,
       );
 
-      const leet = await harness.alice.run(['gate-run', 'leet.translate', '-c', convId, '--arg', 'text=hello agent']);
-      leetRequestId = String(leet.data?.request_id);
-      await waitForUiText(ui, 'leet.translate');
-      await ui.rejectLatestRequest();
+      const seenLeetMessages = new Set(
+        harness.alice.readHistory(convId).map((entry) => String(entry.message_id ?? '')),
+      );
+      await ui.submitGateRequest('leet.translate', { text: 'hello agent' });
+      await waitForUiStoredHistory(
+        ui,
+        convId,
+        uiHistoryMatchesRequestRecipe('leet.translate'),
+        'phase 4 UI leet.translate gate.request',
+        30_000,
+      );
+      const leet = await waitForCliHistory(
+        harness.alice,
+        convId,
+        (entry) => !seenLeetMessages.has(String(entry.message_id ?? '')) && historyMatchesRequestRecipe('leet.translate')(entry),
+        'leet.translate gate.request',
+        30_000,
+      );
+      leetRequestId = String(parseUnsafeBody(leet).request_id);
+      await harness.alice.run(['gate-disapprove', leetRequestId, '-c', convId]);
       await harness.pumpGateway(convId);
 
       await waitForCliHistory(

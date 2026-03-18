@@ -11,145 +11,120 @@ import {
   historyMatchesRequest,
   historyMatchesRequestSigner,
   printDiagnostics,
-  setupCliGovernedConversation,
+  requireUi,
+  setupTwoPartyGovernedConversation,
   waitForCliHistory,
+  waitForUiText,
 } from './long-helpers.js';
 
 describe.sequential('real long-running gateway integration CLI membership flow', () => {
   let harness: LongHarness;
   let convId = '';
-  let daveKeyId = '';
-  let daveKeyIdWire = '';
-  let davePublicKey = '';
-  let restartRequestId = '';
-  let floorThreeProposalId = '';
-  let addDaveProposalId = '';
-  let removeDaveProposalId = '';
+  let inviteToken = '';
+  let charlieKeyId = '';
+  let charlieKeyIdWire = '';
+  let charliePublicKey = '';
+  let addCharlieProposalId = '';
+  let removeCharlieProposalId = '';
+  let pendingRequestId = '';
 
   beforeAll(async () => {
-    harness = await createLongHarness({ withUi: false });
-    const setup = await setupCliGovernedConversation(harness, 'Long CLI Membership', { joinDaveOffline: true });
+    harness = await createLongHarness({ withUi: true });
+    const setup = await setupTwoPartyGovernedConversation(harness, 'Long CLI Membership');
     convId = setup.convId;
-    daveKeyId = setup.daveKeyId;
-    daveKeyIdWire = setup.daveKeyIdWire;
-    davePublicKey = setup.davePublicKey;
-
-    const baselineRequest = await harness.alice.run(['gate-run', 'counter.bump', '-c', convId]);
-    restartRequestId = String(baselineRequest.data?.request_id);
-    await waitForCliHistory(
-      harness.charlie,
-      convId,
-      historyMatchesRequest('gate.request', restartRequestId),
-      'baseline counter request',
-      30_000,
-    );
+    inviteToken = setup.inviteToken;
+    charlieKeyId = setup.charlieKeyId;
+    charlieKeyIdWire = setup.charlieKeyIdWire;
+    charliePublicKey = setup.charliePublicKey;
   }, LONG_TIMEOUT);
 
   afterAll(async () => {
     await harness.stop();
   }, LONG_TIMEOUT);
 
-  it('phase 8: lets an offline prejoined member catch up through add and removal rekeys', async () => {
+  it('phase 8: lets an offline third participant catch up through add and removal rekeys', async () => {
+    const ui = requireUi(harness);
+
     try {
-      const floorProposal = await harness.alice.run([
-        'gov', 'propose-floor', '-c', convId, '--floor', '3', '--required-approvals', '2',
-      ]);
-      floorThreeProposalId = String(floorProposal.data?.proposal_id);
-      await waitForCliHistory(
-        harness.charlie,
-        convId,
-        historyMatchesProposal('gov.propose', floorThreeProposalId),
-        'charlie floor-3 proposal',
-        30_000,
-      );
-      await harness.charlie.run(['gov', 'approve', floorThreeProposalId, '-c', convId]);
-      await harness.pumpGateway(convId);
-      await waitForCliHistory(
-        harness.alice,
-        convId,
-        historyMatchesProposal('gov.applied', floorThreeProposalId),
-        'floor-3 application',
-        30_000,
-      );
+      await harness.charlie.run(['group', 'join', '--name', 'Long CLI Membership', '--', inviteToken]);
 
       const addProposal = await harness.alice.run([
-        'gov', 'propose-add', '-c', convId, '--required-approvals', '2', '--', davePublicKey,
+        'gov', 'propose-add', '-c', convId, '--required-approvals', '2', '--', charliePublicKey,
       ]);
-      addDaveProposalId = String(addProposal.data?.proposal_id);
-      await waitForCliHistory(
-        harness.charlie,
-        convId,
-        historyMatchesProposal('gov.propose', addDaveProposalId),
-        'charlie add-dave proposal',
-        30_000,
-      );
-      await harness.charlie.run(['gov', 'approve', addDaveProposalId, '-c', convId]);
+      addCharlieProposalId = String(addProposal.data?.proposal_id);
+      await waitForUiText(ui, 'adding 1 member');
+      await ui.approveLatestProposal();
       await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
-        historyMatchesProposal('gov.applied', addDaveProposalId),
-        'dave add application',
+        historyMatchesProposal('gov.applied', addCharlieProposalId),
+        'charlie add application',
         30_000,
       );
 
-      await harness.alice.run(['send', convId, 'after dave add']);
+      await harness.alice.run(['send', convId, 'after charlie add']);
+
+      const pendingRequest = await harness.alice.run(['gate-run', 'counter.bump', '-c', convId]);
+      pendingRequestId = String(pendingRequest.data?.request_id);
 
       const removeProposal = await harness.alice.run([
-        'gov', 'propose-remove', '-c', convId, '--required-approvals', '2', '--', daveKeyId,
+        'gov', 'propose-remove', '-c', convId, '--required-approvals', '2', '--', charlieKeyId,
       ]);
-      removeDaveProposalId = String(removeProposal.data?.proposal_id);
-      await waitForCliHistory(
-        harness.charlie,
-        convId,
-        historyMatchesProposal('gov.propose', removeDaveProposalId),
-        'charlie remove-dave proposal',
-        30_000,
-      );
-      await harness.charlie.run(['gov', 'approve', removeDaveProposalId, '-c', convId]);
+      removeCharlieProposalId = String(removeProposal.data?.proposal_id);
+      await waitForUiText(ui, 'removing 1 member');
+      await ui.approveLatestProposal();
       await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
-        historyMatchesProposal('gov.applied', removeDaveProposalId),
-        'dave removal application',
+        historyMatchesProposal('gov.applied', removeCharlieProposalId),
+        'charlie removal application',
         30_000,
       );
-
-      await harness.alice.run(['send', convId, 'after dave remove']);
-
       await waitForCliHistory(
-        harness.dave,
+        harness.alice,
         convId,
-        historyContainsText('after dave add'),
-        'dave catch-up through add rekey',
+        historyMatchesRequest('gate.invalidated', pendingRequestId),
+        'pending request invalidated on charlie removal',
+        30_000,
+      );
+
+      await harness.alice.run(['send', convId, 'after charlie remove']);
+
+      await waitForCliHistory(
+        harness.charlie,
+        convId,
+        historyContainsText('after charlie add'),
+        'charlie catch-up through add rekey',
         30_000,
       );
       await waitForCliHistory(
-        harness.dave,
+        harness.charlie,
         convId,
         (entry) => entry.body_type === 'group_remove',
-        'dave remove marker during catch-up',
+        'charlie remove marker during catch-up',
         30_000,
       );
 
-      const daveHistory = harness.dave.readHistory(convId);
-      const floorAppliedIndex = historyIndex(daveHistory, historyMatchesProposal('gov.applied', floorThreeProposalId));
-      const addIndex = historyIndex(daveHistory, (entry) => entry.body_type === 'group_add');
-      const addTextIndex = historyIndex(daveHistory, historyContainsText('after dave add'));
-      const removeIndex = historyIndex(daveHistory, (entry) => entry.body_type === 'group_remove');
-      const rekeyCount = countHistoryMatches(daveHistory, (entry) => entry.body_type === 'group_rekey');
+      const charlieHistory = harness.charlie.readHistory(convId);
+      const addIndex = historyIndex(charlieHistory, (entry) => entry.body_type === 'group_add');
+      const addTextIndex = historyIndex(charlieHistory, historyContainsText('after charlie add'));
+      const removeIndex = historyIndex(charlieHistory, (entry) => entry.body_type === 'group_remove');
+      const rekeyCount = countHistoryMatches(charlieHistory, (entry) => entry.body_type === 'group_rekey');
 
-      expect(floorAppliedIndex).toBeGreaterThan(-1);
-      expect(addIndex).toBeGreaterThan(floorAppliedIndex);
+      expect(addIndex).toBeGreaterThan(-1);
       expect(addTextIndex).toBeGreaterThan(addIndex);
       expect(removeIndex).toBeGreaterThan(addTextIndex);
       expect(rekeyCount).toBeGreaterThanOrEqual(2);
-      expect(daveHistory.some(historyContainsText('after dave remove'))).toBe(false);
-      expect(daveHistory.some(historyMatchesProposal('gov.applied', removeDaveProposalId))).toBe(false);
+      expect(charlieHistory.some(historyMatchesRequest('gate.invalidated', pendingRequestId))).toBe(false);
+      expect(charlieHistory.some(historyContainsText('after charlie remove'))).toBe(false);
+      expect(charlieHistory.some(historyMatchesProposal('gov.applied', removeCharlieProposalId))).toBe(false);
 
-      const daveConversation = harness.dave.readConversation(convId);
-      expect(daveConversation.current_epoch).toBe(1);
+      const charlieConversation = harness.charlie.readConversation(convId);
+      expect(charlieConversation.current_epoch).toBe(1);
+      await waitForUiText(ui, '1 member removed');
+      await waitForUiText(ui, 'Pending request invalidated');
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;
@@ -158,8 +133,8 @@ describe.sequential('real long-running gateway integration CLI membership flow',
 
   it('phase 9: dropped member stale traffic never affects the live conversation', async () => {
     try {
-      const removedText = 'removed dave says hello';
-      await harness.dave.run(['send', convId, removedText]);
+      const removedText = 'removed charlie says hello';
+      await harness.charlie.run(['send', convId, removedText]);
       await assertNoCliHistory(
         harness.alice,
         convId,
@@ -167,37 +142,19 @@ describe.sequential('real long-running gateway integration CLI membership flow',
         6_000,
       );
 
-      harness.resetCounterExecutions();
-      const staleRequest = await harness.dave.run(['gate-run', 'counter.bump', '-c', convId]);
-      const staleRequestId = String(staleRequest.data?.request_id);
-      await harness.pumpGateway(convId);
+      await harness.charlie.run(['gate-approve', pendingRequestId, '-c', convId]);
       await assertNoCliHistory(
         harness.alice,
         convId,
-        historyMatchesRequest('gate.request', staleRequestId),
-        6_000,
-      );
-      await assertNoCliHistory(
-        harness.alice,
-        convId,
-        historyMatchesRequest('gate.result', staleRequestId),
-        6_000,
-      );
-      expect(harness.getCounterExecutions()).toBe(0);
-
-      await harness.dave.run(['gate-approve', restartRequestId, '-c', convId]);
-      await assertNoCliHistory(
-        harness.alice,
-        convId,
-        historyMatchesRequestSigner('gate.approval', restartRequestId, daveKeyIdWire),
+        historyMatchesRequestSigner('gate.approval', pendingRequestId, charlieKeyIdWire),
         6_000,
       );
 
-      await harness.dave.run(['gov', 'approve', floorThreeProposalId, '-c', convId]);
+      await harness.charlie.run(['gov', 'approve', addCharlieProposalId, '-c', convId]);
       await assertNoCliHistory(
         harness.alice,
         convId,
-        historyMatchesProposalSigner('gov.approve', floorThreeProposalId, daveKeyIdWire),
+        historyMatchesProposalSigner('gov.approve', addCharlieProposalId, charlieKeyIdWire),
         6_000,
       );
     } catch (error) {

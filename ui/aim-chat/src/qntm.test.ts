@@ -247,6 +247,34 @@ describe('browser qntm adapter', () => {
     expect(verifyApproval(alicePublicKey, approvalSignable, base64UrlDecode(approval.signature))).toBe(true)
   })
 
+  it('raises request approvals to the current conversation floor', async () => {
+    const alice = createProfile('Alice')
+    const invite = createInviteForProfile(alice.id, 'Ops')
+
+    const requestMessage = await gateRunRequest(
+      alice.id,
+      alice.name,
+      invite.conversationId,
+      {
+        name: 'hn.top-stories',
+        description: 'Top stories',
+        verb: 'GET',
+        service: 'hackernews',
+        endpoint: '/topstories.json',
+        target_url: 'https://hacker-news.firebaseio.com/v0/topstories.json',
+        risk_tier: 'read',
+        threshold: 1,
+      },
+      'hn.top-stories',
+      '',
+      {},
+      2,
+    )
+
+    const request = JSON.parse(requestMessage.text) as { required_approvals: number }
+    expect(request.required_approvals).toBe(2)
+  })
+
   it('learns participant public keys and emits participants map on promote', async () => {
     const { alice, bob, conversationId } = await createConversationPair()
     const aliceIdentity = identityFor(alice.id)

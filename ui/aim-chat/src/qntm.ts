@@ -661,7 +661,7 @@ export async function receiveMessages(
 export async function gateRunRequest(
   profileId: string, profileName: string, conversationId: string,
   recipe: GateRecipe,
-  recipeName: string, _gateUrl: string, args: Record<string, string>
+  recipeName: string, _gateUrl: string, args: Record<string, string>, minimumApprovals = 1,
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
@@ -685,7 +685,7 @@ export async function gateRunRequest(
   const conv = store.findConversation(profileId, conversationId)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   // Determine threshold from recipe or default to participant count
-  const requiredApprovals = recipe.threshold ?? eligibleSignerKids.length
+  const requiredApprovals = Math.max(recipe.threshold ?? eligibleSignerKids.length, minimumApprovals, 1)
 
   const signable = {
     conv_id: conversationId,

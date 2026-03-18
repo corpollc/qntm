@@ -670,6 +670,7 @@ export default function App() {
         selectedRecipe,
         gateServerUrl.trim(),
         Object.keys(gateArgs).length > 0 ? gateArgs : undefined,
+        Math.max(gateStatus.threshold || 1, 1),
       )
       await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`API request submitted: ${selectedRecipe}`)

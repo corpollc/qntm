@@ -120,13 +120,13 @@ export const api = {
 
   async gateRun(
     profileId: string, profileName: string, conversationId: string,
-    recipeName: string, gateUrl: string, args?: Record<string, string>
+    recipeName: string, gateUrl: string, args?: Record<string, string>, minimumApprovals = 1,
   ): Promise<{ message: ChatMessage; warning?: string }> {
     const allRecipes = (starterCatalog as { recipes: Record<string, GateRecipe> }).recipes || {}
     const recipe = allRecipes[recipeName]
     if (!recipe) throw new Error(`Recipe "${recipeName}" not found`)
     const message = await qntm.gateRunRequest(
-      profileId, profileName, conversationId, recipe, recipeName, gateUrl, args || {}
+      profileId, profileName, conversationId, recipe, recipeName, gateUrl, args || {}, minimumApprovals
     )
     return { message }
   },

@@ -11,8 +11,10 @@ import {
   historyMatchesService,
   parseUnsafeBody,
   printDiagnostics,
+  requireUi,
   setupCliGovernedConversation,
   waitForCliHistory,
+  waitForUiText,
 } from './long-helpers.js';
 
 describe.sequential('real long-running gateway integration CLI policy flow', () => {
@@ -25,7 +27,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   let expiredRequestId = '';
 
   beforeAll(async () => {
-    harness = await createLongHarness({ withUi: false });
+    harness = await createLongHarness({ withUi: true });
     const setup = await setupCliGovernedConversation(harness, 'Long CLI Policy');
     convId = setup.convId;
     gatewayPublicKey = setup.gatewayPublicKey;
@@ -36,6 +38,8 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   }, LONG_TIMEOUT);
 
   it('phase 5: invalidates a conflicting proposal in transcript', async () => {
+    const ui = requireUi(harness);
+
     try {
       const keepFloor = await harness.alice.run([
         'gov', 'propose-floor', '-c', convId, '--floor', '2', '--required-approvals', '2',
@@ -85,6 +89,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         'charlie conflicting proposal invalidation',
         30_000,
       );
+      await waitForUiText(ui, 'Governance proposal invalidated');
       await assertNoCliHistory(
         harness.alice,
         convId,
@@ -98,6 +103,8 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   }, LONG_TIMEOUT);
 
   it('phase 6: restarts the gateway around an approved request and executes it once', async () => {
+    const ui = requireUi(harness);
+
     try {
       harness.resetCounterExecutions();
 
@@ -131,6 +138,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
       );
       assertCounterResultPayload(parseUnsafeBody(resultEntry), 1);
       expect(harness.getCounterExecutions()).toBe(1);
+      await waitForUiText(ui, '"count": 1');
 
       const aliceHistory = harness.alice.readHistory(convId);
       expect(countHistoryMatches(aliceHistory, historyMatchesRequest('gate.executed', restartRequestId))).toBe(1);
@@ -142,6 +150,8 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   }, LONG_TIMEOUT);
 
   it('phase 7: blocks execution after secret expiry and resumes it after reprovision', async () => {
+    const ui = requireUi(harness);
+
     try {
       harness.resetCounterExecutions();
 
@@ -172,6 +182,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         'fun secret expiry marker',
         30_000,
       );
+      await waitForUiText(ui, 'Credential Expired');
 
       const blocked = await harness.alice.run(['gate-run', 'counter.bump', '-c', convId]);
       expiredRequestId = String(blocked.data?.request_id);
@@ -218,6 +229,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
       );
       assertCounterResultPayload(parseUnsafeBody(recovered), 1);
       expect(harness.getCounterExecutions()).toBe(1);
+      await waitForUiText(ui, '"count": 1');
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;
