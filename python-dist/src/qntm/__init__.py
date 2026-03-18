@@ -70,3 +70,13 @@ from .gate import (
     verify_approval,
     verify_request,
 )
+from .governance import (
+    GOV_MESSAGE_APPLIED,
+    GOV_MESSAGE_APPROVE,
+    GOV_MESSAGE_DISAPPROVE,
+    GOV_MESSAGE_PROPOSE,
+    create_proposal_body,
+    hash_proposal,
+    sign_gov_approval,
+    sign_proposal,
+)

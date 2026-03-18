@@ -22,11 +22,20 @@ from .identity import (
 )
 from .wire import (
     blob_to_wire,
+    kid_from_wire,
     kid_from_pubkey,
     kid_to_wire,
     pubkey_from_wire,
     pubkey_to_wire,
     sig_to_wire,
+)
+from .governance import (
+    GOV_MESSAGE_APPROVE,
+    GOV_MESSAGE_DISAPPROVE,
+    GOV_MESSAGE_PROPOSE,
+    create_proposal_body,
+    hash_proposal,
+    sign_gov_approval,
 )
 from .invite import (
     add_participant,
@@ -345,6 +354,37 @@ def _merge_participant_public_key(config_dir, conv_id_hex, public_key: bytes):
             json.dump(pk_store, f)
 
 
+def _merge_conversation_participant(conv_record, sender_kid_hex: str) -> bool:
+    participants = [kid.lower() for kid in conv_record.get("participants", [])]
+    normalized = sender_kid_hex.lower()
+    if normalized in participants:
+        return False
+    conv_record["participants"] = participants + [normalized]
+    return True
+
+
+NON_MEMBER_SYSTEM_BODY_TYPES = {
+    "gate.executed",
+    "gate.result",
+    "gate.expired",
+    "gate.invalidated",
+    "gate.config",
+    "gov.applied",
+    "gov.invalidated",
+    "group_add",
+    "group_remove",
+    "group_rekey",
+}
+
+
+def _should_track_sender_as_participant(conv_record, body_type: str, sender_kid_hex: str) -> bool:
+    participants = [kid.lower() for kid in conv_record.get("participants", [])]
+    normalized = sender_kid_hex.lower()
+    if normalized in participants:
+        return True
+    return body_type not in NON_MEMBER_SYSTEM_BODY_TYPES
+
+
 def _load_participant_public_keys(config_dir, conv_id_hex) -> dict[str, bytes]:
     """Load learned participant public keys for a conversation. Returns {kid_hex: pk_bytes}."""
     pk_path = os.path.join(config_dir, "participant_keys.json")
@@ -387,6 +427,80 @@ def _decode_gateway_public_key(gateway_pubkey: str) -> bytes:
         return pubkey_from_wire(gateway_pubkey)
     except Exception as exc:
         raise ValueError("gateway public key must be valid base64url") from exc
+
+
+def _decode_identity_public_key(value: str) -> bytes:
+    """Decode a public key from base64url or legacy hex."""
+    is_legacy_hex = len(value) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+    if is_legacy_hex:
+        return bytes.fromhex(value)
+    try:
+        return pubkey_from_wire(value)
+    except Exception as exc:
+        raise ValueError("member public key must be valid base64url") from exc
+
+
+def _decode_identity_key_id(value: str) -> bytes:
+    """Decode a KID from base64url or hex."""
+    is_hex = len(value) == 32 and all(
+        ch in "0123456789abcdefABCDEF" for ch in value
+    )
+    if is_hex:
+        return bytes.fromhex(value)
+    try:
+        return kid_from_wire(value)
+    except Exception as exc:
+        raise ValueError("member key ID must be valid base64url") from exc
+
+
+def _eligible_signer_kids_from_conversation(conv_record, identity=None) -> list[str]:
+    signer_kids = [kid_to_wire(bytes.fromhex(kid_hex)) for kid_hex in _participant_kids_from_conversation(conv_record)]
+    if identity is not None:
+        signer_kids.append(kid_to_wire(identity["keyID"]))
+    return sorted(set(signer_kids))
+
+
+def _current_governance_floor(history_entries) -> int:
+    floor = 0
+    for entry in history_entries:
+        raw = entry.get("unsafe_body") or entry.get("body", "")
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if entry.get("body_type") == GATE_MESSAGE_PROMOTE:
+            floor = msg.get("floor") or ((msg.get("rules") or [{}])[0].get("m")) or floor
+        elif entry.get("body_type") == "gov.applied" and msg.get("proposal_type") == "floor_change":
+            floor = msg.get("applied_floor") or floor
+    return floor
+
+
+def _default_governance_required_approvals(conv_record, proposal_type=None, removed_member_kids=None) -> int:
+    participant_count = len(_participant_kids_from_conversation(conv_record))
+    if proposal_type == "member_remove":
+        removed_count = len(removed_member_kids or [])
+        return max(1, participant_count - removed_count)
+    return max(1, participant_count)
+
+
+def _find_gov_proposal_in_history(history_entries, proposal_id):
+    for entry in history_entries:
+        if entry.get("body_type") != GOV_MESSAGE_PROPOSE:
+            continue
+        raw = entry.get("unsafe_body") or entry.get("body", "")
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if msg.get("proposal_id") == proposal_id:
+            return msg
+    raise ValueError(
+        f"governance proposal {proposal_id!r} not found in conversation history "
+        "(try 'qntm recv' first)"
+    )
 
 
 def _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity):
@@ -809,6 +923,7 @@ def cmd_recv(args):
 
     history = _load_history(config_dir, conv_id_hex)
     output_messages = []
+    conversations_dirty = False
 
     for raw_msg in raw_messages:
         try:
@@ -834,11 +949,16 @@ def cmd_recv(args):
         body_bytes = bytes(inner["body"])
         body_type = inner["body_type"]
 
-        # Track participant public keys for gate promote/request roster construction
-        _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
-
-        # Apply group membership/epoch state changes
+        # Apply group membership/epoch state changes before learning senders so
+        # governed membership updates can adjust the roster deterministically.
         _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity)
+        if body_type == "group_rekey":
+            conv_crypto = _conv_to_crypto(conv_record)
+
+        if _should_track_sender_as_participant(conv_record, body_type, sender_kid_hex):
+            _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
+            if _merge_conversation_participant(conv_record, sender_kid_hex):
+                conversations_dirty = True
 
         entry = {
             "conversation_id": conv_id_hex,
@@ -888,6 +1008,8 @@ def cmd_recv(args):
 
     _save_seen(config_dir, seen)
     _save_history(config_dir, conv_id_hex, history)
+    if conversations_dirty:
+        _save_conversations(config_dir, conversations)
 
     _output("recv", {
         "received": len(output_messages),
@@ -2177,6 +2299,269 @@ def cmd_gate_secret(args):
     })
 
 
+def cmd_gov_propose_floor(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    history = _load_history(config_dir, conv_id_hex)
+    payload = create_proposal_body(
+        identity,
+        conv_id=conv_id_hex,
+        proposal_type="floor_change",
+        proposed_floor=args.floor,
+        eligible_signer_kids=_eligible_signer_kids_from_conversation(conv_record, identity=identity),
+        required_approvals=args.required_approvals or _default_governance_required_approvals(
+            conv_record,
+            proposal_type="floor_change",
+        ),
+        expires_in_seconds=args.expires_in,
+    )
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
+    )
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GOV_MESSAGE_PROPOSE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gov.propose", {
+        "conversation_id": conv_id_hex,
+        "proposal_id": payload["proposal_id"],
+        "proposal_type": payload["proposal_type"],
+        "required_approvals": payload["required_approvals"],
+        "proposed_floor": payload["proposed_floor"],
+    })
+
+
+def cmd_gov_propose_add(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    history = _load_history(config_dir, conv_id_hex)
+    public_key = _decode_identity_public_key(args.public_key)
+    payload = create_proposal_body(
+        identity,
+        conv_id=conv_id_hex,
+        proposal_type="member_add",
+        proposed_members=[{
+            "kid": kid_from_pubkey(public_key),
+            "public_key": pubkey_to_wire(public_key),
+        }],
+        eligible_signer_kids=_eligible_signer_kids_from_conversation(conv_record, identity=identity),
+        required_approvals=args.required_approvals or _default_governance_required_approvals(
+            conv_record,
+            proposal_type="member_add",
+        ),
+        expires_in_seconds=args.expires_in,
+    )
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
+    )
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GOV_MESSAGE_PROPOSE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gov.propose", {
+        "conversation_id": conv_id_hex,
+        "proposal_id": payload["proposal_id"],
+        "proposal_type": payload["proposal_type"],
+        "required_approvals": payload["required_approvals"],
+        "member_kid": payload["proposed_members"][0]["kid"],
+    })
+
+
+def cmd_gov_propose_remove(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    history = _load_history(config_dir, conv_id_hex)
+    member_kid = kid_to_wire(_decode_identity_key_id(args.key_id))
+    payload = create_proposal_body(
+        identity,
+        conv_id=conv_id_hex,
+        proposal_type="member_remove",
+        removed_member_kids=[member_kid],
+        eligible_signer_kids=_eligible_signer_kids_from_conversation(conv_record, identity=identity),
+        required_approvals=args.required_approvals or _default_governance_required_approvals(
+            conv_record,
+            proposal_type="member_remove",
+            removed_member_kids=[member_kid],
+        ),
+        expires_in_seconds=args.expires_in,
+    )
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
+    )
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GOV_MESSAGE_PROPOSE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gov.propose", {
+        "conversation_id": conv_id_hex,
+        "proposal_id": payload["proposal_id"],
+        "proposal_type": payload["proposal_type"],
+        "required_approvals": payload["required_approvals"],
+        "removed_member_kid": member_kid,
+    })
+
+
+def cmd_gov_approve(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    history = _load_history(config_dir, conv_id_hex)
+    try:
+        proposal = _find_gov_proposal_in_history(history, args.proposal_id)
+    except ValueError as e:
+        _error(str(e))
+
+    proposal_hash = hash_proposal(
+        conv_id=proposal["conv_id"],
+        proposal_id=proposal["proposal_id"],
+        proposal_type=proposal["proposal_type"],
+        proposed_floor=proposal.get("proposed_floor"),
+        proposed_rules=proposal.get("proposed_rules"),
+        proposed_members=proposal.get("proposed_members"),
+        removed_member_kids=proposal.get("removed_member_kids"),
+        eligible_signer_kids=proposal.get("eligible_signer_kids") or [],
+        required_approvals=proposal.get("required_approvals") or 1,
+        expires_at_unix=int(datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00")).timestamp()),
+    )
+    payload = {
+        "type": GOV_MESSAGE_APPROVE,
+        "conv_id": proposal["conv_id"],
+        "proposal_id": proposal["proposal_id"],
+        "signer_kid": kid_to_wire(identity["keyID"]),
+        "signature": sig_to_wire(sign_gov_approval(
+            identity["privateKey"],
+            conv_id=proposal["conv_id"],
+            proposal_id=proposal["proposal_id"],
+            proposal_hash=proposal_hash,
+        )),
+    }
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GOV_MESSAGE_APPROVE, payload, dropbox_url,
+    )
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GOV_MESSAGE_APPROVE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gov.approve", {
+        "conversation_id": conv_id_hex,
+        "proposal_id": payload["proposal_id"],
+        "signer_kid": payload["signer_kid"],
+    })
+
+
+def cmd_gov_disapprove(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, args.conversation)
+    if not conv_record:
+        _error(f"conversation {args.conversation} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    payload = {
+        "type": GOV_MESSAGE_DISAPPROVE,
+        "conv_id": conv_id_hex,
+        "proposal_id": args.proposal_id,
+        "signer_kid": kid_to_wire(identity["keyID"]),
+    }
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GOV_MESSAGE_DISAPPROVE, payload, dropbox_url,
+    )
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GOV_MESSAGE_DISAPPROVE,
+        "unsafe_body": json.dumps(payload),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gov.disapprove", {
+        "conversation_id": conv_id_hex,
+        "proposal_id": payload["proposal_id"],
+        "signer_kid": payload["signer_kid"],
+    })
+
+
 def cmd_version(args):
     _output("version", {
         "version": __version__,
@@ -2468,6 +2853,48 @@ quick start:
     gate_secret_p.add_argument("--ttl", type=int, default=0,
                                help="Secret TTL in seconds (0 = no expiry, default: 0)")
 
+    # gov
+    gov_parser = subparsers.add_parser("gov", help="Govern gateway policy and membership")
+    gov_sub = gov_parser.add_subparsers(dest="gov_command")
+
+    gov_floor_p = gov_sub.add_parser("propose-floor", help="Propose a threshold floor change")
+    gov_floor_p.add_argument("-c", "--conversation", required=True,
+                             help="Conversation ID or prefix")
+    gov_floor_p.add_argument("--floor", type=int, required=True,
+                             help="New approval floor")
+    gov_floor_p.add_argument("--required-approvals", type=int, default=0,
+                             help="Approvals required for this proposal (defaults to current governance quorum)")
+    gov_floor_p.add_argument("--expires-in", type=int, default=3600,
+                             help="Proposal expiry in seconds (default: 3600)")
+
+    gov_add_p = gov_sub.add_parser("propose-add", help="Propose adding a member")
+    gov_add_p.add_argument("-c", "--conversation", required=True,
+                           help="Conversation ID or prefix")
+    gov_add_p.add_argument("public_key", help="Member public key (base64url or hex)")
+    gov_add_p.add_argument("--required-approvals", type=int, default=0,
+                           help="Approvals required for this proposal (defaults to current governance quorum)")
+    gov_add_p.add_argument("--expires-in", type=int, default=3600,
+                           help="Proposal expiry in seconds (default: 3600)")
+
+    gov_remove_p = gov_sub.add_parser("propose-remove", help="Propose removing a member")
+    gov_remove_p.add_argument("-c", "--conversation", required=True,
+                              help="Conversation ID or prefix")
+    gov_remove_p.add_argument("key_id", help="Member key ID (base64url or hex)")
+    gov_remove_p.add_argument("--required-approvals", type=int, default=0,
+                              help="Approvals required for this proposal (defaults to remaining-member governance quorum)")
+    gov_remove_p.add_argument("--expires-in", type=int, default=3600,
+                              help="Proposal expiry in seconds (default: 3600)")
+
+    gov_approve_p = gov_sub.add_parser("approve", help="Approve a governance proposal")
+    gov_approve_p.add_argument("proposal_id", help="Proposal ID to approve")
+    gov_approve_p.add_argument("-c", "--conversation", required=True,
+                               help="Conversation ID or prefix")
+
+    gov_disapprove_p = gov_sub.add_parser("disapprove", help="Reject a governance proposal")
+    gov_disapprove_p.add_argument("proposal_id", help="Proposal ID to reject")
+    gov_disapprove_p.add_argument("-c", "--conversation", required=True,
+                                  help="Conversation ID or prefix")
+
     # name
     name_parser = subparsers.add_parser("name", help="Manage local nicknames")
     name_sub = name_parser.add_subparsers(dest="name_command")
@@ -2560,6 +2987,19 @@ quick start:
         cmd_gate_promote(args)
     elif args.command == "gate-secret":
         cmd_gate_secret(args)
+    elif args.command == "gov":
+        if args.gov_command == "propose-floor":
+            cmd_gov_propose_floor(args)
+        elif args.gov_command == "propose-add":
+            cmd_gov_propose_add(args)
+        elif args.gov_command == "propose-remove":
+            cmd_gov_propose_remove(args)
+        elif args.gov_command == "approve":
+            cmd_gov_approve(args)
+        elif args.gov_command == "disapprove":
+            cmd_gov_disapprove(args)
+        else:
+            gov_parser.print_help()
     elif args.command == "name":
         if args.name_command == "set":
             cmd_name_set(args)

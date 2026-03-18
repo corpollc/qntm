@@ -6,7 +6,9 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*.ts", "*.test.ts"]
 }

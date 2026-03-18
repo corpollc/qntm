@@ -1,9 +1,12 @@
 import {
   base64UrlDecode,
   computePayloadHash,
+  hashProposal,
   hashRequest,
   openSecret,
   publicKeyToString,
+  verifyGovApproval,
+  verifyProposal,
   verifyApproval,
   verifyRequest,
 } from '@corpollc/qntm'
@@ -12,10 +15,16 @@ import * as store from './store'
 import {
   createInviteForProfile,
   gateApproveRequest,
+  gateDisapproveRequest,
   gatePromoteRequest,
   gateRunRequest,
   gateSecretRequest,
   generateIdentityForProfile,
+  govApproveProposal,
+  govDisapproveProposal,
+  govProposeFloorChange,
+  govProposeMemberAdd,
+  govProposeMemberRemove,
   hexToBytes,
   receiveMessages,
   sendMessageToConversation,
@@ -266,6 +275,175 @@ describe('browser qntm adapter', () => {
       [aliceKidB64]: publicKeyToString(hexToBytes(aliceIdentity.publicKey)),
       [bobKidB64]: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
     })
+  })
+
+  it('builds signed governance proposals and approvals from the browser client', async () => {
+    const alice = createProfile('Alice')
+    const invite = createInviteForProfile(alice.id, 'Ops')
+    const aliceIdentity = identityFor(alice.id)
+    const alicePublicKey = hexToBytes(aliceIdentity.publicKey)
+
+    const proposalMessage = await govProposeFloorChange(
+      alice.id,
+      alice.name,
+      invite.conversationId,
+      3,
+    )
+    const proposal = JSON.parse(proposalMessage.text) as {
+      conv_id: string
+      proposal_id: string
+      proposal_type: 'floor_change'
+      proposed_floor: number
+      eligible_signer_kids: string[]
+      required_approvals: number
+      expires_at: string
+      signature: string
+    }
+
+    const proposalSignable = {
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_type: proposal.proposal_type,
+      proposed_floor: proposal.proposed_floor,
+      proposed_rules: undefined,
+      proposed_members: undefined,
+      removed_member_kids: undefined,
+      eligible_signer_kids: proposal.eligible_signer_kids,
+      required_approvals: proposal.required_approvals,
+      expires_at_unix: Math.floor(new Date(proposal.expires_at).getTime() / 1000),
+    }
+    expect(verifyProposal(alicePublicKey, proposalSignable, base64UrlDecode(proposal.signature))).toBe(true)
+
+    const approvalMessage = await govApproveProposal(
+      alice.id,
+      alice.name,
+      invite.conversationId,
+      proposal.proposal_id,
+    )
+    const approval = JSON.parse(approvalMessage.text) as {
+      conv_id: string
+      proposal_id: string
+      signature: string
+    }
+    const proposalHash = hashProposal(proposalSignable)
+    expect(verifyGovApproval(alicePublicKey, {
+      conv_id: approval.conv_id,
+      proposal_id: approval.proposal_id,
+      proposal_hash: proposalHash,
+    }, base64UrlDecode(approval.signature))).toBe(true)
+  })
+
+  it('builds member-change proposals and deny messages for browser governance flows', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    const bobIdentity = identityFor(bob.id)
+    const charlie = createProfile('Charlie')
+    const charlieIdentity = identityFor(charlie.id)
+
+    const addProposalMessage = await govProposeMemberAdd(
+      alice.id,
+      alice.name,
+      conversationId,
+      charlieIdentity.publicKey,
+    )
+    const addProposal = JSON.parse(addProposalMessage.text) as {
+      proposal_type: string
+      proposed_members: Array<{ public_key: string }>
+    }
+    expect(addProposal.proposal_type).toBe('member_add')
+    expect(addProposal.proposed_members[0].public_key).toBe(publicKeyToString(hexToBytes(charlieIdentity.publicKey)))
+
+    const removeProposalMessage = await govProposeMemberRemove(
+      alice.id,
+      alice.name,
+      conversationId,
+      bobIdentity.keyId,
+    )
+    const removeProposal = JSON.parse(removeProposalMessage.text) as {
+      proposal_id: string
+      proposal_type: string
+      removed_member_kids: string[]
+    }
+    expect(removeProposal.proposal_type).toBe('member_remove')
+    expect(removeProposal.removed_member_kids).toHaveLength(1)
+
+    const disapprovalMessage = await govDisapproveProposal(
+      alice.id,
+      alice.name,
+      conversationId,
+      removeProposal.proposal_id,
+    )
+    const disapproval = JSON.parse(disapprovalMessage.text) as {
+      type: string
+      proposal_id: string
+    }
+    expect(disapproval.type).toBe('gov.disapprove')
+    expect(disapproval.proposal_id).toBe(removeProposal.proposal_id)
+
+    const gateDisapprovalMessage = await gateDisapproveRequest(
+      alice.id,
+      alice.name,
+      conversationId,
+      'req-123',
+    )
+    const gateDisapproval = JSON.parse(gateDisapprovalMessage.text) as {
+      type: string
+      request_id: string
+    }
+    expect(gateDisapproval.type).toBe('gate.disapproval')
+    expect(gateDisapproval.request_id).toBe('req-123')
+  })
+
+  it('defaults governance approvals to current participants and remaining members', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    const bobIdentity = identityFor(bob.id)
+    const charlie = createProfile('Charlie')
+    const charlieIdentity = identityFor(charlie.id)
+
+    store.updateConversation(alice.id, conversationId, (conv) => ({
+      ...conv,
+      participants: [...conv.participants, bobIdentity.keyId],
+      participantPublicKeys: [...(conv.participantPublicKeys || []), bobIdentity.publicKey],
+    }))
+
+    store.addHistoryMessage(alice.id, conversationId, {
+      id: crypto.randomUUID(),
+      conversationId,
+      direction: 'incoming',
+      sender: 'gateway',
+      senderKey: 'gateway',
+      bodyType: 'gate.promote',
+      text: JSON.stringify({
+        type: 'gate.promote',
+        conv_id: conversationId,
+        floor: 3,
+        rules: [{ service: '*', endpoint: '*', verb: '*', m: 3 }],
+      }),
+      createdAt: new Date().toISOString(),
+    })
+
+    const floorProposalMessage = await govProposeFloorChange(
+      alice.id,
+      alice.name,
+      conversationId,
+      4,
+    )
+    const floorProposal = JSON.parse(floorProposalMessage.text) as { required_approvals: number }
+    expect(floorProposal.required_approvals).toBe(2)
+
+    store.updateConversation(alice.id, conversationId, (conv) => ({
+      ...conv,
+      participants: [...conv.participants, charlieIdentity.keyId],
+      participantPublicKeys: [...(conv.participantPublicKeys || []), charlieIdentity.publicKey],
+    }))
+
+    const removeProposalMessage = await govProposeMemberRemove(
+      alice.id,
+      alice.name,
+      conversationId,
+      bobIdentity.keyId,
+    )
+    const removeProposal = JSON.parse(removeProposalMessage.text) as { required_approvals: number }
+    expect(removeProposal.required_approvals).toBe(2)
   })
 
   it('encrypts gate secrets with the known participant public key using base64url', async () => {

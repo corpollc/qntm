@@ -10,6 +10,7 @@ import os
 import tempfile
 import time
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -247,6 +248,213 @@ class TestGateCommandParticipantRosters:
 
         with pytest.raises(RuntimeError, match="missing participant public keys"):
             cmd_gate_promote(args)
+
+
+class TestGovernanceCommands:
+    def test_gov_propose_add_builds_member_add_payload(self, monkeypatch):
+        from qntm.cli import cmd_gov_propose_add
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, _conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+        captured = {}
+
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["body_type"] = body_type
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr("qntm.cli._send_gate_message_to_conv", fake_send)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            public_key=base64url_encode(bob["publicKey"]),
+            required_approvals=0,
+            expires_in=3600,
+        )
+        cmd_gov_propose_add(args)
+
+        assert captured["body_type"] == "gov.propose"
+        assert captured["payload"]["proposal_type"] == "member_add"
+        assert captured["payload"]["proposed_members"][0]["kid"] == base64url_encode(bob["keyID"])
+        assert captured["payload"]["proposed_members"][0]["public_key"] == base64url_encode(bob["publicKey"])
+        assert captured["payload"]["required_approvals"] == 1
+        assert captured["payload"]["eligible_signer_kids"] == [base64url_encode(alice["keyID"])]
+
+    def test_gov_propose_floor_defaults_required_approvals_to_current_participant_quorum(self, monkeypatch):
+        from qntm.cli import cmd_gov_propose_floor
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+        conv_record["participants"].append(bob["keyID"].hex())
+        with open(os.path.join(tmpdir, "conversations.json"), "w") as f:
+            json.dump([conv_record], f)
+        _write_history(tmpdir, conv_id_hex, [{
+            "msg_id": uuid.uuid4().hex,
+            "direction": "incoming",
+            "body_type": "gate.promote",
+            "unsafe_body": json.dumps({
+                "type": "gate.promote",
+                "conv_id": conv_id_hex,
+                "floor": 3,
+                "rules": [{"service": "*", "endpoint": "*", "verb": "*", "m": 3}],
+            }),
+            "created_ts": int(time.time()),
+        }])
+        captured = {}
+
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr("qntm.cli._send_gate_message_to_conv", fake_send)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            floor=4,
+            required_approvals=0,
+            expires_in=3600,
+        )
+        cmd_gov_propose_floor(args)
+
+        assert captured["payload"]["proposal_type"] == "floor_change"
+        assert captured["payload"]["proposed_floor"] == 4
+        assert captured["payload"]["required_approvals"] == 2
+
+    def test_gov_propose_remove_defaults_required_approvals_to_remaining_members(self, monkeypatch):
+        from qntm.cli import cmd_gov_propose_remove
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+        charlie = generate_identity()
+        conv_record["participants"].extend([bob["keyID"].hex(), charlie["keyID"].hex()])
+        with open(os.path.join(tmpdir, "conversations.json"), "w") as f:
+            json.dump([conv_record], f)
+        captured = {}
+
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr("qntm.cli._send_gate_message_to_conv", fake_send)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            key_id=base64url_encode(charlie["keyID"]),
+            required_approvals=0,
+            expires_in=3600,
+        )
+        cmd_gov_propose_remove(args)
+
+        assert captured["payload"]["proposal_type"] == "member_remove"
+        assert captured["payload"]["required_approvals"] == 2
+
+    def test_gov_approve_uses_history_proposal_hash(self, monkeypatch):
+        from qntm.cli import cmd_gov_approve
+        from qntm.governance import create_proposal_body
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, _conv_record = _make_conversation(tmpdir, alice)
+        proposal = create_proposal_body(
+            alice,
+            conv_id=conv_id_hex,
+            proposal_type="floor_change",
+            proposed_floor=3,
+            eligible_signer_kids=[base64url_encode(alice["keyID"])],
+            required_approvals=1,
+            expires_in_seconds=3600,
+        )
+        _write_history(tmpdir, conv_id_hex, [{
+            "msg_id": uuid.uuid4().hex,
+            "direction": "incoming",
+            "body_type": "gov.propose",
+            "unsafe_body": json.dumps(proposal),
+            "created_ts": int(time.time()),
+        }])
+        captured = {}
+
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["body_type"] = body_type
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr("qntm.cli._send_gate_message_to_conv", fake_send)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            proposal_id=proposal["proposal_id"],
+        )
+        cmd_gov_approve(args)
+
+        assert captured["body_type"] == "gov.approve"
+        assert captured["payload"]["proposal_id"] == proposal["proposal_id"]
+        assert captured["payload"]["signature"]
+
+
+class TestRecvParticipantLearning:
+    def test_recv_merges_sender_into_conversation_participants(self, monkeypatch):
+        from qntm.cli import cmd_recv, _load_conversations
+        from qntm.message import create_message, serialize_envelope, default_ttl
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+
+        conv_crypto = {
+            "id": bytes.fromhex(conv_id_hex),
+            "type": "direct",
+            "keys": {
+                "root": bytes.fromhex(conv_record["keys"]["root"]),
+                "aeadKey": bytes.fromhex(conv_record["keys"]["aead_key"]),
+                "nonceKey": bytes.fromhex(conv_record["keys"]["nonce_key"]),
+            },
+            "participants": [bytes.fromhex(kid_hex) for kid_hex in conv_record["participants"]],
+            "createdAt": datetime.now(timezone.utc),
+            "currentEpoch": conv_record["current_epoch"],
+        }
+        envelope = create_message(
+            bob,
+            conv_crypto,
+            "text",
+            b"hello from bob",
+            None,
+            default_ttl(),
+        )
+        envelope_b64 = base64.b64encode(serialize_envelope(envelope)).decode()
+
+        monkeypatch.setattr("qntm.cli._http_poll", lambda *_args, **_kwargs: (
+            [{"seq": 1, "envelope_b64": envelope_b64}],
+            1,
+        ))
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+        )
+        cmd_recv(args)
+
+        updated = _load_conversations(tmpdir)[0]
+        assert bob["keyID"].hex() in updated["participants"]
 
 
 # ---------------------------------------------------------------------------

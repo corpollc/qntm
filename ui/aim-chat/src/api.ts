@@ -90,6 +90,11 @@ export const api = {
     return { message }
   },
 
+  async gateDisapprove(profileId: string, profileName: string, conversationId: string, requestId: string): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.gateDisapproveRequest(profileId, profileName, conversationId, requestId)
+    return { message }
+  },
+
   gateRecipes(): { recipes: GateRecipe[] } {
     const recipes = Object.values((starterCatalog as { recipes: Record<string, GateRecipe> }).recipes || {})
     return { recipes }
@@ -124,6 +129,56 @@ export const api = {
       gatewayPublicKey
     )
     return { output: `Secret provisioned for service ${service}`, message }
+  },
+
+  async govProposeFloorChange(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    proposedFloor: number,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.govProposeFloorChange(profileId, profileName, conversationId, proposedFloor)
+    return { message }
+  },
+
+  async govProposeMemberAdd(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    memberPublicKey: string,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.govProposeMemberAdd(profileId, profileName, conversationId, memberPublicKey)
+    return { message }
+  },
+
+  async govProposeMemberRemove(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    memberKeyId: string,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.govProposeMemberRemove(profileId, profileName, conversationId, memberKeyId)
+    return { message }
+  },
+
+  async govApprove(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    proposalId: string,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.govApproveProposal(profileId, profileName, conversationId, proposalId)
+    return { message }
+  },
+
+  async govDisapprove(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    proposalId: string,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const message = await qntm.govDisapproveProposal(profileId, profileName, conversationId, proposalId)
+    return { message }
   },
 
   getSettings(): { dropboxUrl: string; defaultDropboxUrl: string } {

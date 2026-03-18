@@ -12,6 +12,7 @@ import {
   GateConfigCard,
   GateResultCard,
 } from './GateCards'
+import { GovProposalCard } from './GovernanceCards'
 import { SystemEventCard } from './SystemEvents'
 import { Composer } from './Composer'
 import { WelcomeCard } from './WelcomeCard'
@@ -33,21 +34,31 @@ export interface ChatPaneProps {
   onCheckMessages: () => void
   onGateApprove: (requestId: string, conversationId: string) => void
   onGateDisapprove?: (requestId: string, conversationId: string) => void
+  onGovApprove?: (proposalId: string, conversationId: string) => void
+  onGovDisapprove?: (proposalId: string, conversationId: string) => void
   identityExists: boolean
   conversationCount: number
   onGenerateIdentity: () => void
   onOpenInvites: () => void
 }
 
-function MessageBody({ message, onGateApprove, onGateDisapprove, isWorking, approvalCounts, disapprovalCounts, requiredApprovals, approvedByMe }: {
+function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, onGovDisapprove, isWorking, approvalCounts, disapprovalCounts, requiredApprovals, approvedByMe, govApprovalCounts, govDisapprovalCounts, govRequiredApprovals, govApprovedByMe, govDisapprovedByMe, govApplied }: {
   message: ChatMessage
   onGateApprove: (requestId: string, conversationId: string) => void
   onGateDisapprove?: (requestId: string, conversationId: string) => void
+  onGovApprove?: (proposalId: string, conversationId: string) => void
+  onGovDisapprove?: (proposalId: string, conversationId: string) => void
   isWorking: boolean
   approvalCounts: Record<string, number>
   disapprovalCounts: Record<string, number>
   requiredApprovals: number
   approvedByMe: Set<string>
+  govApprovalCounts: Record<string, number>
+  govDisapprovalCounts: Record<string, number>
+  govRequiredApprovals: Record<string, number>
+  govApprovedByMe: Set<string>
+  govDisapprovedByMe: Set<string>
+  govApplied: Set<string>
 }) {
   if (message.bodyType === 'gate.promote') return <GatePromoteCard message={message} />
   if (message.bodyType === 'gate.config') return <GateConfigCard message={message} />
@@ -68,7 +79,25 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, isWorking, appr
   if (message.bodyType === 'group_genesis' || message.bodyType === 'group_add' || message.bodyType === 'group_remove' || message.bodyType === 'group_rekey') {
     return <SystemEventCard message={message} />
   }
-  if (message.bodyType === 'gov.propose' || message.bodyType === 'gov.approve' || message.bodyType === 'gov.disapprove' || message.bodyType === 'gov.applied') {
+  if (message.bodyType === 'gov.propose') {
+    const parsed = parseGateMessage(message.text) as { proposal_id?: string } | null
+    const proposalId = parsed?.proposal_id || ''
+    return (
+      <GovProposalCard
+        message={message}
+        onApprove={onGovApprove}
+        onDisapprove={onGovDisapprove}
+        isWorking={isWorking}
+        alreadyApproved={govApprovedByMe.has(proposalId)}
+        alreadyDisapproved={govDisapprovedByMe.has(proposalId)}
+        approvalCount={govApprovalCounts[proposalId] || 0}
+        disapprovalCount={govDisapprovalCounts[proposalId] || 0}
+        requiredApprovals={govRequiredApprovals[proposalId] || 0}
+        isApplied={govApplied.has(proposalId)}
+      />
+    )
+  }
+  if (message.bodyType === 'gov.approve' || message.bodyType === 'gov.disapprove' || message.bodyType === 'gov.applied') {
     return <SystemEventCard message={message} />
   }
   return <div className="message-body">{message.text}</div>
@@ -91,6 +120,8 @@ export function ChatPane({
   onCheckMessages,
   onGateApprove,
   onGateDisapprove,
+  onGovApprove,
+  onGovDisapprove,
   identityExists,
   conversationCount,
   onGenerateIdentity,
@@ -104,10 +135,28 @@ export function ChatPane({
   })()
 
   // Count approvals per request_id and track which ones current user approved
-  const { approvalCounts, disapprovalCounts, requiredApprovals, approvedByMe } = useMemo(() => {
+  const {
+    approvalCounts,
+    disapprovalCounts,
+    requiredApprovals,
+    approvedByMe,
+    govApprovalCounts,
+    govDisapprovalCounts,
+    govRequiredApprovals,
+    govApprovedByMe,
+    govDisapprovedByMe,
+    govApplied,
+  } = useMemo(() => {
     const counts: Record<string, number> = {}
     const denyCounts: Record<string, number> = {}
     const myApprovals = new Set<string>()
+    const govVotes: Record<string, Record<string, 'approve' | 'disapprove'>> = {}
+    const govApprovals: Record<string, number> = {}
+    const govDisapprovals: Record<string, number> = {}
+    const govRequired: Record<string, number> = {}
+    const myGovApprovals = new Set<string>()
+    const myGovDisapprovals = new Set<string>()
+    const appliedGov = new Set<string>()
     let threshold = 0
     for (const msg of messages) {
       if (msg.bodyType === 'gate.request') {
@@ -137,9 +186,64 @@ export function ChatPane({
           const body = JSON.parse(msg.text) as GatePromoteBody
           if (body.rules?.[0]?.m) threshold = body.rules[0].m
         } catch { /* ignore */ }
+      } else if (msg.bodyType === 'gov.propose') {
+        try {
+          const parsed = JSON.parse(msg.text) as {
+            proposal_id: string
+            signer_kid: string
+            required_approvals: number
+          }
+          govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
+          govVotes[parsed.proposal_id][parsed.signer_kid] = 'approve'
+          govRequired[parsed.proposal_id] = parsed.required_approvals || 1
+          if (msg.direction === 'outgoing') {
+            myGovApprovals.add(parsed.proposal_id)
+            myGovDisapprovals.delete(parsed.proposal_id)
+          }
+        } catch { /* ignore */ }
+      } else if (msg.bodyType === 'gov.approve') {
+        try {
+          const parsed = JSON.parse(msg.text) as { proposal_id: string; signer_kid: string }
+          govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
+          govVotes[parsed.proposal_id][parsed.signer_kid] = 'approve'
+          if (msg.direction === 'outgoing') {
+            myGovApprovals.add(parsed.proposal_id)
+            myGovDisapprovals.delete(parsed.proposal_id)
+          }
+        } catch { /* ignore */ }
+      } else if (msg.bodyType === 'gov.disapprove') {
+        try {
+          const parsed = JSON.parse(msg.text) as { proposal_id: string; signer_kid: string }
+          govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
+          govVotes[parsed.proposal_id][parsed.signer_kid] = 'disapprove'
+          if (msg.direction === 'outgoing') {
+            myGovApprovals.delete(parsed.proposal_id)
+            myGovDisapprovals.add(parsed.proposal_id)
+          }
+        } catch { /* ignore */ }
+      } else if (msg.bodyType === 'gov.applied') {
+        try {
+          const parsed = JSON.parse(msg.text) as { proposal_id: string }
+          appliedGov.add(parsed.proposal_id)
+        } catch { /* ignore */ }
       }
     }
-    return { approvalCounts: counts, disapprovalCounts: denyCounts, requiredApprovals: threshold, approvedByMe: myApprovals }
+    for (const [proposalId, votes] of Object.entries(govVotes)) {
+      govApprovals[proposalId] = Object.values(votes).filter((vote) => vote === 'approve').length
+      govDisapprovals[proposalId] = Object.values(votes).filter((vote) => vote === 'disapprove').length
+    }
+    return {
+      approvalCounts: counts,
+      disapprovalCounts: denyCounts,
+      requiredApprovals: threshold,
+      approvedByMe: myApprovals,
+      govApprovalCounts: govApprovals,
+      govDisapprovalCounts: govDisapprovals,
+      govRequiredApprovals: govRequired,
+      govApprovedByMe: myGovApprovals,
+      govDisapprovedByMe: myGovDisapprovals,
+      govApplied: appliedGov,
+    }
   }, [messages])
 
   const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
@@ -215,7 +319,7 @@ export function ChatPane({
                       </span>
                     </div>
                   )}
-                  <MessageBody message={message} onGateApprove={onGateApprove} onGateDisapprove={onGateDisapprove} isWorking={isWorking} approvalCounts={approvalCounts} disapprovalCounts={disapprovalCounts} requiredApprovals={requiredApprovals} approvedByMe={approvedByMe} />
+                  <MessageBody message={message} onGateApprove={onGateApprove} onGateDisapprove={onGateDisapprove} onGovApprove={onGovApprove} onGovDisapprove={onGovDisapprove} isWorking={isWorking} approvalCounts={approvalCounts} disapprovalCounts={disapprovalCounts} requiredApprovals={requiredApprovals} approvedByMe={approvedByMe} govApprovalCounts={govApprovalCounts} govDisapprovalCounts={govDisapprovalCounts} govRequiredApprovals={govRequiredApprovals} govApprovedByMe={govApprovedByMe} govDisapprovedByMe={govDisapprovedByMe} govApplied={govApplied} />
                   <div className="message-type">{message.bodyType}</div>
                 </article>
               </div>

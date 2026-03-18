@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { GateRecipe } from '../types'
 import { CollapsiblePanel } from './CollapsiblePanel'
 import { GateWalkthrough, isDismissed } from './GateWalkthrough'
@@ -17,6 +17,7 @@ export interface GatePanelProps {
   gatePromoteThreshold: number
   setGatePromoteThreshold: (value: number) => void
   resolvedGateUrl: string
+  participantKids: string[]
   secretService: string
   setSecretService: (value: string) => void
   secretValue: string
@@ -31,6 +32,9 @@ export interface GatePanelProps {
   onGateRun: () => void
   onGatePromote: () => void
   onGateSecret: () => void
+  onGovProposeFloorChange: (proposedFloor: number) => void
+  onGovProposeMemberAdd: (memberPublicKey: string) => void
+  onGovProposeMemberRemove: (memberKeyId: string) => void
 }
 
 export function GatePanel({
@@ -44,6 +48,7 @@ export function GatePanel({
   gatePromoteThreshold,
   setGatePromoteThreshold,
   resolvedGateUrl,
+  participantKids,
   secretService,
   setSecretService,
   secretValue,
@@ -58,10 +63,27 @@ export function GatePanel({
   onGateRun,
   onGatePromote,
   onGateSecret,
+  onGovProposeFloorChange,
+  onGovProposeMemberAdd,
+  onGovProposeMemberRemove,
 }: GatePanelProps) {
   const [apiRequestExpanded, setApiRequestExpanded] = useState(true)
+  const [governanceExpanded, setGovernanceExpanded] = useState(false)
   const [apiKeysExpanded, setApiKeysExpanded] = useState(false)
   const [walkthroughDone, setWalkthroughDone] = useState(isDismissed)
+  const [governanceFloor, setGovernanceFloor] = useState(gateStatus.threshold || gatePromoteThreshold)
+  const [memberPublicKey, setMemberPublicKey] = useState('')
+  const [memberRemovalKid, setMemberRemovalKid] = useState(participantKids[0] || '')
+
+  useEffect(() => {
+    setGovernanceFloor(gateStatus.threshold || gatePromoteThreshold)
+  }, [gateStatus.threshold, gatePromoteThreshold])
+
+  useEffect(() => {
+    if (!participantKids.includes(memberRemovalKid)) {
+      setMemberRemovalKid(participantKids[0] || '')
+    }
+  }, [participantKids, memberRemovalKid])
 
   // Determine whether all required params are filled
   const requiredParamsFilled = useMemo(() => {
@@ -316,6 +338,76 @@ export function GatePanel({
           onClick={() => void onGateSecret()}
         >
           {isWorking ? <Spinner /> : 'Add API key'}
+        </button>
+      </CollapsiblePanel>
+
+      <CollapsiblePanel
+        title="Governance"
+        expanded={governanceExpanded}
+        onToggle={() => setGovernanceExpanded((v) => !v)}
+        trailing={<Tooltip text="Use governed proposals to change thresholds and membership after promotion." />}
+      >
+        <div className="gate-hint">
+          Current policy is {gateStatus.threshold} approvals across {gateStatus.signerCount} signer{gateStatus.signerCount !== 1 ? 's' : ''}.
+        </div>
+
+        <label className="label" htmlFor="gov-floor">Propose threshold</label>
+        <input
+          id="gov-floor"
+          className="input"
+          type="number"
+          min={1}
+          value={governanceFloor}
+          onChange={(event) => setGovernanceFloor(Number(event.target.value) || 1)}
+        />
+        <button
+          className="button full"
+          type="button"
+          disabled={isWorking || governanceFloor < 1}
+          onClick={() => void onGovProposeFloorChange(governanceFloor)}
+        >
+          {isWorking ? <Spinner /> : 'Propose threshold change'}
+        </button>
+
+        <label className="label" htmlFor="gov-add-public-key">Add member by public key</label>
+        <input
+          id="gov-add-public-key"
+          className="input"
+          placeholder="base64url or hex public key"
+          value={memberPublicKey}
+          onChange={(event) => setMemberPublicKey(event.target.value)}
+        />
+        <button
+          className="button full"
+          type="button"
+          disabled={isWorking || !memberPublicKey.trim()}
+          onClick={() => {
+            void onGovProposeMemberAdd(memberPublicKey.trim())
+            setMemberPublicKey('')
+          }}
+        >
+          {isWorking ? <Spinner /> : 'Propose member add'}
+        </button>
+
+        <label className="label" htmlFor="gov-remove-kid">Remove member</label>
+        <select
+          id="gov-remove-kid"
+          className="input"
+          value={memberRemovalKid}
+          onChange={(event) => setMemberRemovalKid(event.target.value)}
+        >
+          <option value="">Select a member...</option>
+          {participantKids.map((kid) => (
+            <option key={kid} value={kid}>{kid}</option>
+          ))}
+        </select>
+        <button
+          className="button full"
+          type="button"
+          disabled={isWorking || !memberRemovalKid}
+          onClick={() => void onGovProposeMemberRemove(memberRemovalKid)}
+        >
+          {isWorking ? <Spinner /> : 'Propose member removal'}
         </button>
       </CollapsiblePanel>
     </aside>

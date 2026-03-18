@@ -24,6 +24,14 @@ export default {
       return cors(await handlePromote(request, env));
     }
 
+    if (env.ENABLE_DEBUG_ROUTES === '1' && request.method === 'GET' && url.pathname === '/v1/status') {
+      return cors(await handleConversationRoute(env, url, '/status'));
+    }
+
+    if (env.ENABLE_DEBUG_ROUTES === '1' && request.method === 'POST' && url.pathname === '/v1/debug/poll-once') {
+      return cors(await handleConversationRoute(env, url, '/debug/poll-once', { method: 'POST' }));
+    }
+
     return cors(new Response('Not Found', { status: 404 }));
   },
 } satisfies ExportedHandler<Env>;
@@ -73,6 +81,22 @@ async function handlePromote(request: Request, env: Env): Promise<Response> {
   });
 
   return stub.fetch(doReq);
+}
+
+async function handleConversationRoute(
+  env: Env,
+  url: URL,
+  doPath: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const convId = url.searchParams.get('conv_id') || '';
+  if (!/^[0-9a-f]{32}$/i.test(convId)) {
+    return Response.json({ error: 'conv_id must be a 32-character hex string' }, { status: 400 });
+  }
+
+  const doId = env.GATEWAY_CONVO_DO.idFromName(convId);
+  const stub = env.GATEWAY_CONVO_DO.get(doId);
+  return stub.fetch(new Request(`http://do${doPath}`, init));
 }
 
 function corsHeaders(): Record<string, string> {

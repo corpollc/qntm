@@ -11,6 +11,10 @@ const decoder = new Decoder({
   mapsAsObjects: true,
 } as any);
 
+function isNodeBuffer(value: unknown): boolean {
+  return typeof Buffer !== 'undefined' && Buffer.isBuffer(value);
+}
+
 /**
  * Sort object keys for canonical CBOR (RFC 8949 §4.2.1).
  * Keys sorted by encoded byte length first, then lexicographic.
@@ -18,7 +22,7 @@ const decoder = new Decoder({
  */
 function toCanonicalMap(obj: unknown): unknown {
   if (obj === null || obj === undefined) return obj;
-  if (obj instanceof Uint8Array || Buffer.isBuffer(obj)) return obj;
+  if (obj instanceof Uint8Array || isNodeBuffer(obj)) return obj;
   if (Array.isArray(obj)) return obj.map(toCanonicalMap);
   if (typeof obj === 'object') {
     const keys = Object.keys(obj as Record<string, unknown>);

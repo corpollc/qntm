@@ -119,20 +119,30 @@ export default function App() {
     let promoted = false
     let orgId = ''
     let threshold = 0
-    let signerCount = 0
     for (const msg of messages) {
       if (msg.bodyType === 'gate.promote') {
         try {
           const body = JSON.parse(msg.text)
           promoted = true
           orgId = body.conv_id || ''
-          signerCount = 0 // signers derived from conversation membership
           if (body.rules?.[0]?.m) threshold = body.rules[0].m
+        } catch { /* ignore */ }
+      } else if (msg.bodyType === 'gov.applied') {
+        try {
+          const body = JSON.parse(msg.text)
+          if (body.proposal_type === 'floor_change' && typeof body.applied_floor === 'number') {
+            threshold = body.applied_floor
+          }
         } catch { /* ignore */ }
       }
     }
-    return { promoted, orgId, threshold, signerCount }
-  }, [messages])
+    return {
+      promoted,
+      orgId,
+      threshold,
+      signerCount: selectedConversation?.participants.length || 0,
+    }
+  }, [messages, selectedConversation])
 
   const selectConversation = useCallback((convId: string) => {
     setSelectedConversationId(convId)
@@ -409,8 +419,12 @@ export default function App() {
   async function refreshHistory(profileId: string, conversationId: string, initial = false) {
     if (initial) setIsLoadingMessages(true)
     try {
-      const response = await api.getHistory(profileId, conversationId)
-      setMessages(response.messages)
+      const [historyResponse, conversationsResponse] = await Promise.all([
+        api.getHistory(profileId, conversationId),
+        api.listConversations(profileId),
+      ])
+      setMessages(historyResponse.messages)
+      setConversations(conversationsResponse.conversations)
       setError('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load message history'
@@ -760,6 +774,141 @@ export default function App() {
     }
   }, [activeProfileId])
 
+  const onGateDisapprove = useCallback(async (requestId: string, conversationId: string) => {
+    if (!activeProfileId) return
+
+    setIsWorking(true)
+    try {
+      await api.gateDisapprove(activeProfileId, activeProfile?.name || '', conversationId, requestId)
+      setStatus(`Request denied: ${requestId.slice(0, 8)}...`)
+      addToast(`Request denied: ${requestId.slice(0, 8)}...`, 'success')
+      setError('')
+      await refreshHistory(activeProfileId, conversationId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to deny request'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }, [activeProfileId])
+
+  const onGovApprove = useCallback(async (proposalId: string, conversationId: string) => {
+    if (!activeProfileId) return
+
+    setIsWorking(true)
+    try {
+      await api.govApprove(activeProfileId, activeProfile?.name || '', conversationId, proposalId)
+      setStatus(`Governance proposal approved: ${proposalId.slice(0, 8)}...`)
+      addToast(`Governance proposal approved: ${proposalId.slice(0, 8)}...`, 'success')
+      setError('')
+      await refreshHistory(activeProfileId, conversationId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to approve governance proposal'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }, [activeProfileId])
+
+  const onGovDisapprove = useCallback(async (proposalId: string, conversationId: string) => {
+    if (!activeProfileId) return
+
+    setIsWorking(true)
+    try {
+      await api.govDisapprove(activeProfileId, activeProfile?.name || '', conversationId, proposalId)
+      setStatus(`Governance proposal rejected: ${proposalId.slice(0, 8)}...`)
+      addToast(`Governance proposal rejected: ${proposalId.slice(0, 8)}...`, 'success')
+      setError('')
+      await refreshHistory(activeProfileId, conversationId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to reject governance proposal'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }, [activeProfileId])
+
+  async function onGovProposeFloorChange(proposedFloor: number) {
+    if (!activeProfileId || !selectedConversationId) {
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.govProposeFloorChange(
+        activeProfileId,
+        activeProfile?.name || '',
+        selectedConversationId,
+        proposedFloor,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus(`Proposed threshold change to ${proposedFloor}`)
+      addToast(`Proposed threshold change to ${proposedFloor}`, 'success')
+      setError('')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to propose threshold change'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
+  async function onGovProposeMemberAdd(memberPublicKey: string) {
+    if (!activeProfileId || !selectedConversationId) {
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.govProposeMemberAdd(
+        activeProfileId,
+        activeProfile?.name || '',
+        selectedConversationId,
+        memberPublicKey,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus('Proposed member addition')
+      addToast('Proposed member addition', 'success')
+      setError('')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to propose member addition'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
+  async function onGovProposeMemberRemove(memberKeyId: string) {
+    if (!activeProfileId || !selectedConversationId) {
+      return
+    }
+
+    setIsWorking(true)
+    try {
+      const response = await api.govProposeMemberRemove(
+        activeProfileId,
+        activeProfile?.name || '',
+        selectedConversationId,
+        memberKeyId,
+      )
+      setMessages((previous) => [...previous, response.message])
+      setStatus(`Proposed removing ${shortId(memberKeyId)}`)
+      addToast(`Proposed removing ${shortId(memberKeyId)}`, 'success')
+      setError('')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to propose member removal'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
   async function onSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
@@ -890,6 +1039,9 @@ export default function App() {
             onSendMessage={onSendMessage}
             onCheckMessages={() => void receiveMessages(true)}
             onGateApprove={onGateApprove}
+            onGateDisapprove={onGateDisapprove}
+            onGovApprove={onGovApprove}
+            onGovDisapprove={onGovDisapprove}
             identityExists={identity.exists}
             conversationCount={conversations.length}
             onGenerateIdentity={onGenerateIdentity}
@@ -909,6 +1061,7 @@ export default function App() {
               gatePromoteThreshold={gatePromoteThreshold}
               setGatePromoteThreshold={setGatePromoteThreshold}
               resolvedGateUrl={resolvedGateUrl}
+              participantKids={selectedConversation.participants}
               secretService={secretService}
               setSecretService={setSecretService}
               secretValue={secretValue}
@@ -923,6 +1076,9 @@ export default function App() {
               onGateRun={onGateRun}
               onGatePromote={onGatePromote}
               onGateSecret={onGateSecret}
+              onGovProposeFloorChange={onGovProposeFloorChange}
+              onGovProposeMemberAdd={onGovProposeMemberAdd}
+              onGovProposeMemberRemove={onGovProposeMemberRemove}
             />
           )}
           </>

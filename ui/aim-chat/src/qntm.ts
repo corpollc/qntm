@@ -23,6 +23,9 @@ import {
   signRequest,
   signApproval,
   hashRequest,
+  createProposalBody,
+  signGovApproval,
+  hashProposal,
   computePayloadHash,
   resolveRecipe,
   sealSecret,
@@ -200,6 +203,20 @@ function decodeGatewayPublicKey(value: string): Uint8Array {
   return decoded
 }
 
+function decodeIdentityPublicKey(value: string): Uint8Array {
+  const trimmed = value.trim()
+  const decoded = /^[0-9a-fA-F]{64}$/.test(trimmed) ? hexToBytes(trimmed) : base64UrlDecode(trimmed)
+  if (decoded.length !== 32) throw new Error(`public key must decode to 32 bytes (got ${decoded.length})`)
+  return decoded
+}
+
+function decodeIdentityKeyID(value: string): Uint8Array {
+  const trimmed = value.trim()
+  const decoded = /^[0-9a-fA-F]{32}$/.test(trimmed) ? hexToBytes(trimmed) : base64UrlDecode(trimmed)
+  if (decoded.length !== 16) throw new Error(`key ID must decode to 16 bytes (got ${decoded.length})`)
+  return decoded
+}
+
 function uint8ToBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i++) {
@@ -329,6 +346,31 @@ function mergeConversationParticipants(
   })
 }
 
+const NON_MEMBER_SYSTEM_BODY_TYPES = new Set([
+  'gate.executed',
+  'gate.result',
+  'gate.expired',
+  'gate.invalidated',
+  'gate.config',
+  'gov.applied',
+  'gov.invalidated',
+  'group_add',
+  'group_remove',
+  'group_rekey',
+])
+
+function shouldTrackSenderAsParticipant(
+  conv: store.StoredConversation | null,
+  bodyType: string,
+  senderKidHex: string,
+): boolean {
+  const normalizedKid = senderKidHex.toLowerCase()
+  if ((conv?.participants || []).some((participant) => participant.toLowerCase() === normalizedKid)) {
+    return true
+  }
+  return !NON_MEMBER_SYSTEM_BODY_TYPES.has(bodyType)
+}
+
 function listKnownParticipantPublicKeys(
   conv: store.StoredConversation | null,
   identity?: IdentityKeys | null,
@@ -338,6 +380,53 @@ function listKnownParticipantPublicKeys(
     identity ? bytesToHex(identity.publicKey) : '',
   ])
   return allHex.map((publicKeyHex) => hexToBytes(publicKeyHex))
+}
+
+function listEligibleSignerKids(
+  conv: store.StoredConversation | null,
+  identity?: IdentityKeys | null,
+): string[] {
+  if (conv?.participants?.length) {
+    return dedupeHex(conv.participants).map((kidHex) => base64UrlEncode(hexToBytes(kidHex)))
+  }
+  return dedupeHex(listKnownParticipantPublicKeys(conv, identity).map((publicKey) =>
+    bytesToHex(keyIDFromPublicKey(publicKey)),
+  )).map((kidHex) => base64UrlEncode(hexToBytes(kidHex)))
+}
+
+function defaultGovernanceApprovals(
+  conv: store.StoredConversation | null,
+  identity?: IdentityKeys | null,
+  options?: {
+    proposalType?: 'floor_change' | 'rules_change' | 'member_add' | 'member_remove'
+    removedMemberCount?: number
+  },
+): number {
+  const eligibleCount = Math.max(1, listEligibleSignerKids(conv, identity).length)
+  if (options?.proposalType === 'member_remove') {
+    return Math.max(1, eligibleCount - (options.removedMemberCount || 0))
+  }
+  return eligibleCount
+}
+
+function findGovernanceProposalInHistory(
+  profileId: string,
+  conversationId: string,
+  proposalId: string,
+): Record<string, unknown> {
+  const history = store.getHistory(profileId, conversationId)
+  for (const message of history) {
+    if (message.bodyType !== 'gov.propose') continue
+    try {
+      const parsed = JSON.parse(message.text) as Record<string, unknown>
+      if (parsed.proposal_id === proposalId) {
+        return parsed
+      }
+    } catch {
+      continue
+    }
+  }
+  throw new Error(`Governance proposal ${proposalId} not found in conversation history`)
 }
 
 export function createInviteForProfile(
@@ -475,7 +564,7 @@ export async function receiveMessages(
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
 
-  const convCrypto = getConvCrypto(profileId, conversationId)
+  let convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) return { messages: [] }
 
   const dropbox = getDropbox()
@@ -501,8 +590,6 @@ export async function receiveMessages(
       continue
     }
 
-    mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
-
     const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
     const bodyType = decrypted.inner.body_type || 'text'
     const rawBodyBytes = new Uint8Array(decrypted.inner.body)
@@ -511,6 +598,17 @@ export async function receiveMessages(
 
     // Apply group membership/epoch state changes
     applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
+    if (bodyType === 'group_rekey') {
+      convCrypto = getConvCrypto(profileId, conversationId)
+      if (!convCrypto) {
+        continue
+      }
+    }
+
+    const conv = store.findConversation(profileId, conversationId)
+    if (shouldTrackSenderAsParticipant(conv, bodyType, senderKidHex)) {
+      mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
+    }
 
     const message: store.StoredMessage = {
       id: bytesToHex(envelope.msg_id),
@@ -790,6 +888,175 @@ export async function gateSecretRequest(
 
   const bodyText = JSON.stringify(secretPayload)
   return sendMessageToConversation(profileId, profileName, conversationId, bodyText, 'gate.secret')
+}
+
+// ---- Governance operations ----
+
+export async function govProposeFloorChange(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  proposedFloor: number,
+  requiredApprovals?: number,
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+  if (proposedFloor < 1) throw new Error('Proposed floor must be at least 1')
+
+  const conv = store.findConversation(profileId, conversationId)
+  const eligibleSignerKids = listEligibleSignerKids(conv, identity)
+  const proposal = createProposalBody(identity, {
+    convId: conversationId,
+    proposalType: 'floor_change',
+    proposedFloor,
+    eligibleSignerKids,
+    requiredApprovals: requiredApprovals ?? defaultGovernanceApprovals(conv, identity, { proposalType: 'floor_change' }),
+    expiresInSeconds: 3600,
+  })
+
+  return sendMessageToConversation(
+    profileId,
+    profileName,
+    conversationId,
+    JSON.stringify(proposal),
+    'gov.propose',
+  )
+}
+
+export async function govProposeMemberAdd(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  memberPublicKey: string,
+  requiredApprovals?: number,
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+
+  const conv = store.findConversation(profileId, conversationId)
+  const publicKey = decodeIdentityPublicKey(memberPublicKey)
+  const eligibleSignerKids = listEligibleSignerKids(conv, identity)
+  const proposal = createProposalBody(identity, {
+    convId: conversationId,
+    proposalType: 'member_add',
+    proposedMembers: [{
+      kid: base64UrlEncode(keyIDFromPublicKey(publicKey)),
+      publicKey: base64UrlEncode(publicKey),
+    }],
+    eligibleSignerKids,
+    requiredApprovals: requiredApprovals ?? defaultGovernanceApprovals(conv, identity, { proposalType: 'member_add' }),
+    expiresInSeconds: 3600,
+  })
+
+  return sendMessageToConversation(
+    profileId,
+    profileName,
+    conversationId,
+    JSON.stringify(proposal),
+    'gov.propose',
+  )
+}
+
+export async function govProposeMemberRemove(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  memberKeyId: string,
+  requiredApprovals?: number,
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+
+  const conv = store.findConversation(profileId, conversationId)
+  const eligibleSignerKids = listEligibleSignerKids(conv, identity)
+  const proposal = createProposalBody(identity, {
+    convId: conversationId,
+    proposalType: 'member_remove',
+    removedMemberKids: [base64UrlEncode(decodeIdentityKeyID(memberKeyId))],
+    eligibleSignerKids,
+    requiredApprovals: requiredApprovals ?? defaultGovernanceApprovals(conv, identity, {
+      proposalType: 'member_remove',
+      removedMemberCount: 1,
+    }),
+    expiresInSeconds: 3600,
+  })
+
+  return sendMessageToConversation(
+    profileId,
+    profileName,
+    conversationId,
+    JSON.stringify(proposal),
+    'gov.propose',
+  )
+}
+
+export async function govApproveProposal(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  proposalId: string,
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+
+  const proposal = findGovernanceProposalInHistory(profileId, conversationId, proposalId)
+  const proposalHash = hashProposal({
+    conv_id: proposal.conv_id as string,
+    proposal_id: proposal.proposal_id as string,
+    proposal_type: proposal.proposal_type as 'floor_change' | 'rules_change' | 'member_add' | 'member_remove',
+    proposed_floor: proposal.proposed_floor as number | undefined,
+    proposed_rules: proposal.proposed_rules as Array<{ service: string; endpoint: string; verb: string; m: number }> | undefined,
+    proposed_members: proposal.proposed_members as Array<{ kid: string; public_key: string }> | undefined,
+    removed_member_kids: proposal.removed_member_kids as string[] | undefined,
+    eligible_signer_kids: proposal.eligible_signer_kids as string[],
+    required_approvals: proposal.required_approvals as number,
+    expires_at_unix: Math.floor(new Date(proposal.expires_at as string).getTime() / 1000),
+  })
+
+  const approval = {
+    type: 'gov.approve',
+    conv_id: proposal.conv_id,
+    proposal_id: proposal.proposal_id,
+    signer_kid: base64UrlEncode(identity.keyID),
+    signature: base64UrlEncode(signGovApproval(identity.privateKey, {
+      conv_id: proposal.conv_id as string,
+      proposal_id: proposal.proposal_id as string,
+      proposal_hash: proposalHash,
+    })),
+  }
+
+  return sendMessageToConversation(
+    profileId,
+    profileName,
+    conversationId,
+    JSON.stringify(approval),
+    'gov.approve',
+  )
+}
+
+export async function govDisapproveProposal(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  proposalId: string,
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+
+  const disapproval = {
+    type: 'gov.disapprove',
+    conv_id: conversationId,
+    proposal_id: proposalId,
+    signer_kid: base64UrlEncode(identity.keyID),
+  }
+
+  return sendMessageToConversation(
+    profileId,
+    profileName,
+    conversationId,
+    JSON.stringify(disapproval),
+    'gov.disapprove',
+  )
 }
 
 // ---- Backup / Restore ----

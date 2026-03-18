@@ -4,6 +4,7 @@ import {
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
   verifyProposal, hashProposal, verifyGovApproval,
+  createGroupAddBody, createGroupRemoveBody, createGroupRekeyBody, QSP1Suite,
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
@@ -16,6 +17,36 @@ import type {
 import { scanRequestApprovals, findExecutableRequests } from './scan.js';
 import { processSecret, importVaultKey, isExpired } from './vault.js';
 import { executeRequest } from './execute.js';
+
+const groupSuite = new QSP1Suite();
+
+function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
+  return {
+    conv_id: msg.conv_id,
+    proposal_id: msg.proposal_id,
+    proposal_type: msg.proposal_type,
+    proposed_floor: msg.proposed_floor,
+    proposed_rules: msg.proposed_rules,
+    proposed_members: msg.proposed_members,
+    removed_member_kids: msg.removed_member_kids,
+    eligible_signer_kids: msg.eligible_signer_kids,
+    required_approvals: msg.required_approvals,
+    expires_at_unix: Math.floor(new Date(msg.expires_at).getTime() / 1000),
+  };
+}
+
+const GATEWAY_BODY_TYPES = new Set([
+  'gate.promote',
+  'gate.request',
+  'gate.approval',
+  'gate.disapproval',
+  'gate.secret',
+  'gate.config',
+  'gate.executed',
+  'gov.propose',
+  'gov.approve',
+  'gov.disapprove',
+]);
 
 /**
  * GatewayConversationDO — one Durable Object instance per gateway-managed conversation.
@@ -83,6 +114,11 @@ export class GatewayConversationDO implements DurableObject {
 
     if (request.method === 'POST' && url.pathname === '/promote') {
       return this.handlePromote(request);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/debug/poll-once') {
+      await this.alarm();
+      return this.handleStatus();
     }
 
     if (request.method === 'GET' && url.pathname === '/status') {
@@ -168,45 +204,55 @@ export class GatewayConversationDO implements DurableObject {
    */
   async alarm(): Promise<void> {
     await this.recover();
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
-    if (!convState) return;
+    const initialState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!initialState) return;
 
     try {
-      convState.polling = true;
-      await this.state.storage.put('conv_state', convState);
+      initialState.polling = true;
+      await this.state.storage.put('conv_state', initialState);
 
       const dropbox = new DropboxClient(this.env.DROPBOX_URL);
-      const convIdBytes = hexToBytes(convState.conv_id);
-      const result = await dropbox.receiveMessages(convIdBytes, convState.poll_cursor, 100);
+      const convIdBytes = hexToBytes(initialState.conv_id);
+      const result = await dropbox.receiveMessages(convIdBytes, initialState.poll_cursor, 100);
 
       if (result.messages.length > 0) {
-        const conv = this.buildConversation(convState, convIdBytes);
+        const conv = this.buildConversation(initialState, convIdBytes);
 
         for (const envelopeBytes of result.messages) {
           try {
             const envelope = deserializeEnvelope(envelopeBytes);
             const msg = decryptMessage(envelope, conv);
             await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
-          } catch {
+          } catch (error) {
+            console.error('GatewayConversationDO alarm failed to process envelope', error);
             continue;
           }
         }
 
-        convState.poll_cursor = result.sequence;
-        await this.state.storage.put('conv_state', convState);
+        const latestState = await this.state.storage.get<ConversationState>('conv_state');
+        if (!latestState) return;
+        latestState.poll_cursor = result.sequence;
+        await this.state.storage.put('conv_state', latestState);
 
         // After processing new messages, check for executable requests
-        if (convState.gate_promoted) {
-          await this.checkAndExecute(convState);
+        if (latestState.gate_promoted) {
+          await this.checkAndExecute(latestState);
         }
       }
+
+      const currentState = await this.state.storage.get<ConversationState>('conv_state');
+      if (!currentState) return;
+
       // Sweep expired secrets every poll cycle
-      if (convState.gate_promoted) {
-        await this.sweepExpiredSecrets(convState);
+      if (currentState.gate_promoted) {
+        await this.sweepExpiredSecrets(currentState);
       }
     } finally {
-      convState.polling = false;
-      await this.state.storage.put('conv_state', convState);
+      const currentState = await this.state.storage.get<ConversationState>('conv_state');
+      if (currentState) {
+        currentState.polling = false;
+        await this.state.storage.put('conv_state', currentState);
+      }
       await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
     }
   }
@@ -217,6 +263,10 @@ export class GatewayConversationDO implements DurableObject {
   private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
     const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
+
+    if (!GATEWAY_BODY_TYPES.has(bodyType)) {
+      return;
+    }
 
     // Reject gate actions before promotion (only gate.promote allowed pre-promotion)
     if (bodyType !== 'gate.promote') {
@@ -635,31 +685,30 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     // Verify the proposal signature
-    const signable: GovProposalSignable = {
-      conv_id: msg.conv_id,
-      proposal_id: msg.proposal_id,
-      proposal_type: msg.proposal_type,
-      proposed_floor: msg.proposed_floor,
-      proposed_rules: msg.proposed_rules,
-      eligible_signer_kids: msg.eligible_signer_kids,
-      required_approvals: msg.required_approvals,
-      expires_at_unix: Math.floor(new Date(msg.expires_at).getTime() / 1000),
-    };
+    const signable = buildGovProposalSignable(msg);
     const signature = base64UrlDecode(msg.signature);
     if (!verifyProposal(senderPublicKey, signable, signature)) {
       throw new Error('gov.propose rejected: invalid proposal signature');
     }
 
-    // Validate required_approvals >= promotion floor
-    if (msg.required_approvals < convState.promotion_floor) {
-      throw new Error(`gov.propose rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
+    if (msg.required_approvals < 1) {
+      throw new Error('gov.propose rejected: required_approvals must be at least 1');
+    }
+    if (msg.required_approvals > msg.eligible_signer_kids.length) {
+      throw new Error('gov.propose rejected: required_approvals exceeds eligible_signer_kids roster size');
     }
 
     // Validate eligible signers match current participants
     const currentParticipantKids = new Set(Object.keys(convState.participants));
-    for (const kid of msg.eligible_signer_kids) {
+    const requestedSignerKids = new Set(msg.eligible_signer_kids);
+    for (const kid of requestedSignerKids) {
       if (!currentParticipantKids.has(kid)) {
         throw new Error(`gov.propose rejected: eligible signer ${kid} is not a current participant`);
+      }
+    }
+    for (const kid of currentParticipantKids) {
+      if (!requestedSignerKids.has(kid)) {
+        throw new Error(`gov.propose rejected: current participant ${kid} missing from eligible_signer_kids`);
       }
     }
 
@@ -693,19 +742,13 @@ export class GatewayConversationDO implements DurableObject {
     if (!proposalStored?.body) {
       throw new Error('gov.approve rejected: referenced proposal not found');
     }
+    if (proposals.some(p => p.type === 'gov.invalidated' && p.proposal_id === msg.proposal_id)) {
+      throw new Error('gov.approve rejected: referenced proposal has been invalidated');
+    }
     const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
 
     // Verify the approval signature against the proposal hash
-    const proposalSignable: GovProposalSignable = {
-      conv_id: proposalMsg.conv_id,
-      proposal_id: proposalMsg.proposal_id,
-      proposal_type: proposalMsg.proposal_type,
-      proposed_floor: proposalMsg.proposed_floor,
-      proposed_rules: proposalMsg.proposed_rules,
-      eligible_signer_kids: proposalMsg.eligible_signer_kids,
-      required_approvals: proposalMsg.required_approvals,
-      expires_at_unix: Math.floor(new Date(proposalMsg.expires_at).getTime() / 1000),
-    };
+    const proposalSignable = buildGovProposalSignable(proposalMsg);
     const proposalHash = hashProposal(proposalSignable);
     const approvalSignable = {
       conv_id: msg.conv_id,
@@ -770,23 +813,35 @@ export class GatewayConversationDO implements DurableObject {
 
     // Check expiry
     if (new Date(proposalMsg.expires_at) < new Date()) return;
+    if (proposals.some(p => p.type === 'gov.invalidated' && p.proposal_id === proposalId)) return;
 
-    // Count unique approvals (proposer counts as first approval)
-    const approverKids = new Set<string>();
-    if (proposalStored.signer_kid) approverKids.add(proposalStored.signer_kid);
+    // Count effective approvals with last-vote-wins semantics.
+    const votes: Record<string, 'approve' | 'disapprove'> = {};
+    if (proposalStored.signer_kid) {
+      votes[proposalStored.signer_kid] = 'approve';
+    }
     for (const p of proposals) {
-      if (p.type === 'gov.approve' && p.proposal_id === proposalId && p.signer_kid) {
-        approverKids.add(p.signer_kid);
+      if (p.proposal_id !== proposalId || !p.signer_kid) continue;
+      if (p.type === 'gov.approve') {
+        votes[p.signer_kid] = 'approve';
+      } else if (p.type === 'gov.disapprove') {
+        votes[p.signer_kid] = 'disapprove';
       }
     }
+    const approvalCount = Object.values(votes).filter(v => v === 'approve').length;
 
     // Check if already applied
     const alreadyApplied = proposals.some(p => p.type === 'gov.applied' && p.proposal_id === proposalId);
     if (alreadyApplied) return;
 
-    if (approverKids.size < proposalMsg.required_approvals) return;
+    if (approvalCount < proposalMsg.required_approvals) return;
 
     // Apply the proposal
+    const preApplyState: ConversationState = {
+      ...convState,
+      participants: { ...convState.participants },
+      rules: convState.rules.map(rule => ({ ...rule })),
+    };
     if (proposalMsg.proposal_type === 'floor_change' && proposalMsg.proposed_floor !== undefined) {
       convState.promotion_floor = proposalMsg.proposed_floor;
     } else if (proposalMsg.proposal_type === 'rules_change' && proposalMsg.proposed_rules) {
@@ -801,6 +856,10 @@ export class GatewayConversationDO implements DurableObject {
       for (const kid of proposalMsg.removed_member_kids) {
         delete convState.participants[kid];
       }
+    }
+
+    if (proposalMsg.proposal_type === 'member_add' || proposalMsg.proposal_type === 'member_remove') {
+      await this.emitGovernedMembershipEvents(preApplyState, convState, proposalMsg);
     }
     await this.state.storage.put('conv_state', convState);
 
@@ -837,9 +896,8 @@ export class GatewayConversationDO implements DurableObject {
       // Best effort
     }
 
-    // Invalidate pending gate.requests whose approval context no longer matches
-    // (e.g. if floor was raised above their required_approvals)
-    // This is done by storing invalidation markers, not by deleting messages.
+    await this.invalidatePendingRequests(convState);
+    await this.invalidatePendingProposals(proposalId);
   }
 
   // ---- Governance storage helpers ----
@@ -856,6 +914,107 @@ export class GatewayConversationDO implements DurableObject {
       proposals.push(value);
     }
     return proposals;
+  }
+
+  private async emitGovernedMembershipEvents(
+    previousState: ConversationState,
+    nextState: ConversationState,
+    proposalMsg: GovProposeMessage,
+  ): Promise<void> {
+    const convIdBytes = hexToBytes(previousState.conv_id);
+    const convBefore = this.buildConversation(previousState, convIdBytes);
+    const identity = this.buildIdentity(previousState);
+    const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+
+    if (proposalMsg.proposal_type === 'member_add' && proposalMsg.proposed_members?.length) {
+      const addBody = createGroupAddBody(
+        identity,
+        proposalMsg.proposed_members.map(m => base64UrlDecode(m.public_key)),
+      );
+      await this.postConversationBody(dropbox, convIdBytes, identity, convBefore, 'group_add', addBody);
+    } else if (proposalMsg.proposal_type === 'member_remove' && proposalMsg.removed_member_kids?.length) {
+      const removeBody = createGroupRemoveBody(
+        proposalMsg.removed_member_kids.map(kid => base64UrlDecode(kid)),
+        'Governance proposal applied',
+      );
+      await this.postConversationBody(dropbox, convIdBytes, identity, convBefore, 'group_remove', removeBody);
+    }
+
+    const members = Object.entries(nextState.participants).map(([kid, publicKey]) => ({
+      kid: base64UrlDecode(kid),
+      publicKey: base64UrlDecode(publicKey),
+    }));
+    const newGroupKey = groupSuite.generateGroupKey();
+    const newEpoch = previousState.conv_epoch + 1;
+    const rekeyBody = createGroupRekeyBody(newGroupKey, newEpoch, members, convIdBytes);
+    await this.postConversationBody(dropbox, convIdBytes, identity, convBefore, 'group_rekey', rekeyBody);
+
+    const { aeadKey, nonceKey } = groupSuite.deriveEpochKeys(newGroupKey, convIdBytes, newEpoch);
+    nextState.conv_epoch = newEpoch;
+    nextState.conv_aead_key = base64UrlEncode(aeadKey);
+    nextState.conv_nonce_key = base64UrlEncode(nonceKey);
+  }
+
+  private async invalidatePendingRequests(convState: ConversationState): Promise<void> {
+    const messages = await this.loadGateMessages();
+    const seenInvalidations = new Set(
+      messages.filter(msg => msg.type === 'gate.invalidated' && msg.request_id).map(msg => msg.request_id as string),
+    );
+    const requestIds = [...new Set(messages.filter(msg => msg.type === 'gate.request' && msg.request_id).map(msg => msg.request_id as string))];
+
+    for (const requestId of requestIds) {
+      if (seenInvalidations.has(requestId)) continue;
+      const scan = scanRequestApprovals(messages, requestId, convState.kid, convState.rules);
+      if (!scan) continue;
+      if (scan.status === 'pending' || scan.status === 'approved') {
+        const invalidated = {
+          seq: ++this.messageSeq,
+          type: 'gate.invalidated',
+          request_id: requestId,
+          signer_kid: convState.kid,
+        } satisfies StoredGateMessage;
+        await this.storeGateMessage(invalidated);
+        messages.push(invalidated);
+      }
+    }
+  }
+
+  private async invalidatePendingProposals(appliedProposalId: string): Promise<void> {
+    const proposals = await this.loadGovProposals();
+    const invalidated = new Set(
+      proposals.filter(p => p.type === 'gov.invalidated').map(p => p.proposal_id),
+    );
+    const applied = new Set(
+      proposals.filter(p => p.type === 'gov.applied').map(p => p.proposal_id),
+    );
+
+    for (const proposal of proposals) {
+      if (proposal.type !== 'gov.propose') continue;
+      if (proposal.proposal_id === appliedProposalId) continue;
+      if (invalidated.has(proposal.proposal_id) || applied.has(proposal.proposal_id)) continue;
+      await this.storeGovProposal({
+        seq: ++this.messageSeq,
+        type: 'gov.invalidated',
+        proposal_id: proposal.proposal_id,
+        signer_kid: undefined,
+      });
+    }
+  }
+
+  private async postConversationBody(
+    dropbox: DropboxClient,
+    convIdBytes: Uint8Array,
+    identity: Identity,
+    conv: Conversation,
+    bodyType: string,
+    bodyBytes: Uint8Array,
+  ): Promise<void> {
+    const env = createMessage(identity, conv, bodyType, bodyBytes, undefined, defaultTTL());
+    try {
+      await dropbox.postMessage(convIdBytes, serializeEnvelope(env));
+    } catch {
+      // Best effort
+    }
   }
 
   // ---- Storage helpers ----

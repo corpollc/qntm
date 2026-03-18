@@ -5,6 +5,7 @@ export interface Env {
   GATE_VAULT_KEY: string; // Secret binding: AES-256 key for vault encryption at rest
   DROPBOX_URL: string;
   POLL_INTERVAL_MS: string;
+  ENABLE_DEBUG_ROUTES?: string;
 }
 
 /** Request body for POST /v1/promote */

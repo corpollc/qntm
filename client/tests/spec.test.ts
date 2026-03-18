@@ -412,6 +412,27 @@ describe('CBOR Encoding', () => {
     expect(new Uint8Array(decoded.data)).toEqual(bytes);
   });
 
+  it('does not require a global Buffer', () => {
+    const globalWithOptionalBuffer = globalThis as typeof globalThis & { Buffer?: typeof Buffer };
+    const original = globalWithOptionalBuffer.Buffer;
+    try {
+      Object.defineProperty(globalWithOptionalBuffer, 'Buffer', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const encoded = marshalCanonical({ hello: 'worker' });
+      const decoded = unmarshalCanonical<{ hello: string }>(encoded);
+      expect(decoded.hello).toBe('worker');
+    } finally {
+      Object.defineProperty(globalWithOptionalBuffer, 'Buffer', {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
   it('canonical encoding sorts keys deterministically', () => {
     const obj1 = { z: 1, a: 2, m: 3 };
     const obj2 = { a: 2, m: 3, z: 1 };

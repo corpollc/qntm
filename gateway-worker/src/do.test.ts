@@ -13,11 +13,14 @@
  * processGateMessage() directly via type cast.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  generateIdentity, keyIDFromPublicKey, base64UrlEncode,
+  generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   signRequest, signApproval, hashRequest, computePayloadHash,
+  createProposalBody, signGovApproval, hashProposal,
+  deserializeEnvelope, decryptMessage, createMessage, serializeEnvelope, defaultTTL,
 } from '@corpollc/qntm';
+import { DropboxClient } from '@corpollc/qntm';
 import { GatewayConversationDO } from './do.js';
 import type { ConversationState, StoredGateMessage } from './types.js';
 
@@ -80,6 +83,10 @@ const bobKid = base64UrlEncode(keyIDFromPublicKey(bob.publicKey));
 
 const mallory = generateIdentity();
 const malloryKid = base64UrlEncode(keyIDFromPublicKey(mallory.publicKey));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // ---- Helpers ----
 
@@ -185,6 +192,61 @@ function buildSignedApproval(
   };
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+function stubDropboxFetch() {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ seq: 1 }),
+    text: async () => '',
+  })) as unknown as typeof fetch;
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock as unknown as ReturnType<typeof vi.fn>;
+}
+
+function convFromState(state: ConversationState) {
+  return {
+    id: hexToBytes(state.conv_id),
+    type: 'group' as const,
+    keys: {
+      root: new Uint8Array(32),
+      aeadKey: base64UrlDecode(state.conv_aead_key),
+      nonceKey: base64UrlDecode(state.conv_nonce_key),
+    },
+    participants: Object.keys(state.participants).map(kid => base64UrlDecode(kid)),
+    createdAt: new Date(state.promoted_at),
+    currentEpoch: state.conv_epoch,
+  };
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function decodePostedBody(fetchMock: ReturnType<typeof vi.fn>, callIndex: number, state: ConversationState) {
+  const [, init] = fetchMock.mock.calls[callIndex];
+  const req = JSON.parse(init!.body as string) as { envelope_b64: string };
+  const envelopeBytes = base64ToBytes(req.envelope_b64);
+  const envelope = deserializeEnvelope(envelopeBytes);
+  const message = decryptMessage(envelope, convFromState(state));
+  return {
+    bodyType: message.inner.body_type,
+    body: new Uint8Array(message.inner.body),
+  };
+}
+
 // =====================================================================
 // Tests
 // =====================================================================
@@ -268,6 +330,231 @@ describe('qntm-iv57: gate.executed authentication', () => {
     // Verify nothing was stored
     const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
     expect(messages.size).toBe(0);
+  });
+});
+
+describe('governance member-change flow', () => {
+  it('accepts and applies a signed member_add proposal end to end', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    const initialState = structuredClone(state);
+    await storage.put('conv_state', state);
+    const fetchMock = stubDropboxFetch();
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: malloryKid, publicKey: base64UrlEncode(mallory.publicKey) }],
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).resolves.toBeUndefined();
+
+    const proposalHash = hashProposal({
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_type: proposal.proposal_type,
+      proposed_floor: proposal.proposed_floor,
+      proposed_rules: proposal.proposed_rules,
+      proposed_members: proposal.proposed_members,
+      removed_member_kids: proposal.removed_member_kids,
+      eligible_signer_kids: proposal.eligible_signer_kids,
+      required_approvals: proposal.required_approvals,
+      expires_at_unix: Math.floor(new Date(proposal.expires_at).getTime() / 1000),
+    });
+    const approvalSig = signGovApproval(bob.privateKey, {
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_hash: proposalHash,
+    });
+
+    await expect(
+      process('gov.approve', encode({
+        type: 'gov.approve',
+        conv_id: proposal.conv_id,
+        proposal_id: proposal.proposal_id,
+        signer_kid: bobKid,
+        signature: base64UrlEncode(approvalSig),
+      }), keyIDFromPublicKey(bob.publicKey), bob.publicKey),
+    ).resolves.toBeUndefined();
+
+    const updated = await storage.get<ConversationState>('conv_state');
+    expect(updated?.participants[malloryKid]).toBe(base64UrlEncode(mallory.publicKey));
+    expect(updated?.conv_epoch).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const groupAdd = decodePostedBody(fetchMock, 0, initialState);
+    expect(groupAdd.bodyType).toBe('group_add');
+    const rekey = decodePostedBody(fetchMock, 1, initialState);
+    expect(rekey.bodyType).toBe('group_rekey');
+    const applied = decodePostedBody(fetchMock, 2, updated!);
+    expect(applied.bodyType).toBe('gov.applied');
+  });
+
+  it('accepts and applies a signed member_remove proposal end to end', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState({
+      participants: {
+        [aliceKid]: base64UrlEncode(alice.publicKey),
+        [bobKid]: base64UrlEncode(bob.publicKey),
+        [malloryKid]: base64UrlEncode(mallory.publicKey),
+      },
+    });
+    const initialState = structuredClone(state);
+    await storage.put('conv_state', state);
+    const fetchMock = stubDropboxFetch();
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'member_remove',
+      removedMemberKids: [malloryKid],
+      eligibleSignerKids: [aliceKid, bobKid, malloryKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+
+    await process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+
+    const proposalHash = hashProposal({
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_type: proposal.proposal_type,
+      proposed_floor: proposal.proposed_floor,
+      proposed_rules: proposal.proposed_rules,
+      proposed_members: proposal.proposed_members,
+      removed_member_kids: proposal.removed_member_kids,
+      eligible_signer_kids: proposal.eligible_signer_kids,
+      required_approvals: proposal.required_approvals,
+      expires_at_unix: Math.floor(new Date(proposal.expires_at).getTime() / 1000),
+    });
+    const approvalSig = signGovApproval(bob.privateKey, {
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_hash: proposalHash,
+    });
+
+    await process('gov.approve', encode({
+      type: 'gov.approve',
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      signer_kid: bobKid,
+      signature: base64UrlEncode(approvalSig),
+    }), keyIDFromPublicKey(bob.publicKey), bob.publicKey);
+
+    const updated = await storage.get<ConversationState>('conv_state');
+    expect(updated?.participants[malloryKid]).toBeUndefined();
+    expect(updated?.conv_epoch).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const groupRemove = decodePostedBody(fetchMock, 0, initialState);
+    expect(groupRemove.bodyType).toBe('group_remove');
+    const rekey = decodePostedBody(fetchMock, 1, initialState);
+    expect(rekey.bodyType).toBe('group_rekey');
+    const applied = decodePostedBody(fetchMock, 2, updated!);
+    expect(applied.bodyType).toBe('gov.applied');
+  });
+
+  it('invalidates pending requests and stale proposals after governance applies', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    stubDropboxFetch();
+
+    const { body: pendingRequest } = buildSignedRequest(alice);
+    await process('gate.request', encode(pendingRequest), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+
+    const staleProposal = createProposalBody(bob, {
+      convId: state.conv_id,
+      proposalType: 'member_remove',
+      removedMemberKids: [aliceKid],
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+    await process('gov.propose', encode(staleProposal), keyIDFromPublicKey(bob.publicKey), bob.publicKey);
+
+    const floorProposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 3,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+    await process('gov.propose', encode(floorProposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+
+    const proposalHash = hashProposal({
+      conv_id: floorProposal.conv_id,
+      proposal_id: floorProposal.proposal_id,
+      proposal_type: floorProposal.proposal_type,
+      proposed_floor: floorProposal.proposed_floor,
+      proposed_rules: floorProposal.proposed_rules,
+      proposed_members: floorProposal.proposed_members,
+      removed_member_kids: floorProposal.removed_member_kids,
+      eligible_signer_kids: floorProposal.eligible_signer_kids,
+      required_approvals: floorProposal.required_approvals,
+      expires_at_unix: Math.floor(new Date(floorProposal.expires_at).getTime() / 1000),
+    });
+    const approvalSig = signGovApproval(bob.privateKey, {
+      conv_id: floorProposal.conv_id,
+      proposal_id: floorProposal.proposal_id,
+      proposal_hash: proposalHash,
+    });
+    await process('gov.approve', encode({
+      type: 'gov.approve',
+      conv_id: floorProposal.conv_id,
+      proposal_id: floorProposal.proposal_id,
+      signer_kid: bobKid,
+      signature: base64UrlEncode(approvalSig),
+    }), keyIDFromPublicKey(bob.publicKey), bob.publicKey);
+
+    const gateMessages = [...(await storage.list<StoredGateMessage>({ prefix: 'msg:' })).values()];
+    expect(gateMessages.some(msg => msg.type === 'gate.invalidated' && msg.request_id === pendingRequest.request_id)).toBe(true);
+
+    const govMessages = [...(await storage.list<{ type: string; proposal_id: string }>({ prefix: 'gov:' })).values()];
+    expect(govMessages.some(msg => msg.type === 'gov.invalidated' && msg.proposal_id === staleProposal.proposal_id)).toBe(true);
+  });
+
+  it('accepts governance quorums below the request floor when all participants remain eligible', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState({ promotion_floor: 3 });
+    await storage.put('conv_state', state);
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: malloryKid, publicKey: base64UrlEncode(mallory.publicKey) }],
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects governance proposals that omit current participants from eligible_signer_kids', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: malloryKid, publicKey: base64UrlEncode(mallory.publicKey) }],
+      eligibleSignerKids: [aliceKid],
+      requiredApprovals: 1,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('missing from eligible_signer_kids');
   });
 });
 
@@ -416,6 +703,63 @@ describe('qntm-qko0: promotion and membership invariants', () => {
     ).rejects.toThrow('gateway KID must not be included in participants');
   });
 
+  it('preserves promoted state updates written during alarm processing', async () => {
+    const { doInstance, storage } = makeDO();
+    const state = promotedState({
+      gate_promoted: false,
+      rules: [],
+      participants: {},
+      promotion_floor: 1,
+      poll_cursor: 0,
+    });
+    await storage.put('conv_state', state);
+
+    const conv = {
+      id: hexToBytes(state.conv_id),
+      type: 'group' as const,
+      keys: {
+        root: new Uint8Array(32),
+        aeadKey: base64UrlDecode(state.conv_aead_key),
+        nonceKey: base64UrlDecode(state.conv_nonce_key),
+      },
+      participants: [keyIDFromPublicKey(alice.publicKey), keyIDFromPublicKey(bob.publicKey)],
+      createdAt: new Date(state.promoted_at),
+      currentEpoch: state.conv_epoch,
+    };
+    const promoteBody = encode({
+      type: 'gate.promote',
+      conv_id: state.conv_id,
+      gateway_kid: state.kid,
+      floor: 2,
+      rules: [{ service: '*', endpoint: '', verb: '', m: 2 }],
+      participants: {
+        [aliceKid]: base64UrlEncode(alice.publicKey),
+        [bobKid]: base64UrlEncode(bob.publicKey),
+      },
+    });
+    const envelope = createMessage(
+      alice,
+      conv,
+      'gate.promote',
+      promoteBody,
+      undefined,
+      defaultTTL(),
+    );
+
+    vi.spyOn(DropboxClient.prototype, 'receiveMessages').mockResolvedValue({
+      messages: [serializeEnvelope(envelope)],
+      sequence: 1,
+    });
+
+    await doInstance.alarm();
+
+    const updated = await storage.get<ConversationState>('conv_state');
+    expect(updated?.gate_promoted).toBe(true);
+    expect(updated?.poll_cursor).toBe(1);
+    expect(updated?.participants[aliceKid]).toBe(base64UrlEncode(alice.publicKey));
+    expect(updated?.rules).toEqual([{ service: '*', endpoint: '', verb: '', m: 2 }]);
+  });
+
   it('rejects gate.promote with floor < 1', async () => {
     const { storage, process } = makeDO();
     await storage.put('conv_state', promotedState({ gate_promoted: false }));
@@ -468,6 +812,15 @@ describe('qntm-qko0: promotion and membership invariants', () => {
     await expect(
       process('gate.secret', secretBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
     ).rejects.toThrow('conversation not yet promoted');
+  });
+
+  it('ignores ordinary transcript traffic before promotion', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState({ gate_promoted: false }));
+
+    await expect(
+      process('text', encode({ text: 'hello' }), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).resolves.toBeUndefined();
   });
 
   it('rejects gate.request with required_approvals below floor', async () => {
