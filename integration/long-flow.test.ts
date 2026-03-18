@@ -76,13 +76,18 @@ async function printDiagnostics(harness: LongHarness, convId: string): Promise<v
 }
 
 function traceGateResultDelivery(
+  label: string,
   cliBody: Record<string, unknown>,
   uiBody: Record<string, unknown>,
+  detailLines: string[] = [],
 ): void {
   if (process.env.QNTM_LONG_TRACE_RESULTS !== '1') {
     return;
   }
-  console.error('\n=== gate.result delivery ===');
+  console.error(`\n=== ${label} gate.result delivery ===`);
+  for (const detailLine of detailLines) {
+    console.error(detailLine);
+  }
   console.error(`CLI: ${JSON.stringify(cliBody)}`);
   console.error(`AIM: ${JSON.stringify(uiBody)}`);
 }
@@ -104,6 +109,19 @@ function assertLiveHnTopStoriesPayload(resultBody: Record<string, unknown>): num
   return storyIds as number[];
 }
 
+function assertLiveHnItemPayload(resultBody: Record<string, unknown>, expectedId: number): string {
+  expect(resultBody.status_code).toBe(200);
+  expect(resultBody.content_type).toContain('application/json');
+  expect(typeof resultBody.body).toBe('string');
+
+  const parsed = JSON.parse(String(resultBody.body)) as Record<string, unknown>;
+  expect(parsed.id).toBe(expectedId);
+  expect(typeof parsed.title).toBe('string');
+  const title = String(parsed.title).trim();
+  expect(title.length).toBeGreaterThan(0);
+  return title;
+}
+
 describe.sequential('real long-running gateway integration flow', () => {
   let harness: LongHarness;
   let convId = '';
@@ -112,7 +130,8 @@ describe.sequential('real long-running gateway integration flow', () => {
   let gatewayKid = '';
   let charlieKeyId = '';
   let charliePublicKey = '';
-  let phase1RequestId = '';
+  let phase1TopStoriesRequestId = '';
+  let phase1TopStoryItemRequestId = '';
   let staleRequestId = '';
   let strictRequestId = '';
   let leetRequestId = '';
@@ -171,7 +190,7 @@ describe.sequential('real long-running gateway integration flow', () => {
       ]);
 
       const request = await harness.alice.run(['gate-run', 'hn.top-stories', '-c', convId]);
-      phase1RequestId = String(request.data?.request_id);
+      phase1TopStoriesRequestId = String(request.data?.request_id);
 
       await waitForUiText(harness.ui, 'hn.top-stories');
       await harness.ui.approveLatestRequest();
@@ -180,7 +199,7 @@ describe.sequential('real long-running gateway integration flow', () => {
       const resultEntry = await waitForCliHistory(
         harness.alice,
         convId,
-        historyMatchesRequest('gate.result', phase1RequestId),
+        historyMatchesRequest('gate.result', phase1TopStoriesRequestId),
         'phase 1 gate.result',
         30_000,
       );
@@ -189,7 +208,7 @@ describe.sequential('real long-running gateway integration flow', () => {
       const uiResultEntry = await waitForUiStoredHistory(
         harness.ui,
         convId,
-        uiHistoryMatchesRequest('gate.result', phase1RequestId),
+        uiHistoryMatchesRequest('gate.result', phase1TopStoriesRequestId),
         'phase 1 UI gate.result',
         30_000,
       );
@@ -197,8 +216,50 @@ describe.sequential('real long-running gateway integration flow', () => {
       expect(typeof uiText).toBe('string');
       const uiResultBody = JSON.parse(String(uiText)) as Record<string, unknown>;
       expect(uiResultBody).toEqual(resultBody);
-      await waitForUiText(harness.ui, String(storyIds[0]));
-      traceGateResultDelivery(resultBody, uiResultBody);
+      const topStoryId = storyIds[0];
+      await waitForUiText(harness.ui, String(topStoryId));
+      traceGateResultDelivery('hn.top-stories', resultBody, uiResultBody, [
+        `Top story ID selected for follow-up: ${topStoryId}`,
+      ]);
+
+      const itemRequest = await harness.alice.run([
+        'gate-run',
+        'hn.get-item',
+        '-c',
+        convId,
+        '--arg',
+        `id=${topStoryId}`,
+      ]);
+      phase1TopStoryItemRequestId = String(itemRequest.data?.request_id);
+
+      await waitForUiText(harness.ui, 'hn.get-item');
+      await harness.ui.approveLatestRequest();
+      await harness.pumpGateway(convId);
+
+      const itemResultEntry = await waitForCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesRequest('gate.result', phase1TopStoryItemRequestId),
+        'phase 1 hn.get-item gate.result',
+        30_000,
+      );
+      const itemResultBody = parseUnsafeBody(itemResultEntry);
+      const topStoryTitle = assertLiveHnItemPayload(itemResultBody, topStoryId);
+      const uiItemResultEntry = await waitForUiStoredHistory(
+        harness.ui,
+        convId,
+        uiHistoryMatchesRequest('gate.result', phase1TopStoryItemRequestId),
+        'phase 1 UI hn.get-item gate.result',
+        30_000,
+      );
+      const uiItemText = uiItemResultEntry.text;
+      expect(typeof uiItemText).toBe('string');
+      const uiItemResultBody = JSON.parse(String(uiItemText)) as Record<string, unknown>;
+      expect(uiItemResultBody).toEqual(itemResultBody);
+      await waitForUiText(harness.ui, topStoryTitle);
+      traceGateResultDelivery('hn.get-item', itemResultBody, uiItemResultBody, [
+        `Top story title: ${topStoryTitle}`,
+      ]);
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;

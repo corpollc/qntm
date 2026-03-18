@@ -493,6 +493,7 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
         auth_required: false,
         endpoints: [
           { path: '/topstories.json', verb: 'GET', description: 'Top stories', risk_tier: 'read' },
+          { path: '/item/{id}.json', verb: 'GET', description: 'Get item by ID', risk_tier: 'read' },
         ],
       },
       fun: {
@@ -528,6 +529,25 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
         risk_tier: 'read',
         threshold: 3,
         content_type: 'application/json',
+      },
+      'hn.get-item': {
+        name: 'hn.get-item',
+        description: 'Live Hacker News item lookup',
+        service: 'hackernews',
+        verb: 'GET',
+        endpoint: '/item/{id}.json',
+        target_url: 'https://hacker-news.firebaseio.com/v0/item/{id}.json',
+        risk_tier: 'read',
+        threshold: 2,
+        content_type: 'application/json',
+        path_params: [
+          {
+            name: 'id',
+            description: 'Hacker News item ID',
+            required: true,
+            type: 'string',
+          },
+        ],
       },
       'leet.translate': {
         name: 'leet.translate',
@@ -674,10 +694,21 @@ export async function createLongHarness(): Promise<LongHarness> {
       );
     },
     async pumpGateway(convId: string) {
-      const response = await fetch(`${gatewayUrl}/v1/debug/poll-once?conv_id=${convId}`, { method: 'POST' });
-      if (!response.ok) {
-        throw new Error(`gateway debug pump failed: HTTP ${response.status} ${await response.text()}`);
+      let lastCursor = -1;
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const response = await fetch(`${gatewayUrl}/v1/debug/poll-once?conv_id=${convId}`, { method: 'POST' });
+        if (!response.ok) {
+          throw new Error(`gateway debug pump failed: HTTP ${response.status} ${await response.text()}`);
+        }
+        const status = await response.json() as { poll_cursor?: unknown };
+        const pollCursor = Number(status.poll_cursor ?? 0);
+        if (pollCursor === lastCursor) {
+          return;
+        }
+        lastCursor = pollCursor;
       }
+      throw new Error(`gateway debug pump did not converge for ${convId}`);
     },
   };
 }
