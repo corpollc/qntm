@@ -4,6 +4,7 @@ import {
   assertNoCliHistory,
   createLongHarness,
   waitForCliHistory,
+  waitForUiStoredHistory,
   waitForUiText,
 } from './src/runtime.js';
 
@@ -35,6 +36,19 @@ function historyContainsText(text: string) {
   );
 }
 
+function uiHistoryMatchesRequest(bodyType: string, requestId: string) {
+  return (entry: Record<string, unknown>): boolean => {
+    if (entry.bodyType !== bodyType) return false;
+    const text = entry.text;
+    if (typeof text !== 'string') return false;
+    try {
+      return (JSON.parse(text) as Record<string, unknown>).request_id === requestId;
+    } catch {
+      return false;
+    }
+  };
+}
+
 function summarizeHistory(entries: Array<Record<string, unknown>>): string {
   return entries.map((entry) => {
     const bodyType = String(entry.body_type ?? 'unknown');
@@ -59,6 +73,18 @@ async function printDiagnostics(harness: LongHarness, convId: string): Promise<v
     console.error(`\n=== Process: ${process.name} stdout ===`);
     console.error(process.stdout.slice(-8000));
   }
+}
+
+function traceGateResultDelivery(
+  cliBody: Record<string, unknown>,
+  uiBody: Record<string, unknown>,
+): void {
+  if (process.env.QNTM_LONG_TRACE_RESULTS !== '1') {
+    return;
+  }
+  console.error('\n=== gate.result delivery ===');
+  console.error(`CLI: ${JSON.stringify(cliBody)}`);
+  console.error(`AIM: ${JSON.stringify(uiBody)}`);
 }
 
 describe.sequential('real long-running gateway integration flow', () => {
@@ -144,6 +170,18 @@ describe.sequential('real long-running gateway integration flow', () => {
       const resultBody = parseUnsafeBody(resultEntry);
       expect(resultBody.body).toContain('[101,102,103,104]');
       await waitForUiText(harness.ui, '101');
+      const uiResultEntry = await waitForUiStoredHistory(
+        harness.ui,
+        convId,
+        uiHistoryMatchesRequest('gate.result', phase1RequestId),
+        'phase 1 UI gate.result',
+        30_000,
+      );
+      const uiText = uiResultEntry.text;
+      expect(typeof uiText).toBe('string');
+      const uiResultBody = JSON.parse(String(uiText)) as Record<string, unknown>;
+      expect(uiResultBody).toEqual(resultBody);
+      traceGateResultDelivery(resultBody, uiResultBody);
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;

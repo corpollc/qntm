@@ -302,6 +302,20 @@ export class AimUiAgent {
   async hasText(text: string): Promise<boolean> {
     return (await this.page.getByText(text, { exact: false }).count()) > 0;
   }
+
+  async readStoredHistory(conversationId: string): Promise<Array<Record<string, unknown>>> {
+    return await this.page.evaluate((convId) => {
+      const raw = window.localStorage.getItem('aim-store');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as {
+        activeProfileId?: string;
+        history?: Record<string, Record<string, Array<Record<string, unknown>>>>;
+      };
+      const profileId = parsed.activeProfileId || '';
+      if (!profileId) return [];
+      return parsed.history?.[profileId]?.[convId] || [];
+    }, conversationId);
+  }
 }
 
 export async function waitForUiText(ui: AimUiAgent, text: string, timeoutMs = 20_000): Promise<void> {
@@ -312,6 +326,23 @@ export async function waitForUiText(ui: AimUiAgent, text: string, timeoutMs = 20
     await delay(500);
   }
   throw new Error(`Timed out waiting for UI text: ${text}`);
+}
+
+export async function waitForUiStoredHistory(
+  ui: AimUiAgent,
+  convId: string,
+  predicate: (entry: Record<string, unknown>) => boolean,
+  description: string,
+  timeoutMs = 20_000,
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await ui.checkMessages();
+    const entry = (await ui.readStoredHistory(convId)).find(predicate);
+    if (entry) return entry;
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for ${description} in AIM UI`);
 }
 
 function isRateLimited(error: unknown): boolean {
