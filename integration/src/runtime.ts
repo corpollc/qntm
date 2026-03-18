@@ -131,6 +131,10 @@ function bunxCommand(): string {
   return process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
 }
 
+function uvCommand(): string {
+  return process.platform === 'win32' ? 'uv.exe' : 'uv';
+}
+
 export class CliAgent {
   readonly name: string;
   readonly configDir: string;
@@ -551,14 +555,12 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
 
 async function createPythonVenv(rootDir: string, repoRoot: string): Promise<string> {
   const venvDir = join(rootDir, 'venv');
-  await execFileAsync('python3', ['-m', 'venv', venvDir], { cwd: repoRoot });
-  const pip = join(venvDir, 'bin', 'pip');
-  const python = join(venvDir, 'bin', 'python');
-  await execFileAsync(pip, ['install', '-q', '-e', 'python-dist'], {
+  await execFileAsync(uvCommand(), ['venv', venvDir], {
     cwd: repoRoot,
     maxBuffer: EXEC_MAX_BUFFER,
   });
-  await execFileAsync(python, ['-m', 'pip', 'install', '-q', 'pytest'], {
+  const python = join(venvDir, 'bin', 'python');
+  await execFileAsync(uvCommand(), ['pip', 'install', '--python', python, '-q', '-e', 'python-dist'], {
     cwd: repoRoot,
     maxBuffer: EXEC_MAX_BUFFER,
   });
@@ -576,6 +578,8 @@ export async function createLongHarness(): Promise<LongHarness> {
   const relayPort = await getFreePort();
   const gatewayPort = await getFreePort();
   const uiPort = await getFreePort();
+  const relayInspectorPort = await getFreePort();
+  const gatewayInspectorPort = await getFreePort();
 
   const fixture = await FixtureServer.start(fixturePort);
   const recipeCatalogPath = join(rootDir, 'recipes.json');
@@ -593,6 +597,7 @@ export async function createLongHarness(): Promise<LongHarness> {
         bunxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
+        '--inspector-port', String(relayInspectorPort),
         '--var', 'RATE_LIMIT_PER_MIN:5000',
       ],
       join(repoRoot, 'worker'),
@@ -604,6 +609,7 @@ export async function createLongHarness(): Promise<LongHarness> {
         bunxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(gatewayPort),
         '--ip', '127.0.0.1',
+        '--inspector-port', String(gatewayInspectorPort),
         '--var', `DROPBOX_URL:${relayUrl}`,
         '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
