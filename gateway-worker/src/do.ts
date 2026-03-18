@@ -897,7 +897,7 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     await this.invalidatePendingRequests(convState);
-    await this.invalidatePendingProposals(proposalId);
+    await this.invalidatePendingProposals(convState, proposalId);
   }
 
   // ---- Governance storage helpers ----
@@ -975,11 +975,17 @@ export class GatewayConversationDO implements DurableObject {
         } satisfies StoredGateMessage;
         await this.storeGateMessage(invalidated);
         messages.push(invalidated);
+        await this.postConversationJsonMessage(convState, 'gate.invalidated', {
+          type: 'gate.invalidated',
+          request_id: requestId,
+          invalidated_at: new Date().toISOString(),
+          message: 'Pending request invalidated by governance change.',
+        });
       }
     }
   }
 
-  private async invalidatePendingProposals(appliedProposalId: string): Promise<void> {
+  private async invalidatePendingProposals(convState: ConversationState, appliedProposalId: string): Promise<void> {
     const proposals = await this.loadGovProposals();
     const invalidated = new Set(
       proposals.filter(p => p.type === 'gov.invalidated').map(p => p.proposal_id),
@@ -998,6 +1004,36 @@ export class GatewayConversationDO implements DurableObject {
         proposal_id: proposal.proposal_id,
         signer_kid: undefined,
       });
+      await this.postConversationJsonMessage(convState, 'gov.invalidated', {
+        type: 'gov.invalidated',
+        proposal_id: proposal.proposal_id,
+        invalidated_at: new Date().toISOString(),
+        message: 'Pending governance proposal invalidated by a newer applied change.',
+      });
+    }
+  }
+
+  private async postConversationJsonMessage(
+    convState: ConversationState,
+    bodyType: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const convIdBytes = hexToBytes(convState.conv_id);
+    const conv = this.buildConversation(convState, convIdBytes);
+    const identity = this.buildIdentity(convState);
+    const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+    const env = createMessage(
+      identity,
+      conv,
+      bodyType,
+      new TextEncoder().encode(JSON.stringify(payload)),
+      undefined,
+      defaultTTL(),
+    );
+    try {
+      await dropbox.postMessage(convIdBytes, serializeEnvelope(env));
+    } catch {
+      // Best effort.
     }
   }
 

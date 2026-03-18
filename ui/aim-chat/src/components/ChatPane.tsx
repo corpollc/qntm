@@ -75,6 +75,7 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
   if (message.bodyType === 'gate.disapproval') return <GateDisapprovalCard message={message} />
   if (message.bodyType === 'gate.executed') return <GateExecutedCard message={message} />
   if (message.bodyType === 'gate.expired') return <GateExpiredCard message={message} />
+  if (message.bodyType === 'gate.invalidated') return <SystemEventCard message={message} />
   if (message.bodyType === 'gate.result') return <GateResultCard message={message} />
   if (message.bodyType === 'group_genesis' || message.bodyType === 'group_add' || message.bodyType === 'group_remove' || message.bodyType === 'group_rekey') {
     return <SystemEventCard message={message} />
@@ -97,7 +98,7 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
       />
     )
   }
-  if (message.bodyType === 'gov.approve' || message.bodyType === 'gov.disapprove' || message.bodyType === 'gov.applied') {
+  if (message.bodyType === 'gov.approve' || message.bodyType === 'gov.disapprove' || message.bodyType === 'gov.applied' || message.bodyType === 'gov.invalidated') {
     return <SystemEventCard message={message} />
   }
   return <div className="message-body">{message.text}</div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatGroupEvent, formatGovEvent, type GroupEventDisplay } from './SystemEvents'
+import { formatGroupEvent, formatGovEvent, formatInvalidationEvent, type GroupEventDisplay } from './SystemEvents'
 
 describe('formatGroupEvent', () => {
   describe('group_genesis', () => {
@@ -220,5 +220,27 @@ describe('formatGovEvent', () => {
   it('returns null for unknown types', () => {
     expect(formatGovEvent('text', '{}')).toBeNull()
     expect(formatGovEvent('gate.request', '{}')).toBeNull()
+  })
+})
+
+describe('formatInvalidationEvent', () => {
+  it('formats gate.invalidated', () => {
+    const body = JSON.stringify({ request_id: 'req-12345678abcd' })
+    const result = formatInvalidationEvent('gate.invalidated', body)
+    expect(result).not.toBeNull()
+    expect(result!.headline).toContain('Pending request invalidated')
+    expect(result!.detail.length).toBeGreaterThan(0)
+  })
+
+  it('formats gov.invalidated', () => {
+    const body = JSON.stringify({ proposal_id: 'prop-12345678abcd' })
+    const result = formatInvalidationEvent('gov.invalidated', body)
+    expect(result).not.toBeNull()
+    expect(result!.headline).toContain('Governance proposal invalidated')
+    expect(result!.detail.length).toBeGreaterThan(0)
+  })
+
+  it('returns null for unknown body types', () => {
+    expect(formatInvalidationEvent('text', '{}')).toBeNull()
   })
 })

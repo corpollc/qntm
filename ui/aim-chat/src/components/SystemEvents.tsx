@@ -83,6 +83,7 @@ const ICONS: Record<string, string> = {
 export function SystemEventCard({ message }: { message: ChatMessage }) {
   const display = formatGroupEvent(message.bodyType, message.text, message.sender)
     ?? formatGovEvent(message.bodyType, message.text, message.sender)
+    ?? formatInvalidationEvent(message.bodyType, message.text)
   if (!display) {
     return <div className="message-body">{message.text}</div>
   }
@@ -98,6 +99,35 @@ export function SystemEventCard({ message }: { message: ChatMessage }) {
       </div>
     </div>
   )
+}
+
+export function formatInvalidationEvent(
+  bodyType: string,
+  body: string,
+): GroupEventDisplay | null {
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return null
+  }
+
+  switch (bodyType) {
+    case 'gate.invalidated':
+      return {
+        icon: 'remove',
+        headline: 'Pending request invalidated',
+        detail: shortId((parsed.request_id as string) || ''),
+      }
+    case 'gov.invalidated':
+      return {
+        icon: 'remove',
+        headline: 'Governance proposal invalidated',
+        detail: shortId((parsed.proposal_id as string) || ''),
+      }
+    default:
+      return null
+  }
 }
 
 /**

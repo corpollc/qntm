@@ -81,7 +81,7 @@ export class ManagedProcess {
   readonly command: string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly child: ReturnType<typeof spawn>;
+  child: ReturnType<typeof spawn>;
   stdout = '';
   stderr = '';
 
@@ -120,6 +120,13 @@ export class ManagedProcess {
         if (this.child.exitCode === null) this.child.kill('SIGKILL');
       }),
     ]);
+  }
+
+  async restart(): Promise<void> {
+    await this.stop();
+    this.stdout += '\n--- restarted ---\n';
+    this.stderr += '\n--- restarted ---\n';
+    this.child = this.start();
   }
 }
 
@@ -408,18 +415,21 @@ export async function assertNoCliHistory(
 export class FixtureServer {
   readonly server: Server;
   readonly baseUrl: string;
+  private readonly state: { counterExecutions: number };
 
-  private constructor(server: Server, port: number) {
+  private constructor(server: Server, port: number, state: { counterExecutions: number }) {
     this.server = server;
     this.baseUrl = `http://127.0.0.1:${port}`;
+    this.state = state;
   }
 
   static async start(port: number): Promise<FixtureServer> {
+    const state = { counterExecutions: 0 };
     const server = createServer((req, res) => {
-      void handleFixtureRequest(req, res);
+      void handleFixtureRequest(req, res, state);
     });
     await new Promise<void>((resolveServer) => server.listen(port, '127.0.0.1', () => resolveServer()));
-    return new FixtureServer(server, port);
+    return new FixtureServer(server, port, state);
   }
 
   async close(): Promise<void> {
@@ -430,9 +440,21 @@ export class FixtureServer {
       });
     });
   }
+
+  getCounterExecutions(): number {
+    return this.state.counterExecutions;
+  }
+
+  resetCounterExecutions(): void {
+    this.state.counterExecutions = 0;
+  }
 }
 
-async function handleFixtureRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleFixtureRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: { counterExecutions: number },
+): Promise<void> {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
@@ -460,6 +482,19 @@ async function handleFixtureRequest(req: IncomingMessage, res: ServerResponse): 
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/counter') {
+    state.counterExecutions += 1;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ count: state.counterExecutions }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/counter') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ count: state.counterExecutions }));
+    return;
+  }
+
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'not found' }));
 }
@@ -476,10 +511,14 @@ export interface LongHarness {
   ui: AimUiAgent;
   alice: CliAgent;
   charlie: CliAgent;
+  dave: CliAgent;
   processes: ManagedProcess[];
   stop(): Promise<void>;
   bootstrapGateway(convId: string, agent: CliAgent): Promise<{ gateway_public_key: string; gateway_kid: string }>;
   pumpGateway(convId: string): Promise<void>;
+  restartGateway(): Promise<void>;
+  getCounterExecutions(): number;
+  resetCounterExecutions(): void;
 }
 
 function writeRecipeCatalog(path: string, baseUrl: string): void {
@@ -504,6 +543,7 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
         auth_required: false,
         endpoints: [
           { path: '/leet', verb: 'POST', description: 'Leet translation', risk_tier: 'read' },
+          { path: '/counter', verb: 'POST', description: 'Increment execution counter', risk_tier: 'read' },
         ],
       },
     },
@@ -568,6 +608,17 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
         },
         body_example: { text: 'hello world' },
       },
+      'counter.bump': {
+        name: 'counter.bump',
+        description: 'Increment a local counter fixture',
+        service: 'fun',
+        verb: 'POST',
+        endpoint: '/counter',
+        target_url: `${baseUrl}/counter`,
+        risk_tier: 'read',
+        threshold: 2,
+        content_type: 'application/json',
+      },
     },
   };
   writeFileSync(path, JSON.stringify(catalog, null, 2));
@@ -610,8 +661,7 @@ export async function createLongHarness(): Promise<LongHarness> {
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
   const uiUrl = `http://127.0.0.1:${uiPort}`;
 
-  const processes = [
-    new ManagedProcess(
+  const relayProcess = new ManagedProcess(
       'relay',
       [
         bunxCommand(), 'wrangler', 'dev', '--local',
@@ -622,8 +672,8 @@ export async function createLongHarness(): Promise<LongHarness> {
       ],
       join(repoRoot, 'worker'),
       { ...process.env },
-    ),
-    new ManagedProcess(
+    );
+  const gatewayProcess = new ManagedProcess(
       'gateway',
       [
         bunxCommand(), 'wrangler', 'dev', '--local',
@@ -637,14 +687,14 @@ export async function createLongHarness(): Promise<LongHarness> {
       ],
       join(repoRoot, 'gateway-worker'),
       { ...process.env },
-    ),
-    new ManagedProcess(
+    );
+  const uiProcess = new ManagedProcess(
       'aim-ui',
       [bunCommand(), 'run', 'dev', '--host', '127.0.0.1', '--port', String(uiPort)],
       join(repoRoot, 'ui/aim-chat'),
       { ...process.env },
-    ),
-  ];
+    );
+  const processes = [relayProcess, gatewayProcess, uiProcess];
 
   await waitForHttp(`${relayUrl}/v1/poll`, {
     method: 'POST',
@@ -659,6 +709,7 @@ export async function createLongHarness(): Promise<LongHarness> {
   const ui = await AimUiAgent.launch(browser, uiUrl, relayUrl);
   const alice = new CliAgent('alice', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
   const charlie = new CliAgent('charlie', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
+  const dave = new CliAgent('dave', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
 
   return {
     rootDir,
@@ -672,6 +723,7 @@ export async function createLongHarness(): Promise<LongHarness> {
     ui,
     alice,
     charlie,
+    dave,
     processes,
     async stop() {
       await ui.close();
@@ -709,6 +761,16 @@ export async function createLongHarness(): Promise<LongHarness> {
         lastCursor = pollCursor;
       }
       throw new Error(`gateway debug pump did not converge for ${convId}`);
+    },
+    async restartGateway() {
+      await gatewayProcess.restart();
+      await waitForHttp(`${gatewayUrl}/health`);
+    },
+    getCounterExecutions() {
+      return fixture.getCounterExecutions();
+    },
+    resetCounterExecutions() {
+      fixture.resetCounterExecutions();
     },
   };
 }

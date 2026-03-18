@@ -462,7 +462,7 @@ describe('governance member-change flow', () => {
     const { storage, process } = makeDO();
     const state = promotedState();
     await storage.put('conv_state', state);
-    stubDropboxFetch();
+    const fetchMock = stubDropboxFetch();
 
     const { body: pendingRequest } = buildSignedRequest(alice);
     await process('gate.request', encode(pendingRequest), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
@@ -517,6 +517,23 @@ describe('governance member-change flow', () => {
 
     const govMessages = [...(await storage.list<{ type: string; proposal_id: string }>({ prefix: 'gov:' })).values()];
     expect(govMessages.some(msg => msg.type === 'gov.invalidated' && msg.proposal_id === staleProposal.proposal_id)).toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const applied = decodePostedBody(fetchMock, 0, {
+      ...state,
+      promotion_floor: 3,
+    } as ConversationState);
+    expect(applied.bodyType).toBe('gov.applied');
+    const gateInvalidated = decodePostedBody(fetchMock, 1, {
+      ...state,
+      promotion_floor: 3,
+    } as ConversationState);
+    expect(gateInvalidated.bodyType).toBe('gate.invalidated');
+    const govInvalidated = decodePostedBody(fetchMock, 2, {
+      ...state,
+      promotion_floor: 3,
+    } as ConversationState);
+    expect(govInvalidated.bodyType).toBe('gov.invalidated');
   });
 
   it('accepts governance quorums below the request floor when all participants remain eligible', async () => {
