@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { RefObject } from 'react'
+import type { Ref } from 'react'
 import type { IdentityInfo } from '../types'
 import { Tooltip } from './Tooltip'
 
@@ -13,7 +13,7 @@ export interface InvitePanelProps {
   isWorking: boolean
   onCreateInvite: () => void
   onAcceptInvite: () => void
-  newConversationInputRef?: RefObject<HTMLInputElement | null>
+  newConversationInputRef?: Ref<HTMLInputElement>
 }
 
 export function InvitePanel({

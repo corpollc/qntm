@@ -1,4 +1,4 @@
-import type { RefObject } from 'react'
+import type { Ref } from 'react'
 import type { Conversation } from '../types'
 import { shortId } from '../utils'
 
@@ -14,7 +14,7 @@ export interface ConversationListProps {
   toggleHideConversation: (convId: string) => void
   conversationFilter: string
   setConversationFilter: (value: string) => void
-  filterInputRef?: RefObject<HTMLInputElement | null>
+  filterInputRef?: Ref<HTMLInputElement>
 }
 
 export function ConversationList({
