@@ -18,6 +18,7 @@ import {
   serializeEnvelope,
   deserializeEnvelope,
   defaultTTL,
+  base64UrlDecode,
   base64UrlEncode,
   signRequest,
   signApproval,
@@ -43,6 +44,14 @@ export function hexToBytes(hex: string): Uint8Array {
     bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
   }
   return bytes
+}
+
+function decodeGatewayPublicKey(value: string): Uint8Array {
+  // Canonical gateway wire encoding is base64url. Keep 64-char hex as a
+  // compatibility shim for older callers until those inputs are removed.
+  const decoded = /^[0-9a-fA-F]{64}$/.test(value) ? hexToBytes(value) : base64UrlDecode(value)
+  if (decoded.length !== 32) throw new Error(`gatewayPublicKey must decode to 32 bytes (got ${decoded.length})`)
+  return decoded
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
@@ -569,7 +578,7 @@ export async function gateSecretRequest(
   const selfKidB64 = base64UrlEncode(identity.keyID)
 
   if (gatewayPublicKey) {
-    gwPubKeyBytes = hexToBytes(gatewayPublicKey)
+    gwPubKeyBytes = decodeGatewayPublicKey(gatewayPublicKey)
   } else {
     const conv = store.findConversation(profileId, conversationId)
     for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {

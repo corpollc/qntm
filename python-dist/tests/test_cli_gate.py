@@ -10,10 +10,11 @@ import os
 import tempfile
 import time
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
-from qntm.identity import generate_identity, base64url_encode, base64url_decode, key_id_to_string
+from qntm.identity import generate_identity, base64url_encode, base64url_decode
 from qntm.gate import (
     Recipe,
     RecipeParam,
@@ -49,7 +50,7 @@ def _make_config_dir_with_identity():
     ident_data = {
         "private_key": ident["privateKey"].hex(),
         "public_key": ident["publicKey"].hex(),
-        "key_id": base64url_encode(ident["keyID"]),
+        "key_id": ident["keyID"].hex(),
     }
     with open(os.path.join(tmpdir, "identity.json"), "w") as f:
         json.dump(ident_data, f)
@@ -89,6 +90,15 @@ def _write_history(tmpdir, conv_id_hex, entries):
     os.makedirs(chats_dir, exist_ok=True)
     with open(os.path.join(chats_dir, f"{conv_id_hex}.json"), "w") as f:
         json.dump(entries, f)
+
+
+def _write_participant_key_cache(tmpdir, conv_id_hex, identities):
+    """Write learned participant public keys for a conversation."""
+    cache = {}
+    for ident in identities:
+        cache[ident["keyID"].hex()] = ident["publicKey"].hex()
+    with open(os.path.join(tmpdir, "participant_keys.json"), "w") as f:
+        json.dump({conv_id_hex.lower(): cache}, f)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +159,94 @@ class TestLoadStarterCatalog:
                 os.environ.pop("QNTM_RECIPE_CATALOG_PATH", None)
             else:
                 os.environ["QNTM_RECIPE_CATALOG_PATH"] = old
+
+
+class TestLoadKnownParticipantPublicKeys:
+    def test_merges_local_identity_and_learned_cache(self):
+        from qntm.cli import _load_known_participant_public_keys
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+
+        carol = generate_identity()
+        _write_participant_key_cache(tmpdir, conv_id_hex, [carol])
+
+        merged = _load_known_participant_public_keys(tmpdir, conv_record, identity=alice)
+        merged_hex = {pk.hex() for pk in merged.values()}
+
+        assert alice["publicKey"].hex() in merged_hex
+        assert carol["publicKey"].hex() in merged_hex
+
+
+class TestGateCommandParticipantRosters:
+    def test_gate_run_uses_conversation_participant_kids_without_public_key_cache(self, monkeypatch):
+        from qntm.cli import cmd_gate_run
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+        conv_record["participants"].append(bob["keyID"].hex())
+        with open(os.path.join(tmpdir, "conversations.json"), "w") as f:
+            json.dump([conv_record], f)
+
+        recipe = Recipe(
+            name="jokes.dad",
+            description="Get a dad joke",
+            service="dadjokes",
+            verb="GET",
+            endpoint="/",
+            target_url="https://icanhazdadjoke.com/",
+            risk_tier="read",
+            threshold=2,
+        )
+        captured = {}
+
+        monkeypatch.setattr("qntm.cli._load_starter_catalog", lambda: {"jokes.dad": recipe})
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr("qntm.cli._send_gate_message_to_conv", fake_send)
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            recipe="jokes.dad",
+            arg=[],
+        )
+        cmd_gate_run(args)
+
+        assert set(captured["payload"]["eligible_signer_kids"]) == {
+            base64url_encode(alice["keyID"]),
+            base64url_encode(bob["keyID"]),
+        }
+
+    def test_gate_promote_fails_closed_when_participant_public_keys_are_missing(self, monkeypatch):
+        from qntm.cli import cmd_gate_promote
+
+        tmpdir, alice = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        bob = generate_identity()
+        conv_record["participants"].append(bob["keyID"].hex())
+        with open(os.path.join(tmpdir, "conversations.json"), "w") as f:
+            json.dump([conv_record], f)
+
+        monkeypatch.setattr("qntm.cli._output", lambda *args, **kwargs: None)
+        monkeypatch.setattr("qntm.cli._error", lambda message: (_ for _ in ()).throw(RuntimeError(message)))
+
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://example.test",
+            conversation=conv_id_hex,
+            gateway_kid="gateway-kid",
+            threshold=2,
+        )
+
+        with pytest.raises(RuntimeError, match="missing participant public keys"):
+            cmd_gate_promote(args)
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +596,7 @@ class TestBuildSecretPayload:
         gateway = generate_identity()
         payload = _build_secret_payload(
             identity=sender,
-            gateway_pubkey_hex=gateway["publicKey"].hex(),
+            gateway_pubkey_wire=base64url_encode(gateway["publicKey"]),
             service="stripe",
             value="sk_test_123",
             header_name="Authorization",
@@ -519,10 +617,10 @@ class TestBuildSecretPayload:
     def test_invalid_gateway_pubkey(self):
         from qntm.cli import _build_secret_payload
         sender = generate_identity()
-        with pytest.raises(ValueError, match="gateway public key"):
+        with pytest.raises(ValueError, match="32 bytes"):
             _build_secret_payload(
                 identity=sender,
-                gateway_pubkey_hex="deadbeef",
+                gateway_pubkey_wire=base64url_encode(b"short"),
                 service="stripe",
                 value="sk_test_123",
             )

@@ -20,7 +20,14 @@ from .identity import (
     generate_identity,
     key_id_from_public_key,
 )
-from .wire import kid_to_wire, pubkey_to_wire, sig_to_wire, blob_to_wire, kid_from_pubkey
+from .wire import (
+    blob_to_wire,
+    kid_from_pubkey,
+    kid_to_wire,
+    pubkey_from_wire,
+    pubkey_to_wire,
+    sig_to_wire,
+)
 from .invite import (
     add_participant,
     create_conversation,
@@ -262,7 +269,7 @@ def _merge_participant_public_key(config_dir, conv_id_hex, public_key: bytes):
 
 
 def _load_participant_public_keys(config_dir, conv_id_hex) -> dict[str, bytes]:
-    """Load known participant public keys for a conversation. Returns {kid_hex: pk_bytes}."""
+    """Load learned participant public keys for a conversation. Returns {kid_hex: pk_bytes}."""
     pk_path = os.path.join(config_dir, "participant_keys.json")
     try:
         with open(pk_path) as f:
@@ -271,6 +278,38 @@ def _load_participant_public_keys(config_dir, conv_id_hex) -> dict[str, bytes]:
         return {}
     conv_keys = pk_store.get(conv_id_hex.lower(), {})
     return {k: bytes.fromhex(v) for k, v in conv_keys.items()}
+
+
+def _participant_kids_from_conversation(conv_record) -> list[str]:
+    """Return the current conversation participant KIDs from stored conversation state."""
+    return [kid.lower() for kid in conv_record.get("participants", [])]
+
+
+def _load_known_participant_public_keys(config_dir, conv_record, identity=None) -> dict[str, bytes]:
+    """Load participant public keys known locally for promotion payload construction."""
+    conv_id_hex = conv_record["id"]
+    known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+    if identity is not None:
+        known_pks[identity["keyID"].hex().lower()] = identity["publicKey"]
+
+    return known_pks
+
+
+def _decode_gateway_public_key(gateway_pubkey: str) -> bytes:
+    """Decode a gateway public key from the canonical base64url wire format.
+
+    Temporary compatibility: accept 64-char hex keys as legacy input, but
+    canonical CLI/docs/test surfaces must use base64url.
+    """
+    is_legacy_hex = len(gateway_pubkey) == 64 and all(
+        ch in "0123456789abcdefABCDEF" for ch in gateway_pubkey
+    )
+    if is_legacy_hex:
+        return bytes.fromhex(gateway_pubkey)
+    try:
+        return pubkey_from_wire(gateway_pubkey)
+    except Exception as exc:
+        raise ValueError("gateway public key must be valid base64url") from exc
 
 
 def _conv_to_crypto(conv_record):
@@ -447,6 +486,7 @@ def cmd_convo_create(args):
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
+    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     _output("convo.create", {
         "conversation_id": conv_id_hex,
@@ -498,6 +538,8 @@ def cmd_convo_join(args):
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
+    _merge_participant_public_key(config_dir, conv_id_hex, bytes(invite["inviter_ik_pk"]))
+    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     _output("convo.join", {
         "conversation_id": conv_id_hex,
@@ -756,6 +798,7 @@ def cmd_group_create(args):
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
+    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     # Create and send genesis message
     body_bytes = create_group_genesis_body(
@@ -836,6 +879,8 @@ def cmd_group_join(args):
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
+    _merge_participant_public_key(config_dir, conv_id_hex, bytes(invite["inviter_ik_pk"]))
+    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     _output("group.join", {
         "conversation_id": conv_id_hex,
@@ -903,6 +948,7 @@ def cmd_group_add(args):
     add_participant(conv_crypto, new_member_pk)
     conv_record["participants"] = [p.hex() for p in conv_crypto["participants"]]
     _save_conversations(config_dir, conversations)
+    _merge_participant_public_key(config_dir, conv_id_hex, new_member_pk)
 
     new_member_kid = key_id_from_public_key(new_member_pk)
     _output("group.add", {
@@ -1557,15 +1603,15 @@ def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
 
 
 
-def _build_secret_payload(identity, gateway_pubkey_hex, service, value,
+def _build_secret_payload(identity, gateway_pubkey_wire, service, value,
                           header_name="Authorization",
                           header_template="Bearer {value}",
                           ttl=0):
     """Build a gate.secret payload dict with encrypted secret."""
     try:
-        gw_pub = bytes.fromhex(gateway_pubkey_hex)
+        gw_pub = _decode_gateway_public_key(gateway_pubkey_wire)
     except ValueError:
-        raise ValueError("gateway public key must be valid hex")
+        raise
     if len(gw_pub) != 32:
         raise ValueError(
             f"gateway public key must be 32 bytes (got {len(gw_pub)})"
@@ -1639,13 +1685,9 @@ def cmd_gate_run(args):
         recipe_args[k] = v
 
     # Build eligible signer roster from ALL known conversation participants
-    known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
     eligible_signer_kids = []
-    # Add self
-    eligible_signer_kids.append(kid_to_wire(identity["keyID"]))
-    # Add other known participants
-    for _kid_hex, pk_bytes in known_pks.items():
-        kid_wire = kid_from_pubkey(pk_bytes)
+    for participant_kid_hex in _participant_kids_from_conversation(conv_record):
+        kid_wire = kid_to_wire(bytes.fromhex(participant_kid_hex))
         if kid_wire not in eligible_signer_kids:
             eligible_signer_kids.append(kid_wire)
     required_approvals = recipe.threshold
@@ -1815,7 +1857,16 @@ def cmd_gate_promote(args):
     threshold = args.threshold
 
     try:
-        known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+        known_pks = _load_known_participant_public_keys(config_dir, conv_record, identity=identity)
+        missing_kids = [
+            kid_hex for kid_hex in _participant_kids_from_conversation(conv_record)
+            if kid_hex not in known_pks
+        ]
+        if missing_kids:
+            _error(
+                "missing participant public keys for gate.promote; run 'qntm recv' to learn "
+                f"them before promoting: {', '.join(sorted(missing_kids))}"
+            )
         payload = _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
                                          known_participant_pks=known_pks)
     except ValueError as e:
@@ -1876,7 +1927,7 @@ def cmd_gate_secret(args):
     try:
         payload = _build_secret_payload(
             identity=identity,
-            gateway_pubkey_hex=gateway_pubkey,
+            gateway_pubkey_wire=gateway_pubkey,
             service=service,
             value=value,
             header_name=header_name,
@@ -2182,7 +2233,7 @@ quick start:
     gate_secret_p.add_argument("--service", required=True,
                                help="Target service name (e.g. stripe, github)")
     gate_secret_p.add_argument("--gateway-pubkey", required=True,
-                               help="Gateway Ed25519 public key (hex)")
+                               help="Gateway Ed25519 public key (base64url; legacy 64-char hex still accepted)")
     gate_secret_p.add_argument("--value", default="",
                                help="Secret value (omit to read from stdin)")
     gate_secret_p.add_argument("--header-name", dest="header_name",

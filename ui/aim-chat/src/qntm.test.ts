@@ -268,7 +268,7 @@ describe('browser qntm adapter', () => {
     })
   })
 
-  it('encrypts gate secrets with the known participant public key using base64', async () => {
+  it('encrypts gate secrets with the known participant public key using base64url', async () => {
     const { alice, bob, conversationId } = await createConversationPair()
     const aliceIdentity = identityFor(alice.id)
     const bobIdentity = identityFor(bob.id)
@@ -302,5 +302,36 @@ describe('browser qntm adapter', () => {
       base64UrlDecode(payload.encrypted_blob),
     )
     expect(new TextDecoder().decode(decrypted)).toBe('sk_test_123')
+  })
+
+  it('accepts a provided base64url gateway public key for gate secrets', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    const aliceIdentity = identityFor(alice.id)
+    const bobIdentity = identityFor(bob.id)
+
+    const secretMessage = await gateSecretRequest(
+      alice.id,
+      alice.name,
+      conversationId,
+      'stripe',
+      'sk_test_explicit',
+      'Authorization',
+      'Bearer {value}',
+      publicKeyToString(hexToBytes(bobIdentity.publicKey)),
+    )
+    const payload = JSON.parse(secretMessage.text) as {
+      sender_kid: string
+      encrypted_blob: string
+    }
+
+    const aliceSenderKidB64 = publicKeyToString(hexToBytes(aliceIdentity.keyId))
+    expect(payload.sender_kid).toBe(aliceSenderKidB64)
+
+    const decrypted = openSecret(
+      hexToBytes(bobIdentity.privateKey),
+      hexToBytes(aliceIdentity.publicKey),
+      base64UrlDecode(payload.encrypted_blob),
+    )
+    expect(new TextDecoder().decode(decrypted)).toBe('sk_test_explicit')
   })
 })
