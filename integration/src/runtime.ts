@@ -487,9 +487,9 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
     profiles: {
       hackernews: {
         service: 'hackernews',
-        description: 'Local HN fixture',
-        base_url: baseUrl,
-        hosts: ['127.0.0.1'],
+        description: 'Live Hacker News API',
+        base_url: 'https://hacker-news.firebaseio.com/v0',
+        hosts: ['hacker-news.firebaseio.com'],
         auth_required: false,
         endpoints: [
           { path: '/topstories.json', verb: 'GET', description: 'Top stories', risk_tier: 'read' },
@@ -509,22 +509,22 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
     recipes: {
       'hn.top-stories': {
         name: 'hn.top-stories',
-        description: 'Top stories fixture',
+        description: 'Live Hacker News top stories',
         service: 'hackernews',
         verb: 'GET',
         endpoint: '/topstories.json',
-        target_url: `${baseUrl}/topstories.json`,
+        target_url: 'https://hacker-news.firebaseio.com/v0/topstories.json',
         risk_tier: 'read',
         threshold: 2,
         content_type: 'application/json',
       },
       'hn.top-stories.strict': {
         name: 'hn.top-stories.strict',
-        description: 'Top stories fixture requiring 3 approvals',
+        description: 'Live Hacker News top stories requiring 3 approvals',
         service: 'hackernews',
         verb: 'GET',
         endpoint: '/topstories.json',
-        target_url: `${baseUrl}/topstories.json`,
+        target_url: 'https://hacker-news.firebaseio.com/v0/topstories.json',
         risk_tier: 'read',
         threshold: 3,
         content_type: 'application/json',

@@ -87,6 +87,23 @@ function traceGateResultDelivery(
   console.error(`AIM: ${JSON.stringify(uiBody)}`);
 }
 
+function assertLiveHnTopStoriesPayload(resultBody: Record<string, unknown>): number[] {
+  expect(resultBody.status_code).toBe(200);
+  expect(resultBody.content_type).toContain('application/json');
+  expect(typeof resultBody.body).toBe('string');
+
+  const parsed = JSON.parse(String(resultBody.body)) as unknown;
+  expect(Array.isArray(parsed)).toBe(true);
+  const storyIds = parsed as unknown[];
+  expect(storyIds.length).toBeGreaterThan(10);
+  for (const storyId of storyIds.slice(0, 10)) {
+    expect(typeof storyId).toBe('number');
+    expect(Number.isInteger(storyId)).toBe(true);
+    expect(Number(storyId)).toBeGreaterThan(0);
+  }
+  return storyIds as number[];
+}
+
 describe.sequential('real long-running gateway integration flow', () => {
   let harness: LongHarness;
   let convId = '';
@@ -168,8 +185,7 @@ describe.sequential('real long-running gateway integration flow', () => {
         30_000,
       );
       const resultBody = parseUnsafeBody(resultEntry);
-      expect(resultBody.body).toContain('[101,102,103,104]');
-      await waitForUiText(harness.ui, '101');
+      const storyIds = assertLiveHnTopStoriesPayload(resultBody);
       const uiResultEntry = await waitForUiStoredHistory(
         harness.ui,
         convId,
@@ -181,6 +197,7 @@ describe.sequential('real long-running gateway integration flow', () => {
       expect(typeof uiText).toBe('string');
       const uiResultBody = JSON.parse(String(uiText)) as Record<string, unknown>;
       expect(uiResultBody).toEqual(resultBody);
+      await waitForUiText(harness.ui, String(storyIds[0]));
       traceGateResultDelivery(resultBody, uiResultBody);
     } catch (error) {
       await printDiagnostics(harness, convId);
@@ -267,7 +284,7 @@ describe.sequential('real long-running gateway integration flow', () => {
         'strict gate.result',
         30_000,
       );
-      expect(parseUnsafeBody(strictResult).body).toContain('[101,102,103,104]');
+      assertLiveHnTopStoriesPayload(parseUnsafeBody(strictResult));
       await waitForUiText(harness.ui, '1 member added');
     } catch (error) {
       await printDiagnostics(harness, convId);
