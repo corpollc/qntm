@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as store from './store'
 import {
   createInviteForProfile,
+  bootstrapGatewayForConversation,
   gateApproveRequest,
   gateDisapproveRequest,
   gatePromoteRequest,
@@ -186,7 +187,6 @@ describe('browser qntm adapter', () => {
         },
       },
       'deploy.app',
-      'org-1',
       '',
       { app: 'qntm', version: '1.2.3', force: 'true' },
     )
@@ -511,5 +511,57 @@ describe('browser qntm adapter', () => {
       base64UrlDecode(payload.encrypted_blob),
     )
     expect(new TextDecoder().decode(decrypted)).toBe('sk_test_explicit')
+  })
+
+  it('bootstraps gateway identity and reuses it for gate secrets', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    const aliceIdentity = identityFor(alice.id)
+    const bobIdentity = identityFor(bob.id)
+
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url
+
+      if (url === 'http://gateway.test/v1/promote') {
+        return Promise.resolve(new Response(JSON.stringify({
+          conv_id: conversationId,
+          gateway_public_key: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
+          gateway_kid: publicKeyToString(hexToBytes(bobIdentity.keyId)),
+          created: true,
+        }), { status: 201 }))
+      }
+
+      return relay.handleFetch(input, init)
+    }))
+
+    const bootstrap = await bootstrapGatewayForConversation(alice.id, conversationId, 'http://gateway.test')
+    expect(bootstrap).toEqual({
+      gatewayPublicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
+      gatewayKid: publicKeyToString(hexToBytes(bobIdentity.keyId)),
+    })
+    expect(store.findConversation(alice.id, conversationId)?.gateway).toEqual({
+      publicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
+      keyId: publicKeyToString(hexToBytes(bobIdentity.keyId)),
+    })
+
+    const secretMessage = await gateSecretRequest(
+      alice.id,
+      alice.name,
+      conversationId,
+      'stripe',
+      'sk_test_bootstrap',
+      'Authorization',
+      'Bearer {value}',
+    )
+    const payload = JSON.parse(secretMessage.text) as { encrypted_blob: string }
+    const decrypted = openSecret(
+      hexToBytes(bobIdentity.privateKey),
+      hexToBytes(aliceIdentity.publicKey),
+      base64UrlDecode(payload.encrypted_blob),
+    )
+    expect(new TextDecoder().decode(decrypted)).toBe('sk_test_bootstrap')
   })
 })

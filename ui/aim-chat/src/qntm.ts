@@ -288,6 +288,11 @@ function getDropbox(): DropboxClient {
   return new DropboxClient(store.getDropboxUrl())
 }
 
+interface GatewayBootstrap {
+  gatewayPublicKey: string
+  gatewayKid: string
+}
+
 async function sendEnvelope(conversationId: string, envelope: ReturnType<typeof createMessage>): Promise<void> {
   const dropbox = getDropbox()
   const data = serializeEnvelope(envelope)
@@ -576,6 +581,10 @@ export async function receiveMessages(
   const acceptedMessages: ChatMessage[] = []
 
   for (const rawEnvelope of result.messages) {
+    const activeConvCrypto = convCrypto
+    if (!activeConvCrypto) {
+      break
+    }
     let envelope
     try {
       envelope = deserializeEnvelope(rawEnvelope)
@@ -585,7 +594,7 @@ export async function receiveMessages(
 
     let decrypted
     try {
-      decrypted = decryptMessage(envelope, convCrypto)
+      decrypted = decryptMessage(envelope, activeConvCrypto)
     } catch {
       continue
     }
@@ -652,7 +661,7 @@ export async function receiveMessages(
 export async function gateRunRequest(
   profileId: string, profileName: string, conversationId: string,
   recipe: GateRecipe,
-  recipeName: string, orgId: string, _gateUrl: string, args: Record<string, string>
+  recipeName: string, _gateUrl: string, args: Record<string, string>
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
@@ -673,13 +682,8 @@ export async function gateRunRequest(
   const kidB64 = base64UrlEncode(identity.keyID)
   const payloadHash = computePayloadHash(requestBody ?? null)
 
-  // Build eligible signer roster from conversation participants (base64url KIDs)
   const conv = store.findConversation(profileId, conversationId)
-  const eligibleSignerKids: string[] = []
-  const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
-  for (const pk of knownPublicKeys) {
-    eligibleSignerKids.push(base64UrlEncode(keyIDFromPublicKey(pk)))
-  }
+  const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   // Determine threshold from recipe or default to participant count
   const requiredApprovals = recipe.threshold ?? eligibleSignerKids.length
 
@@ -833,6 +837,53 @@ export async function gatePromoteRequest(
   return sendMessageToConversation(profileId, profileName, conversationId, bodyText, 'gate.promote')
 }
 
+export async function bootstrapGatewayForConversation(
+  profileId: string,
+  conversationId: string,
+  gateServerUrl: string,
+): Promise<GatewayBootstrap> {
+  const convCrypto = getConvCrypto(profileId, conversationId)
+  if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
+
+  const baseUrl = gateServerUrl.trim().replace(/\/+$/, '')
+  if (!baseUrl) {
+    throw new Error('Gateway server URL is required')
+  }
+
+  const response = await fetch(`${baseUrl}/v1/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conv_id: conversationId,
+      conv_aead_key: base64UrlEncode(convCrypto.keys.aeadKey),
+      conv_nonce_key: base64UrlEncode(convCrypto.keys.nonceKey),
+      conv_epoch: convCrypto.currentEpoch,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Gateway bootstrap failed: HTTP ${response.status} ${await response.text()}`)
+  }
+
+  const data = await response.json() as { gateway_public_key?: unknown; gateway_kid?: unknown }
+  if (typeof data.gateway_public_key !== 'string' || typeof data.gateway_kid !== 'string') {
+    throw new Error('Gateway bootstrap returned an invalid response')
+  }
+
+  store.updateConversation(profileId, conversationId, (conv) => ({
+    ...conv,
+    gateway: {
+      publicKey: data.gateway_public_key as string,
+      keyId: data.gateway_kid as string,
+    },
+  }))
+
+  return {
+    gatewayPublicKey: data.gateway_public_key,
+    gatewayKid: data.gateway_kid,
+  }
+}
+
 export async function gateSecretRequest(
   profileId: string, profileName: string, conversationId: string,
   service: string, value: string, headerName: string, headerTemplate: string,
@@ -849,6 +900,13 @@ export async function gateSecretRequest(
   if (gatewayPublicKey) {
     gwPubKeyBytes = decodeGatewayPublicKey(gatewayPublicKey)
   } else {
+    const conv = store.findConversation(profileId, conversationId)
+    if (conv?.gateway?.publicKey) {
+      gwPubKeyBytes = decodeGatewayPublicKey(conv.gateway.publicKey)
+    }
+  }
+
+  if (!gwPubKeyBytes) {
     const conv = store.findConversation(profileId, conversationId)
     for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
       const pKid = base64UrlEncode(keyIDFromPublicKey(publicKey))

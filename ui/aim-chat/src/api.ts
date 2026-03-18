@@ -100,20 +100,33 @@ export const api = {
     return { recipes }
   },
 
-  async gatePromote(profileId: string, profileName: string, conversationId: string, orgId: string, threshold: number): Promise<{ message: ChatMessage; warning?: string }> {
-    const message = await qntm.gatePromoteRequest(profileId, profileName, conversationId, orgId, threshold)
+  async gatePromote(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    gateServerUrl: string,
+    threshold: number,
+  ): Promise<{ message: ChatMessage; warning?: string }> {
+    const bootstrap = await qntm.bootstrapGatewayForConversation(profileId, conversationId, gateServerUrl)
+    const message = await qntm.gatePromoteRequest(
+      profileId,
+      profileName,
+      conversationId,
+      bootstrap.gatewayKid,
+      threshold,
+    )
     return { message }
   },
 
   async gateRun(
     profileId: string, profileName: string, conversationId: string,
-    recipeName: string, orgId: string, gateUrl: string, args?: Record<string, string>
+    recipeName: string, gateUrl: string, args?: Record<string, string>
   ): Promise<{ message: ChatMessage; warning?: string }> {
     const allRecipes = (starterCatalog as { recipes: Record<string, GateRecipe> }).recipes || {}
     const recipe = allRecipes[recipeName]
     if (!recipe) throw new Error(`Recipe "${recipeName}" not found`)
     const message = await qntm.gateRunRequest(
-      profileId, profileName, conversationId, recipe, recipeName, orgId, gateUrl, args || {}
+      profileId, profileName, conversationId, recipe, recipeName, gateUrl, args || {}
     )
     return { message }
   },

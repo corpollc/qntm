@@ -46,7 +46,6 @@ export default function App() {
 
   const [gateRecipes, setGateRecipes] = useState<GateRecipe[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState('')
-  const [gateOrgId, setGateOrgId] = useState('')
   const [gateServerUrl, setGateServerUrl] = useState('http://localhost:8080')
   const [gateArgs, setGateArgs] = useState<Record<string, string>>({})
   const [gatePromoteThreshold, setGatePromoteThreshold] = useState(2)
@@ -117,14 +116,12 @@ export default function App() {
   // Derive gate status from message history
   const gateStatus = useMemo(() => {
     let promoted = false
-    let orgId = ''
     let threshold = 0
     for (const msg of messages) {
       if (msg.bodyType === 'gate.promote') {
         try {
           const body = JSON.parse(msg.text)
           promoted = true
-          orgId = body.conv_id || ''
           if (body.rules?.[0]?.m) threshold = body.rules[0].m
         } catch { /* ignore */ }
       } else if (msg.bodyType === 'gov.applied') {
@@ -138,7 +135,6 @@ export default function App() {
     }
     return {
       promoted,
-      orgId,
       threshold,
       signerCount: selectedConversation?.participants.length || 0,
     }
@@ -665,20 +661,17 @@ export default function App() {
       return
     }
 
-    const orgId = gateOrgId.trim() || gateStatus.orgId || selectedConversationId
-
     setIsWorking(true)
     try {
-      const response = await api.gateRun(
+      await api.gateRun(
         activeProfileId,
         activeProfile?.name || '',
         selectedConversationId,
         selectedRecipe,
-        orgId,
         gateServerUrl.trim(),
         Object.keys(gateArgs).length > 0 ? gateArgs : undefined,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`API request submitted: ${selectedRecipe}`)
       addToast(`API request submitted: ${selectedRecipe}`, 'success')
       setError('')
@@ -696,19 +689,16 @@ export default function App() {
       return
     }
 
-    // Use conversation ID as org ID — the conversation IS the org
-    const orgId = gateOrgId.trim() || selectedConversationId
-
     setIsWorking(true)
     try {
-      const response = await api.gatePromote(
+      await api.gatePromote(
         activeProfileId,
         activeProfile?.name || '',
         selectedConversationId,
-        orgId,
+        gateServerUrl.trim(),
         gatePromoteThreshold,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`API Gateway enabled: ${gatePromoteThreshold} approvals required`)
       addToast(`API Gateway enabled: ${gatePromoteThreshold} approvals required`, 'success')
       setError('')
@@ -739,7 +729,7 @@ export default function App() {
         secretHeaderName.trim() || undefined,
         secretHeaderTemplate.trim() || undefined,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       const secretMsg = response.output || `API key added for ${secretService.trim()}`
       setStatus(secretMsg)
       addToast(secretMsg, 'success')
@@ -838,13 +828,13 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const response = await api.govProposeFloorChange(
+      await api.govProposeFloorChange(
         activeProfileId,
         activeProfile?.name || '',
         selectedConversationId,
         proposedFloor,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`Proposed threshold change to ${proposedFloor}`)
       addToast(`Proposed threshold change to ${proposedFloor}`, 'success')
       setError('')
@@ -864,13 +854,13 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const response = await api.govProposeMemberAdd(
+      await api.govProposeMemberAdd(
         activeProfileId,
         activeProfile?.name || '',
         selectedConversationId,
         memberPublicKey,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setStatus('Proposed member addition')
       addToast('Proposed member addition', 'success')
       setError('')
@@ -890,13 +880,13 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const response = await api.govProposeMemberRemove(
+      await api.govProposeMemberRemove(
         activeProfileId,
         activeProfile?.name || '',
         selectedConversationId,
         memberKeyId,
       )
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`Proposed removing ${shortId(memberKeyId)}`)
       addToast(`Proposed removing ${shortId(memberKeyId)}`, 'success')
       setError('')
@@ -925,7 +915,7 @@ export default function App() {
     setIsSending(true)
     try {
       const response = await api.sendMessage(activeProfileId, activeProfile?.name || '', selectedConversationId, text)
-      setMessages((previous) => [...previous, response.message])
+      await refreshHistory(activeProfileId, selectedConversationId)
       setComposer('')
       const relayWarning = response.warning?.trim() || ''
       const sentMsg = relayWarning ? `Message sent · ${relayWarning}` : 'Message sent'
@@ -1057,7 +1047,6 @@ export default function App() {
               gateServerUrl={gateServerUrl}
               setGateServerUrl={setGateServerUrl}
               gateArgs={gateArgs}
-              gateOrgId={gateOrgId}
               gatePromoteThreshold={gatePromoteThreshold}
               setGatePromoteThreshold={setGatePromoteThreshold}
               resolvedGateUrl={resolvedGateUrl}

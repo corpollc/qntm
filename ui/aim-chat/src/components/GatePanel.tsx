@@ -6,14 +6,13 @@ import { Spinner } from './Spinner'
 import { Tooltip } from './Tooltip'
 
 export interface GatePanelProps {
-  gateStatus: { promoted: boolean; orgId: string; threshold: number; signerCount: number }
+  gateStatus: { promoted: boolean; threshold: number; signerCount: number }
   gateRecipes: GateRecipe[]
   selectedRecipe: string
   activeRecipe: GateRecipe | null
   gateServerUrl: string
   setGateServerUrl: (value: string) => void
   gateArgs: Record<string, string>
-  gateOrgId: string
   gatePromoteThreshold: number
   setGatePromoteThreshold: (value: number) => void
   resolvedGateUrl: string
@@ -121,6 +120,14 @@ export function GatePanel({
             All conversation participants become signers.
             Set how many must approve each API call.
           </div>
+          <label className="label" htmlFor="gate-promote-url">Gateway server</label>
+          <input
+            id="gate-promote-url"
+            className="input"
+            placeholder="http://localhost:8080"
+            value={gateServerUrl}
+            onChange={(event) => setGateServerUrl(event.target.value)}
+          />
           <label className="label" htmlFor="gate-promote-threshold">Required approvals <Tooltip text="The number of participants who must approve before an API call executes." /></label>
           <input
             id="gate-promote-threshold"
@@ -152,7 +159,6 @@ export function GatePanel({
           <div className="gate-status-badge promoted">API Gateway Active</div>
           <div className="meta">
             <div><strong>Required approvals:</strong> {gateStatus.threshold} of {gateStatus.signerCount} signers</div>
-            {gateStatus.orgId && <div><strong>Org:</strong> {gateStatus.orgId}</div>}
           </div>
         </div>
       </section>

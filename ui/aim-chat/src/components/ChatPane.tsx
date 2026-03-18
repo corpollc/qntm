@@ -321,7 +321,6 @@ export function ChatPane({
                     </div>
                   )}
                   <MessageBody message={message} onGateApprove={onGateApprove} onGateDisapprove={onGateDisapprove} onGovApprove={onGovApprove} onGovDisapprove={onGovDisapprove} isWorking={isWorking} approvalCounts={approvalCounts} disapprovalCounts={disapprovalCounts} requiredApprovals={requiredApprovals} approvedByMe={approvedByMe} govApprovalCounts={govApprovalCounts} govDisapprovalCounts={govDisapprovalCounts} govRequiredApprovals={govRequiredApprovals} govApprovedByMe={govApprovedByMe} govDisapprovedByMe={govDisapprovedByMe} govApplied={govApplied} />
-                  <div className="message-type">{message.bodyType}</div>
                 </article>
               </div>
             </div>

@@ -24,6 +24,11 @@ export interface StoredConversationKeys {
   nonceKey: string // hex
 }
 
+export interface StoredGatewayIdentity {
+  publicKey: string // base64url
+  keyId: string     // base64url
+}
+
 export interface StoredConversation {
   id: string
   name: string
@@ -31,6 +36,7 @@ export interface StoredConversation {
   keys: StoredConversationKeys
   participants: string[] // hex key IDs
   participantPublicKeys?: string[] // hex public keys
+  gateway?: StoredGatewayIdentity | null
   createdAt: string
   currentEpoch: number
 }
@@ -69,6 +75,12 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
     },
     participants: Array.isArray(raw?.participants) ? raw.participants : [],
     participantPublicKeys: Array.isArray(raw?.participantPublicKeys) ? raw.participantPublicKeys : [],
+    gateway: raw?.gateway && typeof raw.gateway === 'object'
+      ? {
+          publicKey: typeof raw.gateway.publicKey === 'string' ? raw.gateway.publicKey : '',
+          keyId: typeof raw.gateway.keyId === 'string' ? raw.gateway.keyId : '',
+        }
+      : null,
     createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
     currentEpoch: typeof raw?.currentEpoch === 'number' ? raw.currentEpoch : 0,
   }

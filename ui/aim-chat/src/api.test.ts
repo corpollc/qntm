@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
+import * as qntm from './qntm'
 
 class MemoryStorage implements Storage {
   private data = new Map<string, string>()
@@ -57,5 +58,28 @@ describe('api', () => {
     const recipes = api.gateRecipes()
     expect(recipes.recipes.length).toBeGreaterThan(0)
     expect(recipes.recipes.some((recipe) => recipe.name === 'jokes.dad')).toBe(true)
+  })
+
+  it('bootstraps the gateway before sending gate.promote', async () => {
+    const bootstrapSpy = vi.spyOn(qntm, 'bootstrapGatewayForConversation').mockResolvedValue({
+      gatewayPublicKey: 'gateway-public-key',
+      gatewayKid: 'gateway-kid',
+    })
+    const promoteSpy = vi.spyOn(qntm, 'gatePromoteRequest').mockResolvedValue({
+      id: 'm1',
+      conversationId: 'conv-1',
+      direction: 'outgoing',
+      sender: 'Alice',
+      senderKey: '',
+      bodyType: 'gate.promote',
+      text: '{"type":"gate.promote"}',
+      createdAt: new Date().toISOString(),
+    })
+
+    const response = await api.gatePromote('profile-1', 'Alice', 'conv-1', 'http://gateway.test', 2)
+
+    expect(bootstrapSpy).toHaveBeenCalledWith('profile-1', 'conv-1', 'http://gateway.test')
+    expect(promoteSpy).toHaveBeenCalledWith('profile-1', 'Alice', 'conv-1', 'gateway-kid', 2)
+    expect(response.message.bodyType).toBe('gate.promote')
   })
 })
