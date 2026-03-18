@@ -12,3 +12,4 @@
 .dolt/
 *.db
 ui/tui/node_modules/
+integration/node_modules/
