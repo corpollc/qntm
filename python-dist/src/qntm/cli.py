@@ -56,6 +56,7 @@ from .announce import (
 )
 from .gate import (
     GATE_MESSAGE_APPROVAL,
+    GATE_MESSAGE_DISAPPROVAL,
     GATE_MESSAGE_EXECUTED,
     GATE_MESSAGE_PROMOTE,
     GATE_MESSAGE_REQUEST,
@@ -77,6 +78,10 @@ from .group import (
     create_group_rekey_body,
     create_group_remove_body,
     create_rekey,
+    parse_group_genesis_body,
+    parse_group_add_body,
+    parse_group_remove_body,
+    parse_group_rekey_body,
 )
 from .identity import (
     base64url_decode,
@@ -97,6 +102,78 @@ SYSTEM_WARNING = (
 )
 
 DEFAULT_DROPBOX_URL = "https://inbox.qntm.corpo.llc"
+
+_GROUP_BODY_TYPES = frozenset([
+    "group_genesis", "group_add", "group_remove", "group_rekey",
+])
+
+_GROUP_PARSERS = {
+    "group_genesis": parse_group_genesis_body,
+    "group_add": parse_group_add_body,
+    "group_remove": parse_group_remove_body,
+    "group_rekey": parse_group_rekey_body,
+}
+
+
+def _bytes_to_b64url(v):
+    """Encode bytes to base64url string (no padding)."""
+    return base64.urlsafe_b64encode(v).rstrip(b"=").decode()
+
+
+def _json_safe(obj):
+    """Recursively convert bytes in parsed CBOR dicts to base64url strings."""
+    if isinstance(obj, bytes):
+        return _bytes_to_b64url(obj)
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def _decode_group_body(body_type: str, body_bytes: bytes) -> str | None:
+    """Parse a CBOR-encoded group event body into a JSON string, or None."""
+    parser = _GROUP_PARSERS.get(body_type)
+    if parser is None:
+        return None
+    try:
+        parsed = parser(body_bytes)
+        return json.dumps(_json_safe(parsed))
+    except Exception:
+        return None
+
+
+def _format_group_event(body_type: str, body_json: str, sender_kid: str = "") -> str | None:
+    """Format a group event JSON as a human-readable system message."""
+    try:
+        parsed = json.loads(body_json)
+    except Exception:
+        return None
+
+    sender = sender_kid[:8] if sender_kid else "Someone"
+
+    if body_type == "group_genesis":
+        name = parsed.get("group_name", "Group")
+        count = len(parsed.get("founding_members", []))
+        return f"Group \"{name}\" created with {count} member{'s' if count != 1 else ''}"
+
+    if body_type == "group_add":
+        count = len(parsed.get("new_members", []))
+        return f"{sender} added {count} member{'s' if count != 1 else ''}"
+
+    if body_type == "group_remove":
+        count = len(parsed.get("removed_members", []))
+        reason = parsed.get("reason", "")
+        msg = f"{sender} removed {count} member{'s' if count != 1 else ''}"
+        if reason:
+            msg += f" ({reason})"
+        return msg
+
+    if body_type == "group_rekey":
+        epoch = parsed.get("new_conv_epoch", "?")
+        return f"Security keys rotated (epoch {epoch})"
+
+    return None
 
 
 # --- Config dir helpers ---
@@ -310,6 +387,87 @@ def _decode_gateway_public_key(gateway_pubkey: str) -> bytes:
         return pubkey_from_wire(gateway_pubkey)
     except Exception as exc:
         raise ValueError("gateway public key must be valid base64url") from exc
+
+
+def _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity):
+    """Apply group membership/epoch state changes from a received group event.
+
+    Mutates conv_record in-place and saves conversations to disk.
+    """
+    if body_type not in _GROUP_BODY_TYPES:
+        return
+
+    try:
+        if body_type == "group_genesis":
+            parsed = parse_group_genesis_body(body_bytes)
+            existing = set(conv_record.get("participants", []))
+            existing_pks = set(conv_record.get("participant_public_keys", []))
+            for m in parsed.get("founding_members", []):
+                kid_hex = bytes(m["key_id"]).hex().lower()
+                pk_hex = bytes(m["public_key"]).hex()
+                existing.add(kid_hex)
+                existing_pks.add(pk_hex)
+            conv_record["participants"] = list(existing)
+            conv_record["participant_public_keys"] = list(existing_pks)
+            _save_conversations(config_dir, conversations)
+
+        elif body_type == "group_add":
+            parsed = parse_group_add_body(body_bytes)
+            existing = set(conv_record.get("participants", []))
+            existing_pks = set(conv_record.get("participant_public_keys", []))
+            for m in parsed.get("new_members", []):
+                kid_hex = bytes(m["key_id"]).hex().lower()
+                pk_hex = bytes(m["public_key"]).hex()
+                existing.add(kid_hex)
+                existing_pks.add(pk_hex)
+            conv_record["participants"] = list(existing)
+            conv_record["participant_public_keys"] = list(existing_pks)
+            _save_conversations(config_dir, conversations)
+
+        elif body_type == "group_remove":
+            parsed = parse_group_remove_body(body_bytes)
+            removed_kids = set()
+            for kid_raw in parsed.get("removed_members", []):
+                removed_kids.add(bytes(kid_raw).hex().lower())
+            conv_record["participants"] = [
+                p for p in conv_record.get("participants", [])
+                if p.lower() not in removed_kids
+            ]
+            # Also remove from public keys cache
+            from .identity import key_id_from_public_key as _kid_from_pk
+            conv_record["participant_public_keys"] = [
+                pk for pk in conv_record.get("participant_public_keys", [])
+                if _kid_from_pk(bytes.fromhex(pk)).hex().lower() not in removed_kids
+            ]
+            _save_conversations(config_dir, conversations)
+
+        elif body_type == "group_rekey":
+            if not identity:
+                return
+            parsed = parse_group_rekey_body(body_bytes)
+            local_kid = identity["keyID"]
+            local_kid_b64 = base64url_encode(local_kid)
+            wrapped = parsed.get("wrapped_keys", {}).get(local_kid_b64)
+            if wrapped is None:
+                # Excluded from rekey — don't update keys
+                return
+            conv_id_bytes = _conv_id_to_bytes(conv_record["id"])
+            from .crypto import QSP1Suite as _Suite
+            _s = _Suite()
+            new_group_key = _s.unwrap_key_for_recipient(
+                bytes(wrapped), identity["privateKey"], local_kid, conv_id_bytes,
+            )
+            new_epoch = parsed["new_conv_epoch"]
+            aead_key, nonce_key = _s.derive_epoch_keys(
+                new_group_key, conv_id_bytes, new_epoch,
+            )
+            conv_record["current_epoch"] = new_epoch
+            conv_record["keys"]["root"] = new_group_key.hex()
+            conv_record["keys"]["aead_key"] = aead_key.hex()
+            conv_record["keys"]["nonce_key"] = nonce_key.hex()
+            _save_conversations(config_dir, conversations)
+    except Exception:
+        pass  # Silently ignore malformed group events
 
 
 def _conv_to_crypto(conv_record):
@@ -679,6 +837,9 @@ def cmd_recv(args):
         # Track participant public keys for gate promote/request roster construction
         _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
 
+        # Apply group membership/epoch state changes
+        _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity)
+
         entry = {
             "conversation_id": conv_id_hex,
             "message_id": msg_id_hex,
@@ -688,12 +849,19 @@ def cmd_recv(args):
             "body_type": body_type,
         }
 
-        # Determine body encoding
-        try:
-            body_text = body_bytes.decode("utf-8")
-            entry["unsafe_body"] = body_text
-        except UnicodeDecodeError:
-            entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
+        # Determine body encoding — decode group CBOR events to JSON
+        group_json = _decode_group_body(body_type, body_bytes)
+        if group_json is not None:
+            entry["unsafe_body"] = group_json
+            system_msg = _format_group_event(body_type, group_json, sender_kid_hex)
+            if system_msg:
+                entry["system_message"] = system_msg
+        else:
+            try:
+                body_text = body_bytes.decode("utf-8")
+                entry["unsafe_body"] = body_text
+            except UnicodeDecodeError:
+                entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
 
         output_messages.append(entry)
 
@@ -705,10 +873,13 @@ def cmd_recv(args):
             "body_type": body_type,
             "created_ts": envelope["created_ts"],
         }
-        try:
-            hist_entry["unsafe_body"] = body_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            hist_entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
+        if group_json is not None:
+            hist_entry["unsafe_body"] = group_json
+        else:
+            try:
+                hist_entry["unsafe_body"] = body_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                hist_entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
         history.append(hist_entry)
 
     if up_to_seq > from_seq:
@@ -1776,6 +1947,52 @@ def cmd_gate_approve(args):
     })
 
 
+def cmd_gate_disapprove(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    conv_crypto = _conv_to_crypto(conv_record)
+    request_id = args.request_id
+
+    disapproval_msg = {
+        "type": GATE_MESSAGE_DISAPPROVAL,
+        "conv_id": conv_id_hex,
+        "request_id": request_id,
+        "signer_kid": kid_to_wire(identity["keyID"]),
+    }
+
+    result, envelope = _send_gate_message_to_conv(
+        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_DISAPPROVAL, disapproval_msg, dropbox_url,
+    )
+
+    history = _load_history(config_dir, conv_id_hex)
+    history.append({
+        "msg_id": envelope["msg_id"].hex(),
+        "direction": "outgoing",
+        "body_type": GATE_MESSAGE_DISAPPROVAL,
+        "unsafe_body": json.dumps(disapproval_msg),
+        "created_ts": envelope["created_ts"],
+    })
+    _save_history(config_dir, conv_id_hex, history)
+
+    _output("gate.disapprove", {
+        "conversation_id": conv_id_hex,
+        "request_id": request_id,
+        "signer_kid": kid_to_wire(identity["keyID"]),
+    })
+
+
 def cmd_gate_pending(args):
     config_dir = _get_config_dir(args)
     conversations = _load_conversations(config_dir)
@@ -2212,6 +2429,12 @@ quick start:
     gate_approve_p.add_argument("-c", "--conversation", required=True,
                                 help="Conversation ID or prefix")
 
+    # gate-disapprove
+    gate_disapprove_p = subparsers.add_parser("gate-disapprove", help="Deny a gate request")
+    gate_disapprove_p.add_argument("request_id", help="Request ID to deny")
+    gate_disapprove_p.add_argument("-c", "--conversation", required=True,
+                                    help="Conversation ID or prefix")
+
     # gate-pending
     gate_pending_p = subparsers.add_parser("gate-pending", help="List pending gate requests")
     gate_pending_p.add_argument("-c", "--conversation", default=None,
@@ -2329,6 +2552,8 @@ quick start:
         cmd_gate_run(args)
     elif args.command == "gate-approve":
         cmd_gate_approve(args)
+    elif args.command == "gate-disapprove":
+        cmd_gate_disapprove(args)
     elif args.command == "gate-pending":
         cmd_gate_pending(args)
     elif args.command == "gate-promote":

@@ -1,0 +1,17 @@
+{
+  "name": "qntm-integration",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "echo 'Integration tests are opt-in. Run: npm run test:long' && exit 0",
+    "test:long": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@corpollc/qntm": "file:../client"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.0"
+  }
+}

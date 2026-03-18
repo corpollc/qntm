@@ -27,10 +27,156 @@ import {
   resolveRecipe,
   sealSecret,
   DropboxClient,
+  parseGroupGenesisBody,
+  parseGroupAddBody,
+  parseGroupRemoveBody,
+  parseGroupRekeyBody,
+  QSP1Suite,
 } from '@corpollc/qntm'
 
 import * as store from './store'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
+
+const _suite = new QSP1Suite()
+const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
+
+// ---- Group event state application ----
+
+/**
+ * Apply group membership/epoch mutations from a received group event.
+ * Mutates the stored conversation in localStorage.
+ */
+function applyGroupEvent(
+  profileId: string,
+  conversationId: string,
+  bodyType: string,
+  bodyBytes: Uint8Array,
+  localIdentity: IdentityKeys | null,
+): void {
+  if (!GROUP_BODY_TYPES.has(bodyType)) return
+
+  try {
+    switch (bodyType) {
+      case 'group_genesis': {
+        const parsed = parseGroupGenesisBody(bodyBytes)
+        const newKids: string[] = []
+        const newPks: string[] = []
+        for (const m of parsed.founding_members ?? []) {
+          newKids.push(bytesToHex(new Uint8Array(m.key_id)).toLowerCase())
+          newPks.push(bytesToHex(new Uint8Array(m.public_key)))
+        }
+        store.updateConversation(profileId, conversationId, (conv) => ({
+          ...conv,
+          participants: dedupeHex([...conv.participants, ...newKids]),
+          participantPublicKeys: dedupeHex([...(conv.participantPublicKeys || []), ...newPks]),
+        }))
+        break
+      }
+      case 'group_add': {
+        const parsed = parseGroupAddBody(bodyBytes)
+        const newKids: string[] = []
+        const newPks: string[] = []
+        for (const m of parsed.new_members ?? []) {
+          newKids.push(bytesToHex(new Uint8Array(m.key_id)).toLowerCase())
+          newPks.push(bytesToHex(new Uint8Array(m.public_key)))
+        }
+        store.updateConversation(profileId, conversationId, (conv) => ({
+          ...conv,
+          participants: dedupeHex([...conv.participants, ...newKids]),
+          participantPublicKeys: dedupeHex([...(conv.participantPublicKeys || []), ...newPks]),
+        }))
+        break
+      }
+      case 'group_remove': {
+        const parsed = parseGroupRemoveBody(bodyBytes)
+        const removedKids = new Set(
+          (parsed.removed_members ?? []).map((kid: Uint8Array | ArrayBuffer) =>
+            bytesToHex(kid instanceof Uint8Array ? kid : new Uint8Array(kid)).toLowerCase()
+          ),
+        )
+        store.updateConversation(profileId, conversationId, (conv) => ({
+          ...conv,
+          participants: conv.participants.filter((p) => !removedKids.has(p.toLowerCase())),
+          participantPublicKeys: (conv.participantPublicKeys || []).filter((pk) => {
+            const kid = bytesToHex(keyIDFromPublicKey(hexToBytes(pk))).toLowerCase()
+            return !removedKids.has(kid)
+          }),
+        }))
+        break
+      }
+      case 'group_rekey': {
+        if (!localIdentity) break
+        const parsed = parseGroupRekeyBody(bodyBytes)
+        const localKidB64 = base64UrlEncode(localIdentity.keyID)
+        const wrappedBlob = parsed.wrapped_keys[localKidB64]
+        if (!wrappedBlob) {
+          // We're excluded from this rekey — don't update keys
+          break
+        }
+        // Unwrap the new group key
+        const conv = store.findConversation(profileId, conversationId)
+        if (!conv) break
+        const convIdBytes = hexToBytes(conv.id)
+        const newGroupKey = _suite.unwrapKeyForRecipient(
+          new Uint8Array(wrappedBlob),
+          localIdentity.privateKey,
+          localIdentity.keyID,
+          convIdBytes,
+        )
+        const newEpoch = parsed.new_conv_epoch
+        const { aeadKey, nonceKey } = _suite.deriveEpochKeys(newGroupKey, convIdBytes, newEpoch)
+        store.updateConversation(profileId, conversationId, (c) => ({
+          ...c,
+          currentEpoch: newEpoch,
+          keys: {
+            root: bytesToHex(newGroupKey),
+            aeadKey: bytesToHex(aeadKey),
+            nonceKey: bytesToHex(nonceKey),
+          },
+        }))
+        break
+      }
+    }
+  } catch {
+    // Silently ignore malformed group events — they'll still show as system messages
+  }
+}
+
+// ---- Group event CBOR → JSON ----
+
+/**
+ * Convert a CBOR-encoded group event body to JSON text for UI display/storage.
+ * Non-group body types return the raw UTF-8 decoded text unchanged.
+ */
+function groupBodyToJson(bodyType: string, bodyBytes: Uint8Array): string | null {
+  if (!GROUP_BODY_TYPES.has(bodyType)) return null
+  try {
+    let parsed: unknown
+    switch (bodyType) {
+      case 'group_genesis':
+        parsed = parseGroupGenesisBody(bodyBytes)
+        break
+      case 'group_add':
+        parsed = parseGroupAddBody(bodyBytes)
+        break
+      case 'group_remove':
+        parsed = parseGroupRemoveBody(bodyBytes)
+        break
+      case 'group_rekey':
+        parsed = parseGroupRekeyBody(bodyBytes)
+        break
+    }
+    return JSON.stringify(parsed, (_key, value) => {
+      // Convert Uint8Array / ArrayBuffer to base64url strings for JSON serialization
+      if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+        return base64UrlEncode(value instanceof Uint8Array ? value : new Uint8Array(value))
+      }
+      return value
+    })
+  } catch {
+    return null
+  }
+}
 
 // ---- Hex utilities ----
 
@@ -358,9 +504,13 @@ export async function receiveMessages(
     mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
 
     const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
-    const bodyText = new TextDecoder().decode(new Uint8Array(decrypted.inner.body))
     const bodyType = decrypted.inner.body_type || 'text'
+    const rawBodyBytes = new Uint8Array(decrypted.inner.body)
+    const bodyText = groupBodyToJson(bodyType, rawBodyBytes) ?? new TextDecoder().decode(rawBodyBytes)
     const createdAt = new Date(envelope.created_ts * 1000).toISOString()
+
+    // Apply group membership/epoch state changes
+    applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
 
     const message: store.StoredMessage = {
       id: bytesToHex(envelope.msg_id),
@@ -530,6 +680,27 @@ export async function gateApproveRequest(
 
   const bodyText = JSON.stringify(approvalBody)
   return sendMessageToConversation(profileId, profileName, conversationId, bodyText, 'gate.approval')
+}
+
+export async function gateDisapproveRequest(
+  profileId: string, profileName: string, conversationId: string, requestId: string
+): Promise<ChatMessage> {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+  const convCrypto = getConvCrypto(profileId, conversationId)
+  if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
+
+  const kidB64 = base64UrlEncode(identity.keyID)
+
+  const disapprovalBody = {
+    type: 'gate.disapproval',
+    conv_id: conversationId,
+    request_id: requestId,
+    signer_kid: kidB64,
+  }
+
+  const bodyText = JSON.stringify(disapprovalBody)
+  return sendMessageToConversation(profileId, profileName, conversationId, bodyText, 'gate.disapproval')
 }
 
 export async function gatePromoteRequest(

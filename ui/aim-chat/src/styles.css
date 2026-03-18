@@ -4,4 +4,5 @@
 @import './styles/components.css';
 @import './styles/messages.css';
 @import './styles/gate.css';
+@import './styles/system-events.css';
 @import './styles/overlays.css';

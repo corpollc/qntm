@@ -53,6 +53,18 @@ export type {
   GroupRemoveBody, GroupRekeyBody,
 } from './group/index.js';
 
+export {
+  GovMessagePropose, GovMessageApprove, GovMessageDisapprove, GovMessageApplied,
+  signProposal, verifyProposal, hashProposal,
+  signGovApproval, verifyGovApproval,
+  createProposalBody,
+} from './governance/index.js';
+export type {
+  GovProposalType, ProposedMember,
+  GovProposalSignable, GovApprovalSignable,
+  GovProposalBody, GovApprovalBody, GovDisapprovalBody, GovAppliedBody,
+} from './governance/index.js';
+
 export { DropboxClient } from './dropbox/index.js';
 export type { ReceiveResult } from './dropbox/index.js';
 

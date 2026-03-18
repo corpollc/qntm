@@ -115,6 +115,15 @@
   color: var(--success);
 }
 
+.gate-disapproval {
+  background: var(--tint-danger-bg);
+  border-color: var(--danger);
+}
+
+.gate-disapproval .gate-card-header {
+  color: var(--danger);
+}
+
 .gate-executed {
   background: var(--brand-light);
   border-color: var(--brand-primary);
@@ -153,6 +162,30 @@
 
 .gate-approve-btn:disabled {
   background: var(--approve-disabled);
+  cursor: default;
+}
+
+.gate-deny-btn {
+  display: inline-block;
+  margin-top: 8px;
+  margin-left: 8px;
+  padding: 6px 16px;
+  background: var(--danger, #e74c3c);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--text-base);
+  transition: background 0.15s;
+}
+
+.gate-deny-btn:hover {
+  opacity: 0.85;
+}
+
+.gate-deny-btn:disabled {
+  opacity: 0.5;
   cursor: default;
 }
 

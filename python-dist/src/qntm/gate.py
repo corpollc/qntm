@@ -34,6 +34,7 @@ GATE_MESSAGE_EXECUTED: str = "gate.executed"
 GATE_MESSAGE_PROMOTE: str = "gate.promote"
 GATE_MESSAGE_SECRET: str = "gate.secret"
 GATE_MESSAGE_CONFIG: str = "gate.config"
+GATE_MESSAGE_DISAPPROVAL: str = "gate.disapproval"
 GATE_MESSAGE_REVOKE: str = "gate.revoke"
 GATE_MESSAGE_EXPIRED: str = "gate.expired"
 

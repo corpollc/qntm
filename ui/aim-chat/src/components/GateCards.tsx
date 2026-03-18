@@ -12,16 +12,20 @@ import { shortId, parseGateMessage } from '../utils'
 export function GateRequestCard({
   message,
   onApprove,
+  onDisapprove,
   isWorking,
   alreadyApproved,
   approvalCount,
+  disapprovalCount,
   requiredApprovals,
 }: {
   message: ChatMessage
   onApprove: (requestId: string, conversationId: string) => void
+  onDisapprove?: (requestId: string, conversationId: string) => void
   isWorking: boolean
   alreadyApproved?: boolean
   approvalCount?: number
+  disapprovalCount?: number
   requiredApprovals?: number
 }) {
   const parsed = parseGateMessage(message.text) as GateRequestBody | null
@@ -87,6 +91,21 @@ export function GateRequestCard({
       {!isExpired && alreadyApproved && !thresholdMet && (
         <div style={{ marginTop: 8, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>You have already approved this request.</div>
       )}
+      {!isExpired && !thresholdMet && onDisapprove && (
+        <button
+          className="gate-deny-btn"
+          type="button"
+          disabled={isWorking}
+          onClick={() => onDisapprove(parsed.request_id, message.conversationId)}
+        >
+          Deny
+        </button>
+      )}
+      {disapprovalCount != null && disapprovalCount > 0 && (
+        <div style={{ marginTop: 4, fontSize: 'var(--text-xs)', color: 'var(--danger, #e74c3c)', fontWeight: 600 }}>
+          {disapprovalCount} disapproval{disapprovalCount !== 1 ? 's' : ''}
+        </div>
+      )}
       {isExpired && <div className="gate-expired">Expired</div>}
     </div>
   )
@@ -112,6 +131,21 @@ export function GateApprovalCard({ message, approvalCount, requiredApprovals }: 
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
         <div><strong>Approved by:</strong> {shortId(parsed.signer_kid)}</div>
+      </div>
+    </div>
+  )
+}
+
+export function GateDisapprovalCard({ message }: { message: ChatMessage }) {
+  const parsed = parseGateMessage(message.text) as { request_id?: string; signer_kid?: string } | null
+  if (!parsed) return <div className="message-body">{message.text}</div>
+
+  return (
+    <div className="gate-card gate-disapproval">
+      <div className="gate-card-header">Request Denied</div>
+      <div className="gate-card-body">
+        <div><strong>Request:</strong> {shortId(parsed.request_id || '')}</div>
+        <div><strong>Denied by:</strong> {shortId(parsed.signer_kid || '')}</div>
       </div>
     </div>
   )

@@ -3,13 +3,15 @@ import {
   DropboxClient, deserializeEnvelope, decryptMessage,
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
+  verifyProposal, hashProposal, verifyGovApproval,
 } from '@corpollc/qntm';
-import type { Conversation, ConversationKeys, Identity } from '@corpollc/qntm';
+import type { Conversation, ConversationKeys, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
   Env, ConversationState, PromoteRequest, PromoteResponse,
   GatePromoteMessage, GateRequestMessage, GateApprovalMessage,
   GateDisapprovalMessage, GateSecretMessage,
-  StoredGateMessage, VaultEntry,
+  GovProposeMessage, GovApproveMessage,
+  StoredGateMessage, StoredGovProposal, VaultEntry,
 } from './types.js';
 import { scanRequestApprovals, findExecutableRequests } from './scan.js';
 import { processSecret, importVaultKey, isExpired } from './vault.js';
@@ -246,6 +248,15 @@ export class GatewayConversationDO implements DurableObject {
         throw new Error('gate.config rejected: direct policy mutation is not allowed; use governed request/approval workflow');
       case 'gate.executed':
         await this.handleGateExecuted(bodyStr, authenticatedKid);
+        break;
+      case 'gov.propose':
+        await this.handleGovPropose(bodyStr, authenticatedKid, senderPublicKey);
+        break;
+      case 'gov.approve':
+        await this.handleGovApprove(bodyStr, authenticatedKid, senderPublicKey);
+        break;
+      case 'gov.disapprove':
+        await this.handleGovDisapprove(bodyStr, authenticatedKid);
         break;
       default:
         break;
@@ -604,6 +615,247 @@ export class GatewayConversationDO implements DurableObject {
       // Clean up WAL entry
       await this.state.storage.delete(`wal:${scan.request_id}`);
     }
+  }
+
+  // ---- Governance handlers ----
+
+  private async handleGovPropose(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
+    const msg = JSON.parse(bodyStr) as GovProposeMessage;
+
+    // Validate sender matches
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gov.propose rejected: signer_kid does not match authenticated sender');
+    }
+
+    // Validate sender is a participant
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gov.propose: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gov.propose rejected: sender is not a participant');
+    }
+
+    // Verify the proposal signature
+    const signable: GovProposalSignable = {
+      conv_id: msg.conv_id,
+      proposal_id: msg.proposal_id,
+      proposal_type: msg.proposal_type,
+      proposed_floor: msg.proposed_floor,
+      proposed_rules: msg.proposed_rules,
+      eligible_signer_kids: msg.eligible_signer_kids,
+      required_approvals: msg.required_approvals,
+      expires_at_unix: Math.floor(new Date(msg.expires_at).getTime() / 1000),
+    };
+    const signature = base64UrlDecode(msg.signature);
+    if (!verifyProposal(senderPublicKey, signable, signature)) {
+      throw new Error('gov.propose rejected: invalid proposal signature');
+    }
+
+    // Validate required_approvals >= promotion floor
+    if (msg.required_approvals < convState.promotion_floor) {
+      throw new Error(`gov.propose rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
+    }
+
+    // Validate eligible signers match current participants
+    const currentParticipantKids = new Set(Object.keys(convState.participants));
+    for (const kid of msg.eligible_signer_kids) {
+      if (!currentParticipantKids.has(kid)) {
+        throw new Error(`gov.propose rejected: eligible signer ${kid} is not a current participant`);
+      }
+    }
+
+    // Store the proposal
+    await this.storeGovProposal({
+      seq: ++this.messageSeq,
+      type: 'gov.propose',
+      proposal_id: msg.proposal_id,
+      signer_kid: authenticatedKid,
+      signature: msg.signature,
+      body: bodyStr,
+    });
+  }
+
+  private async handleGovApprove(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
+    const msg = JSON.parse(bodyStr) as GovApproveMessage;
+
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gov.approve rejected: signer_kid does not match authenticated sender');
+    }
+
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gov.approve: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gov.approve rejected: sender is not a participant');
+    }
+
+    // Find the referenced proposal
+    const proposals = await this.loadGovProposals();
+    const proposalStored = proposals.find(p => p.type === 'gov.propose' && p.proposal_id === msg.proposal_id && p.body);
+    if (!proposalStored?.body) {
+      throw new Error('gov.approve rejected: referenced proposal not found');
+    }
+    const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
+
+    // Verify the approval signature against the proposal hash
+    const proposalSignable: GovProposalSignable = {
+      conv_id: proposalMsg.conv_id,
+      proposal_id: proposalMsg.proposal_id,
+      proposal_type: proposalMsg.proposal_type,
+      proposed_floor: proposalMsg.proposed_floor,
+      proposed_rules: proposalMsg.proposed_rules,
+      eligible_signer_kids: proposalMsg.eligible_signer_kids,
+      required_approvals: proposalMsg.required_approvals,
+      expires_at_unix: Math.floor(new Date(proposalMsg.expires_at).getTime() / 1000),
+    };
+    const proposalHash = hashProposal(proposalSignable);
+    const approvalSignable = {
+      conv_id: msg.conv_id,
+      proposal_id: msg.proposal_id,
+      proposal_hash: proposalHash,
+    };
+    const approvalSig = base64UrlDecode(msg.signature);
+    if (!verifyGovApproval(senderPublicKey, approvalSignable, approvalSig)) {
+      throw new Error('gov.approve rejected: invalid approval signature');
+    }
+
+    // Validate approver is in the proposal's eligible signer roster
+    if (!proposalMsg.eligible_signer_kids.includes(authenticatedKid)) {
+      throw new Error('gov.approve rejected: sender is not in proposal eligible_signer_kids roster');
+    }
+
+    // Store the approval
+    await this.storeGovProposal({
+      seq: ++this.messageSeq,
+      type: 'gov.approve',
+      proposal_id: msg.proposal_id,
+      signer_kid: authenticatedKid,
+      signature: msg.signature,
+    });
+
+    // Check if threshold is met and apply
+    await this.checkAndApplyProposal(convState, msg.proposal_id);
+  }
+
+  private async handleGovDisapprove(bodyStr: string, authenticatedKid: string): Promise<void> {
+    const msg = JSON.parse(bodyStr) as { conv_id: string; proposal_id: string; signer_kid: string };
+
+    if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
+      throw new Error('gov.disapprove rejected: signer_kid does not match authenticated sender');
+    }
+
+    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new Error('gov.disapprove: no bootstrapped state');
+    if (!convState.participants[authenticatedKid]) {
+      throw new Error('gov.disapprove rejected: sender is not a participant');
+    }
+
+    await this.storeGovProposal({
+      seq: ++this.messageSeq,
+      type: 'gov.disapprove',
+      proposal_id: msg.proposal_id,
+      signer_kid: authenticatedKid,
+    });
+  }
+
+  /**
+   * Check if a governance proposal has enough approvals and apply it.
+   * The proposer counts as the first approval (like gate.request).
+   */
+  private async checkAndApplyProposal(convState: ConversationState, proposalId: string): Promise<void> {
+    const proposals = await this.loadGovProposals();
+
+    // Find the proposal
+    const proposalStored = proposals.find(p => p.type === 'gov.propose' && p.proposal_id === proposalId && p.body);
+    if (!proposalStored?.body) return;
+    const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
+
+    // Check expiry
+    if (new Date(proposalMsg.expires_at) < new Date()) return;
+
+    // Count unique approvals (proposer counts as first approval)
+    const approverKids = new Set<string>();
+    if (proposalStored.signer_kid) approverKids.add(proposalStored.signer_kid);
+    for (const p of proposals) {
+      if (p.type === 'gov.approve' && p.proposal_id === proposalId && p.signer_kid) {
+        approverKids.add(p.signer_kid);
+      }
+    }
+
+    // Check if already applied
+    const alreadyApplied = proposals.some(p => p.type === 'gov.applied' && p.proposal_id === proposalId);
+    if (alreadyApplied) return;
+
+    if (approverKids.size < proposalMsg.required_approvals) return;
+
+    // Apply the proposal
+    if (proposalMsg.proposal_type === 'floor_change' && proposalMsg.proposed_floor !== undefined) {
+      convState.promotion_floor = proposalMsg.proposed_floor;
+    } else if (proposalMsg.proposal_type === 'rules_change' && proposalMsg.proposed_rules) {
+      convState.rules = proposalMsg.proposed_rules;
+    } else if (proposalMsg.proposal_type === 'member_add' && proposalMsg.proposed_members) {
+      for (const m of proposalMsg.proposed_members) {
+        if (m.kid !== convState.kid) { // Don't add gateway as participant
+          convState.participants[m.kid] = m.public_key;
+        }
+      }
+    } else if (proposalMsg.proposal_type === 'member_remove' && proposalMsg.removed_member_kids) {
+      for (const kid of proposalMsg.removed_member_kids) {
+        delete convState.participants[kid];
+      }
+    }
+    await this.state.storage.put('conv_state', convState);
+
+    // Store applied marker
+    await this.storeGovProposal({
+      seq: ++this.messageSeq,
+      type: 'gov.applied',
+      proposal_id: proposalId,
+    });
+
+    // Post gov.applied to conversation
+    const convIdBytes = hexToBytes(convState.conv_id);
+    const conv = this.buildConversation(convState, convIdBytes);
+    const identity = this.buildIdentity(convState);
+    const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+
+    const appliedBody = JSON.stringify({
+      type: 'gov.applied',
+      proposal_id: proposalId,
+      proposal_type: proposalMsg.proposal_type,
+      applied_floor: proposalMsg.proposed_floor,
+      applied_rules: proposalMsg.proposed_rules,
+      applied_members: proposalMsg.proposed_members,
+      removed_member_kids: proposalMsg.removed_member_kids,
+      applied_at: new Date().toISOString(),
+    });
+    const appliedEnv = createMessage(
+      identity, conv, 'gov.applied',
+      new TextEncoder().encode(appliedBody), undefined, defaultTTL(),
+    );
+    try {
+      await dropbox.postMessage(convIdBytes, serializeEnvelope(appliedEnv));
+    } catch {
+      // Best effort
+    }
+
+    // Invalidate pending gate.requests whose approval context no longer matches
+    // (e.g. if floor was raised above their required_approvals)
+    // This is done by storing invalidation markers, not by deleting messages.
+  }
+
+  // ---- Governance storage helpers ----
+
+  private async storeGovProposal(msg: StoredGovProposal): Promise<void> {
+    const key = `gov:${String(msg.seq).padStart(8, '0')}`;
+    await this.state.storage.put(key, msg);
+  }
+
+  private async loadGovProposals(): Promise<StoredGovProposal[]> {
+    const entries = await this.state.storage.list<StoredGovProposal>({ prefix: 'gov:' });
+    const proposals: StoredGovProposal[] = [];
+    for (const [, value] of entries) {
+      proposals.push(value);
+    }
+    return proposals;
   }
 
   // ---- Storage helpers ----

@@ -166,6 +166,50 @@ export interface StoredGateMessage {
   body?: string;
 }
 
+/** Parsed gov.propose message body */
+export interface GovProposeMessage {
+  type: 'gov.propose';
+  conv_id: string;
+  proposal_id: string;
+  proposal_type: 'floor_change' | 'rules_change' | 'member_add' | 'member_remove';
+  proposed_floor?: number;
+  proposed_rules?: ThresholdRuleState[];
+  proposed_members?: Array<{ kid: string; public_key: string }>;
+  removed_member_kids?: string[];
+  eligible_signer_kids: string[];
+  required_approvals: number;
+  expires_at: string;
+  signer_kid: string;
+  signature: string;
+}
+
+/** Parsed gov.approve message body */
+export interface GovApproveMessage {
+  type: 'gov.approve';
+  conv_id: string;
+  proposal_id: string;
+  signer_kid: string;
+  signature: string;
+}
+
+/** Parsed gov.disapprove message body */
+export interface GovDisapproveMessage {
+  type: 'gov.disapprove';
+  conv_id: string;
+  proposal_id: string;
+  signer_kid: string;
+}
+
+/** Stored governance proposal for approval scanning */
+export interface StoredGovProposal {
+  seq: number;
+  type: string;
+  proposal_id: string;
+  signer_kid?: string;
+  signature?: string;
+  body?: string;
+}
+
 /** Stored vault credential (encrypted at rest) */
 export interface VaultEntry {
   secret_id: string;

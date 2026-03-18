@@ -25,6 +25,37 @@ function isGateType(bodyType: string): boolean {
   return bodyType.startsWith('gate.');
 }
 
+const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey']);
+
+function formatGroupSystemMessage(bodyType: string, text: string, senderLabel: string): string | null {
+  if (!GROUP_BODY_TYPES.has(bodyType)) return null;
+  try {
+    const parsed = JSON.parse(text);
+    switch (bodyType) {
+      case 'group_genesis': {
+        const name = parsed.group_name || 'Group';
+        const count = (parsed.founding_members || []).length;
+        return `\u{1F465} ${name} created (${count} member${count !== 1 ? 's' : ''})`;
+      }
+      case 'group_add': {
+        const count = (parsed.new_members || []).length;
+        return `\u{2795} ${senderLabel} added ${count} member${count !== 1 ? 's' : ''}`;
+      }
+      case 'group_remove': {
+        const count = (parsed.removed_members || []).length;
+        const reason = parsed.reason ? ` (${parsed.reason})` : '';
+        return `\u{2796} ${senderLabel} removed ${count} member${count !== 1 ? 's' : ''}${reason}`;
+      }
+      case 'group_rekey':
+        return `\u{1F510} Security keys rotated (epoch ${parsed.new_conv_epoch ?? '?'})`;
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export default function ChatPane({
   messages,
   conversationName,
@@ -62,6 +93,16 @@ export default function ChatPane({
             const alias = resolveContact(msg.senderKey);
             if (alias) senderLabel = alias;
             else senderLabel = msg.senderKey.slice(0, 12) + '..';
+          }
+
+          if (GROUP_BODY_TYPES.has(msg.bodyType)) {
+            const systemMsg = formatGroupSystemMessage(msg.bodyType, msg.text, senderLabel);
+            return (
+              <Box key={msg.id} flexDirection="row" marginTop={0}>
+                <Text dimColor>{time} </Text>
+                <Text color={theme.system ?? 'gray'}>{systemMsg ?? msg.text}</Text>
+              </Box>
+            );
           }
 
           if (isGateType(msg.bodyType)) {
