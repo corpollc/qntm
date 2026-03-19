@@ -1,0 +1,41 @@
+name: Deploy AIM UI
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/aim-chat/package-lock.json
+
+      - name: Install and build client package
+        run: npm ci && npm run build
+        working-directory: client
+
+      - name: Install UI dependencies
+        run: npm install
+        working-directory: ui/aim-chat
+
+      - name: Install Rollup Linux binary
+        run: npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
+        working-directory: ui/aim-chat
+
+      - name: Build UI
+        run: npm run build
+        working-directory: ui/aim-chat
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=qntm-aim
+          workingDirectory: ui/aim-chat
