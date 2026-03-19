@@ -4,6 +4,7 @@
 
 import {
   DropboxClient,
+  buildSignedReceipt,
   decryptMessage,
   deserializeEnvelope,
   serializeEnvelope,
@@ -33,6 +34,7 @@ export async function pollConversation(
 
   const selfKidHex = bytesToHex(identity.keyID).toLowerCase();
   const accepted: StoredMessage[] = [];
+  const processedMsgIds: Uint8Array[] = [];
 
   for (const envelopeBytes of result.messages) {
     let envelope;
@@ -70,6 +72,8 @@ export async function pollConversation(
       if (hasRecent) continue;
     }
 
+    processedMsgIds.push(envelope.msg_id);
+
     const message: StoredMessage = {
       id: msgIdHex,
       conversationId: convId,
@@ -87,6 +91,19 @@ export async function pollConversation(
 
   if (result.sequence > fromSeq) {
     store.saveCursor(convId, result.sequence);
+  }
+
+  // Emit read receipts for all successfully processed messages (fire-and-forget)
+  if (processedMsgIds.length > 0) {
+    const requiredAcks = convCrypto.participants.length;
+    for (const msgId of processedMsgIds) {
+      try {
+        const receipt = buildSignedReceipt(identity, convCrypto.id, msgId, requiredAcks);
+        dropbox.submitReceipt(receipt).catch(() => {});
+      } catch {
+        // Receipt emission is best-effort
+      }
+    }
   }
 
   return { messages: accepted, newCursor: result.sequence };

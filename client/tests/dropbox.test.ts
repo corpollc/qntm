@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DropboxClient } from '../src/dropbox/index.js';
+import { DropboxClient, buildSignedReceipt, RECEIPT_PROTO } from '../src/dropbox/index.js';
+import { generateIdentity } from '../src/identity/index.js';
 
 // Helper: create a fake conversation ID (16 bytes)
 function fakeConvID(): Uint8Array {
@@ -243,6 +244,103 @@ describe('DropboxClient', () => {
       expect(body.conv_id).toBe('abcdef0123456789abcdef0123456789');
       // Ensure lowercase
       expect(body.conv_id).toBe(body.conv_id.toLowerCase());
+    });
+  });
+
+  // === submitReceipt ===
+
+  describe('submitReceipt', () => {
+    it('sends POST to /v1/receipt with correct JSON body', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ recorded: true, deleted: false, receipts: 1, required_acks: 2 }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const payload = {
+        proto: RECEIPT_PROTO,
+        conv_id: toHex(fakeConvID()),
+        msg_id: toHex(fakeConvID()),
+        reader_kid: toHex(fakeConvID()),
+        reader_ik_pk: 'dGVzdA',
+        read_ts: Date.now(),
+        required_acks: 2,
+        sig: 'dGVzdHNpZw',
+      };
+
+      const result = await client.submitReceipt(payload);
+
+      expect(mockFetch).toHaveBeenCalledOnce();
+      const [url, opts] = mockFetch.mock.calls[0];
+      expect(url).toBe(`${baseUrl}/v1/receipt`);
+      expect(opts.method).toBe('POST');
+      expect(opts.headers['Content-Type']).toBe('application/json');
+
+      const body = JSON.parse(opts.body);
+      expect(body.proto).toBe(RECEIPT_PROTO);
+      expect(body.conv_id).toBe(payload.conv_id);
+      expect(body.msg_id).toBe(payload.msg_id);
+      expect(result.recorded).toBe(true);
+      expect(result.deleted).toBe(false);
+    });
+
+    it('throws on HTTP error response', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: async () => 'invalid signature',
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await expect(
+        client.submitReceipt({
+          proto: RECEIPT_PROTO,
+          conv_id: toHex(fakeConvID()),
+          msg_id: toHex(fakeConvID()),
+          reader_kid: toHex(fakeConvID()),
+          reader_ik_pk: 'dGVzdA',
+          read_ts: Date.now(),
+          required_acks: 2,
+          sig: 'dGVzdHNpZw',
+        }),
+      ).rejects.toThrow(/401/);
+    });
+  });
+
+  // === buildSignedReceipt ===
+
+  describe('buildSignedReceipt', () => {
+    it('builds a receipt with correct fields and valid structure', () => {
+      const identity = generateIdentity();
+      const convId = fakeConvID();
+      const msgId = fakeConvID();
+
+      const receipt = buildSignedReceipt(identity, convId, msgId, 2);
+
+      expect(receipt.proto).toBe(RECEIPT_PROTO);
+      expect(receipt.conv_id).toBe(toHex(convId));
+      expect(receipt.msg_id).toBe(toHex(msgId));
+      expect(receipt.required_acks).toBe(2);
+      expect(receipt.read_ts).toBeGreaterThan(0);
+      // reader_kid should be 32 hex chars (16 bytes)
+      expect(receipt.reader_kid).toMatch(/^[0-9a-f]{32}$/);
+      // sig and reader_ik_pk should be non-empty base64url strings
+      expect(receipt.sig.length).toBeGreaterThan(0);
+      expect(receipt.reader_ik_pk.length).toBeGreaterThan(0);
+    });
+
+    it('produces different signatures for different messages', () => {
+      const identity = generateIdentity();
+      const convId = fakeConvID();
+      const msgId1 = new Uint8Array(16).fill(1);
+      const msgId2 = new Uint8Array(16).fill(2);
+
+      const r1 = buildSignedReceipt(identity, convId, msgId1, 2);
+      const r2 = buildSignedReceipt(identity, convId, msgId2, 2);
+
+      expect(r1.sig).not.toBe(r2.sig);
+      expect(r1.msg_id).not.toBe(r2.msg_id);
     });
   });
 });

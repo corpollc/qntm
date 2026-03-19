@@ -25,8 +25,9 @@ import {
   serializeEnvelope,
   deserializeEnvelope,
   defaultTTL,
+  buildSignedReceipt,
 } from '@corpollc/qntm';
-import type { Identity, Conversation } from '@corpollc/qntm';
+import type { Identity, Conversation, ReadReceiptPayload } from '@corpollc/qntm';
 
 // ---- In-memory dropbox relay ----
 
@@ -37,6 +38,8 @@ interface StoredEnvelope {
 
 export class InMemoryRelay {
   private conversations = new Map<string, StoredEnvelope[]>();
+  /** receipts[convId][msgIdHex] = Set of reader_kid hex strings */
+  private receipts = new Map<string, Map<string, Set<string>>>();
 
   post(convIdHex: string, envelope: Uint8Array): number {
     const messages = this.conversations.get(convIdHex) || [];
@@ -55,8 +58,55 @@ export class InMemoryRelay {
     };
   }
 
+  /**
+   * Record a read receipt. Returns whether the message was deleted
+   * (i.e. unique readers >= required_acks).
+   */
+  submitReceipt(payload: ReadReceiptPayload): { recorded: boolean; deleted: boolean; receipts: number } {
+    const convId = payload.conv_id.toLowerCase();
+    const msgId = payload.msg_id.toLowerCase();
+    const readerKid = payload.reader_kid.toLowerCase();
+
+    if (!this.receipts.has(convId)) {
+      this.receipts.set(convId, new Map());
+    }
+    const convReceipts = this.receipts.get(convId)!;
+    if (!convReceipts.has(msgId)) {
+      convReceipts.set(msgId, new Set());
+    }
+    const readers = convReceipts.get(msgId)!;
+    readers.add(readerKid);
+
+    const shouldDelete = readers.size >= payload.required_acks;
+    if (shouldDelete) {
+      // Remove the message from the conversation
+      const messages = this.conversations.get(convId);
+      if (messages) {
+        // Find and remove the message by deserializing to match msg_id
+        const idx = messages.findIndex(m => {
+          try {
+            const env = deserializeEnvelope(m.data);
+            return bytesToHex(env.msg_id).toLowerCase() === msgId;
+          } catch { return false; }
+        });
+        if (idx !== -1) {
+          messages.splice(idx, 1);
+        }
+      }
+      convReceipts.delete(msgId);
+    }
+
+    return { recorded: true, deleted: shouldDelete, receipts: readers.size };
+  }
+
+  /** Count messages currently stored for a conversation */
+  messageCount(convIdHex: string): number {
+    return (this.conversations.get(convIdHex) || []).length;
+  }
+
   clear(): void {
     this.conversations.clear();
+    this.receipts.clear();
   }
 }
 
@@ -108,6 +158,48 @@ export class CLIAgent {
 
   sendText(relay: InMemoryRelay, convIdHex: string, text: string): number {
     return this.sendMessage(relay, convIdHex, 'text', new TextEncoder().encode(text));
+  }
+
+  /**
+   * Receive messages and emit read receipts for each successfully decrypted message.
+   * Returns the decrypted messages (excluding self-echoes).
+   */
+  receiveAndReceipt(relay: InMemoryRelay, convIdHex: string): Array<{ bodyType: string; body: Uint8Array; senderKid: string }> {
+    const conv = this.conversations.get(convIdHex);
+    if (!conv) throw new Error(`Agent ${this.name}: conversation ${convIdHex} not found`);
+    const cursor = this.cursors.get(convIdHex) || 0;
+    const result = relay.poll(convIdHex, cursor);
+
+    const received: Array<{ bodyType: string; body: Uint8Array; senderKid: string }> = [];
+    const requiredAcks = conv.participants.length;
+
+    for (const envelopeBytes of result.messages) {
+      try {
+        const envelope = deserializeEnvelope(envelopeBytes);
+        const msg = decryptMessage(envelope, conv);
+        const senderKid = base64UrlEncode(new Uint8Array(msg.inner.sender_kid));
+
+        // Emit receipt for every successfully processed message
+        const receipt = buildSignedReceipt(this.identity, conv.id, envelope.msg_id, requiredAcks);
+        relay.submitReceipt(receipt);
+
+        // Skip self-echoes from the returned results
+        if (senderKid === this.kidB64) continue;
+        received.push({
+          bodyType: msg.inner.body_type,
+          body: new Uint8Array(msg.inner.body),
+          senderKid,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    if (result.sequence > cursor) {
+      this.cursors.set(convIdHex, result.sequence);
+    }
+
+    return received;
   }
 
   receiveMessages(relay: InMemoryRelay, convIdHex: string): Array<{ bodyType: string; body: Uint8Array; senderKid: string }> {

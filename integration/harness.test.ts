@@ -13,6 +13,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { InMemoryRelay, CLIAgent, APIFixture } from './src/harness.js';
 import { existsSync } from 'node:fs';
+import { buildSignedReceipt } from '@corpollc/qntm';
 
 describe('Integration harness smoke', () => {
   const agents: CLIAgent[] = [];
@@ -142,5 +143,119 @@ describe('Integration harness smoke', () => {
 
     const result = relay.poll(convId2, 0);
     expect(result.messages).toHaveLength(1);
+  });
+});
+
+describe('Read receipt flow', () => {
+  const agents: CLIAgent[] = [];
+  const relay = new InMemoryRelay();
+
+  afterEach(() => {
+    for (const agent of agents) agent.cleanup();
+    agents.length = 0;
+    relay.clear();
+  });
+
+  it('receipt recorded but message not deleted before threshold', () => {
+    const alice = new CLIAgent('alice');
+    const bob = new CLIAgent('bob');
+    agents.push(alice, bob);
+
+    const { convIdHex, conversation } = alice.createConversation('Test');
+    bob.joinConversation(convIdHex, { ...conversation });
+
+    alice.sendText(relay, convIdHex, 'hello');
+    expect(relay.messageCount(convIdHex)).toBe(1);
+
+    // Bob receives and receipts — required_acks from conv.participants
+    // conv has 1 participant (alice), so required_acks = 1 → one receipt deletes
+    const received = bob.receiveAndReceipt(relay, convIdHex);
+    expect(received).toHaveLength(1);
+    expect(new TextDecoder().decode(received[0].body)).toBe('hello');
+  });
+
+  it('message deleted when all participants have receipted', () => {
+    const alice = new CLIAgent('alice');
+    const bob = new CLIAgent('bob');
+    agents.push(alice, bob);
+
+    const { convIdHex, conversation } = alice.createConversation('Test');
+    bob.joinConversation(convIdHex, { ...conversation });
+
+    alice.sendText(relay, convIdHex, 'secret');
+    expect(relay.messageCount(convIdHex)).toBe(1);
+
+    // Manually submit receipts with required_acks = 2 to test threshold
+    const messages = relay.poll(convIdHex, 0).messages;
+    expect(messages.length).toBe(1);
+
+    // First receipt (alice) — not enough
+    const receipt1 = buildSignedReceipt(alice.identity, conversation.id, conversation.id, 2);
+    // Use a real msg_id based on the envelope — we'll use conv.id as a stand-in
+    const r1 = relay.submitReceipt(receipt1);
+    expect(r1.recorded).toBe(true);
+    expect(r1.deleted).toBe(false);
+    expect(r1.receipts).toBe(1);
+
+    // Second receipt (bob) — threshold met
+    const receipt2 = buildSignedReceipt(bob.identity, conversation.id, conversation.id, 2);
+    const r2 = relay.submitReceipt(receipt2);
+    expect(r2.recorded).toBe(true);
+    expect(r2.deleted).toBe(true);
+    expect(r2.receipts).toBe(2);
+  });
+
+  it('receiveAndReceipt emits receipts and returns messages', () => {
+    const alice = new CLIAgent('alice');
+    const bob = new CLIAgent('bob');
+    agents.push(alice, bob);
+
+    const { convIdHex, conversation } = alice.createConversation('Receipt');
+    bob.joinConversation(convIdHex, { ...conversation });
+
+    alice.sendText(relay, convIdHex, 'ping');
+    alice.sendText(relay, convIdHex, 'pong');
+
+    // Bob receives and receipts both messages
+    const received = bob.receiveAndReceipt(relay, convIdHex);
+    expect(received).toHaveLength(2);
+    expect(new TextDecoder().decode(received[0].body)).toBe('ping');
+    expect(new TextDecoder().decode(received[1].body)).toBe('pong');
+  });
+
+  it('duplicate receipts from same reader are idempotent', () => {
+    const alice = new CLIAgent('alice');
+    agents.push(alice);
+
+    const convId = new Uint8Array(16).fill(0xab);
+    const msgId = new Uint8Array(16).fill(0xcd);
+
+    const receipt = buildSignedReceipt(alice.identity, convId, msgId, 2);
+    const r1 = relay.submitReceipt(receipt);
+    const r2 = relay.submitReceipt(receipt);
+
+    expect(r1.recorded).toBe(true);
+    expect(r2.recorded).toBe(true);
+    expect(r1.receipts).toBe(1);
+    expect(r2.receipts).toBe(1);
+  });
+
+  it('buildSignedReceipt produces valid receipt payloads', () => {
+    const alice = new CLIAgent('alice');
+    agents.push(alice);
+
+    const convId = new Uint8Array(16).fill(0xab);
+    const msgId = new Uint8Array(16).fill(0xcd);
+
+    const receipt = buildSignedReceipt(alice.identity, convId, msgId, 3);
+
+    expect(receipt.proto).toBe('qntm-receipt-v1');
+    expect(receipt.conv_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(receipt.msg_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(receipt.reader_kid).toMatch(/^[0-9a-f]{32}$/);
+    expect(receipt.required_acks).toBe(3);
+    expect(receipt.read_ts).toBeGreaterThan(0);
+    expect(receipt.sig.length).toBeGreaterThan(0);
+    expect(receipt.reader_ik_pk.length).toBeGreaterThan(0);
   });
 });

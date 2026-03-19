@@ -65,8 +65,8 @@ export type {
   GovProposalBody, GovApprovalBody, GovDisapprovalBody, GovAppliedBody,
 } from './governance/index.js';
 
-export { DropboxClient } from './dropbox/index.js';
-export type { ReceiveResult } from './dropbox/index.js';
+export { DropboxClient, buildSignedReceipt, RECEIPT_PROTO } from './dropbox/index.js';
+export type { ReceiveResult, ReadReceiptPayload, ReceiptResponse } from './dropbox/index.js';
 
 export * from './types.js';
 export * from './constants.js';

@@ -30,6 +30,7 @@ import {
   resolveRecipe,
   sealSecret,
   DropboxClient,
+  buildSignedReceipt,
   parseGroupGenesisBody,
   parseGroupAddBody,
   parseGroupRemoveBody,
@@ -579,6 +580,7 @@ export async function receiveMessages(
 
   const selfKeyIdHex = bytesToHex(identity.keyID).toLowerCase()
   const acceptedMessages: ChatMessage[] = []
+  const processedMsgIds: Uint8Array[] = []
 
   for (const rawEnvelope of result.messages) {
     const activeConvCrypto = convCrypto
@@ -613,6 +615,8 @@ export async function receiveMessages(
         continue
       }
     }
+
+    processedMsgIds.push(envelope.msg_id)
 
     const conv = store.findConversation(profileId, conversationId)
     if (shouldTrackSenderAsParticipant(conv, bodyType, senderKidHex)) {
@@ -651,6 +655,20 @@ export async function receiveMessages(
 
   if (result.sequence > fromSeq) {
     store.saveCursor(profileId, conversationId, result.sequence)
+  }
+
+  // Emit read receipts for all successfully processed messages (fire-and-forget)
+  if (processedMsgIds.length > 0) {
+    const requiredAcks = convCrypto.participants.length
+    const identityForReceipt = { privateKey: identity.privateKey, publicKey: identity.publicKey, keyID: identity.keyID }
+    for (const msgId of processedMsgIds) {
+      try {
+        const receipt = buildSignedReceipt(identityForReceipt, convCrypto.id, msgId, requiredAcks)
+        dropbox.submitReceipt(receipt).catch(() => {})
+      } catch {
+        // Receipt emission is best-effort
+      }
+    }
   }
 
   return { messages: acceptedMessages }

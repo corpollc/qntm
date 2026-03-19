@@ -6,7 +6,11 @@
  *   POST /v1/poll  — fetch envelopes from a sequence cursor
  */
 
+import { QSP1Suite } from '../crypto/qsp1.js';
+import type { Identity } from '../types.js';
+
 const DEFAULT_BASE_URL = 'https://inbox.qntm.corpo.llc';
+const _suite = new QSP1Suite();
 
 // ---------- wire types (match archived Go structs in attic/go/dropbox/http.go) ----------
 
@@ -45,6 +49,26 @@ interface PollResponse {
   conversations: PollConversationResponse[];
 }
 
+// ---------- receipt types ----------
+
+export interface ReadReceiptPayload {
+  proto: string;
+  conv_id: string;
+  msg_id: string;
+  reader_kid: string;
+  reader_ik_pk: string;
+  read_ts: number;
+  required_acks: number;
+  sig: string;
+}
+
+export interface ReceiptResponse {
+  recorded: boolean;
+  deleted: boolean;
+  receipts: number;
+  required_acks: number;
+}
+
 // ---------- helpers ----------
 
 function toHex(bytes: Uint8Array): string {
@@ -78,6 +102,51 @@ export interface ReceiveResult {
   messages: Uint8Array[];
   /** Highest sequence number seen — use as fromSequence on the next poll */
   sequence: number;
+}
+
+export const RECEIPT_PROTO = 'qntm-receipt-v1';
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Build a signed read receipt payload ready for submission to the relay.
+ *
+ * @param identity   The reader's identity (private key used to sign)
+ * @param convId     Conversation ID (16 bytes)
+ * @param msgId      Message ID (16 bytes)
+ * @param requiredAcks  Number of unique readers needed before deletion
+ */
+export function buildSignedReceipt(
+  identity: Identity,
+  convId: Uint8Array,
+  msgId: Uint8Array,
+  requiredAcks: number,
+): ReadReceiptPayload {
+  const convIdHex = toHex(convId);
+  const msgIdHex = toHex(msgId);
+  const readerKidHex = toHex(_suite.computeKeyID(identity.publicKey));
+  const readerIkPk = toBase64Url(identity.publicKey);
+  const readTs = Date.now();
+
+  const signable = `${RECEIPT_PROTO}|${convIdHex}|${msgIdHex}|${readerKidHex}|${readTs}|${requiredAcks}`;
+  const sig = _suite.sign(identity.privateKey, new TextEncoder().encode(signable));
+
+  return {
+    proto: RECEIPT_PROTO,
+    conv_id: convIdHex,
+    msg_id: msgIdHex,
+    reader_kid: readerKidHex,
+    reader_ik_pk: readerIkPk,
+    read_ts: readTs,
+    required_acks: requiredAcks,
+    sig: toBase64Url(sig),
+  };
 }
 
 export class DropboxClient {
@@ -176,5 +245,26 @@ export class DropboxClient {
       messages,
       sequence: conv.up_to_seq,
     };
+  }
+
+  /**
+   * Submit a signed read receipt to the relay.
+   * When enough unique readers have receipted a message, the relay deletes it.
+   */
+  async submitReceipt(payload: ReadReceiptPayload): Promise<ReceiptResponse> {
+    const resp = await fetch(`${this.baseUrl}/v1/receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(
+        `dropbox receipt failed: HTTP ${resp.status}${text ? ': ' + text : ''}`,
+      );
+    }
+
+    return (await resp.json()) as ReceiptResponse;
   }
 }
