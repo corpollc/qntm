@@ -22,4 +22,4 @@ new_sqlite_classes = ["ConversationSequencerDO"]
 ENVELOPE_TTL_SECONDS = "604800"   # 7 days
 MAX_ENVELOPE_SIZE = "65536"       # 64KB
 MAX_MESSAGES_PER_CHANNEL = "512"
-RATE_LIMIT_PER_MIN = "100"
+RATE_LIMIT_PER_MIN = "500"

@@ -14,7 +14,8 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useToast } from './hooks/useToast'
 import { ToastContainer } from './components/ToastContainer'
 
-const POLL_INTERVAL_MS = 3000
+const ACTIVE_POLL_INTERVAL_MS = 3000
+const BACKGROUND_POLL_INTERVAL_MS = 10000
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -165,6 +166,13 @@ export default function App() {
     return conversations.filter(c => !hiddenConversations.has(c.id))
   }, [conversations, hiddenConversations, showHidden])
 
+  const backgroundPollConversations = useMemo(
+    () => conversations.filter((conversation) => (
+      conversation.id !== selectedConversationId && !hiddenConversations.has(conversation.id)
+    )),
+    [conversations, selectedConversationId, hiddenConversations],
+  )
+
   const hiddenCount = useMemo(
     () => conversations.filter(c => hiddenConversations.has(c.id)).length,
     [conversations, hiddenConversations],
@@ -283,7 +291,7 @@ export default function App() {
 
     const timer = window.setInterval(() => {
       void receiveMessages(false)
-    }, POLL_INTERVAL_MS)
+    }, ACTIVE_POLL_INTERVAL_MS)
 
     return () => {
       window.clearInterval(timer)
@@ -293,7 +301,7 @@ export default function App() {
   // Poll non-selected conversations for unread message counts
   const bgPollingRef = useRef(false)
   useEffect(() => {
-    if (!activeProfileId || conversations.length === 0) {
+    if (!activeProfileId || backgroundPollConversations.length === 0) {
       return
     }
 
@@ -301,8 +309,7 @@ export default function App() {
       if (bgPollingRef.current) return
       bgPollingRef.current = true
       try {
-        for (const conv of conversations) {
-          if (conv.id === selectedConversationId) continue
+        for (const conv of backgroundPollConversations) {
           try {
             const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', conv.id)
             if (response.messages.length > 0) {
@@ -323,12 +330,12 @@ export default function App() {
     void pollOtherConversations()
     const timer = window.setInterval(() => {
       void pollOtherConversations()
-    }, POLL_INTERVAL_MS)
+    }, BACKGROUND_POLL_INTERVAL_MS)
 
     return () => {
       window.clearInterval(timer)
     }
-  }, [activeProfileId, conversations, selectedConversationId])
+  }, [activeProfileId, activeProfile?.name, backgroundPollConversations])
 
   async function initializeProfiles() {
     try {

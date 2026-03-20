@@ -290,7 +290,7 @@ export default {
 
 		// Rate limiting
 		const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-		const maxPerMin = parseInt(env.RATE_LIMIT_PER_MIN || "100", 10);
+		const maxPerMin = parseInt(env.RATE_LIMIT_PER_MIN || "500", 10);
 		if (!checkRateLimit(ip, maxPerMin)) {
 			return errorResponse("rate limit exceeded", 429);
 		}
