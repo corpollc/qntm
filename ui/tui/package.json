@@ -6,6 +6,7 @@
   "scripts": {
     "start": "tsx src/index.tsx",
     "dev": "tsx watch src/index.tsx",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsc"
