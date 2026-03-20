@@ -658,7 +658,7 @@ export async function receiveMessages(
   }
 
   // Emit read receipts for all successfully processed messages (fire-and-forget)
-  if (processedMsgIds.length > 0) {
+  if (processedMsgIds.length > 0 && convCrypto) {
     const requiredAcks = convCrypto.participants.length
     const identityForReceipt = { privateKey: identity.privateKey, publicKey: identity.publicKey, keyID: identity.keyID }
     for (const msgId of processedMsgIds) {
