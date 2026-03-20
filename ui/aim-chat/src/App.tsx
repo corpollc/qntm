@@ -416,7 +416,8 @@ export default function App() {
           return previous
         }
 
-        return conversationsResponse.conversations[0]?.id || ''
+        const firstVisible = conversationsResponse.conversations.find((c) => !hiddenConversations.has(c.id))
+        return firstVisible?.id || conversationsResponse.conversations[0]?.id || ''
       })
 
       setError('')
@@ -1063,6 +1064,11 @@ export default function App() {
             onGovDisapprove={onGovDisapprove}
             conversationCount={conversations.length}
             onOpenInvites={() => sidebarRef.current?.openInvites()}
+            onCopyInviteLink={(token) => {
+              const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`
+              navigator.clipboard.writeText(link)
+              addToast('Invite Link Copied', 'success')
+            }}
           />
 
           {showGatePanel && selectedConversation && (

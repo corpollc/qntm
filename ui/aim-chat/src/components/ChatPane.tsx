@@ -38,6 +38,7 @@ export interface ChatPaneProps {
   onGovDisapprove?: (proposalId: string, conversationId: string) => void
   conversationCount: number
   onOpenInvites: () => void
+  onCopyInviteLink?: (token: string) => void
 }
 
 function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, onGovDisapprove, isWorking, approvalCounts, disapprovalCounts, requiredApprovals, approvedByMe, govApprovalCounts, govDisapprovalCounts, govRequiredApprovals, govApprovedByMe, govDisapprovedByMe, govApplied }: {
@@ -123,6 +124,7 @@ export function ChatPane({
   onGovDisapprove,
   conversationCount,
   onOpenInvites,
+  onCopyInviteLink,
 }: ChatPaneProps) {
   const lastOutgoingIndex = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -255,13 +257,7 @@ export function ChatPane({
                 className="invite-add-btn"
                 type="button"
                 title="Invite"
-                onClick={(e) => {
-                  const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(selectedConversation.inviteToken!)}`
-                  navigator.clipboard.writeText(link)
-                  const btn = e.currentTarget
-                  btn.textContent = '\u2713'
-                  setTimeout(() => { btn.textContent = '+' }, 1500)
-                }}
+                onClick={() => onCopyInviteLink?.(selectedConversation.inviteToken!)}
               >
                 +
               </button>
