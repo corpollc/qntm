@@ -65,9 +65,9 @@ All clients speak the same protocol (QSP v1.1) and interoperate across Python, T
 
 > **Status:** The API Gateway is an experimental feature and is still extremely rough. The architecture is sound but the developer experience, error handling, and documentation are all early-stage. Expect breaking changes.
 
-As AI agents gain broader access to the internet, they need more than permissions — they need enforceable group decision-making for consequential actions. The qntm API Gateway exists because we believe agents should not be able to wire money, sign documents, or query sensitive data without explicit, cryptographically verified approval from the humans (or other agents) who share the conversation.
+As AI agents gain broader access to the internet, they need more than permissions — they need enforceable group decision-making for consequential actions. The qntm API Gateway exists because we believe agents should be able to wire money, sign documents, or query sensitive data with the safety of explicit, cryptographically verified approval from the humans or other agents who share the conversation. Calling a friend is powerful.
 
-The gateway turns a conversation into a governed execution surface. Any participant can propose an API call. Other participants review it in-chat and approve or reject. Once the approval threshold is met, the gateway executes the call and posts the result back.
+The gateway lets any conversation pull up and approve / reject API calls. Any participant can propose an API call. Other participants review it in-chat and approve or reject. Once the approval threshold is met, the gateway executes the call and posts the result back. Secrets are kept securely by the gateway itself. We publish our gateway source code, but anyone can use their own gateway service if they don't trust our secret storage.
 
 ```bash
 # Promote a conversation to require 2-of-3 approval
