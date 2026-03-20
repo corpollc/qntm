@@ -1,234 +1,192 @@
 # Getting Started with qntm
 
-## What is qntm?
+## What qntm is
 
-qntm is an end-to-end encrypted messaging system with built-in API Gateway capabilities. Every message you send is encrypted so that only the participants in a conversation can read it. No central server ever stores your messages in plain text --- the relay server only sees encrypted blobs that it cannot decrypt.
+qntm is end-to-end encrypted messaging for agents and humans. It gives each participant a persistent cryptographic identity, lets them exchange messages through an untrusted relay, and keeps the relay blind to message contents.
 
-In addition to private messaging, qntm includes an API Gateway feature that lets groups of people make approved API calls together. Multiple participants must review and approve each request before it goes through, ensuring that sensitive actions always have group oversight.
+The system is agent-first. The preferred runtime for agents is the Python `qntm` tool. The browser UI and terminal UI are useful companion clients for humans who want to talk to agents, supervise workflows, or approve gateway actions.
 
 ---
 
-## Choosing Your Client
+## Choose the right client
 
-qntm offers two client interfaces. Pick whichever fits your workflow.
+All qntm clients speak the same protocol and can join the same conversations.
 
-| Client | Best for | Requires |
+| Client | Best for | Status |
 |---|---|---|
-| **Web UI** (qntm Messenger) | Visual, browser-based experience | Node.js, a modern browser |
-| **Terminal UI** (TUI) | Command-line users, remote sessions | Node.js, a terminal |
+| **Python `qntm` tool** | Agents, scripts, automation, JSON-first integrations | **Preferred** |
+| **AIM Web UI** | Humans who want a browser chat client | Human-facing |
+| **Terminal UI** | Humans working over SSH or in a terminal | Human-facing |
 
-Both clients connect to the same relay server and use the same encryption protocol. You can switch between them at any time.
+If you are building an agent, start with the Python tool.
 
 ---
 
-## First Launch
+## Agent quick start: Python `qntm`
 
-### Web UI
+The Python CLI is the primary supported runtime for agent workflows. It defaults to JSON output, which makes it suitable for automation and LLM/runtime integration.
 
-1. Open a terminal and navigate to the `ui/aim-chat` directory in the qntm repository.
+### Install
 
-2. Install dependencies (first time only):
+Run it directly with `uvx`:
 
-   ```
-   npm install
-   ```
+```bash
+uvx qntm --help
+```
 
-3. Start the development server:
+Or install it into an environment:
 
-   ```
-   npm run dev
-   ```
+```bash
+pip install qntm
+```
 
-4. Open your browser to [http://localhost:5173](http://localhost:5173).
+### Generate an identity
 
-When you launch for the first time, the Web UI automatically creates a default profile called "Agent 1" and selects it. You will see the main interface with a sidebar on the left (containing panels for Identities, Invites, Conversations, and Contacts) and a chat area on the right.
+```bash
+qntm identity generate
+```
+
+This creates your local identity keypair. By default, the CLI stores state under `~/.qntm`.
+
+### Start a conversation
+
+Create a conversation and get an invite token:
+
+```bash
+qntm convo create --name "Ops Chat"
+```
+
+Join a conversation from an invite token:
+
+```bash
+qntm convo join <invite-token>
+```
+
+Invite tokens are the bootstrap secret for a conversation. Share them out of band.
+
+### Send and receive messages
+
+```bash
+qntm send <conversation> "hello"
+qntm recv <conversation>
+qntm history <conversation>
+```
+
+You can use either the full conversation ID or a unique prefix.
+
+### Human-readable output
+
+The CLI is JSON-first by default. For terminal use, add `--human`:
+
+```bash
+qntm --human inbox
+qntm --human history <conversation>
+```
+
+### Default hosted services
+
+- Relay: `https://inbox.qntm.corpo.llc`
+- Hosted gateway: `https://gateway.corpo.llc`
+
+You can override the relay with `--dropbox-url` if you are running your own infrastructure.
+
+---
+
+## Human quick start: browser or terminal
+
+Humans usually do not need the Python tool unless they want scripting or raw JSON output. For day-to-day chat, invite handling, and gateway approvals, the browser and terminal UIs are the better fit.
+
+### AIM Web UI
+
+Use the browser UI if you want the easiest human-facing experience.
+
+```bash
+cd ui/aim-chat
+npm install
+npm run dev
+```
+
+Then open `http://localhost:5173`.
+
+The AIM UI:
+
+- creates and stores identities in the browser
+- lets you create or accept invite tokens
+- shows local conversation history
+- can submit and approve gateway actions
+
+For the hosted site, the gateway defaults to `https://gateway.corpo.llc`. In local development, the UI falls back to `http://localhost:8080`.
 
 ### Terminal UI
 
-1. Open a terminal and navigate to the `ui/tui` directory in the qntm repository.
+Use the TUI if you want a human-friendly client in a shell or remote session.
 
-2. Install dependencies (first time only):
+```bash
+cd ui/tui
+npm install
+npm start
+```
 
-   ```
-   npm install
-   ```
-
-3. Start the client:
-
-   ```
-   npm start
-   ```
-
-   You can also run it directly:
-
-   ```
-   npx tsx src/index.tsx
-   ```
-
-   Optional flags:
-
-   ```
-   npx tsx src/index.tsx --config-dir ~/.qntm-human --relay-url https://inbox.qntm.corpo.llc
-   ```
-
-When you launch for the first time, the TUI automatically generates a new identity and displays your Key ID. You will see a header, a sidebar listing conversations, a chat area, a status bar, and a text input at the bottom. Type `/help` to see the full list of available commands.
+The TUI keeps its data separate from the agent CLI by default, using `~/.qntm-human/`.
 
 ---
 
-## Creating Your Identity
+## Common cross-client flow
 
-Your identity is a cryptographic keypair (a public key and a private key) that proves who you are. Think of the Key ID as your unique username within qntm.
+The most common real-world setup is:
 
-### Web UI
+1. An agent uses the Python `qntm` tool.
+2. A human uses the AIM UI or TUI.
+3. One side creates a conversation and shares the invite token.
+4. Both sides join the same encrypted thread.
+5. The human chats with the agent or supervises gateway actions in that thread.
 
-1. Expand the **Identities** panel in the sidebar.
-2. Click **Generate keypair**.
-3. Your status changes to "Ready" and you will see your **Key ID** and **Public key** displayed below the button.
-4. Click **Copy** next to your public key to copy it to the clipboard. Share this with others so they can verify your messages.
-
-### Terminal UI
-
-Your identity is generated automatically on first launch. To view it at any time, type:
-
-```
-/identity
-```
-
-This displays your Key ID, public key, and config directory path.
+That means you do not need separate "agent chat" and "human chat" systems. qntm is the shared channel.
 
 ---
 
-## Starting a Conversation
+## Key concepts
 
-Conversations in qntm are created using invite tokens. One person creates the conversation and shares the token; the other person uses the token to join.
+### Identity
 
-### Web UI
+Each participant has a cryptographic identity keypair. The Key ID (`kid`) is the stable identifier other participants see.
 
-**Creating a conversation:**
+### Invite token
 
-1. Expand the **Invites** panel in the sidebar.
-2. Under **New Conversation**, type a name for the conversation (for example, "Team Chat").
-3. Click **Create**.
-4. An invite token appears in a text box. Click **Copy** to copy it to your clipboard.
-5. Send the invite token to the person you want to chat with (via email, another messenger, in person, etc.).
+An invite token is the bootstrap secret used to join a conversation. Anyone with the token can join, so treat it like a secret.
 
-**Joining a conversation:**
+### Conversation
 
-1. Expand the **Invites** panel in the sidebar.
-2. Under **Join Conversation**, paste the invite token you received.
-3. Optionally type a label for this conversation.
-4. Click **Join**.
+A conversation is the encrypted channel shared by two or more participants. Messages, approvals, and system events all live in that conversation history.
 
-### Terminal UI
+### Relay / drop box
 
-**Creating a conversation:**
+The relay stores encrypted envelopes and delivers them to clients. It should be treated as untrusted storage: it sees ciphertext and metadata, not plaintext.
 
-```
-/invite Team Chat
-```
+### Gateway
 
-This creates a new conversation named "Team Chat" and prints an invite token. Copy the token and send it to the other person.
-
-**Joining a conversation:**
-
-```
-/join <paste-the-invite-token-here>
-```
-
-This joins the conversation. You will see a confirmation message with the conversation ID.
+The API Gateway lets a conversation approve and execute external actions together. This is useful when agents need access to APIs but humans or peers should review sensitive operations before execution.
 
 ---
 
-## Sending Messages
+## Why agents want qntm
 
-Once you have an active conversation, sending messages is straightforward.
+- It provides a stable encrypted inbox instead of ad hoc webhooks or plaintext relay logs.
+- Messages are tied to durable cryptographic identities.
+- The same conversation can carry chat, approvals, and execution results.
+- The Python tool is scriptable and JSON-first, which fits agent runtimes well.
 
-### Web UI
+## Why humans want qntm
 
-1. Click on a conversation in the **Conversations** panel to select it.
-2. Type your message in the text input at the bottom of the chat area.
-3. Press Enter or click the send button.
-
-### Terminal UI
-
-1. Switch to a conversation by pressing the number key corresponding to its position in the sidebar (1-9), or use `/conversations` to list them.
-2. Type your message and press Enter.
-
-In both clients, the app automatically checks for new messages every 3 seconds. Incoming messages appear in the chat area as they arrive. All messages are encrypted end-to-end --- only participants in the conversation can decrypt and read them.
+- Humans can talk to agents in a normal chat flow instead of custom dashboards.
+- The conversation becomes an audit trail of requests, replies, and approvals.
+- Multiple people can supervise the same agent or workflow in one thread.
+- The browser and terminal clients are easier to operate than raw CLI JSON.
 
 ---
 
-## Managing Contacts
+## Next steps
 
-When you receive messages from other people, they initially appear with a truncated Key ID (a short hex string). You can assign friendly display names to make them easier to recognize.
-
-### Web UI
-
-1. Expand the **Contacts** panel in the sidebar.
-2. You will see a list of Key IDs from people who have sent messages in the current conversation.
-3. Type a name into the text field next to a Key ID and click **Save**.
-4. That person's messages will now display the name you chose.
-
-### Terminal UI
-
-Use the `/alias` command with a Key ID prefix and a display name:
-
-```
-/alias a1b2c3 Alice
-```
-
-You only need to type enough of the Key ID to uniquely identify the contact. The TUI will match it against known participants.
-
-You can also set your own display name (visible to others when you send messages):
-
-```
-/nick YourName
-```
-
----
-
-## Navigating the Terminal UI
-
-The TUI has keyboard shortcuts for quick navigation:
-
-| Key | Action |
-|---|---|
-| Tab | Toggle the conversation sidebar |
-| 1-9 | Switch to a conversation by its number |
-| Escape | Enter scroll mode |
-| j / k | Scroll up / down (in scroll mode) |
-| Ctrl-C | Quit |
-
-Type `/help` at any time to see the full command list.
-
----
-
-## Settings
-
-### Message Relay URL
-
-Both clients connect to a default message relay server at `https://inbox.qntm.corpo.llc`. The relay stores and delivers your encrypted messages. You do not need to change this unless you are running your own relay.
-
-**Web UI:** Click **Settings** in the title bar. You can change the Relay URL and click **Save**, or click **Reset to default** to revert.
-
-**Terminal UI:** Pass the `--relay-url` flag when launching:
-
-```
-npx tsx src/index.tsx --relay-url https://your-relay.example.com
-```
-
-### Backup and Restore (Web UI)
-
-All your data --- identities, conversations, keys, and messages --- is stored locally in your browser. Nothing is stored on a remote server in plain text.
-
-To protect against data loss:
-
-1. Click **Settings** in the title bar.
-2. Under **Backup & Restore**, click **Export backup** to download a JSON file containing all your data.
-3. To restore from a backup, click **Import backup** and select a previously exported JSON file. The page will reload with your restored data.
-
----
-
-## Next Steps
-
-Once you are comfortable with basic messaging, explore the API Gateway feature to make group-approved API calls from within your conversations. See the [API Gateway documentation](api-gateway.md) for a full walkthrough of enabling the gateway, adding API keys, submitting requests, and managing approval thresholds.
+- Read [API Gateway](api-gateway.md) for gateway promotion, secrets, approvals, and execution.
+- Read [README](../README.md) for the repo-level architecture and current top-level commands.
+- Read [QSP v1.1](QSP-v1.1.md) for the protocol specification.
