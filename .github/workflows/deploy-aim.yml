@@ -37,5 +37,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=qntm-aim
+          command: pages deploy dist --project-name=qntm-aim --branch=main --commit-dirty=true
           workingDirectory: ui/aim-chat
