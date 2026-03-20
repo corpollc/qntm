@@ -61,22 +61,39 @@ uvx qntm convo join <invite-link-or-token>
 
 All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
 
-## API Gateway
+## API Gateway (Experimental)
 
-The gateway turns a conversation into a governed execution surface. A request can be proposed in chat, reviewed by participants, approved by threshold, and executed with the result posted back.
+> **Status:** The API Gateway is an experimental feature and is still extremely rough. The architecture is sound but the developer experience, error handling, and documentation are all early-stage. Expect breaking changes.
+
+As AI agents gain broader access to the internet, they need more than permissions — they need enforceable group decision-making for consequential actions. The qntm API Gateway exists because we believe agents should not be able to wire money, sign documents, or query sensitive data without explicit, cryptographically verified approval from the humans (or other agents) who share the conversation.
+
+The gateway turns a conversation into a governed execution surface. Any participant can propose an API call. Other participants review it in-chat and approve or reject. Once the approval threshold is met, the gateway executes the call and posts the result back.
 
 ```bash
-# Promote a conversation to use the gateway (2-of-2 approval)
+# Promote a conversation to require 2-of-3 approval
 uvx qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
 
-# Submit an API request
-uvx qntm gate-run <conv-id> --recipe hn.top-stories
+# Propose a bank wire transfer
+uvx qntm gate-run <conv-id> --recipe mercury.create-payment \
+  --arg recipient="Acme Corp" --arg amount=15000 --arg currency=USD
 
-# Approve a pending request
+# Another participant approves
 uvx qntm gate-approve <conv-id> <request-id>
 ```
 
-See [docs/api-gateway.md](docs/api-gateway.md) for details.
+### How the Gateway Works
+
+The gateway is an open-source Cloudflare Worker ([`gateway-worker/`](gateway-worker/)). When a conversation is promoted:
+
+1. The gateway generates an isolated keypair for that conversation
+2. API credentials are encrypted directly to the gateway's public key using NaCl sealed boxes — no participant or the relay can read them
+3. The gateway polls the relay like any other participant, reading encrypted messages and watching for signed requests and approvals
+4. When an approval threshold is met, the gateway decrypts the relevant API credential, injects it into the outgoing HTTP request, executes the call, and posts the result back as an encrypted message
+5. Credentials can have TTLs — when they expire, the gateway notifies the conversation and humans must re-provision
+
+The gateway cannot approve its own requests. It is excluded from the m-of-n threshold. It can only act when enough human (or authorized agent) participants have cryptographically signed their approval.
+
+See [docs/api-gateway.md](docs/api-gateway.md) for the full walkthrough.
 
 ## Clients
 
@@ -86,6 +103,19 @@ See [docs/api-gateway.md](docs/api-gateway.md) for details.
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
+
+## Security & Threat Model
+
+See [docs/threat-model.md](docs/threat-model.md) for the full threat model covering:
+
+- What the relay can and cannot see
+- What happens if the relay is compromised
+- What each client stores locally and how to protect it
+- Metadata exposure (who talks to whom, when, how much)
+- Forward secrecy guarantees and limitations
+- Invite link security
+
+For the cryptographic specification, see [docs/QSP-v1.1.md](docs/QSP-v1.1.md).
 
 ## Project Layout
 
@@ -105,19 +135,8 @@ docs/              Protocol specs and guides
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging
 - [Protocol Spec (QSP v1.1)](docs/QSP-v1.1.md) — full cryptographic specification
 - [API Gateway](docs/api-gateway.md) — approved execution, thresholds, secrets
+- [Threat Model](docs/threat-model.md) — security guarantees and limitations
 - [Gateway Deployment](docs/gateway-deploy.md) — hosted and self-hosted setup
-- [Releasing](docs/RELEASING.md) — tag-based npm/PyPI publishing
-
-## Security
-
-- End-to-end encrypted (XChaCha20-Poly1305) with Ed25519 sender signatures
-- The relay is untrusted — it stores and forwards opaque blobs
-- Invite links are bearer secrets — share them like passwords
-- Forward secrecy is epoch-based via `group_rekey`, not per-message
-- Browser keys live in `localStorage` — treat the browser profile as sensitive
-- All decrypted agent content uses the `unsafe_` prefix convention
-
-For the full security model, see the [protocol spec](docs/QSP-v1.1.md).
 
 ## Building
 
