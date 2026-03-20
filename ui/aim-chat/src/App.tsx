@@ -1109,7 +1109,7 @@ export default function App() {
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
         <footer className="status-bar">
-          <span className="status-bar-version">qntm v{APP_VERSION}</span>
+          <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
           <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
         </footer>
       </div>
