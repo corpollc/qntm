@@ -41,6 +41,11 @@ export const api = {
     return { activeProfileId: profileId }
   },
 
+  renameProfile(profileId: string, newName: string): { profile: Profile } {
+    const profile = store.renameProfile(profileId, newName)
+    return { profile }
+  },
+
   getIdentity(profileId: string): IdentityInfo {
     return qntm.getIdentityInfo(profileId)
   },

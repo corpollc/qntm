@@ -32,6 +32,7 @@ export interface SidebarProps {
   isWorking: boolean
   onSelectProfile: (profileId: string) => void
   onCreateProfile: (event: FormEvent<HTMLFormElement>) => void
+  onRenameProfile: (profileId: string, newName: string) => void
   onGenerateIdentity: () => void
   onCreateInvite: () => void
   onAcceptInvite: () => void
@@ -74,6 +75,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   isWorking,
   onSelectProfile,
   onCreateProfile,
+  onRenameProfile,
   onGenerateIdentity,
   onCreateInvite,
   onAcceptInvite,
@@ -137,6 +139,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           isWorking={isWorking}
           onSelectProfile={onSelectProfile}
           onCreateProfile={onCreateProfile}
+          onRenameProfile={onRenameProfile}
           onGenerateIdentity={onGenerateIdentity}
           setStatus={setStatus}
         />

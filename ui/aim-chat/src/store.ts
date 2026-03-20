@@ -171,6 +171,15 @@ export function selectProfile(profileId: string): void {
   saveStore(store)
 }
 
+export function renameProfile(profileId: string, newName: string): StoredProfile {
+  const store = loadStore()
+  const profile = store.profiles.find(p => p.id === profileId)
+  if (!profile) throw new Error(`profile ${profileId} not found`)
+  profile.name = newName.trim() || profile.name
+  saveStore(store)
+  return profile
+}
+
 export function getIdentity(profileId: string): StoredIdentity | null {
   const store = loadStore()
   return store.identities[profileId] || null

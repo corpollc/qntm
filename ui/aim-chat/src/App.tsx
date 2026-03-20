@@ -337,7 +337,7 @@ export default function App() {
       let nextActiveId = response.activeProfileId
 
       if (nextProfiles.length === 0) {
-        const created = await api.createProfile('Agent 1')
+        const created = await api.createProfile('You')
         nextProfiles = [created.profile]
         nextActiveId = created.profile.id
         await api.selectProfile(nextActiveId)
@@ -564,6 +564,19 @@ export default function App() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to switch profile'
       setError(msg)
+      addToast(msg, 'error')
+    }
+  }
+
+  async function onRenameProfile(profileId: string, newName: string) {
+    try {
+      const response = api.renameProfile(profileId, newName)
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === profileId ? response.profile : p)),
+      )
+      addToast(`Profile renamed to ${response.profile.name}`, 'success')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to rename profile'
       addToast(msg, 'error')
     }
   }
@@ -1021,6 +1034,7 @@ export default function App() {
             isWorking={isWorking}
             onSelectProfile={onSelectProfile}
             onCreateProfile={onCreateProfile}
+            onRenameProfile={onRenameProfile}
             onGenerateIdentity={onGenerateIdentity}
             onCreateInvite={onCreateInvite}
             onAcceptInvite={onAcceptInvite}
