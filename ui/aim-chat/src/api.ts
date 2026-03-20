@@ -15,6 +15,7 @@ function formatConversation(conv: store.StoredConversation): Conversation {
     type: conv.type || 'direct',
     participants: conv.participants || [],
     createdAt: conv.createdAt || null,
+    inviteToken: conv.inviteToken || undefined,
   }
 }
 

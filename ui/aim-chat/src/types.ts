@@ -15,6 +15,7 @@ export interface Conversation {
   type: string
   participants: string[]
   createdAt: string | null
+  inviteToken?: string
 }
 
 export interface ContactAlias {

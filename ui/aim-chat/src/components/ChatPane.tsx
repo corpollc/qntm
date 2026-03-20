@@ -248,8 +248,24 @@ export function ChatPane({
     <main id="chat-pane" className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
       <div className="chat-header">
         <div className="chat-header-left">
-          <div>
+          <div className="chat-header-title">
             <strong>{selectedConversation?.name || 'No conversation selected'}</strong>
+            {selectedConversation?.inviteToken && (
+              <button
+                className="invite-add-btn"
+                type="button"
+                title="Invite"
+                onClick={(e) => {
+                  const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(selectedConversation.inviteToken!)}`
+                  navigator.clipboard.writeText(link)
+                  const btn = e.currentTarget
+                  btn.textContent = '\u2713'
+                  setTimeout(() => { btn.textContent = '+' }, 1500)
+                }}
+              >
+                +
+              </button>
+            )}
           </div>
           <div className="chat-subheader">
             {selectedConversation ? shortId(selectedConversation.id) : 'Create or accept an invite'}

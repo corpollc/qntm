@@ -109,6 +109,35 @@
   min-width: 0;
 }
 
+.chat-header-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.invite-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.invite-add-btn:hover {
+  background: var(--brand-primary);
+  color: white;
+  border-color: var(--brand-primary);
+}
+
 .chat-subheader {
   margin-top: 3px;
   font-size: var(--text-xs);
