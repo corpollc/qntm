@@ -13,7 +13,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { InMemoryRelay, CLIAgent, APIFixture } from './src/harness.js';
 import { existsSync } from 'node:fs';
-import { buildSignedReceipt } from '@corpollc/qntm';
+import { buildSignedReceipt, deserializeEnvelope } from '@corpollc/qntm';
 
 describe('Integration harness smoke', () => {
   const agents: CLIAgent[] = [];
@@ -156,7 +156,7 @@ describe('Read receipt flow', () => {
     relay.clear();
   });
 
-  it('receipt recorded but message not deleted before threshold', () => {
+  it('sender ack alone does not delete before quorum', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -166,15 +166,9 @@ describe('Read receipt flow', () => {
 
     alice.sendText(relay, convIdHex, 'hello');
     expect(relay.messageCount(convIdHex)).toBe(1);
-
-    // Bob receives and receipts — required_acks from conv.participants
-    // conv has 1 participant (alice), so required_acks = 1 → one receipt deletes
-    const received = bob.receiveAndReceipt(relay, convIdHex);
-    expect(received).toHaveLength(1);
-    expect(new TextDecoder().decode(received[0].body)).toBe('hello');
   });
 
-  it('message deleted when all participants have receipted', () => {
+  it('message deletes when sender and recipient have both receipted', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -185,24 +179,41 @@ describe('Read receipt flow', () => {
     alice.sendText(relay, convIdHex, 'secret');
     expect(relay.messageCount(convIdHex)).toBe(1);
 
-    // Manually submit receipts with required_acks = 2 to test threshold
+    const received = bob.receiveAndReceipt(relay, convIdHex);
+    expect(received).toHaveLength(1);
+    expect(new TextDecoder().decode(received[0].body)).toBe('secret');
+    expect(relay.messageCount(convIdHex)).toBe(0);
+  });
+
+  it('relay deletes only after the second unique receipt for the real message id', () => {
+    const alice = new CLIAgent('alice');
+    const bob = new CLIAgent('bob');
+    agents.push(alice, bob);
+
+    const { convIdHex, conversation } = alice.createConversation('Test');
+    bob.joinConversation(convIdHex, { ...conversation });
+
+    alice.sendText(relay, convIdHex, 'secret');
+    expect(relay.messageCount(convIdHex)).toBe(1);
+
     const messages = relay.poll(convIdHex, 0).messages;
     expect(messages.length).toBe(1);
+    const envelope = deserializeEnvelope(messages[0]);
 
-    // First receipt (alice) — not enough
-    const receipt1 = buildSignedReceipt(alice.identity, conversation.id, conversation.id, 2);
-    // Use a real msg_id based on the envelope — we'll use conv.id as a stand-in
+    // Alice already self-acked on send; a duplicate receipt should remain idempotent.
+    const receipt1 = buildSignedReceipt(alice.identity, conversation.id, envelope.msg_id, 2);
     const r1 = relay.submitReceipt(receipt1);
     expect(r1.recorded).toBe(true);
     expect(r1.deleted).toBe(false);
     expect(r1.receipts).toBe(1);
+    expect(relay.messageCount(convIdHex)).toBe(1);
 
-    // Second receipt (bob) — threshold met
-    const receipt2 = buildSignedReceipt(bob.identity, conversation.id, conversation.id, 2);
+    const receipt2 = buildSignedReceipt(bob.identity, conversation.id, envelope.msg_id, 2);
     const r2 = relay.submitReceipt(receipt2);
     expect(r2.recorded).toBe(true);
     expect(r2.deleted).toBe(true);
     expect(r2.receipts).toBe(2);
+    expect(relay.messageCount(convIdHex)).toBe(0);
   });
 
   it('receiveAndReceipt emits receipts and returns messages', () => {
@@ -221,6 +232,27 @@ describe('Read receipt flow', () => {
     expect(received).toHaveLength(2);
     expect(new TextDecoder().decode(received[0].body)).toBe('ping');
     expect(new TextDecoder().decode(received[1].body)).toBe('pong');
+    expect(relay.messageCount(convIdHex)).toBe(0);
+  });
+
+  it('keeps sequence monotonic after receipt-driven deletion', () => {
+    const alice = new CLIAgent('alice');
+    const bob = new CLIAgent('bob');
+    agents.push(alice, bob);
+
+    const { convIdHex, conversation } = alice.createConversation('Monotonic');
+    bob.joinConversation(convIdHex, { ...conversation });
+
+    alice.sendText(relay, convIdHex, 'first');
+    expect(bob.receiveAndReceipt(relay, convIdHex)).toHaveLength(1);
+    expect(relay.messageCount(convIdHex)).toBe(0);
+
+    const seq2 = alice.sendText(relay, convIdHex, 'second');
+    expect(seq2).toBe(2);
+
+    const received = bob.receiveMessages(relay, convIdHex);
+    expect(received).toHaveLength(1);
+    expect(new TextDecoder().decode(received[0].body)).toBe('second');
   });
 
   it('duplicate receipts from same reader are idempotent', () => {

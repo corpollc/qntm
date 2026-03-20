@@ -36,25 +36,38 @@ interface StoredEnvelope {
   data: Uint8Array;
 }
 
+// Match the shipped clients: creators only know themselves until peers are learned locally.
+const MIN_RECEIPT_ACKS = 2;
+
 export class InMemoryRelay {
   private conversations = new Map<string, StoredEnvelope[]>();
+  private heads = new Map<string, number>();
   /** receipts[convId][msgIdHex] = Set of reader_kid hex strings */
   private receipts = new Map<string, Map<string, Set<string>>>();
 
   post(convIdHex: string, envelope: Uint8Array): number {
     const messages = this.conversations.get(convIdHex) || [];
-    const seq = messages.length + 1;
+    const seq = (this.heads.get(convIdHex) || 0) + 1;
     messages.push({ seq, data: envelope });
     this.conversations.set(convIdHex, messages);
+    this.heads.set(convIdHex, seq);
     return seq;
   }
 
   poll(convIdHex: string, fromSeq: number, maxMessages = 200): { messages: Uint8Array[]; sequence: number } {
     const messages = this.conversations.get(convIdHex) || [];
-    const visible = messages.filter(m => m.seq > fromSeq).slice(0, maxMessages);
+    const head = this.heads.get(convIdHex) || 0;
+    let upToSeq = head;
+    if (upToSeq < fromSeq) {
+      upToSeq = fromSeq;
+    }
+    if (maxMessages > 0 && fromSeq + maxMessages < upToSeq) {
+      upToSeq = fromSeq + maxMessages;
+    }
+    const visible = messages.filter(m => m.seq > fromSeq && m.seq <= upToSeq);
     return {
       messages: visible.map(m => m.data),
-      sequence: messages.at(-1)?.seq || fromSeq,
+      sequence: upToSeq,
     };
   }
 
@@ -106,6 +119,7 @@ export class InMemoryRelay {
 
   clear(): void {
     this.conversations.clear();
+    this.heads.clear();
     this.receipts.clear();
   }
 }
@@ -141,6 +155,7 @@ export class CLIAgent {
   }
 
   joinConversation(convIdHex: string, conv: Conversation): void {
+    addParticipant(conv, this.identity.publicKey);
     this.conversations.set(convIdHex, conv);
   }
 
@@ -153,7 +168,15 @@ export class CLIAgent {
     if (!conv) throw new Error(`Agent ${this.name}: conversation ${convIdHex} not found`);
     const envelope = createMessage(this.identity, conv, bodyType, body, undefined, defaultTTL());
     const serialized = serializeEnvelope(envelope);
-    return relay.post(convIdHex, serialized);
+    const seq = relay.post(convIdHex, serialized);
+    const receipt = buildSignedReceipt(
+      this.identity,
+      conv.id,
+      envelope.msg_id,
+      Math.max(MIN_RECEIPT_ACKS, conv.participants.length),
+    );
+    relay.submitReceipt(receipt);
+    return seq;
   }
 
   sendText(relay: InMemoryRelay, convIdHex: string, text: string): number {
@@ -171,7 +194,7 @@ export class CLIAgent {
     const result = relay.poll(convIdHex, cursor);
 
     const received: Array<{ bodyType: string; body: Uint8Array; senderKid: string }> = [];
-    const requiredAcks = conv.participants.length;
+    const requiredAcks = Math.max(MIN_RECEIPT_ACKS, conv.participants.length);
 
     for (const envelopeBytes of result.messages) {
       try {

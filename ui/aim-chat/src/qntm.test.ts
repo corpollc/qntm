@@ -62,6 +62,7 @@ class MemoryStorage implements Storage {
 
 class FakeDropboxRelay {
   private conversations = new Map<string, Array<{ seq: number; envelope_b64: string }>>()
+  readonly receipts: Array<Record<string, unknown>> = []
 
   async handleFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string'
@@ -95,6 +96,17 @@ class FakeDropboxRelay {
           up_to_seq: messages.at(-1)?.seq || request.from_seq,
           messages: visible,
         }],
+      }), { status: 200 })
+    }
+
+    if (url.endsWith('/v1/receipt')) {
+      const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+      this.receipts.push(body)
+      return new Response(JSON.stringify({
+        recorded: true,
+        deleted: false,
+        receipts: 1,
+        required_acks: body.required_acks ?? 1,
       }), { status: 200 })
     }
 
@@ -150,11 +162,26 @@ describe('browser qntm adapter', () => {
     const alice = createProfile('Alice')
     const invite = createInviteForProfile(alice.id, 'Solo')
 
-    await sendMessageToConversation(alice.id, alice.name, invite.conversationId, 'hello')
+    const sent = await sendMessageToConversation(alice.id, alice.name, invite.conversationId, 'hello')
+    expect(relay.receipts).toHaveLength(1)
+    expect(relay.receipts[0].msg_id).toBe(sent.id)
+    expect(relay.receipts[0].required_acks).toBe(2)
+
     const received = await receiveMessages(alice.id, alice.name, invite.conversationId)
 
     expect(received.messages).toEqual([])
     expect(store.getHistory(alice.id, invite.conversationId)).toHaveLength(1)
+    expect(relay.receipts).toHaveLength(1)
+  })
+
+  it('counts the sender toward cleanup quorum at send time', async () => {
+    const { alice, conversationId } = await createConversationPair()
+
+    const sent = await sendMessageToConversation(alice.id, alice.name, conversationId, 'hello bob')
+
+    expect(relay.receipts).toHaveLength(1)
+    expect(relay.receipts[0].msg_id).toBe(sent.id)
+    expect(relay.receipts[0].required_acks).toBe(2)
   })
 
   it('uses payload for gate request signing and approval hashing', async () => {

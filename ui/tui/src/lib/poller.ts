@@ -20,6 +20,24 @@ export interface PollResult {
   newCursor: number;
 }
 
+// Creators only know themselves until another participant is learned locally.
+const MIN_RECEIPT_ACKS = 2;
+
+function submitReceiptBestEffort(
+  dropbox: DropboxClient,
+  identity: Identity,
+  convId: Uint8Array,
+  msgId: Uint8Array,
+  requiredAcks: number,
+): void {
+  try {
+    const receipt = buildSignedReceipt(identity, convId, msgId, requiredAcks);
+    dropbox.submitReceipt(receipt).catch(() => {});
+  } catch {
+    // Receipt emission is best-effort
+  }
+}
+
 export async function pollConversation(
   store: Store,
   dropbox: DropboxClient,
@@ -95,14 +113,9 @@ export async function pollConversation(
 
   // Emit read receipts for all successfully processed messages (fire-and-forget)
   if (processedMsgIds.length > 0) {
-    const requiredAcks = convCrypto.participants.length;
+    const requiredAcks = Math.max(MIN_RECEIPT_ACKS, convCrypto.participants.length);
     for (const msgId of processedMsgIds) {
-      try {
-        const receipt = buildSignedReceipt(identity, convCrypto.id, msgId, requiredAcks);
-        dropbox.submitReceipt(receipt).catch(() => {});
-      } catch {
-        // Receipt emission is best-effort
-      }
+      submitReceiptBestEffort(dropbox, identity, convCrypto.id, msgId, requiredAcks);
     }
   }
 
@@ -125,6 +138,13 @@ export async function sendMessage(
   const serialized = serializeEnvelope(envelope);
 
   await dropbox.postMessage(convCrypto.id, serialized);
+  submitReceiptBestEffort(
+    dropbox,
+    identity,
+    convCrypto.id,
+    envelope.msg_id,
+    Math.max(MIN_RECEIPT_ACKS, convCrypto.participants.length),
+  );
 
   const message: StoredMessage = {
     id: bytesToHex(envelope.msg_id),

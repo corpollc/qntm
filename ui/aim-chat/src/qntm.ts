@@ -43,6 +43,8 @@ import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './type
 
 const _suite = new QSP1Suite()
 const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
+// Conversation creators only know themselves until another participant is learned locally.
+const MIN_RECEIPT_ACKS = 2
 
 // ---- Group event state application ----
 
@@ -294,11 +296,39 @@ interface GatewayBootstrap {
   gatewayKid: string
 }
 
-async function sendEnvelope(conversationId: string, envelope: ReturnType<typeof createMessage>): Promise<void> {
+function submitReceiptBestEffort(
+  dropbox: DropboxClient,
+  identity: IdentityKeys,
+  convId: Uint8Array,
+  msgId: Uint8Array,
+  requiredAcks: number,
+): void {
+  try {
+    const receipt = buildSignedReceipt(identity, convId, msgId, requiredAcks)
+    dropbox.submitReceipt(receipt).catch(() => {})
+  } catch {
+    // Receipt emission is best-effort
+  }
+}
+
+async function sendEnvelope(
+  conversationId: string,
+  envelope: ReturnType<typeof createMessage>,
+  receipt?: { identity: IdentityKeys; convId: Uint8Array; requiredAcks: number },
+): Promise<void> {
   const dropbox = getDropbox()
   const data = serializeEnvelope(envelope)
   const convIdBytes = hexToBytes(conversationId)
   await dropbox.postMessage(convIdBytes, data)
+  if (receipt) {
+    submitReceiptBestEffort(
+      dropbox,
+      receipt.identity,
+      receipt.convId,
+      envelope.msg_id,
+      receipt.requiredAcks,
+    )
+  }
 }
 
 // ---- Invite ----
@@ -547,7 +577,11 @@ export async function sendMessageToConversation(
   const bodyBytes = new TextEncoder().encode(text)
   const envelope = createMessage(identity, convCrypto, bodyType, bodyBytes, undefined, defaultTTL())
 
-  await sendEnvelope(conversationId, envelope)
+  await sendEnvelope(conversationId, envelope, {
+    identity,
+    convId: convCrypto.id,
+    requiredAcks: Math.max(MIN_RECEIPT_ACKS, convCrypto.participants.length),
+  })
 
   const message: store.StoredMessage = {
     id: bytesToHex(envelope.msg_id),
@@ -616,8 +650,6 @@ export async function receiveMessages(
       }
     }
 
-    processedMsgIds.push(envelope.msg_id)
-
     const conv = store.findConversation(profileId, conversationId)
     if (shouldTrackSenderAsParticipant(conv, bodyType, senderKidHex)) {
       mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
@@ -651,6 +683,8 @@ export async function receiveMessages(
       store.addHistoryMessage(profileId, conversationId, message)
       acceptedMessages.push(resolveMessageSender(profileId, message))
     }
+
+    processedMsgIds.push(envelope.msg_id)
   }
 
   if (result.sequence > fromSeq) {
@@ -659,15 +693,9 @@ export async function receiveMessages(
 
   // Emit read receipts for all successfully processed messages (fire-and-forget)
   if (processedMsgIds.length > 0 && convCrypto) {
-    const requiredAcks = convCrypto.participants.length
-    const identityForReceipt = { privateKey: identity.privateKey, publicKey: identity.publicKey, keyID: identity.keyID }
+    const requiredAcks = Math.max(MIN_RECEIPT_ACKS, convCrypto.participants.length)
     for (const msgId of processedMsgIds) {
-      try {
-        const receipt = buildSignedReceipt(identityForReceipt, convCrypto.id, msgId, requiredAcks)
-        dropbox.submitReceipt(receipt).catch(() => {})
-      } catch {
-        // Receipt emission is best-effort
-      }
+      submitReceiptBestEffort(dropbox, identity, convCrypto.id, msgId, requiredAcks)
     }
   }
 
