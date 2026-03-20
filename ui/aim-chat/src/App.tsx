@@ -226,6 +226,21 @@ export default function App() {
 
   useKeyboardShortcuts(shortcutActions)
 
+  // Parse invite token from URL on load (e.g., chat.corpo.llc?invite=TOKEN)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('invite')
+    if (token) {
+      setInviteToken(token)
+      // Clean the URL so the token isn't visible/bookmarked
+      const url = new URL(window.location.href)
+      url.searchParams.delete('invite')
+      window.history.replaceState({}, '', url.pathname + url.hash)
+      // Open the invites panel after sidebar mounts
+      requestAnimationFrame(() => sidebarRef.current?.openInvites())
+    }
+  }, [])
+
   useEffect(() => {
     void initializeProfiles()
     void loadSettings()
@@ -1036,7 +1051,7 @@ export default function App() {
             identityExists={identity.exists}
             conversationCount={conversations.length}
             onGenerateIdentity={onGenerateIdentity}
-            onOpenInvites={() => {}}
+            onOpenInvites={() => sidebarRef.current?.openInvites()}
           />
 
           {showGatePanel && selectedConversation && (

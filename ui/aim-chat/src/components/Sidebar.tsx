@@ -45,6 +45,7 @@ type PanelId = 'identity' | 'invites' | 'conversations' | 'contacts'
 export interface SidebarHandle {
   focusConversationFilter: () => void
   focusNewConversation: () => void
+  openInvites: () => void
 }
 
 export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar({
@@ -96,6 +97,9 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
     focusNewConversation() {
       setExpandedPanels((prev) => new Set([...prev, 'invites']))
       requestAnimationFrame(() => newConversationInputRef.current?.focus())
+    },
+    openInvites() {
+      setExpandedPanels((prev) => new Set([...prev, 'invites']))
     },
   }))
 
