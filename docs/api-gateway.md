@@ -49,7 +49,7 @@ If a request is not approved before its expiration time, it expires and can no l
 
 ### Hosted gateway and self-hosting
 
-The hosted AIM UI defaults the **Gateway server** field to `https://gateway.qntm.corpo.llc`. Local development still defaults to `http://localhost:8080`, and you can always replace the field with your own compatible deployment.
+The hosted AIM UI defaults the **Gateway server** field to `https://gateway.corpo.llc`. Local development still defaults to `http://localhost:8080`, and you can always replace the field with your own compatible deployment.
 
 If you want to operate your own trust boundary, qntm ships the full Cloudflare Worker source in `gateway-worker/`. See [Gateway Deployment](gateway-deploy.md) for the hosted deployment runbook, required Cloudflare secrets, and self-hosting notes.
 

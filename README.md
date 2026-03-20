@@ -53,7 +53,7 @@ Current top-level CLI commands include:
 
 The gateway is a Cloudflare Workers Durable Object (`gateway-worker/`). The Python CLI is a gate client — it does not run a local gateway. All gateway wire fields that represent bytes (KIDs, public keys, signatures, encrypted blobs) use RFC 4648 base64url without padding.
 
-The hosted AIM UI defaults gateway promotion and execution to `https://gateway.qntm.corpo.llc`; local AIM development falls back to `http://localhost:8080`. For the hosted deployment runbook and self-hosting instructions, see [docs/gateway-deploy.md](docs/gateway-deploy.md).
+The hosted AIM UI defaults gateway promotion and execution to `https://gateway.corpo.llc`; local AIM development falls back to `http://localhost:8080`. For the hosted deployment runbook and self-hosting instructions, see [docs/gateway-deploy.md](docs/gateway-deploy.md).
 
 Each JSON response includes:
 - `rules` (unsafe content + policy reminders)

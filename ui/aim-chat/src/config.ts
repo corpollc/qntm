@@ -1,4 +1,4 @@
-export const HOSTED_GATEWAY_URL = 'https://gateway.qntm.corpo.llc'
+export const HOSTED_GATEWAY_URL = 'https://gateway.corpo.llc'
 export const LEGACY_LOCAL_GATEWAY_URL = 'http://localhost:8080'
 
 export function getDefaultGatewayUrl(): string {

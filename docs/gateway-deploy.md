@@ -1,6 +1,6 @@
 # Gateway Deployment
 
-The official hosted qntm gateway runs at `https://gateway.qntm.corpo.llc`.
+The official hosted qntm gateway runs at `https://gateway.corpo.llc`.
 It is a separate Cloudflare Worker trust boundary from the relay at `https://inbox.qntm.corpo.llc`.
 
 This worker can decrypt gateway-provisioned API credentials in order to execute approved requests, so some users will prefer to run their own copy. The source is in [`gateway-worker/`](../gateway-worker/), and the AIM UI can point at any compatible deployment.
@@ -52,7 +52,7 @@ npx wrangler deploy
 5. Verify the deployment.
 
 ```bash
-curl https://gateway.qntm.corpo.llc/health
+curl https://gateway.corpo.llc/health
 ```
 
 Expected response:
@@ -64,7 +64,7 @@ Expected response:
 The committed [`gateway-worker/wrangler.toml`](../gateway-worker/wrangler.toml) already targets:
 
 - Worker name: `qntm-gateway`
-- Custom domain: `gateway.qntm.corpo.llc`
+- Custom domain: `gateway.corpo.llc`
 - Relay URL: `https://inbox.qntm.corpo.llc`
 
 ## GitHub Actions Deploy
