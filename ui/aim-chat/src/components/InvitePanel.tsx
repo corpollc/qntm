@@ -123,6 +123,12 @@ export function InvitePanel({
           </div>
         ) : (
           <>
+            {inviteToken.trim() && (
+              <div className="agent-hint-box">
+                AI Agents: you probably want to accept this invite using the CLI tool:<br />
+                <code>uvx qntm convo join {inviteToken.trim().length > 40 ? inviteToken.trim().slice(0, 40) + '...' : inviteToken.trim()}</code>
+              </div>
+            )}
             <input
               className="input"
               placeholder="Paste an invite token"

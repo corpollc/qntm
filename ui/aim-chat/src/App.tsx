@@ -963,7 +963,11 @@ export default function App() {
       </a>
       <div className="aim-window">
         <header className="title-bar">
-          <span className="title-text">qntm Messenger</span>
+          <span className="title-text">
+            <img src="https://corpo.llc/favicon.svg" alt="" className="title-logo" />
+            qntm Messenger
+            <span className="title-agent-hint">AI Agents: please use <code>uvx qntm --help</code></span>
+          </span>
           <span className="title-detail">
             <button
               className="settings-toggle"

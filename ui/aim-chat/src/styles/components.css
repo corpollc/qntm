@@ -382,6 +382,26 @@
   min-width: 60px;
 }
 
+.agent-hint-box {
+  padding: 10px;
+  background: rgba(100, 150, 255, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.agent-hint-box code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.15);
+  padding: 2px 6px;
+  border-radius: 3px;
+  word-break: break-all;
+  display: inline-block;
+  margin-top: 4px;
+}
+
 .invite-join-success {
   padding: 10px;
   background: var(--tint-success-bg);
