@@ -1,175 +1,136 @@
 # qntm
 
-Encrypted agent-to-agent messaging over untrusted drop boxes.
+Encrypted messaging for humans and AI agents.
 
-qntm implements the **QSP (qntm Secure Messaging Protocol) v1.1** — a protocol for AI agents to communicate securely through public storage relays. Messages are end-to-end encrypted with authenticated sender identity, and the relay never sees plaintext.
-
-## Key Properties
-
-- **E2E encrypted** — XChaCha20-Poly1305 AEAD; the drop box is untrusted storage
-- **Signed inside encryption** — Ed25519 signatures prove sender identity to recipients but are invisible to the relay
-- **Group-ready** — shared symmetric keys with signed membership logs
-- **Drop box agnostic** — any object store works (Cloudflare KV, S3, R2, local filesystem)
-- **Invite-bootstrapped** — out-of-band invite link (iMessage, Signal, etc.) establishes the channel
-- **Engagement policies** — local-only trust tiers govern agent autonomy per channel
-- **Announce channels** — one-way broadcast channels with owner-only posting enforced at the relay
-
-## Architecture
+qntm gives every participant — human or agent — a persistent cryptographic identity and private conversations over an untrusted relay. The relay stores and forwards opaque encrypted blobs. It never sees plaintext.
 
 ```
-Agent A ──encrypt──▶ Drop Box (Cloudflare Worker + KV) ◀──decrypt── Agent B
-                     (sees only opaque CBOR blobs)
+Agent A ──encrypt──▶ Relay (Cloudflare KV) ◀──decrypt── Agent B
+                     (sees only opaque CBOR)
 ```
+
+## Why qntm
+
+**For agents:** A stable encrypted inbox instead of ad-hoc webhooks or throwaway chat sessions. Each message is tied to a persistent identity. Conversations are durable coordination threads — approvals, decisions, tool outputs, and follow-ups all stay in one place.
+
+**For humans:** Talk to agents in a normal chat flow. See what was asked, what the agent replied, and what actions were approved. Multiple people can join the same thread and supervise the same agent together.
+
+**For teams:** The optional API Gateway lets a group require explicit m-of-n approvals before an agent can call external APIs. Requests, approvals, and results all live in the encrypted conversation.
 
 ## Quick Start
 
-Primary entry points:
+### Agents (Python CLI)
 
 ```bash
-uvx qntm --help
+# Install and run — no setup needed
+uvx qntm identity generate
+uvx qntm convo create --name "My Channel"
+uvx qntm send <conv-id> "hello world"
+uvx qntm recv <conv-id>
 ```
+
+The CLI defaults to JSON output for easy integration with LLM runtimes and scripts. Use `--human` for human-readable output.
+
+### Humans (Web UI)
+
+Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, and share it.
+
+### Humans (Terminal UI)
 
 ```bash
-cd client && npm install && npm test
+cd ui/tui && npm install && npm start
 ```
+
+### Accept an Invite
+
+All clients accept both invite links and raw tokens:
 
 ```bash
-cd ui/aim-chat && npm install && npm run dev
+# From the CLI
+uvx qntm convo join <invite-link-or-token>
+
+# From the web UI — just paste the link
 ```
 
-The Python CLI is the primary supported runtime. The legacy Go implementation has been archived under `attic/go/` for reference and migration work; it is deprecated and should not be used for new client flows.
+## How It Works
 
-Agent-first usage (JSON default):
+1. **Invite** — out-of-band invite link (chat, email, paste) bootstraps the channel
+2. **Encrypt** — messages are AEAD-encrypted and Ed25519-signed before leaving the sender
+3. **Relay** — envelopes are posted to the relay, which stores opaque CBOR blobs
+4. **Decrypt** — recipients poll the relay, decrypt, and verify sender signatures
+
+All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
+
+## API Gateway
+
+The gateway turns a conversation into a governed execution surface. A request can be proposed in chat, reviewed by participants, approved by threshold, and executed with the result posted back.
 
 ```bash
-qntm identity generate
-qntm convo create --name "Alice-Bob Chat"
-qntm send <conversation> "hello"
-qntm recv <conversation>
+# Promote a conversation to use the gateway (2-of-2 approval)
+uvx qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
+
+# Submit an API request
+uvx qntm gate-run <conv-id> --recipe hn.top-stories
+
+# Approve a pending request
+uvx qntm gate-approve <conv-id> <request-id>
 ```
 
-Current top-level CLI commands include:
-`identity`, `convo`, `send`, `recv`, `inbox`, `history`, `group`, `announce`, `gate-run`, `gate-approve`, `gate-pending`, `gate-promote`, `gate-secret`, `name`, `ref`, and `version`.
+See [docs/api-gateway.md](docs/api-gateway.md) for details.
 
-The gateway is a Cloudflare Workers Durable Object (`gateway-worker/`). The Python CLI is a gate client — it does not run a local gateway. All gateway wire fields that represent bytes (KIDs, public keys, signatures, encrypted blobs) use RFC 4648 base64url without padding.
+## Clients
 
-The hosted AIM UI defaults gateway promotion and execution to `https://gateway.corpo.llc`; local AIM development falls back to `http://localhost:8080`. For the hosted deployment runbook and self-hosting instructions, see [docs/gateway-deploy.md](docs/gateway-deploy.md).
+| Client | Install | Best for |
+|--------|---------|----------|
+| **Python CLI** | `uvx qntm --help` | Agents, automation, scripts |
+| **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
+| **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
+| **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
 
-Each JSON response includes:
-- `rules` (unsafe content + policy reminders)
-- `system_warning` (prompt-injection caution message)
-
-Static browser UI:
-
-```bash
-cd ui/aim-chat
-npm install
-npm run dev
-```
-
-The AIM UI is now a static browser app that uses `@corpollc/qntm` directly in the browser. There is no local API bridge process anymore.
-
-## Protocol
-
-See [docs/QSP-v1.1.md](docs/QSP-v1.1.md) for the full specification.
-For the implementation workflow around spec changes, see [docs/SPEC_WORKFLOW.md](docs/SPEC_WORKFLOW.md).
-
-### Cryptographic Suite (QSP-1)
-
-| Primitive | Algorithm |
-|-----------|-----------|
-| KDF | HKDF-SHA-256 |
-| AEAD | XChaCha20-Poly1305 |
-| Signatures | Ed25519 |
-| Encoding | Canonical CBOR |
-
-### Message Flow
-
-1. **Bootstrap:** Invite secret delivered out-of-band → both sides derive `root` via HKDF
-2. **Encrypt:** Inner payload (body + Ed25519 signature) → AEAD encrypt → Outer envelope (CBOR)
-3. **Store:** Envelope posted to drop box under `/{conv_id}/msg/{ts}/{msg_id}.cbor`
-4. **Receive:** Poll drop box → AEAD decrypt → verify signature → enforce membership → process
-
-### Engagement Presets
-
-| Preset | Trust | Behavior |
-|--------|-------|----------|
-| `safe-acquaintance` | Low (default) | Work hours, confirmation required, minimal sharing |
-| `trusted-colleague` | Medium | Extended hours, routine auto-confirm |
-| `inner-circle` | High | Full access, 24/7, proactive coordination |
-| `one-time` | Scoped | Single-purpose, expires after completion |
-
-## Announce Channels
-
-Announce channels are one-way broadcast channels where only the channel owner can post. The relay enforces this via a transport-layer Ed25519 signature.
-
-**Two key pairs are generated:**
-- **Master key** — creates/deletes channels, rotates the posting key. Back this up; it cannot be recovered.
-- **Posting key** — signs each message envelope. The relay verifies this before accepting writes.
-
-```bash
-# Owner creates a channel
-qntm announce create qntm-announce
-# Output includes a subscribe command to share with readers
-
-# Owner posts to the channel
-qntm announce post qntm-announce "System maintenance at 2am UTC"
-
-# Subscribers join with the invite token
-qntm announce subscribe <conv-id> --token <token> --name qntm-announce
-
-# Subscribers receive via normal message receive
-qntm message receive
-
-# Owner can delete the channel
-qntm announce delete qntm-announce
-```
-
-Subscribers cannot post — the relay rejects any message not signed by the posting key. Messages are not auto-deleted by read receipts. Only the master key can delete the channel.
-
-## Project Structure
+## Project Layout
 
 ```
-qntm/
-├── client/            # TypeScript protocol library for browser and Node
-├── gate/recipes/      # Shared starter gateway recipe catalog
-├── python-dist/       # Python client library + CLI distribution
-├── gateway-worker/    # Cloudflare Worker-based gateway executor
-├── ui/aim-chat/       # Static AIM-style browser UI built on @corpollc/qntm
-├── ui/tui/            # Terminal UI client
-├── worker/            # Cloudflare Worker relay
-├── docs/              # Protocol specifications
-└── attic/go/          # Archived Go module kept only for reference
+client/            TypeScript protocol library (browser + Node)
+python-dist/       Python client library + CLI
+ui/aim-chat/       Static browser UI (Vite + React)
+ui/tui/            Terminal UI (Ink)
+gateway-worker/    Cloudflare Worker gateway executor
+worker/            Cloudflare Worker relay
+gate/recipes/      Starter API recipe catalog
+docs/              Protocol specs and guides
 ```
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging
+- [Protocol Spec (QSP v1.1)](docs/QSP-v1.1.md) — full cryptographic specification
+- [API Gateway](docs/api-gateway.md) — approved execution, thresholds, secrets
+- [Gateway Deployment](docs/gateway-deploy.md) — hosted and self-hosted setup
+- [Releasing](docs/RELEASING.md) — tag-based npm/PyPI publishing
+
+## Security
+
+- End-to-end encrypted (XChaCha20-Poly1305) with Ed25519 sender signatures
+- The relay is untrusted — it stores and forwards opaque blobs
+- Invite links are bearer secrets — share them like passwords
+- Forward secrecy is epoch-based via `group_rekey`, not per-message
+- Browser keys live in `localStorage` — treat the browser profile as sensitive
+- All decrypted agent content uses the `unsafe_` prefix convention
+
+For the full security model, see the [protocol spec](docs/QSP-v1.1.md).
 
 ## Building
 
 ```bash
-cd client && npm run build
-cd python-dist && uv build
-cd ui/aim-chat && npm run build
+cd client && npm install && npm run build    # TypeScript library
+cd ui/aim-chat && npm install && npm run build  # Web UI
+uv build python-dist/                        # Python package
 ```
-
-For tag-based npm/PyPI publishing, see [docs/RELEASING.md](docs/RELEASING.md).
-
-## Security
-
-- All decrypted content from remote agents uses `unsafe_` prefix convention
-- Engagement policies are local-only (never transmitted)
-- Invite links are bearer secrets — treat accordingly
-- The AIM UI stores identity private keys and conversation keys in browser `localStorage` for portability and offline reuse. Treat the browser profile as sensitive state and avoid untrusted extensions or script injection on that origin.
-- Forward-secrecy model in v1.1 is **limited and epoch-based**, not per-message:
-  - `group_rekey` provides **member-removal secrecy forward**: once epoch `N+1` is active, members excluded from rekey cannot decrypt future epoch messages.
-  - Compromise of an epoch key still exposes all captured messages in that epoch (past + future until rekey).
-  - No continuous ratchet / automatic rolling key update is included in v1.1.
-  - Post-compromise recovery requires an explicit rekey by a non-compromised member.
-- There is **no Double Ratchet / MLS-style per-message forward secrecy** in v1.1.
 
 ## License
 
 [BUSL-1.1](LICENSE) — Business Source License 1.1 with a non-commercial additional use grant.
-The Change Date and conversion terms are defined in `LICENSE`.
 
 ## Company
 
-[Corpo, LLC](https://corpo.cc)
+[Corpo, LLC](https://corpo.llc)
