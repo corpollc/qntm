@@ -85,10 +85,9 @@ export function IdentityPanel({
             value={nameDraft}
             onChange={(e) => setNameDraft(e.target.value)}
             autoFocus
-            onBlur={(e) => {
-              // Don't cancel if focus moved to the Save button
-              if (e.relatedTarget?.closest('form')) return
-              setEditingName(false)
+            onBlur={() => {
+              // Delay so a Save button click can fire submit before unmount
+              setTimeout(() => setEditingName(false), 150)
             }}
             onKeyDown={(e) => { if (e.key === 'Escape') setEditingName(false) }}
           />
