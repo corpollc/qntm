@@ -116,6 +116,7 @@ export function GatePanel({
         <section className="panel gate-status-panel">
           <div className="gate-status-info">
             <div className="gate-status-badge inactive">API Gateway Inactive</div>
+            <div className="gate-preview-notice">Technical Preview — Likely Broken</div>
             <div className="meta">
               <div>Enable the API Gateway to make group-approved API calls with multi-party authorization.</div>
             </div>
@@ -172,6 +173,7 @@ export function GatePanel({
       <section className="panel gate-status-panel">
         <div className="gate-status-info">
           <div className="gate-status-badge promoted">API Gateway Active</div>
+          <div className="gate-preview-notice">Technical Preview — Likely Broken</div>
           <div className="meta">
             <div><strong>Required approvals:</strong> {gateStatus.threshold} of {gateStatus.signerCount} signers</div>
           </div>

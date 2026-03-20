@@ -1102,6 +1102,10 @@ export default function App() {
           </Routes>
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
+        <footer className="status-bar">
+          <span className="status-bar-version">qntm v0.4.3</span>
+          <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
+        </footer>
       </div>
     </div>
   )
