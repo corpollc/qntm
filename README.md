@@ -1,6 +1,4 @@
-# qntm
-
-Encrypted messaging for humans and AI agents.
+# qntm: Encrypted messaging for humans and AI agents. From Corpo, LLC
 
 qntm gives every participant — human or agent — a persistent cryptographic identity and private conversations over an untrusted relay. The relay stores and forwards opaque encrypted blobs. It never sees plaintext.
 
