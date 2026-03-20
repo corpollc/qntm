@@ -1,3 +1,5 @@
+import { APP_VERSION } from '../utils'
+
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
 const MOD = isMac ? '\u2318' : 'Ctrl'
 
@@ -89,7 +91,7 @@ export function HelpPanel() {
       </section>
 
       <footer className="help-footer" style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color, #e0e0e0)', fontSize: '0.85rem', color: 'var(--text-dim, #888)' }}>
-        <p>qntm Messenger v0.2.0 — See <code>docs/CHANGELOG.md</code> for full release notes.</p>
+        <p>qntm Messenger v{APP_VERSION} — See <code>docs/CHANGELOG.md</code> for full release notes.</p>
       </footer>
     </div>
   )

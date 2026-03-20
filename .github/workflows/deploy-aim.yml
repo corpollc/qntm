@@ -20,6 +20,12 @@ jobs:
         run: npm ci && npm run build
         working-directory: client
 
+      - name: Set UI version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm pkg set version="$VERSION"
+        working-directory: ui/aim-chat
+
       - name: Install UI dependencies
         run: npm install
         working-directory: ui/aim-chat

@@ -1,4 +1,7 @@
 import type { GateRequestBody, GateApprovalBody, GateExecutedBody } from './gate-types'
+import pkg from '../package.json'
+
+export const APP_VERSION = pkg.version
 
 export function shortId(value: string): string {
   if (!value) {

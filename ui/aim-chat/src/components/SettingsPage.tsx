@@ -1,4 +1,5 @@
 import { api } from '../api'
+import { APP_VERSION } from '../utils'
 
 export interface SettingsPageProps {
   dropboxUrl: string
@@ -137,7 +138,7 @@ export function SettingsPage({
         <div className="panel">
           <h2>qntm Messenger</h2>
           <div className="meta">
-            <div><strong>Version:</strong> v0.2.0</div>
+            <div><strong>Version:</strong> v{APP_VERSION}</div>
           </div>
           <div className="settings-about-links">
             <span className="settings-about-link">Getting Started Guide</span>

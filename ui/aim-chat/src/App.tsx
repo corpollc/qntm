@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
-import { shortId } from './utils'
+import { shortId, APP_VERSION } from './utils'
 import { SettingsPage } from './components/SettingsPage'
 import { Sidebar } from './components/Sidebar'
 import type { SidebarHandle } from './components/Sidebar'
@@ -1103,7 +1103,7 @@ export default function App() {
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
         <footer className="status-bar">
-          <span className="status-bar-version">qntm v0.4.3</span>
+          <span className="status-bar-version">qntm v{APP_VERSION}</span>
           <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
         </footer>
       </div>
