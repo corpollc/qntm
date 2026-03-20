@@ -13,3 +13,4 @@
 *.db
 ui/tui/node_modules/
 integration/node_modules/
+channel/node_modules/

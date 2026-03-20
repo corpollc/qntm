@@ -1,0 +1,15 @@
+{
+  "name": "qntm",
+  "owner": {
+    "name": "Corpo LLC"
+  },
+  "plugins": [
+    {
+      "name": "channel",
+      "description": "Encrypted qntm messaging channel — makes Claude a first-class qntm peer",
+      "source": "./channel",
+      "category": "productivity",
+      "homepage": "https://github.com/corpollc/qntm"
+    }
+  ]
+}

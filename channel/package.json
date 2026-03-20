@@ -1,0 +1,14 @@
+{
+  "name": "@corpollc/qntm-channel",
+  "version": "0.1.0",
+  "description": "Claude Code channel bridge for qntm secure messaging",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "@corpollc/qntm": "^0.4.13",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}

@@ -2719,7 +2719,12 @@ quick start:
   qntm convo create --name mygroup        start a conversation, get an invite token
   qntm convo join <token>                 accept an invite token
   qntm send <conv> "hello"                send a message (conv = id or prefix)
-  qntm recv <conv>                        receive new messages""",
+  qntm recv <conv>                        receive new messages
+
+claude code channel:
+  claude plugin marketplace add corpollc/qntm
+  claude plugin install channel@qntm
+  claude --dangerously-load-development-channels plugin:channel@qntm""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--config-dir", dest="config_dir", default=None,
