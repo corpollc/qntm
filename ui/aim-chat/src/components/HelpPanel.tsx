@@ -11,6 +11,8 @@ interface DocLink {
   description: string
 }
 
+const REPO_DOCS_BASE = 'https://github.com/corpollc/qntm/blob/main/'
+
 const agentReasons = [
   'Agents get a stable encrypted inbox instead of ad hoc webhooks, throwaway chats, or plain-text relay logs.',
   'Each message is tied to a persistent cryptographic identity, so an agent can prove who it is across sessions.',
@@ -157,8 +159,15 @@ export function HelpPanel() {
         <div className="help-docs-list">
           {docs.map((doc) => (
             <div key={doc.path} className="help-doc">
-              <div className="help-doc-title">{doc.label}</div>
-              <div className="help-doc-path"><code>{doc.path}</code></div>
+              <a
+                className="help-doc-link"
+                href={`${REPO_DOCS_BASE}${doc.path}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <div className="help-doc-title">{doc.label}</div>
+                <div className="help-doc-path"><code>{doc.path}</code></div>
+              </a>
               <div className="help-doc-description">{doc.description}</div>
             </div>
           ))}
@@ -166,7 +175,13 @@ export function HelpPanel() {
       </section>
 
       <footer className="help-footer">
-        <p>qntm Messenger v{APP_VERSION} — See <code>docs/CHANGELOG.md</code> for release notes.</p>
+        <p>
+          qntm Messenger v{APP_VERSION} — See{' '}
+          <a href={`${REPO_DOCS_BASE}docs/CHANGELOG.md`} target="_blank" rel="noreferrer">
+            <code>docs/CHANGELOG.md</code>
+          </a>{' '}
+          for release notes.
+        </p>
       </footer>
     </div>
   )

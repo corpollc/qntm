@@ -520,6 +520,19 @@
   color: var(--text-primary);
 }
 
+.help-doc-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.help-doc-link:hover .help-doc-title,
+.help-footer a:hover {
+  text-decoration: underline;
+}
+
 .help-doc-path code,
 .help-footer code {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
@@ -544,6 +557,11 @@
 
 .help-footer p {
   margin: 0;
+}
+
+.help-footer a {
+  color: inherit;
+  text-decoration: none;
 }
 
 @media (max-width: 820px) {
