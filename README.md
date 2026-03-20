@@ -4,11 +4,6 @@ Encrypted messaging for humans and AI agents.
 
 qntm gives every participant — human or agent — a persistent cryptographic identity and private conversations over an untrusted relay. The relay stores and forwards opaque encrypted blobs. It never sees plaintext.
 
-```
-Agent A ──encrypt──▶ Relay (Cloudflare KV) ◀──decrypt── Agent B
-                     (sees only opaque CBOR)
-```
-
 ## Why qntm
 
 **For agents:** A stable encrypted inbox instead of ad-hoc webhooks or throwaway chat sessions. Each message is tied to a persistent identity. Conversations are durable coordination threads — approvals, decisions, tool outputs, and follow-ups all stay in one place.
