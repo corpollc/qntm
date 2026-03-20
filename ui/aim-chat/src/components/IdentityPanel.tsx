@@ -14,7 +14,7 @@ export interface IdentityPanelProps {
   onSelectProfile: (profileId: string) => void
   onCreateProfile: (event: FormEvent<HTMLFormElement>) => void
   onRenameProfile: (profileId: string, newName: string) => void
-  onGenerateIdentity: () => void
+  onDeleteProfile: (profileId: string) => void
   setStatus: (value: string) => void
 }
 
@@ -28,36 +28,29 @@ export function IdentityPanel({
   onSelectProfile,
   onCreateProfile,
   onRenameProfile,
-  onGenerateIdentity,
+  onDeleteProfile,
   setStatus,
 }: IdentityPanelProps) {
-  const [showConfirm, setShowConfirm] = useState(false)
   const activeProfile = profiles.find((p) => p.id === activeProfileId)
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
-
-  function handleGenerateClick() {
-    if (identity.exists) {
-      setShowConfirm(true)
-    } else {
-      void onGenerateIdentity()
-    }
-  }
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   return (
     <>
       <ConfirmDialog
-        open={showConfirm}
-        title="Replace keypair?"
-        message="This will generate a new keypair and replace your current one. Your existing Key ID will no longer be valid. This cannot be undone."
-        confirmLabel="Replace keypair"
+        open={showDeleteConfirm}
+        title="Delete profile?"
+        message={`This will permanently delete "${activeProfile?.name || ''}" and all its conversations, keys, and message history. This cannot be undone.`}
+        confirmLabel="Delete profile"
         danger
         onConfirm={() => {
-          setShowConfirm(false)
-          void onGenerateIdentity()
+          setShowDeleteConfirm(false)
+          void onDeleteProfile(activeProfileId)
         }}
-        onCancel={() => setShowConfirm(false)}
+        onCancel={() => setShowDeleteConfirm(false)}
       />
+
       {profiles.length > 1 && (
         <>
           <label className="label" htmlFor="profile-select">
@@ -110,30 +103,19 @@ export function IdentityPanel({
           >
             Edit
           </button>
+          {profiles.length > 1 && (
+            <button
+              className="button-small danger"
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+            >
+              Delete
+            </button>
+          )}
         </div>
       )}
 
-      <form className="row" onSubmit={onCreateProfile}>
-        <input
-          className="input"
-          placeholder="New profile name"
-          value={newProfileName}
-          onChange={(event) => setNewProfileName(event.target.value)}
-        />
-        <button className="button" type="submit" disabled={isWorking}>
-          Add
-        </button>
-      </form>
-
-      <button className="button full" type="button" onClick={handleGenerateClick} disabled={isWorking || !activeProfileId}>
-        Generate keypair
-        <Tooltip text="Creates a new cryptographic key pair for signing and encrypting messages." />
-      </button>
-
       <div className="meta">
-        <div>
-          <strong>Status:</strong> {identity.exists ? 'Ready' : 'No keypair yet'}
-        </div>
         <div>
           <strong>Key ID:</strong>
           <Tooltip text="Your unique identifier on the network. Share your public key to let others verify your messages." />
@@ -158,6 +140,18 @@ export function IdentityPanel({
           </div>
         )}
       </div>
+
+      <form className="row" onSubmit={onCreateProfile}>
+        <input
+          className="input"
+          placeholder="New profile name"
+          value={newProfileName}
+          onChange={(event) => setNewProfileName(event.target.value)}
+        />
+        <button className="button" type="submit" disabled={isWorking}>
+          Add
+        </button>
+      </form>
     </>
   )
 }

@@ -31,9 +31,10 @@ export const api = {
     return store.listProfiles()
   },
 
-  createProfile(name: string): { profile: Profile } {
+  createProfile(name: string): { profile: Profile; identity: IdentityInfo } {
     const profile = store.createProfile(name)
-    return { profile }
+    const identity = qntm.generateIdentityForProfile(profile.id)
+    return { profile, identity }
   },
 
   selectProfile(profileId: string): { activeProfileId: string } {
@@ -44,6 +45,10 @@ export const api = {
   renameProfile(profileId: string, newName: string): { profile: Profile } {
     const profile = store.renameProfile(profileId, newName)
     return { profile }
+  },
+
+  deleteProfile(profileId: string): void {
+    store.deleteProfile(profileId)
   },
 
   getIdentity(profileId: string): IdentityInfo {

@@ -36,9 +36,7 @@ export interface ChatPaneProps {
   onGateDisapprove?: (requestId: string, conversationId: string) => void
   onGovApprove?: (proposalId: string, conversationId: string) => void
   onGovDisapprove?: (proposalId: string, conversationId: string) => void
-  identityExists: boolean
   conversationCount: number
-  onGenerateIdentity: () => void
   onOpenInvites: () => void
 }
 
@@ -123,9 +121,7 @@ export function ChatPane({
   onGateDisapprove,
   onGovApprove,
   onGovDisapprove,
-  identityExists,
   conversationCount,
-  onGenerateIdentity,
   onOpenInvites,
 }: ChatPaneProps) {
   const lastOutgoingIndex = (() => {
@@ -247,7 +243,7 @@ export function ChatPane({
     }
   }, [messages])
 
-  const showWelcome = !identityExists || (conversationCount === 0 && messages.length === 0)
+  const showWelcome = conversationCount === 0 && messages.length === 0
   return (
     <main id="chat-pane" className={`chat-pane ${showGatePanel ? 'with-gate' : ''}`}>
       <div className="chat-header">
@@ -275,10 +271,8 @@ export function ChatPane({
       <div className="chat-log">
         {showWelcome && (
           <WelcomeCard
-            identityExists={identityExists}
             conversationCount={conversationCount}
             isWorking={isWorking}
-            onGenerateIdentity={onGenerateIdentity}
             onOpenInvites={onOpenInvites}
           />
         )}

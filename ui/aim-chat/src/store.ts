@@ -180,6 +180,20 @@ export function renameProfile(profileId: string, newName: string): StoredProfile
   return profile
 }
 
+export function deleteProfile(profileId: string): void {
+  const store = loadStore()
+  store.profiles = store.profiles.filter(p => p.id !== profileId)
+  delete store.identities[profileId]
+  delete store.conversations[profileId]
+  delete store.history[profileId]
+  delete store.contacts[profileId]
+  delete store.cursors[profileId]
+  if (store.activeProfileId === profileId) {
+    store.activeProfileId = store.profiles[0]?.id || ''
+  }
+  saveStore(store)
+}
+
 export function getIdentity(profileId: string): StoredIdentity | null {
   const store = loadStore()
   return store.identities[profileId] || null

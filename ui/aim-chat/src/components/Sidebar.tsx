@@ -33,7 +33,7 @@ export interface SidebarProps {
   onSelectProfile: (profileId: string) => void
   onCreateProfile: (event: FormEvent<HTMLFormElement>) => void
   onRenameProfile: (profileId: string, newName: string) => void
-  onGenerateIdentity: () => void
+  onDeleteProfile: (profileId: string) => void
   onCreateInvite: () => void
   onAcceptInvite: () => void
   onContactDraftChange: (key: string, value: string) => void
@@ -76,7 +76,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   onSelectProfile,
   onCreateProfile,
   onRenameProfile,
-  onGenerateIdentity,
+  onDeleteProfile,
   onCreateInvite,
   onAcceptInvite,
   onContactDraftChange,
@@ -140,7 +140,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           onSelectProfile={onSelectProfile}
           onCreateProfile={onCreateProfile}
           onRenameProfile={onRenameProfile}
-          onGenerateIdentity={onGenerateIdentity}
+          onDeleteProfile={onDeleteProfile}
           setStatus={setStatus}
         />
       </CollapsiblePanel>

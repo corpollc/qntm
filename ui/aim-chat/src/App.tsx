@@ -337,10 +337,10 @@ export default function App() {
       let nextActiveId = response.activeProfileId
 
       if (nextProfiles.length === 0) {
-        const created = await api.createProfile('You')
+        const created = api.createProfile('You')
         nextProfiles = [created.profile]
         nextActiveId = created.profile.id
-        await api.selectProfile(nextActiveId)
+        api.selectProfile(nextActiveId)
       }
 
       if (!nextActiveId && nextProfiles.length > 0) {
@@ -531,8 +531,9 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const created = await api.createProfile(trimmedName)
-      await api.selectProfile(created.profile.id)
+      const created = api.createProfile(trimmedName)
+      api.selectProfile(created.profile.id)
+      setIdentity(created.identity)
       await initializeProfiles()
 
       setNewProfileName('')
@@ -581,24 +582,18 @@ export default function App() {
     }
   }
 
-  async function onGenerateIdentity() {
-    if (!activeProfileId) {
+  async function onDeleteProfile(profileId: string) {
+    if (!profileId || profiles.length <= 1) {
       return
     }
 
-    setIsWorking(true)
     try {
-      const response = await api.generateIdentity(activeProfileId)
-      setIdentity(response.identity)
-      setStatus('Keypair generated')
-      addToast('Keypair generated', 'success')
-      setError('')
+      api.deleteProfile(profileId)
+      await initializeProfiles()
+      addToast('Profile deleted', 'success')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate keypair'
-      setError(msg)
+      const msg = err instanceof Error ? err.message : 'Failed to delete profile'
       addToast(msg, 'error')
-    } finally {
-      setIsWorking(false)
     }
   }
 
@@ -1035,7 +1030,7 @@ export default function App() {
             onSelectProfile={onSelectProfile}
             onCreateProfile={onCreateProfile}
             onRenameProfile={onRenameProfile}
-            onGenerateIdentity={onGenerateIdentity}
+            onDeleteProfile={onDeleteProfile}
             onCreateInvite={onCreateInvite}
             onAcceptInvite={onAcceptInvite}
             onContactDraftChange={onContactDraftChange}
@@ -1062,9 +1057,7 @@ export default function App() {
             onGateDisapprove={onGateDisapprove}
             onGovApprove={onGovApprove}
             onGovDisapprove={onGovDisapprove}
-            identityExists={identity.exists}
             conversationCount={conversations.length}
-            onGenerateIdentity={onGenerateIdentity}
             onOpenInvites={() => sidebarRef.current?.openInvites()}
           />
 
