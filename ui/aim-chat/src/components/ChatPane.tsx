@@ -320,8 +320,8 @@ export function ChatPane({
                         {formatSmartTime(message.createdAt)}
                         {message.direction === 'outgoing' && (
                           isSending && index === lastOutgoingIndex
-                            ? <span className="message-status message-status-pending"> sending\u2026</span>
-                            : <span className="message-status message-status-sent"> \u2713</span>
+                            ? <span className="message-status message-status-pending"> sending…</span>
+                            : <span className="message-status message-status-sent"> ✓</span>
                         )}
                       </span>
                     </div>
