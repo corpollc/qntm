@@ -63,7 +63,6 @@ class MockState {
 }
 
 const dummyEnv = {
-  GATEWAY_KV: {} as never,
   GATEWAY_CONVO_DO: {} as never,
   GATE_VAULT_KEY: '00'.repeat(32),
   DROPBOX_URL: 'https://localhost:9999',

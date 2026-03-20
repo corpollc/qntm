@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GateRecipe } from '../types'
+import { getDefaultGatewayUrl, HOSTED_GATEWAY_URL, LEGACY_LOCAL_GATEWAY_URL } from '../config'
 import { CollapsiblePanel } from './CollapsiblePanel'
 import { GateWalkthrough, isDismissed } from './GateWalkthrough'
 import { Spinner } from './Spinner'
@@ -73,6 +74,17 @@ export function GatePanel({
   const [governanceFloor, setGovernanceFloor] = useState(gateStatus.threshold || gatePromoteThreshold)
   const [memberPublicKey, setMemberPublicKey] = useState('')
   const [memberRemovalKid, setMemberRemovalKid] = useState(participantKids[0] || '')
+  const defaultGatewaySeeded = useRef(false)
+
+  useEffect(() => {
+    if (defaultGatewaySeeded.current) return
+    defaultGatewaySeeded.current = true
+
+    const normalized = gateServerUrl.trim()
+    if (!normalized || normalized === LEGACY_LOCAL_GATEWAY_URL) {
+      setGateServerUrl(getDefaultGatewayUrl())
+    }
+  }, [gateServerUrl, setGateServerUrl])
 
   useEffect(() => {
     setGovernanceFloor(gateStatus.threshold || gatePromoteThreshold)
@@ -120,11 +132,14 @@ export function GatePanel({
             All conversation participants become signers.
             Set how many must approve each API call.
           </div>
+          <div className="meta">
+            Default hosted gateway: <code>{HOSTED_GATEWAY_URL}</code>. Self-hosted gateways can override this field.
+          </div>
           <label className="label" htmlFor="gate-promote-url">Gateway server</label>
           <input
             id="gate-promote-url"
             className="input"
-            placeholder="http://localhost:8080"
+            placeholder={getDefaultGatewayUrl()}
             value={gateServerUrl}
             onChange={(event) => setGateServerUrl(event.target.value)}
           />
@@ -193,7 +208,7 @@ export function GatePanel({
               <input
                 id="gate-url"
                 className="input"
-                placeholder="http://localhost:8080"
+                placeholder={getDefaultGatewayUrl()}
                 value={gateServerUrl}
                 onChange={(event) => setGateServerUrl(event.target.value)}
               />

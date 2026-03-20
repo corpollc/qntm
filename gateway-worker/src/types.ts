@@ -1,6 +1,5 @@
 /** Environment bindings for the gateway worker */
 export interface Env {
-  GATEWAY_KV: KVNamespace;
   GATEWAY_CONVO_DO: DurableObjectNamespace;
   GATE_VAULT_KEY: string; // Secret binding: AES-256 key for vault encryption at rest
   DROPBOX_URL: string;

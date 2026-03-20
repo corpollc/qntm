@@ -1,0 +1,65 @@
+name: Deploy Gateway Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "client/**"
+      - "gateway-worker/**"
+      - ".github/workflows/deploy-gateway.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      GATE_VAULT_KEY: ${{ secrets.QNTM_GATE_VAULT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            gateway-worker/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: client
+
+      - name: Build client package
+        run: npm run build
+        working-directory: client
+
+      - name: Install gateway dependencies
+        run: npm ci
+        working-directory: gateway-worker
+
+      - name: Run gateway tests
+        run: npm test
+        working-directory: gateway-worker
+
+      - name: Typecheck gateway worker
+        run: npm run typecheck
+        working-directory: gateway-worker
+
+      - name: Verify deploy credentials
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$GATE_VAULT_KEY"
+
+      - name: Upsert gateway vault secret
+        run: printf '%s' "$GATE_VAULT_KEY" | npx wrangler secret put GATE_VAULT_KEY
+        working-directory: gateway-worker
+
+      - name: Deploy gateway worker
+        run: npx wrangler deploy
+        working-directory: gateway-worker
