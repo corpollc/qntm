@@ -10,6 +10,7 @@ import { ChatPane } from './components/ChatPane'
 import { GatePanel } from './components/GatePanel'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { HelpPanel } from './components/HelpPanel'
+import { JoinModal } from './components/JoinModal'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useToast } from './hooks/useToast'
 import { ToastContainer } from './components/ToastContainer'
@@ -77,6 +78,7 @@ export default function App() {
   const [isSending, setIsSending] = useState(false)
 
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
+  const [showJoinModal, setShowJoinModal] = useState(false)
 
   const { toasts, addToast, removeToast } = useToast()
 
@@ -240,12 +242,11 @@ export default function App() {
     const token = params.get('invite')
     if (token) {
       setInviteToken(token)
+      setShowJoinModal(true)
       // Clean the URL so the token isn't visible/bookmarked
       const url = new URL(window.location.href)
       url.searchParams.delete('invite')
       window.history.replaceState({}, '', url.pathname + url.hash)
-      // Open the invites panel after sidebar mounts
-      requestAnimationFrame(() => sidebarRef.current?.openInvites())
     }
   }, [])
 
@@ -627,6 +628,36 @@ export default function App() {
       setError('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to create invite'
+      setError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsWorking(false)
+    }
+  }
+
+  async function onJoinFromModal(name: string) {
+    if (!activeProfileId) return
+
+    const token = inviteToken.trim()
+    if (!token) return
+
+    setIsWorking(true)
+    try {
+      const label = name.trim() || `${activeProfile?.name || 'Conversation'} Link`
+      const response = await api.acceptInvite(activeProfileId, token, label)
+      setConversations(response.conversations)
+
+      if (response.conversationId) {
+        setSelectedConversationId(response.conversationId)
+      }
+
+      setInviteToken('')
+      setShowJoinModal(false)
+      setStatus('Invite accepted')
+      addToast('Invite accepted', 'success')
+      setError('')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to accept invite'
       setError(msg)
       addToast(msg, 'error')
     } finally {
@@ -1115,6 +1146,17 @@ export default function App() {
           </Routes>
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
+        {showJoinModal && inviteToken && (
+          <JoinModal
+            inviteToken={inviteToken}
+            isWorking={isWorking}
+            onJoin={onJoinFromModal}
+            onCancel={() => {
+              setShowJoinModal(false)
+              setInviteToken('')
+            }}
+          />
+        )}
         <footer className="status-bar">
           <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
           <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>

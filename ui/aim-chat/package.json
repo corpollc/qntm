@@ -1,7 +1,7 @@
 {
   "name": "qntm-aim-chat-ui",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
