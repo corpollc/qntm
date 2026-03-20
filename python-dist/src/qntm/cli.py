@@ -755,6 +755,7 @@ def cmd_convo_create(args):
         "participants": [p.hex() for p in conv["participants"]],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "invite_token": token,
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -818,6 +819,27 @@ def cmd_convo_join(args):
         "type": invite["type"],
         "name": conv_record["name"],
         "participants": len(conv["participants"]),
+    })
+
+
+def cmd_convo_invite(args):
+    config_dir = _get_config_dir(args)
+    conversations = _load_conversations(config_dir)
+    conv = _resolve_conversation(conversations, args.conv)
+    if not conv:
+        _error(f"conversation not found: {args.conv}")
+
+    token = conv.get("invite_token")
+    if not token:
+        _error("no invite token stored for this conversation (created before token persistence was added)")
+
+    import urllib.parse
+    link = f"https://chat.corpo.llc?invite={urllib.parse.quote(token, safe='')}"
+    _output("convo.invite", {
+        "conversation_id": conv["id"],
+        "name": conv.get("name", ""),
+        "invite_token": token,
+        "invite_link": link,
     })
 
 
@@ -1088,6 +1110,7 @@ def cmd_group_create(args):
         "participants": [p.hex() for p in conv["participants"]],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "invite_token": token,
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -2731,6 +2754,9 @@ quick start:
     join_p.add_argument("token", help="Invite token")
     join_p.add_argument("--name", default="", help="Conversation name")
 
+    invite_p = convo_sub.add_parser("invite", help="Get invite token for existing conversation")
+    invite_p.add_argument("conv", help="Conversation ID or prefix")
+
     convo_sub.add_parser("list", help="List conversations")
 
     convo_name_p = convo_sub.add_parser("name", help="Set a local name for a conversation")
@@ -2933,6 +2959,8 @@ quick start:
             cmd_convo_create(args)
         elif args.convo_command == "join":
             cmd_convo_join(args)
+        elif args.convo_command == "invite":
+            cmd_convo_invite(args)
         elif args.convo_command == "list":
             cmd_convo_list(args)
         elif args.convo_command == "name":

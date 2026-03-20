@@ -55,6 +55,7 @@ export interface StoredConversation {
   };
   participants: string[];
   createdAt: string;
+  inviteToken?: string;
   currentEpoch: number;
 }
 
@@ -228,6 +229,7 @@ export class Store {
       participants: conv.participants.map((p) => bytesToHex(p)),
       createdAt: new Date().toISOString(),
       currentEpoch: 0,
+      inviteToken: token,
     });
     this.saveConversations(conversations);
 

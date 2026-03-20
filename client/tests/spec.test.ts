@@ -558,6 +558,32 @@ describe('Invites', () => {
     expect(new Uint8Array(restored.conv_id)).toEqual(new Uint8Array(invite.conv_id));
   });
 
+  it('stored token lets a second user derive the same conversation keys', () => {
+    const alice = generateIdentity();
+    const invite = createInvite(alice, 'direct');
+    const token = inviteToToken(invite);
+    const aliceKeys = deriveConversationKeys(invite);
+
+    // Bob joins later using the stored token
+    const restoredInvite = inviteFromURL(token);
+    const bobKeys = deriveConversationKeys(restoredInvite);
+
+    expect(bobKeys.root).toEqual(aliceKeys.root);
+    expect(bobKeys.aeadKey).toEqual(aliceKeys.aeadKey);
+    expect(bobKeys.nonceKey).toEqual(aliceKeys.nonceKey);
+  });
+
+  it('createConversation stores invite token when provided', () => {
+    const id = generateIdentity();
+    const invite = createInvite(id, 'direct');
+    const token = inviteToToken(invite);
+    const keys = deriveConversationKeys(invite);
+    const conv = createConversation(invite, keys);
+
+    // The conversation should carry the invite token for re-sharing
+    expect(conv.inviteToken).toBe(token);
+  });
+
   it('validates invite structure', () => {
     const invite: InvitePayload = {
       v: 999,

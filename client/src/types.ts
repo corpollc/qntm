@@ -48,6 +48,7 @@ export interface Conversation {
   createdAt: Date;
   currentEpoch: number;
   epochKeys?: EpochKeys[];
+  inviteToken?: string;
 }
 
 export interface OuterEnvelope {

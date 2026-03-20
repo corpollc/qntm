@@ -494,6 +494,7 @@ export function createInviteForProfile(
     ]),
     createdAt: new Date().toISOString(),
     currentEpoch: 0,
+    inviteToken: token,
   }
 
   store.addConversation(profileId, convRecord)

@@ -115,6 +115,7 @@ export function createConversation(invite: InvitePayload, keys: ConversationKeys
     participants: [inviterKeyID],
     createdAt: new Date(),
     currentEpoch: 0,
+    inviteToken: inviteToToken(invite),
   };
 }
 

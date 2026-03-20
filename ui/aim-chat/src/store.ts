@@ -39,6 +39,7 @@ export interface StoredConversation {
   gateway?: StoredGatewayIdentity | null
   createdAt: string
   currentEpoch: number
+  inviteToken?: string
 }
 
 export interface StoredMessage {
@@ -83,6 +84,7 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
       : null,
     createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
     currentEpoch: typeof raw?.currentEpoch === 'number' ? raw.currentEpoch : 0,
+    inviteToken: typeof raw?.inviteToken === 'string' ? raw.inviteToken : undefined,
   }
 }
 

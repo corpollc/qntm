@@ -158,6 +158,23 @@ describe('browser qntm adapter', () => {
     vi.unstubAllGlobals()
   })
 
+  it('stores invite token at creation and retrieves it for re-sharing', () => {
+    const alice = createProfile('Alice')
+    const invite = createInviteForProfile(alice.id, 'Test Room')
+
+    // The stored conversation should have the invite token
+    const conv = store.findConversation(alice.id, invite.conversationId)
+    expect(conv).not.toBeNull()
+    expect(conv!.inviteToken).toBeDefined()
+    expect(typeof conv!.inviteToken).toBe('string')
+    expect(conv!.inviteToken!.length).toBeGreaterThan(0)
+
+    // A second user can join using the stored token
+    const bob = createProfile('Bob')
+    const result = acceptInviteForProfile(bob.id, conv!.inviteToken!, 'Test Room')
+    expect(result.conversationId).toBe(invite.conversationId)
+  })
+
   it('suppresses self echoes when polling sent messages', async () => {
     const alice = createProfile('Alice')
     const invite = createInviteForProfile(alice.id, 'Solo')
