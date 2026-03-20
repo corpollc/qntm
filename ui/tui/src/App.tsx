@@ -297,9 +297,9 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         setActiveConvId(convId);
         setMessages([]);
         setScrollOffset(0);
-        addSystemMessage('Invite created! Share this token:', theme.success);
-        addSystemMessage(token, theme.text);
-        addSystemMessage('Share this token with your contact. They can join with: /join <token>', theme.textDim);
+        addSystemMessage('Invite created! Share this link:', theme.success);
+        addSystemMessage(`https://chat.corpo.llc?invite=${encodeURIComponent(token)}`, theme.text);
+        addSystemMessage('They can also join with the CLI: uvx qntm convo join <token>', theme.textDim);
         break;
       }
 
@@ -310,7 +310,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         }
         const token = args.trim();
         if (!token) {
-          addSystemMessage('Usage: /join <invite-token>', theme.error);
+          addSystemMessage('Usage: /join <invite-link-or-token>', theme.error);
           break;
         }
         try {

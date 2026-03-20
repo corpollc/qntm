@@ -57,7 +57,7 @@ Options:
 Slash commands (in chat):
   /help                  Show available commands
   /invite [name]         Create a new conversation and get an invite token
-  /join <token>          Join a conversation using an invite token
+  /join <link-or-token>  Join via invite link or token
   /name <name>           Set conversation name
   /nick <name>           Set your display name
   /alias <kid> <name>    Set a contact alias

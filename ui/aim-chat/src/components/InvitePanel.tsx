@@ -3,6 +3,32 @@ import type { Ref } from 'react'
 import type { IdentityInfo } from '../types'
 import { Tooltip } from './Tooltip'
 
+const INVITE_BASE_URL = `${window.location.origin}${window.location.pathname}`
+
+function truncateToken(token: string): string {
+  if (token.length <= 20) return token
+  return `${token.slice(0, 10)}...${token.slice(-10)}`
+}
+
+function tokenToLink(token: string): string {
+  return `${INVITE_BASE_URL}?invite=${encodeURIComponent(token)}`
+}
+
+/** Extract a raw token from a pasted invite link or bare token */
+function extractToken(input: string): string {
+  const trimmed = input.trim()
+  try {
+    const url = new URL(trimmed)
+    const invite = url.searchParams.get('invite')
+    if (invite) return invite
+    // Also accept fragment-style URLs
+    if (url.hash) return url.hash.replace(/^#/, '')
+  } catch {
+    // Not a URL — treat as bare token
+  }
+  return trimmed
+}
+
 export interface InvitePanelProps {
   inviteName: string
   setInviteName: (value: string) => void
@@ -57,15 +83,21 @@ export function InvitePanel({
     setTimeout(() => onAcceptInvite(), 0)
   }
 
-  async function handleCopy() {
+  async function handleCopyLink() {
     try {
-      await navigator.clipboard.writeText(createdInviteToken)
+      await navigator.clipboard.writeText(tokenToLink(createdInviteToken))
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
       // Fallback: select the text
     }
   }
+
+  function handlePaste(value: string) {
+    setInviteToken(extractToken(value))
+  }
+
+  const inviteLink = createdInviteToken ? tokenToLink(createdInviteToken) : ''
 
   return (
     <>
@@ -90,22 +122,20 @@ export function InvitePanel({
 
         {createdInviteToken && (
           <div className="invite-success">
-            <span className="invite-success-label">Conversation created! Share this invite token: <Tooltip text="Share this token with someone to let them join your conversation." /></span>
-            <div className="invite-token-row">
-              <textarea
-                className="token-box"
-                value={createdInviteToken}
-                readOnly
-              />
-              <button
-                className="button invite-copy-btn"
-                type="button"
-                aria-label="Copy to clipboard"
-                onClick={() => void handleCopy()}
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
+            <span className="invite-success-label">
+              Conversation created! Share this link:
+              <Tooltip text="Share this link with someone to let them join your conversation." />
+            </span>
+            <div className="invite-link-display" title={inviteLink}>
+              <span className="invite-link-text">{truncateToken(createdInviteToken)}</span>
             </div>
+            <button
+              className="button full invite-copy-btn"
+              type="button"
+              onClick={() => void handleCopyLink()}
+            >
+              {copied ? 'Copied!' : 'Copy Invite Link'}
+            </button>
           </div>
         )}
       </div>
@@ -131,10 +161,15 @@ export function InvitePanel({
             )}
             <input
               className="input"
-              placeholder="Paste an invite token"
+              placeholder="Paste an invite link or token"
               value={inviteToken}
-              onChange={(e) => setInviteToken(e.target.value)}
+              onChange={(e) => handlePaste(e.target.value)}
             />
+            {inviteToken.trim() && (
+              <div className="invite-link-display" title={inviteToken}>
+                <span className="invite-link-text">{truncateToken(inviteToken)}</span>
+              </div>
+            )}
             <input
               className="input"
               placeholder="Label for this conversation (optional)"

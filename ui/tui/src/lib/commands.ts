@@ -20,10 +20,10 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     name: 'join',
-    usage: '/join <token>',
+    usage: '/join <token-or-link>',
     brief: 'Join a conversation',
     description:
-      'Joins an existing conversation using an invite token. Usage: /join <token>. Paste the full invite token you received.',
+      'Joins an existing conversation using an invite token or link. Usage: /join <token-or-link>. Paste a bare token or a full invite link.',
   },
   {
     name: 'approve',
