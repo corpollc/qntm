@@ -76,6 +76,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y expect
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -92,6 +95,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run tests
+        run: npm test
 
       - name: Build TUI
         run: npm run build
