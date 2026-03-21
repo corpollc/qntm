@@ -1,6 +1,6 @@
 name = "qntm-gateway"
 main = "src/index.ts"
-compatibility_date = "2024-02-08"
+compatibility_date = "2025-09-01"
 
 # Gateway has its own domain — separate trust boundary from dropbox relay
 routes = [

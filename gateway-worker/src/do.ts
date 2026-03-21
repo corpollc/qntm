@@ -1,3 +1,4 @@
+import { DurableObject } from 'cloudflare:workers';
 import {
   generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   DropboxClient, deserializeEnvelope, decryptMessage,
@@ -51,16 +52,13 @@ const GATEWAY_BODY_TYPES = new Set([
 /**
  * GatewayConversationDO — one Durable Object instance per gateway-managed conversation.
  */
-export class GatewayConversationDO implements DurableObject {
-  private state: DurableObjectState;
-  private env: Env;
+export class GatewayConversationDO extends DurableObject<Env> {
   private messageSeq = 0;
   private recovered = false;
   private relaySubscription: DropboxSubscription | null = null;
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
 
   /**
@@ -71,7 +69,7 @@ export class GatewayConversationDO implements DurableObject {
    */
   private async recover(): Promise<void> {
     if (this.recovered) return;
-    const entries = await this.state.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const entries = await this.ctx.storage.list<StoredGateMessage>({ prefix: 'msg:' });
     let maxSeq = 0;
     for (const [, msg] of entries) {
       if (msg.seq > maxSeq) maxSeq = msg.seq;
@@ -85,9 +83,9 @@ export class GatewayConversationDO implements DurableObject {
     // Store a local executed marker WITH the gateway's signer_kid so that
     // scan trusts it as gateway-authored. Without signer_kid the marker
     // would be ignored by scanRequestApprovals.
-    const walEntries = await this.state.storage.list<{ request_id: string }>({ prefix: 'wal:' });
+    const walEntries = await this.ctx.storage.list<{ request_id: string }>({ prefix: 'wal:' });
     if (walEntries.size > 0) {
-      const convState = await this.state.storage.get<ConversationState>('conv_state');
+      const convState = await this.ctx.storage.get<ConversationState>('conv_state');
       const gwKid = convState?.kid;
       const executedIds = new Set<string>();
       for (const [, msg] of entries) {
@@ -105,7 +103,7 @@ export class GatewayConversationDO implements DurableObject {
             signer_kid: gwKid,
           });
         }
-        await this.state.storage.delete(key);
+        await this.ctx.storage.delete(key);
       }
     }
   }
@@ -136,7 +134,7 @@ export class GatewayConversationDO implements DurableObject {
   private async handlePromote(request: Request): Promise<Response> {
     const body = await request.json() as PromoteRequest;
 
-    const existing = await this.state.storage.get<ConversationState>('conv_state');
+    const existing = await this.ctx.storage.get<ConversationState>('conv_state');
     if (existing) {
       if (existing.conv_id !== body.conv_id) {
         return Response.json(
@@ -173,9 +171,9 @@ export class GatewayConversationDO implements DurableObject {
       promotion_floor: 1,
     };
 
-    await this.state.storage.put('conv_state', convState);
+    await this.ctx.storage.put('conv_state', convState);
     this.ensureRelaySubscription(convState);
-    await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
+    await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
 
     return Response.json({
       conv_id: convState.conv_id,
@@ -186,7 +184,7 @@ export class GatewayConversationDO implements DurableObject {
   }
 
   private async handleStatus(): Promise<Response> {
-    const existing = await this.state.storage.get<ConversationState>('conv_state');
+    const existing = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!existing) {
       return Response.json({ promoted: false });
     }
@@ -207,15 +205,15 @@ export class GatewayConversationDO implements DurableObject {
    */
   async alarm(): Promise<void> {
     await this.recover();
-    const initialState = await this.state.storage.get<ConversationState>('conv_state');
+    const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!initialState) return;
 
     try {
       initialState.polling = true;
-      await this.state.storage.put('conv_state', initialState);
+      await this.ctx.storage.put('conv_state', initialState);
       this.ensureRelaySubscription(initialState);
 
-      const currentState = await this.state.storage.get<ConversationState>('conv_state');
+      const currentState = await this.ctx.storage.get<ConversationState>('conv_state');
       if (!currentState) return;
 
       // Sweep expired secrets every poll cycle
@@ -223,12 +221,12 @@ export class GatewayConversationDO implements DurableObject {
         await this.sweepExpiredSecrets(currentState);
       }
     } finally {
-      const currentState = await this.state.storage.get<ConversationState>('conv_state');
+      const currentState = await this.ctx.storage.get<ConversationState>('conv_state');
       if (currentState) {
         currentState.polling = false;
-        await this.state.storage.put('conv_state', currentState);
+        await this.ctx.storage.put('conv_state', currentState);
       }
-      await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
+      await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
     }
   }
 
@@ -241,7 +239,7 @@ export class GatewayConversationDO implements DurableObject {
     const convIdBytes = hexToBytes(convState.conv_id);
     this.relaySubscription = dropbox.subscribeMessages(convIdBytes, convState.poll_cursor, {
       getCursor: async () => {
-        const latest = await this.state.storage.get<ConversationState>('conv_state');
+        const latest = await this.ctx.storage.get<ConversationState>('conv_state');
         return latest?.poll_cursor ?? 0;
       },
       onMessage: async ({ seq, envelope }) => {
@@ -258,7 +256,7 @@ export class GatewayConversationDO implements DurableObject {
 
   private async handleRelayEnvelope(seq: number, envelopeBytes: Uint8Array): Promise<void> {
     await this.recover();
-    const initialState = await this.state.storage.get<ConversationState>('conv_state');
+    const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!initialState) return;
 
     const conv = this.buildConversation(initialState, hexToBytes(initialState.conv_id));
@@ -273,12 +271,12 @@ export class GatewayConversationDO implements DurableObject {
       console.error('GatewayConversationDO failed to process relay envelope', error);
     }
 
-    const latestState = await this.state.storage.get<ConversationState>('conv_state');
+    const latestState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!latestState) return;
 
     if (seq > latestState.poll_cursor) {
       latestState.poll_cursor = seq;
-      await this.state.storage.put('conv_state', latestState);
+      await this.ctx.storage.put('conv_state', latestState);
     }
 
     if (processed && latestState.gate_promoted) {
@@ -299,7 +297,7 @@ export class GatewayConversationDO implements DurableObject {
 
     // Reject gate actions before promotion (only gate.promote allowed pre-promotion)
     if (bodyType !== 'gate.promote') {
-      const convState = await this.state.storage.get<ConversationState>('conv_state');
+      const convState = await this.ctx.storage.get<ConversationState>('conv_state');
       if (!convState?.gate_promoted) {
         throw new Error(`${bodyType} rejected: conversation not yet promoted`);
       }
@@ -343,7 +341,7 @@ export class GatewayConversationDO implements DurableObject {
   }
 
   private async handleGatePromote(body: Uint8Array, authenticatedKid: string): Promise<void> {
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.promote: no bootstrapped state');
 
     const msg = JSON.parse(new TextDecoder().decode(body)) as GatePromoteMessage;
@@ -376,7 +374,7 @@ export class GatewayConversationDO implements DurableObject {
     convState.rules = msg.rules || [];
     convState.participants = msg.participants || {};
     convState.promotion_floor = msg.floor ?? 1;
-    await this.state.storage.put('conv_state', convState);
+    await this.ctx.storage.put('conv_state', convState);
   }
 
   private async handleGateRequest(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
@@ -388,7 +386,7 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     // Validate sender is a participant
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.request: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.request rejected: sender is not a participant');
@@ -457,7 +455,7 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     // Validate sender is a participant
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.approval: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.approval rejected: sender is not a participant');
@@ -516,7 +514,7 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     // Validate sender is a participant
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.disapproval: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.disapproval rejected: sender is not a participant');
@@ -533,7 +531,7 @@ export class GatewayConversationDO implements DurableObject {
   private async handleGateExecuted(bodyStr: string, authenticatedKid: string): Promise<void> {
     // qntm-iv57: Only accept gate.executed from the gateway's own identity.
     // This prevents participants from forging terminal markers to suppress execution.
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.executed: no bootstrapped state');
     if (authenticatedKid !== convState.kid) {
       throw new Error('gate.executed rejected: only gateway-authored terminal markers are accepted');
@@ -549,7 +547,7 @@ export class GatewayConversationDO implements DurableObject {
   }
 
   private async handleGateSecret(bodyStr: string, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.secret: no bootstrapped state');
 
     // Validate sender is a participant
@@ -568,7 +566,7 @@ export class GatewayConversationDO implements DurableObject {
     const entry = await processSecret(msg, gatewayPrivateKey, senderPublicKey, vaultKey);
 
     // Store in vault (keyed by service for lookup)
-    await this.state.storage.put(`vault:${msg.service}`, entry);
+    await this.ctx.storage.put(`vault:${msg.service}`, entry);
   }
 
   // handleGateConfig removed (qntm-d9qb): direct policy mutation is not allowed.
@@ -579,14 +577,14 @@ export class GatewayConversationDO implements DurableObject {
    * notifications to the conversation so participants know to re-provision.
    */
   private async sweepExpiredSecrets(convState: ConversationState): Promise<void> {
-    const entries = await this.state.storage.list<VaultEntry>({ prefix: 'vault:' });
+    const entries = await this.ctx.storage.list<VaultEntry>({ prefix: 'vault:' });
     const now = Date.now();
 
     for (const [key, entry] of entries) {
       if (!isExpired(entry, now)) continue;
 
       // Delete the expired entry
-      await this.state.storage.delete(key);
+      await this.ctx.storage.delete(key);
 
       // Post gate.expired notification to conversation
       const convIdBytes = hexToBytes(convState.conv_id);
@@ -626,7 +624,7 @@ export class GatewayConversationDO implements DurableObject {
       if (!scan.request) continue;
 
       // Check if credential exists and is not expired
-      const vaultEntry = await this.state.storage.get<VaultEntry>(`vault:${scan.request.target_service}`);
+      const vaultEntry = await this.ctx.storage.get<VaultEntry>(`vault:${scan.request.target_service}`);
       if (!vaultEntry) continue;
       if (isExpired(vaultEntry)) continue;
 
@@ -640,7 +638,7 @@ export class GatewayConversationDO implements DurableObject {
       // qntm-qtw2: Write-ahead log — record execution intent before performing it.
       // If the DO crashes between execution and posting gate.executed, recovery
       // will find this marker and avoid re-execution.
-      await this.state.storage.put(`wal:${scan.request_id}`, {
+      await this.ctx.storage.put(`wal:${scan.request_id}`, {
         request_id: scan.request_id,
         started_at: new Date().toISOString(),
       });
@@ -692,7 +690,7 @@ export class GatewayConversationDO implements DurableObject {
       });
 
       // Clean up WAL entry
-      await this.state.storage.delete(`wal:${scan.request_id}`);
+      await this.ctx.storage.delete(`wal:${scan.request_id}`);
     }
   }
 
@@ -707,7 +705,7 @@ export class GatewayConversationDO implements DurableObject {
     }
 
     // Validate sender is a participant
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.propose: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.propose rejected: sender is not a participant');
@@ -759,7 +757,7 @@ export class GatewayConversationDO implements DurableObject {
       throw new Error('gov.approve rejected: signer_kid does not match authenticated sender');
     }
 
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.approve: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.approve rejected: sender is not a participant');
@@ -814,7 +812,7 @@ export class GatewayConversationDO implements DurableObject {
       throw new Error('gov.disapprove rejected: signer_kid does not match authenticated sender');
     }
 
-    const convState = await this.state.storage.get<ConversationState>('conv_state');
+    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.disapprove: no bootstrapped state');
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.disapprove rejected: sender is not a participant');
@@ -890,7 +888,7 @@ export class GatewayConversationDO implements DurableObject {
     if (proposalMsg.proposal_type === 'member_add' || proposalMsg.proposal_type === 'member_remove') {
       await this.emitGovernedMembershipEvents(preApplyState, convState, proposalMsg);
     }
-    await this.state.storage.put('conv_state', convState);
+    await this.ctx.storage.put('conv_state', convState);
 
     // Store applied marker
     await this.storeGovProposal({
@@ -933,11 +931,11 @@ export class GatewayConversationDO implements DurableObject {
 
   private async storeGovProposal(msg: StoredGovProposal): Promise<void> {
     const key = `gov:${String(msg.seq).padStart(8, '0')}`;
-    await this.state.storage.put(key, msg);
+    await this.ctx.storage.put(key, msg);
   }
 
   private async loadGovProposals(): Promise<StoredGovProposal[]> {
-    const entries = await this.state.storage.list<StoredGovProposal>({ prefix: 'gov:' });
+    const entries = await this.ctx.storage.list<StoredGovProposal>({ prefix: 'gov:' });
     const proposals: StoredGovProposal[] = [];
     for (const [, value] of entries) {
       proposals.push(value);
@@ -1086,11 +1084,11 @@ export class GatewayConversationDO implements DurableObject {
 
   private async storeGateMessage(msg: StoredGateMessage): Promise<void> {
     const key = `msg:${String(msg.seq).padStart(8, '0')}`;
-    await this.state.storage.put(key, msg);
+    await this.ctx.storage.put(key, msg);
   }
 
   private async loadGateMessages(): Promise<StoredGateMessage[]> {
-    const entries = await this.state.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const entries = await this.ctx.storage.list<StoredGateMessage>({ prefix: 'msg:' });
     const messages: StoredGateMessage[] = [];
     for (const [, value] of entries) {
       messages.push(value);
