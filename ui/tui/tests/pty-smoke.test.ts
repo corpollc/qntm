@@ -40,11 +40,24 @@ async function runExpectSession(expectBody: string, args: string[]): Promise<{ s
 }
 
 async function runTuiForSeconds(configDir: string, relayUrl: string, seconds: number): Promise<{ stdout: string; stderr: string }> {
+  // NOTE: We use an expect-based drain loop instead of `sleep` because
+  // `sleep` stops reading from the PTY. When Ink writes output that fills
+  // the PTY buffer, Node.js blocks on stdout.write and the event loop
+  // stalls — preventing useEffect callbacks (including the poller) from
+  // firing. The loop below keeps draining output so Node stays responsive.
+  const ms = seconds * 1000;
   const script = `
     set timeout ${Math.max(seconds + 5, 10)}
     lassign $argv node entry configDir relayUrl
     spawn env TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
-    sleep ${seconds}
+    set end [expr {[clock milliseconds] + ${ms}}]
+    while {[clock milliseconds] < $end} {
+      expect {
+        -timeout 1
+        -re ".+" { }
+        timeout { }
+      }
+    }
     send -- "\\003"
     expect eof
   `;
