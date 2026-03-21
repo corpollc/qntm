@@ -1,14 +1,20 @@
-# qntm: Encrypted messaging for humans and AI agents. From Corpo, LLC
+# qntm — Multi-sig for AI agent API calls
 
-qntm gives every participant — human or agent — a persistent cryptographic identity and private conversations over an untrusted relay. The relay stores and forwards opaque encrypted blobs. It never sees plaintext.
+> **Your AI agent has your Stripe key. What happens when it gets prompt-injected?**
+
+qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent — and no single person — can act alone on consequential API calls. Every action requires cryptographic approval from multiple participants in an end-to-end encrypted conversation.
+
+Think of it as **Gnosis Safe, but for any API** — not just on-chain transactions.
 
 ## Why qntm
 
-**For agents:** A stable encrypted inbox instead of ad-hoc webhooks or throwaway chat sessions. Each message is tied to a persistent identity. Conversations are durable coordination threads — approvals, decisions, tool outputs, and follow-ups all stay in one place.
+**🔐 For agents:** A persistent encrypted inbox with a cryptographic identity. No more ad-hoc webhooks or hardcoded API keys. Conversations are durable coordination threads — approvals, decisions, and results all in one place.
 
-**For humans:** Talk to agents in a normal chat flow. See what was asked, what the agent replied, and what actions were approved. Multiple people can join the same thread and supervise the same agent together.
+**👥 For humans:** Talk to agents in a normal chat flow. See what was asked, what the agent replied, and what actions were approved. Multiple people can supervise the same agent together.
 
-**For teams:** The optional API Gateway lets a group require explicit m-of-n approvals before an agent can call external APIs. Requests, approvals, and results all live in the encrypted conversation.
+**🛡️ For teams:** The API Gateway requires explicit m-of-n approvals before an agent can call external APIs. Store a Stripe key, and 2-of-3 co-founders must approve before any charge executes. All encrypted, all auditable.
+
+**Nobody else combines all three: E2E encryption + agent-first design + m-of-n API approval.**
 
 ## Quick Start
 
@@ -54,9 +60,7 @@ uvx qntm convo join <invite-link-or-token>
 
 All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
 
-## API Gateway (Experimental)
-
-> **Status:** The API Gateway is an experimental feature and is still extremely rough. The architecture is sound but the developer experience, error handling, and documentation are all early-stage. Expect breaking changes.
+## API Gateway
 
 As AI agents gain broader access to the internet, they need more than permissions — they need enforceable group decision-making for consequential actions. The qntm API Gateway exists because we believe agents should be able to wire money, sign documents, or query sensitive data with the safety of explicit, cryptographically verified approval from the humans or other agents who share the conversation. Calling a friend is powerful.
 
@@ -87,6 +91,22 @@ The gateway is an open-source Cloudflare Worker ([`gateway-worker/`](gateway-wor
 The gateway cannot approve its own requests. It is excluded from the m-of-n threshold. It can only act when enough human (or authorized agent) participants have cryptographically signed their approval.
 
 See [docs/api-gateway.md](docs/api-gateway.md) for the full walkthrough.
+
+### Supported API Recipes
+
+The gateway ships with a [starter recipe catalog](gate/recipes/starter.json) including:
+
+| Service | Recipe | Auth Required |
+|---------|--------|:---:|
+| **Google Gemini** | `gemini.generate` | ✅ |
+| **OpenAI** | `openai.chat` | ✅ |
+| **Anthropic** | `anthropic.messages` | ✅ |
+| **GitHub** | `github.repos` | ✅ |
+| **Hacker News** | `hn.top-stories`, `hn.get-item` | — |
+| **httpbin** | `httpbin.echo`, `httpbin.headers` | — |
+| + more | dad jokes, trivia, dog pics, leet speak, ASCII art | — |
+
+Custom recipes are easy to add — any HTTP API with a header-based auth scheme works.
 
 ## Clients
 
