@@ -297,6 +297,12 @@ export default {
 
 		const url = new URL(request.url);
 		const path = url.pathname;
+
+			// Health check — no auth, no rate limit, no DO access
+			if (request.method === "GET" && path === "/healthz") {
+				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
+			}
+
 			const ttl = parseInt(env.ENVELOPE_TTL_SECONDS || "604800", 10);
 			const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
 			const maxMessagesPerChannel = parseInt(env.MAX_MESSAGES_PER_CHANNEL || "512", 10);
