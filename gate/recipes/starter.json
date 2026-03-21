@@ -2,77 +2,294 @@
   "profiles": {
     "fun": {
       "service": "fun",
-      "description": "qntm fun server — leet speak and ASCII art",
+      "description": "qntm fun server \u2014 leet speak and ASCII art",
       "base_url": "http://localhost:9090",
-      "hosts": ["localhost"],
+      "hosts": [
+        "localhost"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/leet", "verb": "POST", "description": "Translate text to l33tsp34k", "risk_tier": "read"},
-        {"path": "/ascii", "verb": "POST", "description": "Convert text to block-letter ASCII art", "risk_tier": "read"},
-        {"path": "/ascii", "verb": "GET", "description": "Convert text to block-letter ASCII art (query param)", "risk_tier": "read"},
-        {"path": "/health", "verb": "GET", "description": "Health check", "risk_tier": "read"}
+        {
+          "path": "/leet",
+          "verb": "POST",
+          "description": "Translate text to l33tsp34k",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/ascii",
+          "verb": "POST",
+          "description": "Convert text to block-letter ASCII art",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/ascii",
+          "verb": "GET",
+          "description": "Convert text to block-letter ASCII art (query param)",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/health",
+          "verb": "GET",
+          "description": "Health check",
+          "risk_tier": "read"
+        }
       ]
     },
     "hackernews": {
       "service": "hackernews",
-      "description": "Hacker News Firebase API — public, read-only",
+      "description": "Hacker News Firebase API \u2014 public, read-only",
       "base_url": "https://hacker-news.firebaseio.com/v0",
-      "hosts": ["hacker-news.firebaseio.com"],
+      "hosts": [
+        "hacker-news.firebaseio.com"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/topstories.json", "verb": "GET", "description": "Top 500 story IDs", "risk_tier": "read"},
-        {"path": "/newstories.json", "verb": "GET", "description": "New story IDs", "risk_tier": "read"},
-        {"path": "/beststories.json", "verb": "GET", "description": "Best story IDs", "risk_tier": "read"},
-        {"path": "/item/{id}.json", "verb": "GET", "description": "Get item (story, comment, job, poll)", "risk_tier": "read"},
-        {"path": "/user/{id}.json", "verb": "GET", "description": "Get user profile", "risk_tier": "read"}
+        {
+          "path": "/topstories.json",
+          "verb": "GET",
+          "description": "Top 500 story IDs",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/newstories.json",
+          "verb": "GET",
+          "description": "New story IDs",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/beststories.json",
+          "verb": "GET",
+          "description": "Best story IDs",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/item/{id}.json",
+          "verb": "GET",
+          "description": "Get item (story, comment, job, poll)",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/user/{id}.json",
+          "verb": "GET",
+          "description": "Get user profile",
+          "risk_tier": "read"
+        }
       ]
     },
     "httpbin": {
       "service": "httpbin",
-      "description": "httpbin.org — HTTP request/response testing",
+      "description": "httpbin.org \u2014 HTTP request/response testing",
       "base_url": "https://httpbin.org",
-      "hosts": ["httpbin.org"],
+      "hosts": [
+        "httpbin.org"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/post", "verb": "POST", "description": "Echo POST data back", "risk_tier": "read"},
-        {"path": "/get", "verb": "GET", "description": "Echo GET parameters and headers", "risk_tier": "read"},
-        {"path": "/headers", "verb": "GET", "description": "Return request headers", "risk_tier": "read"},
-        {"path": "/ip", "verb": "GET", "description": "Return origin IP", "risk_tier": "read"},
-        {"path": "/user-agent", "verb": "GET", "description": "Return user-agent", "risk_tier": "read"},
-        {"path": "/status/{code}", "verb": "GET", "description": "Return given HTTP status code", "risk_tier": "read"}
+        {
+          "path": "/post",
+          "verb": "POST",
+          "description": "Echo POST data back",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/get",
+          "verb": "GET",
+          "description": "Echo GET parameters and headers",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/headers",
+          "verb": "GET",
+          "description": "Return request headers",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/ip",
+          "verb": "GET",
+          "description": "Return origin IP",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/user-agent",
+          "verb": "GET",
+          "description": "Return user-agent",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/status/{code}",
+          "verb": "GET",
+          "description": "Return given HTTP status code",
+          "risk_tier": "read"
+        }
       ]
     },
     "dadjokes": {
       "service": "dadjokes",
-      "description": "icanhazdadjoke.com — random dad jokes",
+      "description": "icanhazdadjoke.com \u2014 random dad jokes",
       "base_url": "https://icanhazdadjoke.com",
-      "hosts": ["icanhazdadjoke.com"],
+      "hosts": [
+        "icanhazdadjoke.com"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/", "verb": "GET", "description": "Random dad joke", "risk_tier": "read"},
-        {"path": "/search", "verb": "GET", "description": "Search dad jokes", "risk_tier": "read"}
+        {
+          "path": "/",
+          "verb": "GET",
+          "description": "Random dad joke",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/search",
+          "verb": "GET",
+          "description": "Search dad jokes",
+          "risk_tier": "read"
+        }
       ]
     },
     "trivia": {
       "service": "trivia",
-      "description": "Open Trivia Database — random trivia questions",
+      "description": "Open Trivia Database \u2014 random trivia questions",
       "base_url": "https://opentdb.com",
-      "hosts": ["opentdb.com"],
+      "hosts": [
+        "opentdb.com"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/api.php", "verb": "GET", "description": "Get trivia questions", "risk_tier": "read"}
+        {
+          "path": "/api.php",
+          "verb": "GET",
+          "description": "Get trivia questions",
+          "risk_tier": "read"
+        }
       ]
     },
     "dogs": {
       "service": "dogs",
-      "description": "Dog CEO API — random dog images (binary JPEG responses)",
+      "description": "Dog CEO API \u2014 random dog images (binary JPEG responses)",
       "base_url": "https://dog.ceo/api",
-      "hosts": ["dog.ceo"],
+      "hosts": [
+        "dog.ceo"
+      ],
       "auth_required": false,
       "endpoints": [
-        {"path": "/breeds/image/random", "verb": "GET", "description": "Random dog image URL", "risk_tier": "read"},
-        {"path": "/breed/{breed}/images/random", "verb": "GET", "description": "Random image of specific breed", "risk_tier": "read"},
-        {"path": "/breeds/list/all", "verb": "GET", "description": "List all breeds", "risk_tier": "read"}
+        {
+          "path": "/breeds/image/random",
+          "verb": "GET",
+          "description": "Random dog image URL",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/breed/{breed}/images/random",
+          "verb": "GET",
+          "description": "Random image of specific breed",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/breeds/list/all",
+          "verb": "GET",
+          "description": "List all breeds",
+          "risk_tier": "read"
+        }
+      ]
+    },
+    "gemini": {
+      "service": "gemini",
+      "description": "Google Gemini API \u2014 AI text generation",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "hosts": [
+        "generativelanguage.googleapis.com"
+      ],
+      "auth_required": true,
+      "header_name": "x-goog-api-key",
+      "header_template": "{value}",
+      "endpoints": [
+        {
+          "path": "/v1beta/models/gemini-2.0-flash:generateContent",
+          "verb": "POST",
+          "description": "Generate text with Gemini Flash",
+          "risk_tier": "write"
+        },
+        {
+          "path": "/v1beta/models",
+          "verb": "GET",
+          "description": "List available models",
+          "risk_tier": "read"
+        }
+      ]
+    },
+    "openai": {
+      "service": "openai",
+      "description": "OpenAI API \u2014 Chat completions and more",
+      "base_url": "https://api.openai.com",
+      "hosts": [
+        "api.openai.com"
+      ],
+      "auth_required": true,
+      "header_name": "Authorization",
+      "header_template": "Bearer {value}",
+      "endpoints": [
+        {
+          "path": "/v1/chat/completions",
+          "verb": "POST",
+          "description": "Chat completion",
+          "risk_tier": "write"
+        },
+        {
+          "path": "/v1/models",
+          "verb": "GET",
+          "description": "List models",
+          "risk_tier": "read"
+        }
+      ]
+    },
+    "anthropic": {
+      "service": "anthropic",
+      "description": "Anthropic API \u2014 Claude AI messages",
+      "base_url": "https://api.anthropic.com",
+      "hosts": [
+        "api.anthropic.com"
+      ],
+      "auth_required": true,
+      "header_name": "x-api-key",
+      "header_template": "{value}",
+      "endpoints": [
+        {
+          "path": "/v1/messages",
+          "verb": "POST",
+          "description": "Create a message with Claude",
+          "risk_tier": "write"
+        }
+      ]
+    },
+    "github": {
+      "service": "github",
+      "description": "GitHub REST API \u2014 repositories, issues, and more",
+      "base_url": "https://api.github.com",
+      "hosts": [
+        "api.github.com"
+      ],
+      "auth_required": true,
+      "header_name": "Authorization",
+      "header_template": "Bearer {value}",
+      "endpoints": [
+        {
+          "path": "/user/repos",
+          "verb": "GET",
+          "description": "List authenticated user's repositories",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/repos/{owner}/{repo}",
+          "verb": "GET",
+          "description": "Get repository info",
+          "risk_tier": "read"
+        },
+        {
+          "path": "/repos/{owner}/{repo}/issues",
+          "verb": "POST",
+          "description": "Create an issue",
+          "risk_tier": "write"
+        }
       ]
     }
   },
@@ -87,8 +304,21 @@
       "risk_tier": "read",
       "threshold": 1,
       "content_type": "application/json",
-      "body_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to translate to leet speak"}}, "required": ["text"]},
-      "body_example": {"text": "Hello World"}
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to translate to leet speak"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "body_example": {
+        "text": "Hello World"
+      }
     },
     "ascii.artify": {
       "name": "ascii.artify",
@@ -100,8 +330,21 @@
       "risk_tier": "read",
       "threshold": 1,
       "content_type": "application/json",
-      "body_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to convert to ASCII art"}}, "required": ["text"]},
-      "body_example": {"text": "HI"}
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to convert to ASCII art"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "body_example": {
+        "text": "HI"
+      }
     },
     "hn.top-stories": {
       "name": "hn.top-stories",
@@ -125,7 +368,12 @@
       "threshold": 1,
       "content_type": "application/json",
       "path_params": [
-        {"name": "id", "description": "Hacker News item ID", "required": true, "type": "string"}
+        {
+          "name": "id",
+          "description": "Hacker News item ID",
+          "required": true,
+          "type": "string"
+        }
       ]
     },
     "httpbin.echo": {
@@ -138,8 +386,18 @@
       "risk_tier": "read",
       "threshold": 2,
       "content_type": "application/json",
-      "body_schema": {"type": "object", "properties": {"data": {"type": "string", "description": "Arbitrary data to echo back"}}},
-      "body_example": {"data": "hello"}
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Arbitrary data to echo back"
+          }
+        }
+      },
+      "body_example": {
+        "data": "hello"
+      }
     },
     "httpbin.headers": {
       "name": "httpbin.headers",
@@ -196,8 +454,167 @@
       "threshold": 1,
       "content_type": "application/json",
       "path_params": [
-        {"name": "breed", "description": "Dog breed name (e.g. labrador, poodle)", "required": true, "type": "string"}
+        {
+          "name": "breed",
+          "description": "Dog breed name (e.g. labrador, poodle)",
+          "required": true,
+          "type": "string"
+        }
       ]
+    },
+    "gemini.generate": {
+      "name": "gemini.generate",
+      "description": "Generate text with Google Gemini (gemini-2.0-flash)",
+      "service": "gemini",
+      "verb": "POST",
+      "endpoint": "/v1beta/models/gemini-2.0-flash:generateContent",
+      "target_url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+      "risk_tier": "write",
+      "threshold": 2,
+      "content_type": "application/json",
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "parts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "body_example": {
+        "contents": [
+          {
+            "parts": [
+              {
+                "text": "Say hello in exactly 5 words"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "openai.chat": {
+      "name": "openai.chat",
+      "description": "Chat completion with OpenAI (gpt-4o-mini)",
+      "service": "openai",
+      "verb": "POST",
+      "endpoint": "/v1/chat/completions",
+      "target_url": "https://api.openai.com/v1/chat/completions",
+      "risk_tier": "write",
+      "threshold": 2,
+      "content_type": "application/json",
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "model",
+          "messages"
+        ]
+      },
+      "body_example": {
+        "model": "gpt-4o-mini",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Say hello in exactly 5 words"
+          }
+        ]
+      }
+    },
+    "anthropic.messages": {
+      "name": "anthropic.messages",
+      "description": "Create a message with Anthropic Claude",
+      "service": "anthropic",
+      "verb": "POST",
+      "endpoint": "/v1/messages",
+      "target_url": "https://api.anthropic.com/v1/messages",
+      "risk_tier": "write",
+      "threshold": 2,
+      "content_type": "application/json",
+      "body_schema": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "model",
+          "max_tokens",
+          "messages"
+        ]
+      },
+      "body_example": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 256,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Say hello in exactly 5 words"
+          }
+        ]
+      }
+    },
+    "github.repos": {
+      "name": "github.repos",
+      "description": "List authenticated user's GitHub repositories",
+      "service": "github",
+      "verb": "GET",
+      "endpoint": "/user/repos",
+      "target_url": "https://api.github.com/user/repos?per_page=5&sort=updated",
+      "risk_tier": "read",
+      "threshold": 1,
+      "content_type": "application/json"
     }
   }
 }
