@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 export interface Env {
 	QNTM_KV: KVNamespace;
 	CONVO_SEQ_DO: DurableObjectNamespace;
@@ -250,19 +252,17 @@ async function headSequence(env: Env, convID: string): Promise<number> {
 	return payload.seq!;
 }
 
-export class ConversationSequencerDO implements DurableObject {
-	private state: DurableObjectState;
-
-	constructor(state: DurableObjectState) {
-		this.state = state;
+export class ConversationSequencerDO extends DurableObject<Env> {
+	constructor(ctx: DurableObjectState, env: Env) {
+		super(ctx, env);
 	}
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (request.method === "POST" && url.pathname === "/next") {
-			const current = ((await this.state.storage.get<number>("next_seq")) ?? 0) as number;
+			const current = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
 			const next = current + 1;
-			await this.state.storage.put("next_seq", next);
+			await this.ctx.storage.put("next_seq", next);
 			return new Response(JSON.stringify({ seq: next }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
@@ -270,7 +270,7 @@ export class ConversationSequencerDO implements DurableObject {
 		}
 
 		if (request.method === "GET" && url.pathname === "/head") {
-			const current = ((await this.state.storage.get<number>("next_seq")) ?? 0) as number;
+			const current = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
 			return new Response(JSON.stringify({ seq: current }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
