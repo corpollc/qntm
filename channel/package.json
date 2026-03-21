@@ -8,7 +8,7 @@
     "start": "bun run server.ts"
   },
   "dependencies": {
-    "@corpollc/qntm": "^0.4.13",
+    "@corpollc/qntm": "file:../client",
     "@modelcontextprotocol/sdk": "^1.12.0"
   }
 }

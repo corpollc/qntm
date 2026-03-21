@@ -26,6 +26,52 @@ function fromBase64(s: string): Uint8Array {
   return bytes;
 }
 
+type FakeEventHandler = (event?: any) => void;
+
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+
+  readonly url: string;
+  private readonly listeners = new Map<string, FakeEventHandler[]>();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+
+  static reset(): void {
+    FakeWebSocket.instances = [];
+  }
+
+  addEventListener(type: string, handler: FakeEventHandler): void {
+    const handlers = this.listeners.get(type) ?? [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+
+  close(code = 1000, reason = ''): void {
+    this.emit('close', { code, reason, wasClean: true });
+  }
+
+  open(): void {
+    this.emit('open');
+  }
+
+  message(data: string): void {
+    this.emit('message', { data });
+  }
+
+  error(): void {
+    this.emit('error');
+  }
+
+  private emit(type: string, event?: any): void {
+    for (const handler of this.listeners.get(type) ?? []) {
+      handler(event);
+    }
+  }
+}
+
 describe('DropboxClient', () => {
   let client: DropboxClient;
   const baseUrl = 'https://inbox.example.com';
@@ -33,6 +79,9 @@ describe('DropboxClient', () => {
   beforeEach(() => {
     client = new DropboxClient(baseUrl);
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    FakeWebSocket.reset();
   });
 
   // === Construction ===
@@ -219,6 +268,92 @@ describe('DropboxClient', () => {
       expect(result.sequence).toBe(3);
       // At least the valid one should be present
       expect(result.messages.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('subscribeMessages', () => {
+    it('opens a websocket subscription and decodes streamed envelopes', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+
+      const convID = fakeConvID();
+      const envelope = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+      const received: Array<{ seq: number; envelope: Uint8Array }> = [];
+
+      const subscription = client.subscribeMessages(convID, 2, {
+        onMessage: async (message) => {
+          received.push(message);
+        },
+      });
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(FakeWebSocket.instances[0]!.url).toBe(
+        `${baseUrl.replace('https://', 'wss://')}/v1/subscribe?conv_id=${toHex(convID)}&from_seq=2`,
+      );
+
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'message',
+        seq: 3,
+        envelope_b64: toBase64(envelope),
+      }));
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(received).toHaveLength(1);
+      expect(received[0]!.seq).toBe(3);
+      expect(received[0]!.envelope).toEqual(envelope);
+
+      subscription.close();
+      await subscription.closed;
+    });
+
+    it('reconnects with the latest cursor after a close', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+
+      const convID = fakeConvID();
+      const reconnects: Array<{ attempt: number; delayMs: number }> = [];
+      let cursor = 5;
+
+      const subscription = client.subscribeMessages(convID, 0, {
+        getCursor: () => cursor,
+        onMessage: async (message) => {
+          cursor = message.seq;
+        },
+        onReconnect: (attempt, delayMs) => {
+          reconnects.push({ attempt, delayMs });
+        },
+      });
+
+      await Promise.resolve();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(FakeWebSocket.instances[0]!.url).toBe(
+        `${baseUrl.replace('https://', 'wss://')}/v1/subscribe?conv_id=${toHex(convID)}&from_seq=5`,
+      );
+
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'message',
+        seq: 6,
+        envelope_b64: toBase64(new Uint8Array([0xaa])),
+      }));
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      FakeWebSocket.instances[0]!.close(1012, 'restart');
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(reconnects).toEqual([{ attempt: 1, delayMs: 1000 }]);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      expect(FakeWebSocket.instances[1]!.url).toBe(
+        `${baseUrl.replace('https://', 'wss://')}/v1/subscribe?conv_id=${toHex(convID)}&from_seq=6`,
+      );
+
+      subscription.close();
+      FakeWebSocket.instances[1]!.close();
+      await subscription.closed;
     });
   });
 

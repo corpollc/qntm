@@ -238,18 +238,116 @@ async function nextSequence(env: Env, convID: string): Promise<number> {
 	return payload.seq!;
 }
 
-async function headSequence(env: Env, convID: string): Promise<number> {
+type RelayPublishPayload = {
+	conv_id: string;
+	envelope_b64: string;
+};
+
+type RelayFrame =
+	| {
+			type: "message";
+			seq: number;
+			envelope_b64: string;
+	  }
+	| {
+			type: "pong";
+	  };
+
+function conversationMessageKey(convID: string, seq: number): string {
+	return `/${convID}/msg/${seq}.cbor`;
+}
+
+function conversationMessagePrefix(convID: string): string {
+	return `/${convID}/msg/`;
+}
+
+function parseSequencedMessageKey(convID: string, key: string): number | null {
+	const prefix = conversationMessagePrefix(convID);
+	if (!key.startsWith(prefix) || !key.endsWith(".cbor")) {
+		return null;
+	}
+
+	const rawSeq = key.slice(prefix.length, -".cbor".length);
+	const seq = Number.parseInt(rawSeq, 10);
+	if (!Number.isInteger(seq) || seq <= 0) {
+		return null;
+	}
+	return seq;
+}
+
+async function listConversationMessages(
+	env: Env,
+	convID: string,
+	fromSeq: number,
+	limit: number,
+): Promise<Array<{ seq: number; key: string }>> {
+	if (limit <= 0) {
+		return [];
+	}
+
+	const listed = await env.QNTM_KV.list({ prefix: conversationMessagePrefix(convID), limit: 1000 });
+	return listed.keys
+		.map((entry) => {
+			const seq = parseSequencedMessageKey(convID, entry.name);
+			return seq === null ? null : { seq, key: entry.name };
+		})
+		.filter((entry): entry is { seq: number; key: string } => entry !== null && entry.seq > fromSeq)
+		.sort((left, right) => left.seq - right.seq)
+		.slice(0, limit);
+}
+
+async function loadConversationMessages(
+	env: Env,
+	convID: string,
+	fromSeq: number,
+	limit: number,
+): Promise<Array<{ seq: number; envelope_b64: string }>> {
+	const messageEntries = await listConversationMessages(env, convID, fromSeq, limit);
+	const messages: Array<{ seq: number; envelope_b64: string }> = [];
+	for (const entry of messageEntries) {
+		const value = await env.QNTM_KV.get(entry.key, "arrayBuffer");
+		if (value === null) {
+			continue;
+		}
+		messages.push({
+			seq: entry.seq,
+			envelope_b64: toBase64(new Uint8Array(value)),
+		});
+	}
+	return messages;
+}
+
+async function publishConversationMessage(env: Env, convID: string, envelope_b64: string): Promise<number> {
 	const id = env.CONVO_SEQ_DO.idFromName(convID);
 	const stub = env.CONVO_SEQ_DO.get(id);
-	const response = await stub.fetch("https://convo-seq/head", { method: "GET" });
+	const response = await stub.fetch("https://convo-seq/publish", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ conv_id: convID, envelope_b64 } satisfies RelayPublishPayload),
+	});
 	if (!response.ok) {
-		throw new Error(`sequence head failed: HTTP ${response.status}`);
+		throw new Error(`conversation publish failed: HTTP ${response.status}`);
 	}
 	const payload = (await response.json()) as { seq?: number };
-	if (!payload || !Number.isInteger(payload.seq) || payload.seq! < 0) {
-		throw new Error("invalid sequence head response");
+	if (!payload || !Number.isInteger(payload.seq) || payload.seq! <= 0) {
+		throw new Error("invalid publish response");
 	}
 	return payload.seq!;
+}
+
+async function replayConversationMessages(
+	env: Env,
+	convID: string,
+	fromSeq: number,
+): Promise<Array<{ seq: number; envelope_b64: string }>> {
+	return loadConversationMessages(env, convID, fromSeq, 1000);
+}
+
+function validateUpgradeRequest(request: Request): Response | null {
+	if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+		return errorResponse("websocket upgrade required", 426);
+	}
+	return null;
 }
 
 export class ConversationSequencerDO extends DurableObject<Env> {
@@ -257,8 +355,98 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		super(ctx, env);
 	}
 
+	private async handlePublish(request: Request): Promise<Response> {
+		let payload: RelayPublishPayload;
+		try {
+			payload = (await request.json()) as RelayPublishPayload;
+		} catch {
+			return Response.json({ error: "invalid publish payload" }, { status: 400 });
+		}
+
+		if (!payload || typeof payload.conv_id !== "string" || typeof payload.envelope_b64 !== "string") {
+			return Response.json({ error: "invalid publish fields" }, { status: 400 });
+		}
+
+		const convID = payload.conv_id.toLowerCase();
+		const ttl = parseInt(this.env.ENVELOPE_TTL_SECONDS || "604800", 10);
+		let envelopeBytes: Uint8Array;
+		try {
+			envelopeBytes = fromBase64(payload.envelope_b64);
+		} catch {
+			return Response.json({ error: "invalid envelope_b64" }, { status: 400 });
+		}
+
+		const current = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
+		const seq = current + 1;
+		await this.ctx.storage.put("next_seq", seq);
+		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
+
+		const frame = JSON.stringify({
+			type: "message",
+			seq,
+			envelope_b64: payload.envelope_b64,
+		} satisfies RelayFrame);
+		for (const webSocket of this.ctx.getWebSockets()) {
+			try {
+				webSocket.send(frame);
+			} catch {
+				try {
+					webSocket.close(1011, "relay send failed");
+				} catch {
+					// Ignore best-effort close failures.
+				}
+			}
+		}
+
+		return Response.json({ seq });
+	}
+
+	private async handleSubscribe(request: Request): Promise<Response> {
+		const upgradeError = validateUpgradeRequest(request);
+		if (upgradeError) {
+			return upgradeError;
+		}
+
+		const url = new URL(request.url);
+		const convID = (url.searchParams.get("conv_id") || "").toLowerCase();
+		const fromSeqRaw = Number(url.searchParams.get("from_seq") || "0");
+		if (!isHexID(convID, 32)) {
+			return Response.json({ error: "invalid conv_id" }, { status: 400 });
+		}
+		if (!Number.isInteger(fromSeqRaw) || fromSeqRaw < 0) {
+			return Response.json({ error: "invalid from_seq" }, { status: 400 });
+		}
+
+		const [client, server] = Object.values(new WebSocketPair());
+		this.ctx.acceptWebSocket(server);
+
+		const replay = await replayConversationMessages(this.env, convID, fromSeqRaw);
+		for (const message of replay) {
+			server.send(
+				JSON.stringify({
+					type: "message",
+					seq: message.seq,
+					envelope_b64: message.envelope_b64,
+				} satisfies RelayFrame),
+			);
+		}
+
+		return new Response(null, {
+			status: 101,
+			webSocket: client,
+		});
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
+		if (request.method === "POST" && url.pathname === "/publish") {
+			return this.handlePublish(request);
+		}
+
+		if (request.method === "GET" && url.pathname === "/subscribe") {
+			return this.handleSubscribe(request);
+		}
+
 		if (request.method === "POST" && url.pathname === "/next") {
 			const current = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
 			const next = current + 1;
@@ -278,6 +466,15 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		}
 
 		return new Response("not found", { status: 404 });
+	}
+
+	webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): void | Promise<void> {
+		if (typeof message !== "string") {
+			return;
+		}
+		if (message === "ping") {
+			webSocket.send(JSON.stringify({ type: "pong" } satisfies RelayFrame));
+		}
 	}
 }
 
@@ -348,9 +545,7 @@ export default {
 					}
 				}
 
-				const seq = await nextSequence(env, payload.conv_id);
-				const key = `/${payload.conv_id}/msg/${seq}.cbor`;
-				await env.QNTM_KV.put(key, envelopeBytes, { expirationTtl: ttl });
+				const seq = await publishConversationMessage(env, payload.conv_id, payload.envelope_b64);
 				return jsonResponse({ seq }, 201);
 			}
 
@@ -383,29 +578,8 @@ export default {
 						return errorResponse("invalid conv_id", 400);
 					}
 
-					const head = await headSequence(env, convID);
-					let upToSeq = head;
-					if (upToSeq < convo.from_seq) {
-						upToSeq = convo.from_seq;
-					}
-					if (maxMessages > 0 && convo.from_seq + maxMessages < upToSeq) {
-						upToSeq = convo.from_seq + maxMessages;
-					}
-
-					const messages: Array<{ seq: number; envelope_b64: string }> = [];
-					if (maxMessages > 0 && upToSeq > convo.from_seq) {
-						for (let seq = convo.from_seq + 1; seq <= upToSeq; seq++) {
-							const key = `/${convID}/msg/${seq}.cbor`;
-							const value = await env.QNTM_KV.get(key, "arrayBuffer");
-							if (value === null) {
-								continue;
-							}
-							messages.push({
-								seq,
-								envelope_b64: toBase64(new Uint8Array(value)),
-							});
-						}
-					}
+					const messages = await loadConversationMessages(env, convID, convo.from_seq, maxMessages);
+					const upToSeq = messages.length > 0 ? messages[messages.length - 1]!.seq : convo.from_seq;
 
 					conversationResults.push({
 						conv_id: convID,
@@ -415,6 +589,25 @@ export default {
 				}
 
 				return jsonResponse({ conversations: conversationResults }, 200);
+			}
+
+			if (request.method === "GET" && path === "/v1/subscribe") {
+				const convID = (url.searchParams.get("conv_id") || "").toLowerCase();
+				const fromSeqRaw = Number(url.searchParams.get("from_seq") || "0");
+				if (!isHexID(convID, 32)) {
+					return errorResponse("invalid conv_id", 400);
+				}
+				if (!Number.isInteger(fromSeqRaw) || fromSeqRaw < 0) {
+					return errorResponse("invalid from_seq", 400);
+				}
+				const upgradeError = validateUpgradeRequest(request);
+				if (upgradeError) {
+					return upgradeError;
+				}
+
+				const id = env.CONVO_SEQ_DO.idFromName(convID);
+				const stub = env.CONVO_SEQ_DO.get(id);
+				return stub.fetch(new Request(`https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}`, request));
 			}
 
 			// --- Announce channel management endpoints ---

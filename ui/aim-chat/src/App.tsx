@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import type { DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import { shortId, APP_VERSION } from './utils'
@@ -14,9 +15,6 @@ import { JoinModal } from './components/JoinModal'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useToast } from './hooks/useToast'
 import { ToastContainer } from './components/ToastContainer'
-
-const ACTIVE_POLL_INTERVAL_MS = 3000
-const BACKGROUND_POLL_INTERVAL_MS = 10000
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -85,6 +83,9 @@ export default function App() {
   const pollingRef = useRef(false)
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
+  const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map())
+  const activeProfileIdRef = useRef('')
+  const selectedConversationIdRef = useRef('')
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) || null,
@@ -168,11 +169,9 @@ export default function App() {
     return conversations.filter(c => !hiddenConversations.has(c.id))
   }, [conversations, hiddenConversations, showHidden])
 
-  const backgroundPollConversations = useMemo(
-    () => conversations.filter((conversation) => (
-      conversation.id !== selectedConversationId && !hiddenConversations.has(conversation.id)
-    )),
-    [conversations, selectedConversationId, hiddenConversations],
+  const subscriptionConversationIds = useMemo(
+    () => conversations.map((conversation) => conversation.id).sort().join('|'),
+    [conversations],
   )
 
   const hiddenCount = useMemo(
@@ -284,59 +283,95 @@ export default function App() {
   }, [messages])
 
   useEffect(() => {
-    if (!activeProfileId || !selectedConversationId) {
-      return
-    }
+    activeProfileIdRef.current = activeProfileId
+  }, [activeProfileId])
 
-    void receiveMessages(false)
-
-    const timer = window.setInterval(() => {
-      void receiveMessages(false)
-    }, ACTIVE_POLL_INTERVAL_MS)
-
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [activeProfileId, selectedConversationId])
-
-  // Poll non-selected conversations for unread message counts
-  const bgPollingRef = useRef(false)
   useEffect(() => {
-    if (!activeProfileId || backgroundPollConversations.length === 0) {
+    selectedConversationIdRef.current = selectedConversationId
+  }, [selectedConversationId])
+
+  useEffect(() => {
+    const currentSubscriptions = subscriptionsRef.current
+    currentSubscriptions.forEach((subscription) => subscription.close())
+    subscriptionsRef.current = new Map()
+
+    if (!activeProfileId) {
       return
     }
 
-    async function pollOtherConversations() {
-      if (bgPollingRef.current) return
-      bgPollingRef.current = true
+    const profileName = activeProfile?.name || ''
+    const nextSubscriptions = new Map<string, DropboxSubscription>()
+    subscriptionsRef.current = nextSubscriptions
+
+    for (const conversation of conversations) {
       try {
-        for (const conv of backgroundPollConversations) {
-          try {
-            const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', conv.id)
-            if (response.messages.length > 0) {
-              setUnreadCounts((prev) => ({
-                ...prev,
-                [conv.id]: (prev[conv.id] || 0) + response.messages.length,
-              }))
-            }
-          } catch {
-            // Ignore errors for background polling of individual conversations
-          }
-        }
-      } finally {
-        bgPollingRef.current = false
+        const subscription = api.subscribeConversation(
+          activeProfileId,
+          profileName,
+          conversation.id,
+          {
+            onMessage: async () => {
+              if (activeProfileIdRef.current !== activeProfileId) {
+                return
+              }
+
+              setConversations(api.listConversations(activeProfileId).conversations)
+
+              if (selectedConversationIdRef.current === conversation.id) {
+                setMessages(api.getHistory(activeProfileId, conversation.id).messages)
+                setUnreadCounts((prev) => {
+                  if (!prev[conversation.id]) return prev
+                  const next = { ...prev }
+                  delete next[conversation.id]
+                  return next
+                })
+                setStatus('Received new message')
+              } else {
+                setUnreadCounts((prev) => ({
+                  ...prev,
+                  [conversation.id]: (prev[conversation.id] || 0) + 1,
+                }))
+              }
+
+              setError('')
+            },
+            onError: (subscriptionError) => {
+              if (activeProfileIdRef.current !== activeProfileId) {
+                return
+              }
+              setError(subscriptionError.message)
+            },
+            onReconnect: () => {
+              if (activeProfileIdRef.current !== activeProfileId) {
+                return
+              }
+              setStatus('Reconnecting to relay...')
+            },
+            onOpen: () => {
+              if (activeProfileIdRef.current !== activeProfileId) {
+                return
+              }
+              setStatus('Live')
+              setError('')
+            },
+          },
+        )
+        nextSubscriptions.set(conversation.id, subscription)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to subscribe to conversation'
+        setError(msg)
       }
     }
 
-    void pollOtherConversations()
-    const timer = window.setInterval(() => {
-      void pollOtherConversations()
-    }, BACKGROUND_POLL_INTERVAL_MS)
-
     return () => {
-      window.clearInterval(timer)
+      for (const subscription of nextSubscriptions.values()) {
+        subscription.close()
+      }
+      if (subscriptionsRef.current === nextSubscriptions) {
+        subscriptionsRef.current = new Map()
+      }
     }
-  }, [activeProfileId, activeProfile?.name, backgroundPollConversations])
+  }, [activeProfileId, activeProfile?.name, subscriptionConversationIds])
 
   async function initializeProfiles() {
     try {

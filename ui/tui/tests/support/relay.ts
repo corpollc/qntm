@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Buffer } from 'node:buffer';
 import type { AddressInfo } from 'node:net';
 import { deserializeEnvelope } from '@corpollc/qntm';
+import { WebSocketServer, type WebSocket } from 'ws';
 
 interface RelayMessage {
   seq: number;
@@ -13,6 +14,7 @@ interface RelayConversation {
   nextSeq: number;
   messages: RelayMessage[];
   receipts: Map<string, Set<string>>;
+  subscribers: Set<WebSocket>;
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -44,21 +46,25 @@ function decodeEnvelopeMsgId(envelopeB64: string): string {
 
 export class TestRelayServer {
   private readonly server: Server;
+  private readonly wss: WebSocketServer;
   readonly conversations = new Map<string, RelayConversation>();
   url = '';
 
   constructor() {
+    this.wss = new WebSocketServer({ noServer: true });
     this.server = createServer(async (req, res) => {
       try {
         if (req.method === 'POST' && req.url === '/v1/send') {
           const body = await readJson(req);
           const conv = this.getConversation(body.conv_id);
           const seq = conv.nextSeq++;
-          conv.messages.push({
+          const message = {
             seq,
             msgIdHex: decodeEnvelopeMsgId(body.envelope_b64),
             envelopeB64: body.envelope_b64,
-          });
+          };
+          conv.messages.push(message);
+          this.broadcastMessage(conv, message);
           sendJson(res, 200, { seq });
           return;
         }
@@ -117,6 +123,37 @@ export class TestRelayServer {
         sendJson(res, 500, { error: message });
       }
     });
+
+    this.server.on('upgrade', (req, socket, head) => {
+      const url = new URL(req.url || '/', 'http://127.0.0.1');
+      if (req.method !== 'GET' || url.pathname !== '/v1/subscribe') {
+        socket.destroy();
+        return;
+      }
+
+      const convId = url.searchParams.get('conv_id') || '';
+      const fromSeq = Number(url.searchParams.get('from_seq') || '0');
+      if (!convId || !Number.isInteger(fromSeq) || fromSeq < 0) {
+        socket.destroy();
+        return;
+      }
+
+      this.wss.handleUpgrade(req, socket, head, (webSocket) => {
+        const conv = this.getConversation(convId);
+        conv.subscribers.add(webSocket);
+        webSocket.on('close', () => {
+          conv.subscribers.delete(webSocket);
+        });
+
+        for (const message of conv.messages.filter((entry) => entry.seq > fromSeq)) {
+          webSocket.send(JSON.stringify({
+            type: 'message',
+            seq: message.seq,
+            envelope_b64: message.envelopeB64,
+          }));
+        }
+      });
+    });
   }
 
   async start(): Promise<void> {
@@ -128,6 +165,15 @@ export class TestRelayServer {
   }
 
   async close(): Promise<void> {
+    for (const conv of this.conversations.values()) {
+      for (const subscriber of conv.subscribers) {
+        subscriber.close();
+      }
+      conv.subscribers.clear();
+    }
+    await new Promise<void>((resolve) => {
+      this.wss.close(() => resolve());
+    });
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => {
         if (error) reject(error);
@@ -147,6 +193,7 @@ export class TestRelayServer {
         nextSeq: 1,
         messages: [],
         receipts: new Map(),
+        subscribers: new Set(),
       };
       this.conversations.set(convId, conversation);
     }
@@ -158,5 +205,16 @@ export class TestRelayServer {
     const before = conv.messages.length;
     conv.messages = conv.messages.filter((message) => message.msgIdHex !== msgIdHex);
     return conv.messages.length !== before;
+  }
+
+  private broadcastMessage(conv: RelayConversation, message: RelayMessage): void {
+    const payload = JSON.stringify({
+      type: 'message',
+      seq: message.seq,
+      envelope_b64: message.envelopeB64,
+    });
+    for (const subscriber of conv.subscribers) {
+      subscriber.send(payload);
+    }
   }
 }

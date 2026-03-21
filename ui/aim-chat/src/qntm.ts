@@ -37,6 +37,7 @@ import {
   parseGroupRekeyBody,
   QSP1Suite,
 } from '@corpollc/qntm'
+import type { DropboxSubscription } from '@corpollc/qntm'
 
 import * as store from './store'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
@@ -558,6 +559,15 @@ export function acceptInviteForProfile(
 // ---- Messages ----
 
 const SELF_ECHO_WINDOW_MS = 60000
+type ConvCrypto = NonNullable<ReturnType<typeof getConvCrypto>>
+
+export interface ConversationSubscriptionHandlers {
+  onMessage?: (message: ChatMessage) => void | Promise<void>
+  onOpen?: () => void
+  onClose?: () => void
+  onError?: (error: Error) => void
+  onReconnect?: (attempt: number, delayMs: number) => void
+}
 
 function resolveMessageSender(profileId: string, message: store.StoredMessage): ChatMessage {
   const senderKey = message.senderKey || message.sender
@@ -565,6 +575,87 @@ function resolveMessageSender(profileId: string, message: store.StoredMessage): 
     ? store.resolveContactAlias(profileId, senderKey)
     : ''
   return { ...message, senderKey, sender: alias || message.sender }
+}
+
+async function applyReceivedEnvelope(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  identity: IdentityKeys,
+  activeConvCrypto: ConvCrypto,
+  rawEnvelope: Uint8Array,
+): Promise<{ message: ChatMessage | null; processedMsgId: Uint8Array | null; nextConvCrypto: ConvCrypto | null }> {
+  let envelope
+  try {
+    envelope = deserializeEnvelope(rawEnvelope)
+  } catch {
+    return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
+  }
+
+  let decrypted
+  try {
+    decrypted = decryptMessage(envelope, activeConvCrypto)
+  } catch {
+    return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
+  }
+
+  const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
+  const bodyType = decrypted.inner.body_type || 'text'
+  const rawBodyBytes = new Uint8Array(decrypted.inner.body)
+  const bodyText = groupBodyToJson(bodyType, rawBodyBytes) ?? new TextDecoder().decode(rawBodyBytes)
+  const createdAt = new Date(envelope.created_ts * 1000).toISOString()
+
+  applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
+
+  let nextConvCrypto: ConvCrypto | null = activeConvCrypto
+  if (bodyType === 'group_rekey') {
+    nextConvCrypto = getConvCrypto(profileId, conversationId)
+    if (!nextConvCrypto) {
+      return { message: null, processedMsgId: null, nextConvCrypto: null }
+    }
+  }
+
+  const conv = store.findConversation(profileId, conversationId)
+  if (shouldTrackSenderAsParticipant(conv, bodyType, senderKidHex)) {
+    mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
+  }
+
+  const message: store.StoredMessage = {
+    id: bytesToHex(envelope.msg_id),
+    conversationId,
+    direction: 'incoming',
+    sender: senderKidHex,
+    senderKey: senderKidHex,
+    bodyType,
+    text: bodyText,
+    createdAt,
+  }
+
+  const selfKeyIdHex = bytesToHex(identity.keyID).toLowerCase()
+  if (senderKidHex === selfKeyIdHex) {
+    if (store.hasRecentOutgoingMatch(profileId, conversationId, message, SELF_ECHO_WINDOW_MS)) {
+      return { message: null, processedMsgId: null, nextConvCrypto }
+    }
+    const selfMessage: store.StoredMessage = {
+      ...message,
+      direction: 'outgoing',
+      sender: profileName,
+      senderKey: '',
+    }
+    store.addHistoryMessage(profileId, conversationId, selfMessage)
+    return {
+      message: resolveMessageSender(profileId, selfMessage),
+      processedMsgId: envelope.msg_id,
+      nextConvCrypto,
+    }
+  }
+
+  store.addHistoryMessage(profileId, conversationId, message)
+  return {
+    message: resolveMessageSender(profileId, message),
+    processedMsgId: envelope.msg_id,
+    nextConvCrypto,
+  }
 }
 
 export async function sendMessageToConversation(
@@ -614,7 +705,6 @@ export async function receiveMessages(
   const convIdBytes = hexToBytes(conversationId)
   const result = await dropbox.receiveMessages(convIdBytes, fromSeq, 200)
 
-  const selfKeyIdHex = bytesToHex(identity.keyID).toLowerCase()
   const acceptedMessages: ChatMessage[] = []
   const processedMsgIds: Uint8Array[] = []
 
@@ -623,70 +713,21 @@ export async function receiveMessages(
     if (!activeConvCrypto) {
       break
     }
-    let envelope
-    try {
-      envelope = deserializeEnvelope(rawEnvelope)
-    } catch {
-      continue
-    }
-
-    let decrypted
-    try {
-      decrypted = decryptMessage(envelope, activeConvCrypto)
-    } catch {
-      continue
-    }
-
-    const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
-    const bodyType = decrypted.inner.body_type || 'text'
-    const rawBodyBytes = new Uint8Array(decrypted.inner.body)
-    const bodyText = groupBodyToJson(bodyType, rawBodyBytes) ?? new TextDecoder().decode(rawBodyBytes)
-    const createdAt = new Date(envelope.created_ts * 1000).toISOString()
-
-    // Apply group membership/epoch state changes
-    applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
-    if (bodyType === 'group_rekey') {
-      convCrypto = getConvCrypto(profileId, conversationId)
-      if (!convCrypto) {
-        continue
-      }
-    }
-
-    const conv = store.findConversation(profileId, conversationId)
-    if (shouldTrackSenderAsParticipant(conv, bodyType, senderKidHex)) {
-      mergeConversationParticipants(profileId, conversationId, new Uint8Array(decrypted.inner.sender_ik_pk))
-    }
-
-    const message: store.StoredMessage = {
-      id: bytesToHex(envelope.msg_id),
+    const applied = await applyReceivedEnvelope(
+      profileId,
+      profileName,
       conversationId,
-      direction: 'incoming',
-      sender: senderKidHex,
-      senderKey: senderKidHex,
-      bodyType,
-      text: bodyText,
-      createdAt,
+      identity,
+      activeConvCrypto,
+      rawEnvelope,
+    )
+    convCrypto = applied.nextConvCrypto
+    if (applied.message) {
+      acceptedMessages.push(applied.message)
     }
-
-    const isSelf = senderKidHex === selfKeyIdHex
-    if (isSelf) {
-      if (store.hasRecentOutgoingMatch(profileId, conversationId, message, SELF_ECHO_WINDOW_MS)) {
-        continue // suppress self-echo
-      }
-      const selfMessage: store.StoredMessage = {
-        ...message,
-        direction: 'outgoing',
-        sender: profileName,
-        senderKey: '',
-      }
-      store.addHistoryMessage(profileId, conversationId, selfMessage)
-      acceptedMessages.push(resolveMessageSender(profileId, selfMessage))
-    } else {
-      store.addHistoryMessage(profileId, conversationId, message)
-      acceptedMessages.push(resolveMessageSender(profileId, message))
+    if (applied.processedMsgId) {
+      processedMsgIds.push(applied.processedMsgId)
     }
-
-    processedMsgIds.push(envelope.msg_id)
   }
 
   if (result.sequence > fromSeq) {
@@ -702,6 +743,68 @@ export async function receiveMessages(
   }
 
   return { messages: acceptedMessages }
+}
+
+export function subscribeToConversation(
+  profileId: string,
+  profileName: string,
+  conversationId: string,
+  handlers: ConversationSubscriptionHandlers = {},
+): DropboxSubscription {
+  const identity = loadIdentityKeys(profileId)
+  if (!identity) throw new Error('No identity found')
+
+  const convCrypto = getConvCrypto(profileId, conversationId)
+  if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
+
+  const dropbox = getDropbox()
+  let currentConvCrypto: ConvCrypto | null = convCrypto
+
+  return dropbox.subscribeMessages(convCrypto.id, store.loadCursor(profileId, conversationId), {
+    getCursor: () => store.loadCursor(profileId, conversationId),
+    onOpen: handlers.onOpen,
+    onReconnect: handlers.onReconnect,
+    onError: handlers.onError,
+    onClose: () => {
+      handlers.onClose?.()
+    },
+    onMessage: async ({ seq, envelope }) => {
+      const activeConvCrypto = currentConvCrypto ?? getConvCrypto(profileId, conversationId)
+      if (!activeConvCrypto) {
+        return
+      }
+
+      const applied = await applyReceivedEnvelope(
+        profileId,
+        profileName,
+        conversationId,
+        identity,
+        activeConvCrypto,
+        envelope,
+      )
+
+      currentConvCrypto = applied.nextConvCrypto
+
+      if (seq > store.loadCursor(profileId, conversationId)) {
+        store.saveCursor(profileId, conversationId, seq)
+      }
+
+      const receiptConv = applied.nextConvCrypto ?? activeConvCrypto
+      if (applied.processedMsgId) {
+        submitReceiptBestEffort(
+          dropbox,
+          identity,
+          receiptConv.id,
+          applied.processedMsgId,
+          Math.max(MIN_RECEIPT_ACKS, receiptConv.participants.length),
+        )
+      }
+
+      if (applied.message) {
+        await handlers.onMessage?.(applied.message)
+      }
+    },
+  })
 }
 
 // ---- Gate operations ----

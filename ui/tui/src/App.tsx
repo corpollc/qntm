@@ -10,14 +10,14 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { DropboxClient } from '@corpollc/qntm';
 
 import { Store, bytesToHex, type StoredConversation, type StoredMessage } from './lib/store.js';
-import { pollConversation, sendMessage } from './lib/poller.js';
+import { applyIncomingEnvelope, sendMessage } from './lib/poller.js';
 
 import Sidebar from './components/Sidebar.js';
 import ChatPane from './components/ChatPane.js';
 import StatusBar from './components/StatusBar.js';
 import Composer from './components/Composer.js';
 
-import type { Identity } from '@corpollc/qntm';
+import type { DropboxSubscription, Identity } from '@corpollc/qntm';
 import { keyIDToString } from '@corpollc/qntm';
 import { COMMANDS, findCommand, matchCommands } from './lib/commands.js';
 import { theme } from './lib/theme.js';
@@ -62,7 +62,9 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const [bellEnabled, setBellEnabled] = useState(true);
   const [sidebarFocusIdx, setSidebarFocusIdx] = useState(0);
 
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map());
+  const connectedConversationsRef = useRef(new Set<string>());
+  const activeConvIdRef = useRef<string | null>(null);
 
   const terminalHeight = stdout?.rows ?? 24;
 
@@ -100,55 +102,78 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     addSystemMessage('Type /help for available commands.', theme.textDim);
   }, [store, addSystemMessage]);
 
-  // ── Polling ────────────────────────────────────────────────────────
+  useEffect(() => {
+    activeConvIdRef.current = activeConvId;
+  }, [activeConvId]);
+
+  // ── Live subscriptions ────────────────────────────────────────────
 
   useEffect(() => {
     if (!identity) return;
+    const nextSubscriptions = new Map<string, DropboxSubscription>();
+    subscriptionsRef.current.forEach((subscription) => subscription.close());
+    subscriptionsRef.current = nextSubscriptions;
+    connectedConversationsRef.current = new Set();
+    setConnected(false);
 
-    const doPoll = async () => {
-      const convs = store.loadConversations();
-      let bellNeeded = false;
+    for (const conv of store.loadConversations()) {
+      const convCrypto = store.getConversationCrypto(conv.id);
+      if (!convCrypto) continue;
 
-      for (const conv of convs) {
-        try {
-          const result = await pollConversation(store, dropbox, identity, conv.id);
-          if (result.messages.length > 0) {
-            if (conv.id === activeConvId) {
-              setMessages(store.loadHistory(conv.id));
-              setScrollOffset(0);
-            } else {
-              bellNeeded = true;
-              setUnread((prev) => ({
-                ...prev,
-                [conv.id]: (prev[conv.id] || 0) + result.messages.length,
-              }));
-            }
+      const subscription = dropbox.subscribeMessages(convCrypto.id, store.loadCursor(conv.id), {
+        getCursor: () => store.loadCursor(conv.id),
+        onOpen: () => {
+          connectedConversationsRef.current.add(conv.id);
+          setConnected(connectedConversationsRef.current.size > 0);
+        },
+        onClose: () => {
+          connectedConversationsRef.current.delete(conv.id);
+          setConnected(connectedConversationsRef.current.size > 0);
+        },
+        onError: () => {
+          connectedConversationsRef.current.delete(conv.id);
+          setConnected(connectedConversationsRef.current.size > 0);
+        },
+        onReconnect: () => {
+          connectedConversationsRef.current.delete(conv.id);
+          setConnected(connectedConversationsRef.current.size > 0);
+        },
+        onMessage: async ({ seq, envelope }) => {
+          const message = await applyIncomingEnvelope(store, dropbox, identity, conv.id, envelope);
+          if (seq > store.loadCursor(conv.id)) {
+            store.saveCursor(conv.id, seq);
           }
-          setConnected(true);
-        } catch {
-          setConnected(false);
-        }
-      }
+          if (!message) {
+            return;
+          }
 
-      // Ring terminal bell for messages in non-active conversations
-      if (bellNeeded && bellEnabled) {
-        process.stdout.write('\x07');
-      }
-    };
+          if (activeConvIdRef.current === conv.id) {
+            setMessages(store.loadHistory(conv.id));
+            setScrollOffset(0);
+            return;
+          }
 
-    // Initial poll
-    doPoll();
+          setUnread((prev) => ({
+            ...prev,
+            [conv.id]: (prev[conv.id] || 0) + 1,
+          }));
+          if (bellEnabled) {
+            process.stdout.write('\x07');
+          }
+        },
+      });
 
-    // Poll every 3 seconds
-    pollTimerRef.current = setInterval(doPoll, 3000);
+      nextSubscriptions.set(conv.id, subscription);
+    }
 
     return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = null;
+      for (const subscription of nextSubscriptions.values()) {
+        subscription.close();
       }
+      connectedConversationsRef.current = new Set();
+      setConnected(false);
     };
-  }, [identity, activeConvId, store, dropbox, bellEnabled]);
+  }, [identity, store, dropbox, bellEnabled, conversations.map((conv) => conv.id).sort().join('|')]);
 
   // ── Terminal title with unread count ─────────────────────────────
 

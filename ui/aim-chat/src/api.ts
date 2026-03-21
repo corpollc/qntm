@@ -3,8 +3,10 @@
  * No HTTP server needed. Everything runs in-browser.
  */
 
+import type { DropboxSubscription } from '@corpollc/qntm'
 import * as store from './store'
 import * as qntm from './qntm'
+import type { ConversationSubscriptionHandlers } from './qntm'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import starterCatalog from '../../../gate/recipes/starter.json'
 
@@ -94,6 +96,15 @@ export const api = {
 
   async receiveMessages(profileId: string, profileName: string, conversationId: string): Promise<{ messages: ChatMessage[]; warning?: string }> {
     return qntm.receiveMessages(profileId, profileName, conversationId)
+  },
+
+  subscribeConversation(
+    profileId: string,
+    profileName: string,
+    conversationId: string,
+    handlers: ConversationSubscriptionHandlers,
+  ): DropboxSubscription {
+    return qntm.subscribeToConversation(profileId, profileName, conversationId, handlers)
   },
 
   async gateApprove(profileId: string, profileName: string, conversationId: string, requestId: string): Promise<{ message: ChatMessage; warning?: string }> {

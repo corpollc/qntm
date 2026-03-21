@@ -66,7 +66,11 @@ export type {
 } from './governance/index.js';
 
 export { DropboxClient, buildSignedReceipt, RECEIPT_PROTO } from './dropbox/index.js';
-export type { ReceiveResult, ReadReceiptPayload, ReceiptResponse } from './dropbox/index.js';
+export type {
+  ReceiveResult, ReadReceiptPayload, ReceiptResponse,
+  SubscriptionMessage, SubscriptionCloseEvent,
+  DropboxSubscriptionHandlers, DropboxSubscription,
+} from './dropbox/index.js';
 
 export * from './types.js';
 export * from './constants.js';

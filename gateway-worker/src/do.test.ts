@@ -762,12 +762,20 @@ describe('qntm-qko0: promotion and membership invariants', () => {
       defaultTTL(),
     );
 
-    vi.spyOn(DropboxClient.prototype, 'receiveMessages').mockResolvedValue({
-      messages: [serializeEnvelope(envelope)],
-      sequence: 1,
+    let relayDelivery: Promise<void> | undefined;
+    vi.spyOn(DropboxClient.prototype, 'subscribeMessages').mockImplementation((_convId, _fromSeq, handlers) => {
+      relayDelivery = Promise.resolve(handlers.onMessage({
+        seq: 1,
+        envelope: serializeEnvelope(envelope),
+      }));
+      return {
+        close: () => {},
+        closed: Promise.resolve(),
+      };
     });
 
     await doInstance.alarm();
+    await relayDelivery;
 
     const updated = await storage.get<ConversationState>('conv_state');
     expect(updated?.gate_promoted).toBe(true);

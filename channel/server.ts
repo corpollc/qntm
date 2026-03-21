@@ -38,7 +38,7 @@ import {
   DropboxClient,
   base64UrlEncode,
 } from '@corpollc/qntm';
-import type { Identity, Conversation, OuterEnvelope } from '@corpollc/qntm';
+import type { DropboxSubscription, Identity, Conversation, OuterEnvelope } from '@corpollc/qntm';
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -323,7 +323,7 @@ const slot = loadSlot();
 let convIdHex: string | null = null;
 let convCrypto: Conversation | null = null;
 let convName: string | null = null;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let liveSubscription: DropboxSubscription | null = null;
 
 if (slot) {
   const rec = findConversation(slot.conv_id_hex);
@@ -448,7 +448,7 @@ async function activateBridge(conv: Conversation, idHex: string, name: string): 
   convCrypto = conv;
   convName = name;
   saveSlot({ conv_id_hex: idHex });
-  startPolling();
+  startSubscription();
   // Notify Claude Code that the tool list has changed (join/create → reply)
   await mcp.sendToolListChanged();
   console.error(`[qntm-channel] paired to: ${name} (${idHex.substring(0, 8)})`);
@@ -543,7 +543,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 await mcp.connect(new StdioServerTransport());
 
 // ---------------------------------------------------------------------------
-// History + polling (only when paired)
+// History + live subscription (only when paired)
 // ---------------------------------------------------------------------------
 
 async function emitHistory(): Promise<void> {
@@ -573,107 +573,117 @@ async function emitHistory(): Promise<void> {
   console.error(`[qntm-channel] sent ${recent.length} history entries`);
 }
 
-async function poll(): Promise<void> {
+async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<void> {
   if (!convIdHex || !convCrypto) return;
 
   const cursors = loadCursors();
-  const fromSeq = cursors[convIdHex] || 0;
   const seen = loadSeen();
   const convSeen = seen[convIdHex] || {};
 
-  let result;
+  const history = loadHistory(convIdHex);
+
+  let envelope: OuterEnvelope;
   try {
-    result = await dropbox.receiveMessages(convCrypto.id, fromSeq);
-  } catch (err) {
-    console.error(`[qntm-channel] poll error: ${err}`);
+    envelope = deserializeEnvelope(rawEnvBytes);
+  } catch {
+    if (seq > (cursors[convIdHex] || 0)) {
+      cursors[convIdHex] = seq;
+      saveCursors(cursors);
+    }
     return;
   }
 
-  if (result.messages.length === 0 && result.sequence <= fromSeq) return;
-
-  const history = loadHistory(convIdHex);
-  let newMessages = 0;
-
-  for (const rawEnvBytes of result.messages) {
-    let envelope: OuterEnvelope;
-    try {
-      envelope = deserializeEnvelope(rawEnvBytes);
-    } catch {
-      continue;
+  const msgIdHex = toHex(envelope.msg_id);
+  if (convSeen[msgIdHex]) {
+    if (seq > (cursors[convIdHex] || 0)) {
+      cursors[convIdHex] = seq;
+      saveCursors(cursors);
     }
-
-    const msgIdHex = toHex(envelope.msg_id);
-    if (convSeen[msgIdHex]) continue;
-
-    let msg;
-    try {
-      msg = decryptMessage(envelope, convCrypto);
-    } catch {
-      continue;
-    }
-
-    convSeen[msgIdHex] = true;
-
-    const inner = msg.inner;
-    const senderKidHex = toHex(inner.sender_kid);
-
-    // Skip our own messages
-    if (senderKidHex === myKidHex) continue;
-
-    const bodyType = inner.body_type;
-    let bodyText: string;
-    try {
-      bodyText = new TextDecoder().decode(inner.body);
-    } catch {
-      bodyText = `[binary ${inner.body.length} bytes]`;
-    }
-
-    const senderName = resolveName(senderKidHex, names);
-
-    await mcp.notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content: bodyText,
-        meta: {
-          sender: senderName,
-          sender_kid: senderKidHex.substring(0, 8),
-          body_type: bodyType,
-        },
-      },
-    });
-
-    history.push({
-      msg_id: msgIdHex,
-      direction: 'incoming',
-      sender_kid: senderKidHex,
-      body_type: bodyType,
-      unsafe_body: bodyText,
-      created_ts: envelope.created_ts,
-    });
-    newMessages++;
+    return;
   }
 
-  if (result.sequence > fromSeq) {
-    cursors[convIdHex] = result.sequence;
-    saveCursors(cursors);
+  let msg;
+  try {
+    msg = decryptMessage(envelope, convCrypto);
+  } catch {
+    if (seq > (cursors[convIdHex] || 0)) {
+      cursors[convIdHex] = seq;
+      saveCursors(cursors);
+    }
+    return;
   }
+
+  convSeen[msgIdHex] = true;
   seen[convIdHex] = convSeen;
   saveSeen(seen);
-  if (newMessages > 0) {
+
+  const inner = msg.inner;
+  const senderKidHex = toHex(inner.sender_kid);
+
+  if (seq > (cursors[convIdHex] || 0)) {
+    cursors[convIdHex] = seq;
+    saveCursors(cursors);
+  }
+
+  // Skip our own messages
+  if (senderKidHex === myKidHex) return;
+
+  const bodyType = inner.body_type;
+  let bodyText: string;
+  try {
+    bodyText = new TextDecoder().decode(inner.body);
+  } catch {
+    bodyText = `[binary ${inner.body.length} bytes]`;
+  }
+
+  const senderName = resolveName(senderKidHex, names);
+
+  await mcp.notification({
+    method: 'notifications/claude/channel',
+    params: {
+      content: bodyText,
+      meta: {
+        sender: senderName,
+        sender_kid: senderKidHex.substring(0, 8),
+        body_type: bodyType,
+      },
+    },
+  });
+
+  history.push({
+    msg_id: msgIdHex,
+    direction: 'incoming',
+    sender_kid: senderKidHex,
+    body_type: bodyType,
+    unsafe_body: bodyText,
+    created_ts: envelope.created_ts,
+  });
+
+  if (history.length > 0) {
     saveHistory(convIdHex, history);
-    console.error(`[qntm-channel] received ${newMessages} new message(s)`);
+    console.error('[qntm-channel] received 1 new message');
   }
 }
 
-function startPolling(): void {
-  if (pollTimer) return;
-  console.error(`[qntm-channel] polling every ${POLL_INTERVAL_MS}ms`);
-  emitHistory();
-  poll();
-  pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+function startSubscription(): void {
+  if (!convIdHex || !convCrypto || liveSubscription) return;
+  console.error('[qntm-channel] starting live relay subscription');
+  void emitHistory();
+  liveSubscription = dropbox.subscribeMessages(convCrypto.id, loadCursors()[convIdHex] || 0, {
+    getCursor: () => (convIdHex ? loadCursors()[convIdHex] || 0 : 0),
+    onMessage: async ({ seq, envelope }) => {
+      await handleEnvelope(envelope, seq);
+    },
+    onError: (err) => {
+      console.error(`[qntm-channel] relay subscription error: ${err}`);
+    },
+    onReconnect: (attempt, delayMs) => {
+      console.error(`[qntm-channel] relay reconnect attempt ${attempt} in ${delayMs}ms`);
+    },
+  });
 }
 
 // If already paired on startup, begin immediately
 if (paired) {
-  startPolling();
+  startSubscription();
 }

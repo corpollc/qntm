@@ -6,7 +6,7 @@ import {
   verifyProposal, hashProposal, verifyGovApproval,
   createGroupAddBody, createGroupRemoveBody, createGroupRekeyBody, QSP1Suite,
 } from '@corpollc/qntm';
-import type { Conversation, ConversationKeys, Identity, GovProposalSignable } from '@corpollc/qntm';
+import type { Conversation, ConversationKeys, DropboxSubscription, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
   Env, ConversationState, PromoteRequest, PromoteResponse,
   GatePromoteMessage, GateRequestMessage, GateApprovalMessage,
@@ -56,6 +56,7 @@ export class GatewayConversationDO implements DurableObject {
   private env: Env;
   private messageSeq = 0;
   private recovered = false;
+  private relaySubscription: DropboxSubscription | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -143,6 +144,7 @@ export class GatewayConversationDO implements DurableObject {
           { status: 409 },
         );
       }
+      this.ensureRelaySubscription(existing);
       return Response.json({
         conv_id: existing.conv_id,
         gateway_public_key: existing.public_key,
@@ -172,6 +174,7 @@ export class GatewayConversationDO implements DurableObject {
     };
 
     await this.state.storage.put('conv_state', convState);
+    this.ensureRelaySubscription(convState);
     await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
 
     return Response.json({
@@ -200,7 +203,7 @@ export class GatewayConversationDO implements DurableObject {
   }
 
   /**
-   * Alarm: poll dropbox, decrypt, route, check execution.
+   * Alarm: keep the live relay subscription attached and run maintenance.
    */
   async alarm(): Promise<void> {
     await this.recover();
@@ -210,35 +213,7 @@ export class GatewayConversationDO implements DurableObject {
     try {
       initialState.polling = true;
       await this.state.storage.put('conv_state', initialState);
-
-      const dropbox = new DropboxClient(this.env.DROPBOX_URL);
-      const convIdBytes = hexToBytes(initialState.conv_id);
-      const result = await dropbox.receiveMessages(convIdBytes, initialState.poll_cursor, 100);
-
-      if (result.messages.length > 0) {
-        const conv = this.buildConversation(initialState, convIdBytes);
-
-        for (const envelopeBytes of result.messages) {
-          try {
-            const envelope = deserializeEnvelope(envelopeBytes);
-            const msg = decryptMessage(envelope, conv);
-            await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
-          } catch (error) {
-            console.error('GatewayConversationDO alarm failed to process envelope', error);
-            continue;
-          }
-        }
-
-        const latestState = await this.state.storage.get<ConversationState>('conv_state');
-        if (!latestState) return;
-        latestState.poll_cursor = result.sequence;
-        await this.state.storage.put('conv_state', latestState);
-
-        // After processing new messages, check for executable requests
-        if (latestState.gate_promoted) {
-          await this.checkAndExecute(latestState);
-        }
-      }
+      this.ensureRelaySubscription(initialState);
 
       const currentState = await this.state.storage.get<ConversationState>('conv_state');
       if (!currentState) return;
@@ -254,6 +229,60 @@ export class GatewayConversationDO implements DurableObject {
         await this.state.storage.put('conv_state', currentState);
       }
       await this.state.storage.setAlarm(Date.now() + this.pollIntervalMs());
+    }
+  }
+
+  private ensureRelaySubscription(convState: ConversationState): void {
+    if (this.relaySubscription) {
+      return;
+    }
+
+    const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+    const convIdBytes = hexToBytes(convState.conv_id);
+    this.relaySubscription = dropbox.subscribeMessages(convIdBytes, convState.poll_cursor, {
+      getCursor: async () => {
+        const latest = await this.state.storage.get<ConversationState>('conv_state');
+        return latest?.poll_cursor ?? 0;
+      },
+      onMessage: async ({ seq, envelope }) => {
+        await this.handleRelayEnvelope(seq, envelope);
+      },
+      onError: (error) => {
+        console.error('GatewayConversationDO relay subscription error', error);
+      },
+      onReconnect: (attempt, delayMs) => {
+        console.error(`GatewayConversationDO relay reconnect attempt ${attempt} in ${delayMs}ms`);
+      },
+    });
+  }
+
+  private async handleRelayEnvelope(seq: number, envelopeBytes: Uint8Array): Promise<void> {
+    await this.recover();
+    const initialState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!initialState) return;
+
+    const conv = this.buildConversation(initialState, hexToBytes(initialState.conv_id));
+    let processed = false;
+
+    try {
+      const envelope = deserializeEnvelope(envelopeBytes);
+      const msg = decryptMessage(envelope, conv);
+      await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
+      processed = true;
+    } catch (error) {
+      console.error('GatewayConversationDO failed to process relay envelope', error);
+    }
+
+    const latestState = await this.state.storage.get<ConversationState>('conv_state');
+    if (!latestState) return;
+
+    if (seq > latestState.poll_cursor) {
+      latestState.poll_cursor = seq;
+      await this.state.storage.put('conv_state', latestState);
+    }
+
+    if (processed && latestState.gate_promoted) {
+      await this.checkAndExecute(latestState);
     }
   }
 

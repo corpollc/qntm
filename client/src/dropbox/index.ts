@@ -49,6 +49,18 @@ interface PollResponse {
   conversations: PollConversationResponse[];
 }
 
+interface SubscribeFrameMessage {
+  type: 'message';
+  seq: number;
+  envelope_b64: string;
+}
+
+interface SubscribeFramePong {
+  type: 'pong';
+}
+
+type SubscribeFrame = SubscribeFrameMessage | SubscribeFramePong;
+
 // ---------- receipt types ----------
 
 export interface ReadReceiptPayload {
@@ -104,6 +116,31 @@ export interface ReceiveResult {
   sequence: number;
 }
 
+export interface SubscriptionMessage {
+  seq: number;
+  envelope: Uint8Array;
+}
+
+export interface SubscriptionCloseEvent {
+  code: number;
+  reason: string;
+  wasClean: boolean;
+}
+
+export interface DropboxSubscriptionHandlers {
+  onMessage: (message: SubscriptionMessage) => void | Promise<void>;
+  getCursor?: () => number | Promise<number>;
+  onOpen?: () => void;
+  onClose?: (event: SubscriptionCloseEvent) => void;
+  onError?: (error: Error) => void;
+  onReconnect?: (attempt: number, delayMs: number) => void;
+}
+
+export interface DropboxSubscription {
+  close: (code?: number, reason?: string) => void;
+  closed: Promise<void>;
+}
+
 export const RECEIPT_PROTO = 'qntm-receipt-v1';
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -112,6 +149,36 @@ function toBase64Url(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function toWebSocketUrl(baseUrl: string, conversationIdHex: string, fromSequence: number): string {
+  const url = new URL(baseUrl);
+  if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
+  } else if (url.protocol === 'https:') {
+    url.protocol = 'wss:';
+  }
+  url.pathname = '/v1/subscribe';
+  url.search = '';
+  url.searchParams.set('conv_id', conversationIdHex);
+  url.searchParams.set('from_seq', String(fromSequence));
+  return url.toString();
+}
+
+async function webSocketDataToText(data: unknown): Promise<string> {
+  if (typeof data === 'string') {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(data));
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  }
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return data.text();
+  }
+  throw new Error('unsupported websocket frame payload');
 }
 
 /**
@@ -244,6 +311,146 @@ export class DropboxClient {
     return {
       messages,
       sequence: conv.up_to_seq,
+    };
+  }
+
+  subscribeMessages(
+    conversationId: Uint8Array,
+    fromSequence: number = 0,
+    handlers: DropboxSubscriptionHandlers,
+  ): DropboxSubscription {
+    if (typeof WebSocket === 'undefined') {
+      throw new Error('WebSocket is not available in this runtime');
+    }
+
+    const conversationIdHex = toHex(conversationId);
+    let closedByCaller = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let socket: WebSocket | null = null;
+    let reconnectAttempt = 0;
+    let currentSequence = fromSequence;
+    let messageQueue = Promise.resolve();
+
+    let resolveClosed: (() => void) | null = null;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    const reportError = (error: unknown) => {
+      if (!handlers.onError) return;
+      handlers.onError(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    const scheduleReconnect = () => {
+      if (closedByCaller || reconnectTimer) {
+        return;
+      }
+      reconnectAttempt += 1;
+      const delayMs = Math.min(30_000, 1_000 * 2 ** Math.min(reconnectAttempt - 1, 5));
+      handlers.onReconnect?.(reconnectAttempt, delayMs);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, delayMs);
+    };
+
+    const connect = async () => {
+      if (closedByCaller) {
+        return;
+      }
+
+      const resumeSequence = handlers.getCursor
+        ? await Promise.resolve(handlers.getCursor())
+        : currentSequence;
+      currentSequence = resumeSequence;
+
+      const ws = new WebSocket(toWebSocketUrl(this.baseUrl, conversationIdHex, resumeSequence));
+      socket = ws;
+
+      ws.addEventListener('open', () => {
+        if (socket !== ws || closedByCaller) {
+          return;
+        }
+        reconnectAttempt = 0;
+        handlers.onOpen?.();
+      });
+
+      ws.addEventListener('message', (event) => {
+        messageQueue = messageQueue
+          .then(async () => {
+            const payload = await webSocketDataToText(event.data);
+            const frame = JSON.parse(payload) as SubscribeFrame;
+            if (frame.type !== 'message') {
+              return;
+            }
+
+            await handlers.onMessage({
+              seq: frame.seq,
+              envelope: base64ToUint8(frame.envelope_b64),
+            });
+            currentSequence = Math.max(currentSequence, frame.seq);
+          })
+          .catch((error) => {
+            reportError(error);
+          });
+      });
+
+      ws.addEventListener('error', () => {
+        if (socket !== ws || closedByCaller) {
+          return;
+        }
+        reportError(new Error(`dropbox subscription error for conversation ${conversationIdHex}`));
+      });
+
+      ws.addEventListener('close', (event) => {
+        if (socket === ws) {
+          socket = null;
+        }
+
+        handlers.onClose?.({
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        });
+
+        if (closedByCaller) {
+          clearReconnectTimer();
+          resolveClosed?.();
+          resolveClosed = null;
+          return;
+        }
+
+        scheduleReconnect();
+      });
+    };
+
+    void connect().catch((error) => {
+      reportError(error);
+      scheduleReconnect();
+    });
+
+    return {
+      close: (code = 1000, reason = 'client closed') => {
+        if (closedByCaller) {
+          return;
+        }
+        closedByCaller = true;
+        clearReconnectTimer();
+        if (socket) {
+          socket.close(code, reason);
+          return;
+        }
+        resolveClosed?.();
+        resolveClosed = null;
+      },
+      closed,
     };
   }
 
