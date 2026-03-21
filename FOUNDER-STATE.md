@@ -1,73 +1,79 @@
 # Founder State — qntm
-Updated: 2026-03-21T20:48:00Z
+Updated: 2026-03-21T21:30:00Z
+Wave: 2
 
-## Current Cycle
-- Phase: PLAN_REVIEW
-- Active subagents: none
-- Awaiting: Peter's approval to deploy dropbox worker fix + CLOUDFLARE_API_TOKEN
+## Phase: OPERATING (dropbox fix complete, deploy blocked on CF token perms)
 
-## Dropbox Outage — Diagnosed & Fix Ready
-- **Root cause:** Cloudflare error 1101 (uncaught JS exception in Worker)
-- **Specific issue:** `compatibility_date = "2024-02-08"` is too old for `new_sqlite_classes` Durable Objects. The ConversationSequencerDO crashes on any DO access in production. KV-only endpoints work fine.
-- **Evidence:** Worker runs perfectly on `wrangler dev` locally. Only DO-dependent routes (/v1/send, /v1/poll) crash. KV routes (/v1/drop PUT/GET) work in prod.
-- **Fix branch:** `fix/dropbox-outage-compat-date` pushed to GitHub
-  - Updated `compatibility_date` from `2024-02-08` to `2025-09-01`
-  - Added `/healthz` health check endpoint
-- **Verified:** All endpoints (healthz, send, poll) work locally with the fix
-- **To deploy:** Need CLOUDFLARE_API_TOKEN + Peter approval (REQUIRES_APPROVAL per AUTONOMY.md)
-- **Deploy command:** `cd worker && CLOUDFLARE_API_TOKEN=<token> npx wrangler deploy`
+## Critical Finding — Wave 2
+The compat date fix (wave 0) was NECESSARY but NOT SUFFICIENT. Production relay still returns 1101 on DO endpoints.
 
-## Strategic Plan
-- Written to FOUNDER-PLAN.md
-- Covers: outage fix, org design (4 agent types), action plan, risk register
-- Sent to Peter via WhatsApp for review
+**Root cause (confirmed):** `ConversationSequencerDO` used `implements DurableObject` with a manual constructor. With `new_sqlite_classes` in wrangler.toml + compat date ≥ 2024-04-01, Cloudflare requires:
+1. `import { DurableObject } from "cloudflare:workers"`
+2. `extends DurableObject<Env>` (NOT `implements`)
+3. `super(ctx, env)` in constructor
+4. `this.ctx` instead of manual `this.state`
 
-## Known Infrastructure
-- Dropbox relay: Cloudflare Worker at inbox.qntm.corpo.llc (worker/) — **DOWN, fix ready**
-- API Gateway: Cloudflare Worker at gateway.corpo.llc (gateway-worker/) — status unknown (depends on relay)
-- Web UI: chat.corpo.llc (ui/aim-chat/) — deployed via CF Pages, code works
-- CLI: Python `qntm`, published on PyPI v0.4.2
-- TS client: @corpollc/qntm v0.4.2, published on npm
-- Channel plugin: Claude Code MCP integration (channel/)
-- CI: GitHub Actions — 3 test jobs (client, AIM UI, TUI), deploy workflows for AIM + gateway
+**Fix applied:** Commit `4144e1e` on branch `fix/dropbox-outage-compat-date`
+- Verified locally: /healthz ✅, /v1/send ✅, /v1/poll ✅
+- `wrangler deploy --dry-run` builds clean (23.46 KiB)
+- Push to GitHub complete
 
-## Test Results (this cycle)
-- Client TS library: 191/191 ✅
-- AIM Web UI: 43/43 ✅
-- TUI: 10/12 ⚠️ (2 pty-smoke cursor failures)
-- Python tests: couldn't run (system python missing pytest)
-- Worker: passes locally with fix
+**Current prod status:**
+- /healthz → ✅ responds (from previous partial deploy)
+- /v1/send → ❌ 1101 (DO crash — this fix not yet deployed)
+- /v1/poll → ❌ 1101 (same)
 
-## Org Design (Planned)
-1. DevOps Engineer — monitoring, deploys, health checks
-2. QA Engineer — test suites, regression catching
-3. Product Engineer — features, bug fixes
-4. Security Auditor — crypto correctness, threat model
+**Deploy attempt:** Failed — CF token (`CLOUDFLARE_API_KEY` in ~/.env) lacks KV write permissions:
+```
+error: kv bindings require kv write perms [code: 10023]
+```
 
-## Backlog
-- Deploy dropbox fix (BLOCKED on Peter)
-- Fix TUI pty-smoke test failures (2 tests)
-- Create dropbox worker CI/CD deploy workflow
-- Set up monitoring/alerting cron job
-- Verify gateway worker health
-- Run integration test suite
-- Security audit
+## Horizon Goals (set wave 1, next review wave 10)
+1. Dropbox relay UP and stable with monitoring — MEASURABLE: 99.9% uptime over 24h
+2. CI/CD pipeline deploys worker automatically on push — MEASURABLE: merge triggers deploy
+3. Full integration test suite passing — MEASURABLE: all 7 integration test files green
+4. Gateway worker verified healthy — MEASURABLE: gateway.corpo.llc responds correctly
+5. Agent-to-agent comms working via qntm (Corpo Founder ↔ Pepper) — MEASURABLE: messages flow
 
-## Recent History
-- 2026-03-21T20:34Z — Founder agent boot cycle 1
-- 2026-03-21T20:38Z — Diagnosed dropbox outage: Durable Object crash, compat date issue
-- 2026-03-21T20:42Z — Verified fix works locally (healthz, send, poll all pass)
-- 2026-03-21T20:45Z — Wrote FOUNDER-PLAN.md strategic plan
-- 2026-03-21T20:47Z — Pushed fix branch `fix/dropbox-outage-compat-date` to GitHub
-- 2026-03-21T20:48Z — Texted Peter summary via WhatsApp, entering PLAN_REVIEW phase
+## Campaign Goals (set wave 1, next review wave 5)
+1. Deploy dropbox fix to production — MEASURABLE: `qntm send` succeeds against inbox.qntm.corpo.llc — BLOCKED (CF token needs KV write perms)
+2. Add monitoring cron for dropbox health — MEASURABLE: health check runs every 5 min, alerts on failure
+3. Fix TUI test failures (2 pty-smoke tests) — MEASURABLE: 12/12 TUI tests pass
+4. Create worker deploy CI/CD workflow — MEASURABLE: GitHub Action exists for wrangler deploy
+5. Run integration test suite end-to-end — MEASURABLE: all integration tests pass against live relay
 
-## Blockers (need Peter)
-- CLOUDFLARE_API_TOKEN — needed for production deploy
-- Approval to merge fix branch to main and deploy
-- Review of FOUNDER-PLAN.md strategic plan
+## Wave 2 Top 5
+1. Deploy dropbox fix — BLOCKED (CF token lacks KV write perms, re-escalated to Peter via Pepper)
+2. Fix TUI pty-smoke test failures — cursor persistence bug (loadCursor returns 0 instead of 1)
+3. Create GitHub Actions deploy workflow for worker — can prepare without token
+4. Write monitoring health check script — ready to activate post-deploy
+5. Review gateway-worker code and assess health
+
+## Currently Executing
+- Wave 2 complete: diagnosed real root cause (extends vs implements DurableObject), fixed, committed, pushed
+- Deploy still blocked on CF token (needs broader permissions, specifically KV write)
+
+## Ops Log
+- Wave 0 (bootstrap): Full assessment. Dropbox outage diagnosed (compat date). Fix built, branch pushed. Plan written. 244/246 tests passing.
+- Wave 1 (skipped — cron gap)
+- Wave 2: CRITICAL DISCOVERY — compat date fix was NOT enough! Real root cause: DO class must extend base DurableObject class (not implement interface) when using new_sqlite_classes. Fixed in commit 4144e1e. Verified locally. Deploy still blocked — CF token lacks KV write permissions. Re-escalated via Pepper.
+
+## Blockers
+- CLOUDFLARE_API_TOKEN: Token in ~/.env exists but lacks KV write permissions. Error: "kv bindings require kv write perms [code: 10023]". Need Peter to create/update a token with: Workers Scripts Write + KV Write + Durable Objects Write. (re-escalated 2026-03-21T21:30Z)
 
 ## Metrics
-- Tests: 244/246 passing (99.2%)
-- Build: all components build
-- Dropbox server: DOWN (fix ready, awaiting deploy)
-- Gateway server: unknown (depends on relay)
+- Tests: Client 191/191 ✅, AIM UI 43/43 ✅, TUI 10/12 ⚠️ (cursor persistence)
+- Build: all components build, wrangler dry-run ✅
+- Dropbox server: DOWN (fix ready + verified, deploy blocked on CF token perms)
+- Gateway server: unknown
+- Waves completed: 2
+
+## TUI Test Failure Details
+- Test 1: "polls an incoming message on startup" — loadCursor returns wrong value
+- Test 2: "suppresses self-echoes during startup polling" — loadCursor returns 0, expected 1
+- Both failures are in cursor persistence, not message handling itself
+
+## Peter's Standing Instructions
+- Report to Pepper (chief of staff) via sessions_send(label="main")
+- DO NOT push to main. Feature branches only.
+- CF deploy: REQUIRES_APPROVAL (approved, needs working token with KV write perms)
