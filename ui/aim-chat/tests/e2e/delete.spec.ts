@@ -75,7 +75,7 @@ test('deleting selected conversation clears the chat pane', async ({ page }) => 
     const token = bob.createInvite('Active Chat')
     await alice.joinInviteViaSidebar(token, 'Active Chat')
 
-    await page.getByText('Active Chat').click()
+    await page.locator('.conversation-select', { hasText: 'Active Chat' }).click()
 
     await alice.deleteConversation('Active Chat')
 

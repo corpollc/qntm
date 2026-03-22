@@ -20,18 +20,27 @@ export class Alice {
 
   /** Create a new profile */
   async createProfile(name: string): Promise<void> {
-    await this.page.getByText('Profile').click()
-    await this.page.getByPlaceholderText('New profile name').fill(name)
-    await this.page.getByRole('button', { name: 'Create' }).first().click()
-    await this.page.waitForSelector('text=Public Key')
+    await this.page.getByRole('button', { name: 'Profile' }).click()
+    const nameInput = this.page.getByPlaceholder('New profile name')
+    await nameInput.waitFor({ state: 'visible' })
+    await nameInput.fill(name)
+    await this.page.getByRole('button', { name: 'Add' }).click()
+    await this.page.waitForSelector('.pubkey-value')
   }
 
   /** Join a conversation using the sidebar InvitePanel */
   async joinInviteViaSidebar(token: string, name: string): Promise<void> {
-    await this.page.getByText('Invites').click()
-    await this.page.getByPlaceholderText('Paste an invite link or token').fill(token)
+    // Ensure the Invites panel is open (click header only if currently collapsed)
+    const invitesHeader = this.page.getByRole('button', { name: 'Invites', exact: true })
+    const isExpanded = await invitesHeader.getAttribute('aria-expanded')
+    if (isExpanded !== 'true') {
+      await invitesHeader.click()
+    }
+    const tokenInput = this.page.getByPlaceholder('Paste an invite link or token')
+    await tokenInput.waitFor({ state: 'visible' })
+    await tokenInput.fill(token)
     if (name) {
-      await this.page.getByPlaceholderText('Label for this conversation (optional)').fill(name)
+      await this.page.getByPlaceholder('Label for this conversation (optional)').fill(name)
     }
     await this.page.getByRole('button', { name: 'Join' }).click()
     await this.page.waitForTimeout(500)
@@ -40,7 +49,7 @@ export class Alice {
   /** Join a conversation via the JoinModal (URL-based invite) */
   async joinInviteViaModal(name: string): Promise<void> {
     if (name) {
-      await this.page.getByPlaceholderText('e.g. Team Chat, Project Alpha').fill(name)
+      await this.page.getByPlaceholder('e.g. Team Chat, Project Alpha').fill(name)
     }
     await this.page.getByRole('button', { name: 'Join' }).click()
     await this.page.waitForTimeout(500)
@@ -49,7 +58,6 @@ export class Alice {
   /** Rename a conversation by clicking edit, typing new name, pressing Enter */
   async renameConversation(currentName: string, newName: string): Promise<void> {
     const row = this.page.locator('.conversation', { hasText: currentName })
-    await row.hover()
     await row.getByLabel('Rename conversation').click()
     const input = this.page.locator('.conversation-rename-input')
     await input.fill(newName)
@@ -59,17 +67,19 @@ export class Alice {
   /** Delete a conversation — clicks delete then confirms dialog */
   async deleteConversation(name: string): Promise<void> {
     const row = this.page.locator('.conversation', { hasText: name })
-    await row.hover()
     await row.getByLabel('Delete conversation').click()
-    await this.page.getByRole('button', { name: 'Delete' }).click()
+    const dialog = this.page.getByRole('dialog', { name: 'Delete Conversation' })
+    await dialog.waitFor({ state: 'visible' })
+    await dialog.getByRole('button', { name: 'Delete' }).click()
   }
 
   /** Cancel a delete confirmation */
   async cancelDeleteConversation(name: string): Promise<void> {
     const row = this.page.locator('.conversation', { hasText: name })
-    await row.hover()
     await row.getByLabel('Delete conversation').click()
-    await this.page.getByRole('button', { name: 'Cancel' }).click()
+    const dialog = this.page.getByRole('dialog', { name: 'Delete Conversation' })
+    await dialog.waitFor({ state: 'visible' })
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
   }
 
   /** Get all visible conversation names */
