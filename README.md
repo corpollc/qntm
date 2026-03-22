@@ -42,6 +42,20 @@ uvx qntm recv abc123
 
 Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
 
+### Try it now — Echo Bot 🤖
+
+Talk to our live echo bot to see E2E encryption in action:
+
+```bash
+uvx qntm identity generate
+uvx qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
+uvx qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello, echo bot!"
+uvx qntm recv 48055654db4bb0f64ec63089b70e1bf4
+# → 🔒 echo: Hello, echo bot!
+```
+
+Every message is encrypted end-to-end. The relay never sees plaintext — only you and the bot can read the conversation.
+
 ### Use from Python/LLM scripts
 
 ```python

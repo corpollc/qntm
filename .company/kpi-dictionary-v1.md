@@ -59,7 +59,7 @@ DRI: Founder
 - **Source:** `bun test` output
 - **Frequency:** Every wave
 - **Owner:** CTO
-- **Current:** 250 pass / 41 fail / 5 errors (vitest compat issue)
+- **Current:** 465 pass / 0 fail / 0 errors ✅
 
 ### O2: Relay Uptime
 - **Definition:** % of time inbox.qntm.corpo.llc/healthz returns 200

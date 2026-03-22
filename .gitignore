@@ -8,6 +8,10 @@
 /ui/aim-chat/vite.config.d.ts
 /ui/tui/dist
 
+# Echo bot identity (private keys — never commit)
+echo-bot/.qntm/
+echo-bot/bot.log
+
 # Dolt database files (added by bd init)
 .dolt/
 *.db
