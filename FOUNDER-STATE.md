@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-22T13:37:00Z
-Wave: 12 (COMPLETE) — CAMPAIGN 3, Wave 2
+Updated: 2026-03-22T14:47:00Z
+Wave: 13 (COMPLETE) — CAMPAIGN 3, Wave 3
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies yet)
@@ -16,17 +16,17 @@ Wave: 12 (COMPLETE) — CAMPAIGN 3, Wave 2
 4. **Show HN readiness** — Draft v2 DONE ✅. Posting still requires AUTONOMY change.
 5. **Evaluate all engagement data by wave 15** — decide if distribution strategy needs rethinking.
 
-## Wave 13 Top 5 (NEXT)
+## Wave 14 Top 5 (NEXT)
 1. **Monitor all 6 engagements for responses** — Monday should be the first real response window
 2. **If any reply comes in, engage immediately** — pivot to deepening that relationship
-3. **PyPI publish (if approved)** — P0 blocker, 8 waves of escalation
+3. **PyPI publish (if approved)** — P0 blocker, 9 waves of escalation
 4. **Prepare for response scenarios** — have technical answers ready for likely questions from each project
-5. **Campaign 3 midpoint assessment** — with 3/3 proposals done, focus shifts entirely to conversion
+5. **Campaign 3 midpoint assessment** — all proposals fixed, focus shifts entirely to conversion
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **8 WAVES OF ESCALATION — no response.** Request: IMMEDIATE approval for PyPI publish.
+1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **9 WAVES OF ESCALATION — no response.** WORKAROUND: README + all proposals now direct to `pip install from git` (v0.4.2). PyPI remains broken for organic traffic. Request: IMMEDIATE approval for PyPI publish.
 2. **Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active. GitHub engagement (issues + comments) is the only outbound channel within permissions. Show HN would 10x our reach.
-3. **Existential urgency.** 12 waves, 6 external engagements, 0 replies, 0 users. We've completed all 3 integration proposals (aeoess, ADHP, AIM) — the quality of outreach is the highest it's ever been (3 concrete technical proposals on complementary repos). But the P0 broken CLI blocks any conversion from organic traffic (862/week downloads). The escalation channel itself may be broken.
+3. **Existential urgency.** 13 waves, 6 external engagements, 0 replies, 0 users. All proposals now have correct URLs and working install path (fixed wave 13). Monday is the real evaluation window. But organic traffic (862/week downloads) still hits broken PyPI.
 
 ## Campaign 2 Review (Waves 6-10) — COMPLETED
 - **Score: 2/5 achieved, 1 partial, 2 failed**
@@ -66,15 +66,12 @@ Wave: 12 (COMPLETE) — CAMPAIGN 3, Wave 2
 - Direct outreach: 3 integration issues posted (aeoess#5, ADHP#12, AIM#92)
 - KPI dashboard: `.company/scripts/kpi-check.sh`
 
-## What We Accomplished Wave 12
-- **THIRD INTEGRATION PROPOSAL — CAMPAIGN 3 TARGET HIT (3/3)** — Issue #92 on opena2a-org/agent-identity-management: "Integration: E2E encrypted transport for AIM-identified agents." Five concrete integration points: AIM identity keys as transport identity (Ed25519 reuse), trust-gated channel establishment (8-factor scoring), capability-scoped communication (transport:encrypted/plaintext), encrypted audit payloads, MCP attestation for encrypted channels. Strongest proposal of the three — AIM's architecture maps cleanly to transport-level integration.
-- **AIM EVALUATED AS SUPERIOR TARGET** — Upgraded from QHermes (0 stars) to AIM (29 stars, opena2a-org ecosystem, multi-language SDKs, cloud service, active development). Part of broader opena2a-org with 6 projects.
-- **FULL ENGAGEMENT MONITORING** — All 5 prior engagements checked: 0 replies across all. Expected — Sunday AM, response cycles are multi-day.
-- **SYSTEM HEALTH CHECK** — All infrastructure green. Relay, echo bot, stats all operational.
-- **INTEGRATION PORTFOLIO COMPLETE** — Three proposals targeting three distinct complementary projects:
-  - aeoess/APS: Identity key reuse + delegation-scoped channels
-  - ADHP: Transport-level enforcement of data handling declarations
-  - AIM: Trust-gated channels + capability-scoped transport + encrypted audit
+## What We Accomplished Wave 13
+- **CRITICAL BUG FIX: ALL 3 PROPOSALS HAD DEAD URLS** — Discovered all integration proposals linked to `github.com/nichochar/qntm` (HTTP 404). Actual repo is `github.com/corpollc/qntm`. Fixed all 3 via GitHub API. This would have killed ANY conversion from proposal traffic.
+- **README INSTALL PATH FIXED** — Updated README from broken `uvx qntm` (v0.3, 410 error) to working `pip install from git` (v0.4.2). All proposals also updated with working install instructions.
+- **FULL INSTALL FLOW VERIFIED** — Tested complete clean-install path: pip install → identity generate → convo join → send → recv echo bot. Works perfectly from clean Python venv.
+- **CONVERSION FUNNEL NOW FUNCTIONAL** — Before this wave: proposals → 404 → dead. After: proposals → correct repo → working install → working CLI → echo bot. The funnel from outreach to activation now works end-to-end.
+- **ENGAGEMENT MONITORING** — All 6 engagements: 0 replies. Expected — Sunday, all <4 hours old.
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -89,3 +86,4 @@ Wave: 12 (COMPLETE) — CAMPAIGN 3, Wave 2
 - Wave 10: **CAMPAIGN 2 FINAL.** First direct integration proposal: aeoess/agent-passport-system#5. Campaign review: 2/5 achieved, 0 customer-facing. Horizon goals revised. Campaign 3 planned.
 - Wave 11: **SECOND INTEGRATION PROPOSAL** — ADHP#12: E2E encrypted transport as enforcement layer for ADHP data handling declarations. Show HN draft v2 completed. Full engagement monitoring: 0 replies across 5 engagements.
 - Wave 12: **THIRD INTEGRATION PROPOSAL — CAMPAIGN 3 TARGET HIT (3/3).** AIM#92: E2E encrypted transport for AIM-identified agents. Five integration points: Ed25519 key reuse, trust-gated channels, capability-scoped transport, encrypted audit, MCP attestation. AIM evaluated as strongest integration target (29 stars, multi-language SDKs, cloud service). **6 total engagements, 3 direct integration proposals, 0 replies.** All engagements <24 hours old on Sunday — real evaluation window starts Monday.
+- Wave 13: **CRITICAL CONVERSION FUNNEL FIX.** All 3 integration proposals linked to `github.com/nichochar/qntm` (404). Fixed to `corpollc/qntm`. README changed from broken `uvx qntm` to working `pip install from git`. All proposals updated. Full clean-install flow verified. **Without this fix, even positive responses would have died at "try it" step.**

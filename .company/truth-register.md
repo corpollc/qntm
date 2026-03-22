@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 10)
+Last updated: 2026-03-22 (Wave 13)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -42,6 +42,9 @@ Last updated: 2026-03-22 (Wave 10)
 - **NEW (W11): StevenJohnson998 is active across A2A ecosystem.** Authored A2A #1606 (data handling), replies to thread comments, maintains ADHP spec v0.2 with interactive playground and SDK. Highest-probability reply among our outreach targets.
 - **NEW (W12): AIM (opena2a-org/agent-identity-management) is the most mature identity platform in the ecosystem.** 29 stars, Ed25519 + OAuth 2.0, 8-factor trust scoring, capability enforcement, MCP attestation, multi-language SDKs (Python/Java/TypeScript), cloud service + dashboard. Part of opena2a-org ecosystem with 6 repos (HackMyAgent, Secretless, Browser Guard, DVAA). Post-quantum crypto support (ML-DSA) server-side. NO encrypted transport — identity/governance only. Our third integration proposal (#92) is the first issue on the repo.
 - **NEW (W12): agent-security GitHub topic has 160 repos.** The agent security space is active and growing. Categories include: vulnerability scanning (agentic_security, medusa), sandbox enforcement (nono, cupcake, rampart), identity management (AIM), MCP security (mcp-gateway, agentseal), and fleet monitoring (clawdstrike). None provide encrypted agent-to-agent transport.
+- **NEW (W13): All 3 integration proposals had dead URLs (404).** Links pointed to `github.com/nichochar/qntm` (doesn't exist) instead of `github.com/corpollc/qntm`. Fixed via GitHub API edits. A2A comments already had correct URLs. This would have killed any conversion from proposal traffic.
+- **NEW (W13): v0.4.2 from git source works perfectly end-to-end.** Full install → identity generate → convo join → send → recv echo bot flow verified from a clean Python venv. WebSocket subscriptions work. Only PyPI v0.3 is broken.
+- **NEW (W13): pip install from git is a viable workaround for broken PyPI.** `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` works cleanly. README and all proposals updated to use this path.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
@@ -68,6 +71,7 @@ Last updated: 2026-03-22 (Wave 10)
 - **NEW (W10): Will the aeoess integration proposal (#5) generate a response?** This is our first direct outreach to a specific project. aeoess is highly active (pushed 12 hours ago, 969 tests). Their interoperability issue explicitly maps ecosystem gaps that include encrypted transport. If this gets a response, it's our first design partner conversation.
 - **NEW (W12): Will the AIM integration proposal (#92) generate a response?** AIM is the strongest target: 29 stars, opena2a-org ecosystem, multi-language SDKs. Their Ed25519 identity maps directly to qntm. They have Discussions enabled and an active org. But 0 open issues before ours — community may be Discord-focused.
 - **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
+- **NEW (W13): conversations.json format incompatibility.** v0.3 stores conversation IDs as byte arrays, v0.4.2 code expects hex strings. Users who mixed versions would hit AttributeError. Not critical for new installs (clean state) but blocks upgrade path. Low priority — no users yet.
 
 ## ASSUMPTIONS (beliefs without evidence, ranked by risk)
 1. **HIGH RISK:** r/AI_Agents is the #1 distribution channel → untested, posting blocked
