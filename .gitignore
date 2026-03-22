@@ -7,6 +7,9 @@
 /ui/aim-chat/vite.config.js
 /ui/aim-chat/vite.config.d.ts
 /ui/tui/dist
+/openclaw-qntm/node_modules
+/openclaw-qntm/dist
+/openclaw-qntm/*.tsbuildinfo
 
 # Dolt database files (added by bd init)
 .dolt/
