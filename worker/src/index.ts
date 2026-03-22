@@ -222,6 +222,20 @@ type RelayFrame =
 			type: "pong";
 	  };
 
+// --- Subscribe authentication types ---
+type SubscribeAuthFrame =
+	| { type: "auth_challenge"; challenge_hex: string }
+	| { type: "auth_ok" }
+	| { type: "auth_failed"; reason: string };
+
+// Pending auth state for subscribe connections awaiting challenge-response
+type PendingAuth = {
+	challenge: Uint8Array;
+	pubKeyHex: string;
+	convID: string;
+	fromSeq: number;
+};
+
 function conversationMessageKey(convID: string, seq: number): string {
 	return `/${convID}/msg/${seq}.cbor`;
 }
@@ -377,6 +391,9 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		return Response.json({ seq });
 	}
 
+	// Map from server WebSocket to pending auth state (in-memory, per DO instance)
+	private pendingAuths = new Map<WebSocket, PendingAuth>();
+
 	private async handleSubscribe(request: Request): Promise<Response> {
 		const upgradeError = validateUpgradeRequest(request);
 		if (upgradeError) {
@@ -386,6 +403,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const url = new URL(request.url);
 		const convID = (url.searchParams.get("conv_id") || "").toLowerCase();
 		const fromSeqRaw = Number(url.searchParams.get("from_seq") || "0");
+		const pubKeyHex = (url.searchParams.get("pub_key") || "").toLowerCase();
 		if (!isHexID(convID, 32)) {
 			return Response.json({ error: "invalid conv_id" }, { status: 400 });
 		}
@@ -396,6 +414,34 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 
+		// Authenticated subscribe: if pub_key is provided, issue a challenge
+		if (pubKeyHex) {
+			if (!isHexID(pubKeyHex, 32)) {
+				server.send(JSON.stringify({ type: "auth_failed", reason: "invalid pub_key" } satisfies SubscribeAuthFrame));
+				server.close(4003, "invalid pub_key");
+				return new Response(null, { status: 101, webSocket: client });
+			}
+
+			// Generate 32-byte random challenge
+			const challenge = new Uint8Array(32);
+			crypto.getRandomValues(challenge);
+
+			this.pendingAuths.set(server, {
+				challenge,
+				pubKeyHex,
+				convID,
+				fromSeq: fromSeqRaw,
+			});
+
+			server.send(JSON.stringify({
+				type: "auth_challenge",
+				challenge_hex: toHex(challenge),
+			} satisfies SubscribeAuthFrame));
+
+			return new Response(null, { status: 101, webSocket: client });
+		}
+
+		// Unauthenticated subscribe (backwards compatible)
 		const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
 		const replay = await loadConversationMessagesBySequence(this.env, convID, fromSeqRaw, headSeq, 1000);
 		for (const message of replay) {
@@ -529,13 +575,93 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		return new Response("not found", { status: 404 });
 	}
 
-	webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): void | Promise<void> {
+	async webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): Promise<void> {
 		if (typeof message !== "string") {
 			return;
 		}
 		if (message === "ping") {
 			webSocket.send(JSON.stringify({ type: "pong" } satisfies RelayFrame));
+			return;
 		}
+
+		// Check for pending auth challenge-response
+		const pending = this.pendingAuths.get(webSocket);
+		if (pending) {
+			let parsed: { type?: string; signature_hex?: string };
+			try {
+				parsed = JSON.parse(message) as { type?: string; signature_hex?: string };
+			} catch {
+				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid JSON" } satisfies SubscribeAuthFrame));
+				webSocket.close(4003, "invalid auth response");
+				this.pendingAuths.delete(webSocket);
+				return;
+			}
+
+			if (parsed.type !== "auth_response" || typeof parsed.signature_hex !== "string") {
+				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "expected auth_response with signature_hex" } satisfies SubscribeAuthFrame));
+				webSocket.close(4003, "invalid auth response format");
+				this.pendingAuths.delete(webSocket);
+				return;
+			}
+
+			// Verify Ed25519 signature of the challenge
+			const sigBytes = fromHex(parsed.signature_hex);
+			if (!sigBytes || sigBytes.length !== 64) {
+				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid signature format" } satisfies SubscribeAuthFrame));
+				webSocket.close(4003, "invalid signature");
+				this.pendingAuths.delete(webSocket);
+				return;
+			}
+
+			const pkBytes = fromHex(pending.pubKeyHex);
+			if (!pkBytes || pkBytes.length !== 32) {
+				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid public key" } satisfies SubscribeAuthFrame));
+				webSocket.close(4003, "invalid public key");
+				this.pendingAuths.delete(webSocket);
+				return;
+			}
+
+			let verified = false;
+			try {
+				const key = await crypto.subtle.importKey("raw", pkBytes, { name: "Ed25519" }, false, ["verify"]);
+				verified = await crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, pending.challenge);
+			} catch {
+				verified = false;
+			}
+
+			if (!verified) {
+				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "signature verification failed" } satisfies SubscribeAuthFrame));
+				webSocket.close(4003, "auth failed");
+				this.pendingAuths.delete(webSocket);
+				return;
+			}
+
+			// Auth succeeded — send auth_ok, then replay messages
+			this.pendingAuths.delete(webSocket);
+			webSocket.send(JSON.stringify({ type: "auth_ok" } satisfies SubscribeAuthFrame));
+
+			const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
+			const replay = await loadConversationMessagesBySequence(this.env, pending.convID, pending.fromSeq, headSeq, 1000);
+			for (const msg of replay) {
+				webSocket.send(
+					JSON.stringify({
+						type: "message",
+						seq: msg.seq,
+						envelope_b64: msg.envelope_b64,
+					} satisfies RelayFrame),
+				);
+			}
+			webSocket.send(JSON.stringify({ type: "ready", head_seq: headSeq } satisfies RelayFrame));
+			return;
+		}
+	}
+
+	webSocketClose(webSocket: WebSocket): void {
+		this.pendingAuths.delete(webSocket);
+	}
+
+	webSocketError(webSocket: WebSocket): void {
+		this.pendingAuths.delete(webSocket);
 	}
 }
 
@@ -648,6 +774,7 @@ export default {
 			if (request.method === "GET" && path === "/v1/subscribe") {
 				const convID = (url.searchParams.get("conv_id") || "").toLowerCase();
 				const fromSeqRaw = Number(url.searchParams.get("from_seq") || "0");
+				const pubKey = url.searchParams.get("pub_key") || "";
 				if (!isHexID(convID, 32)) {
 					return errorResponse("invalid conv_id", 400);
 				}
@@ -661,7 +788,10 @@ export default {
 
 				const id = env.CONVO_SEQ_DO.idFromName(convID);
 				const stub = env.CONVO_SEQ_DO.get(id);
-				return stub.fetch(new Request(`https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}`, request));
+				const doUrl = pubKey
+					? `https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}&pub_key=${pubKey}`
+					: `https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}`;
+				return stub.fetch(new Request(doUrl, request));
 			}
 
 			// --- Announce channel management endpoints ---
