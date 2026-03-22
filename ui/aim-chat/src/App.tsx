@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import type { DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
-import { shortId, APP_VERSION } from './utils'
+import { shortId, APP_VERSION, extractToken } from './utils'
 import { SettingsPage } from './components/SettingsPage'
 import { Sidebar } from './components/Sidebar'
 import type { SidebarHandle } from './components/Sidebar'
@@ -20,6 +20,7 @@ import {
   selectedConversationRelayStatus,
   type RelayConnectionState,
 } from './relayStatus'
+import { parseInviteConvId } from './qntm'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -270,6 +271,41 @@ export default function App() {
       window.history.replaceState({}, '', url.pathname + url.hash)
     }
   }, [])
+
+  // Global paste listener: detect invite tokens pasted outside text inputs
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      const active = document.activeElement
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return // Let native paste happen
+      }
+
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text) return
+
+      const token = extractToken(text)
+      if (!token) return
+
+      const convId = parseInviteConvId(token)
+      if (!convId) return // Not a valid invite token
+
+      // Check if we already have this conversation
+      const existing = conversations.find(c => c.id === convId)
+      if (existing) {
+        selectConversation(convId)
+      } else {
+        setInviteToken(token)
+        setShowJoinModal(true)
+      }
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [conversations, selectConversation])
 
   // Sync selected conversation from URL on mount/navigation
   useEffect(() => {
