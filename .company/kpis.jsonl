@@ -1,1 +1,2 @@
 {"wave":1,"ts":"2026-03-22T01:26:00Z","tests":{"pass":250,"fail":41,"errors":5,"note":"vitest compat regression"},"deploy":"up","relay":"up","beads":{"open":0,"closed":0},"activation":null,"active_convos_7d":0,"custom":{"ttfm_seconds":null}}
+{"wave":2,"ts":"2026-03-22T04:10:00Z","tests":{"pass":465,"fail":0,"errors":0,"note":"all green: 193 client + 43 UI + 12 TUI + 217 integration"},"deploy":"up","relay":"up","beads":{"open":0,"closed":0},"activation":null,"active_convos_7d":0,"custom":{"ttfm_seconds":1.2,"poll_status":"fixed_sqlite"}}

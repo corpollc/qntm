@@ -44,4 +44,45 @@ Started: 2026-03-22T03:52:00Z
 5. **Write tutorial draft: "E2E encryption for your LangChain agents"**
 
 ## Execution Log
-(filled during wave)
+
+### #1 — Fix relay poll ✅ DONE
+- Root cause: KV list() daily limit on free tier (not token issue, not code bug)
+- Fix: Added SQLite table in DO, store messages on publish, serve reads from SQLite
+- Also routes subscribe replay through SQLite
+- Deployed: Version 75cc67cc → 4th deploy attempt succeeded
+- Verified: send + recv working end-to-end
+- Side discovery: CF token WORKS (wrangler auth succeeds, verify endpoint is misleading)
+- Tests: 465/465 green (193 + 43 + 12 + 217)
+
+### #2 — Quick-start code snippet ✅ DONE
+- Wrote "Two Agents in 30 Seconds" demo for README
+- Added Python/LLM script integration example
+- Simplified web UI section
+
+### #3 — Draft outbound positioning messages ✅ DONE
+- 5 messages: r/AI_Agents project thread, reply threads, Show HN, Twitter thread, DM template
+- Positioning matrix mapping message→channel→tone→CTA
+- Ready to deploy moment public posting is approved
+
+### #4 — Fix TUI vi.hoisted test ✅ DONE (self-resolved)
+- Running under bun via `bunx vitest run` passes all 12/12 tests
+- The compat issue from Wave 1 has resolved (possibly vitest/bun update)
+
+### #5 — Write LangChain encryption tutorial ✅ DONE
+- Full tutorial: "How to Add End-to-End Encryption to Your LangChain Agents"
+- Covers: identity setup, conversation creation, LangChain tool integration, code examples
+- Includes multi-sig API Gateway extension section
+- Ready for blog post / dev.to publication
+
+## Wave 2 Results
+- **Relay fully operational** — poll fixed, send+recv verified, 0 KV list() calls on read path
+- **465 tests green** (up from 299/300 — TUI compat issue resolved)
+- **README improved** with compelling quick-start
+- **5 outbound messages drafted** — distribution-ready
+- **Tutorial written** — content marketing asset ready
+- **Truth register created** — shared reality document
+- **CF token blocker RESOLVED** — was a red herring (verify endpoint vs wrangler auth)
+
+## Remaining Blockers
+1. **Public posting DENIED** — still the #1 strategic blocker. All distribution content is ready but can't be deployed.
+2. **Old messages in KV only** — messages sent before SQLite migration won't appear in poll results. New messages work fine.

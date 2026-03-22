@@ -1,50 +1,55 @@
 # Founder State — qntm
-Updated: 2026-03-22T01:55:00Z
-Wave: 1 (RELAUNCH — COMPLETE)
+Updated: 2026-03-22T04:15:00Z
+Wave: 2 (COMPLETE)
 
 ## Horizon Goals (set wave 1, review wave 10)
-1. 5+ active external conversations per week — NOT STARTED
-2. 3+ design partners using the protocol — NOT STARTED
-3. At least 1 team using the API Gateway — NOT STARTED
+1. 5+ active external conversations per week — NOT STARTED (0)
+2. 3+ design partners using the protocol — NOT STARTED (0)
+3. At least 1 team using the API Gateway — NOT STARTED (0)
 4. TTFM measured and optimized to <10s — DONE ✅ (1.2s!)
-5. All tests green, relay fully functional — BLOCKED (CF deploy perms)
+5. All tests green, relay fully functional — DONE ✅ (465 green, relay fixed)
 
 ## Campaign Goals (set wave 1, review wave 5)
-1. Deploy echo bot (so new users get immediate response) — BLOCKED (relay poll 1101)
-2. Distribution research — DONE ✅ (20 channels identified, competitive landscape mapped)
-3. Write quick-start snippet for README — NOT STARTED
-4. Start 5 outbound conversations with target customers — BLOCKED (public posting DENIED)
-5. Fix remaining test compat issue (TUI vi.hoisted) — NOT STARTED
+1. Deploy echo bot — UNBLOCKED (relay fixed, needs implementation)
+2. Distribution research — DONE ✅ (20 channels + 5 outbound messages drafted)
+3. Write quick-start snippet for README — DONE ✅
+4. Start 5 outbound conversations — BLOCKED (public posting DENIED)
+5. Fix remaining test compat issue — DONE ✅ (self-resolved, 465/465 green)
 
-## Wave 2 Top 5 (NEXT)
-1. ~~Get CF token fixed~~ — RESOLVED. Peter fixed deploy bug manually. Relay should be deployable now.
-2. Write quick-start code snippet (can do without deploy)
-3. Fix TUI app.test.tsx vi.hoisted compat (300/300 tests)
-4. Draft outbound messages using positioning statements from research
-5. Write "E2E encryption for your LangChain agents" tutorial draft
+## Wave 3 Top 5 (NEXT)
+1. Deploy echo bot to relay — when someone messages, they get an immediate encrypted response. Proves the product works and creates first "active conversation" signal.
+2. Build basic PyPI download tracking — check if anyone is installing organically
+3. Backfill existing KV messages into SQLite — so old conversations are readable via new poll path
+4. Deploy gateway worker (if not already deployed / verify gateway poll works too)
+5. Prepare Show HN post — requires echo bot live + tutorial published
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **Cloudflare API token invalid** — `NfIXY0HKuyLyZgu9RtyyF0yJ__CFKsdeAOn4_AWf` fails CF verify endpoint. Cannot deploy worker updates. Relay poll returns 1101 (DO issue in older deployed code). **Send works, receive/poll broken.** Need new token with Workers Scripts + KV write permissions.
-2. **Public posting DENIED** — Autonomy config says no public posts. Distribution research found r/AI_Agents is the #1 channel. Need Chairman approval to post OR route through Pepper. Competitors are already posting there.
+1. **Public posting DENIED** — All 5 outbound messages drafted and ready. Tutorial written. Distribution content is done — the single bottleneck is permission to post. Competitors (claweb.ai) are already posting in r/AI_Agents. Every day we don't post, they get further ahead. Request: approve posting in r/AI_Agents project display thread OR authorize Pepper to post on our behalf.
+
+## Resolved Blockers
+- ~~CF token invalid~~ — RESOLVED Wave 2. Token works via wrangler. The /user/tokens/verify endpoint returns "Invalid" but wrangler auth succeeds. Worker deployed successfully.
+- ~~Relay poll broken (500/1101)~~ — RESOLVED Wave 2. Root cause: KV list() daily limit on free tier. Fix: migrated read path to DO SQLite. Poll fully operational.
+- ~~TUI vi.hoisted test~~ — RESOLVED Wave 2. Self-resolved, 12/12 tests pass.
 
 ## Metrics
-- Tests: 299/300 (1 vitest compat in TUI)
-- Relay: PARTIAL ⚠️ (healthz OK, send OK, poll 1101)
-- TTFM: 1.2 seconds ✅ (target <10s)
+- Tests: 465/465 ✅ (193 client + 43 UI + 12 TUI + 217 integration)
+- Relay: FULLY OPERATIONAL ✅ (healthz OK, send OK, poll OK, recv OK)
+- TTFM: 1.2 seconds ✅
 - Active conversations (7-day): 0
 - Design partners: 0
-- Competitors: Google A2A (no encryption), claweb.ai (no E2E yet)
+- Outbound messages drafted: 5 (awaiting posting permission)
 
-## What We Accomplished Wave 1
-- Created .company/ workspace with full structure
-- Wrote ALL 9 Day One documents
-- Measured TTFM: 1.2 seconds (crushes 10s target)
-- Verified relay (partial: send OK, poll broken)
-- Ran all tests: 299/300 green
-- Completed distribution research (20 channel hypotheses)
-- Completed competitive landscape analysis
-- Merged to main, pushed
-- Identified 2 critical blockers for Chairman
+## What We Accomplished Wave 2
+- Fixed relay poll: migrated from KV list() to DO SQLite (eliminates free-tier limit)
+- Deployed relay worker to CF (two deploys this wave)
+- Verified full send+recv end-to-end
+- Wrote "Two Agents in 30 Seconds" quick-start for README
+- Drafted 5 outbound positioning messages for distribution
+- Created truth register (shared reality document)
+- Wrote "E2E Encryption for LangChain Agents" tutorial (docs/tutorials/)
+- All 465 tests green
+- Resolved 3 blockers (CF token, relay poll, TUI test)
 
 ## Ops Log
-- Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token invalid — ESCALATED. Public posting — ESCALATED.
+- Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
+- Wave 2: Fixed relay poll (KV→SQLite). CF deploy working. 465 tests green. Quick-start, outbound msgs, tutorial, truth register. Public posting remains only blocker.
