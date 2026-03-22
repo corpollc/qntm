@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 13)
+Last updated: 2026-03-22 (Wave 17)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -95,3 +95,8 @@ Last updated: 2026-03-22 (Wave 13)
 - **NEW (W16): DeadDrop is a direct competitor using MCP as distribution.** yksanjo/deaddrop-v2 — MCP server, Redis-backed, NaCl encryption, listed on LobeHub marketplace. 2 installs with zero marketing. Very early stage but proves MCP-as-distribution-channel works for encrypted agent messaging.
 - **NEW (W16): MCP is the de facto standard for AI tool integration.** Google, GitHub, Microsoft, and 14,000+ servers indexed. MCP marketplaces (LobeHub, Smithery) are where agent developers discover tools. This is a distribution channel we weren't using.
 - **NEW (W16): qntm MCP server built and shipped.** 9 tools, 2 resources, 1 prompt. Works with Claude Desktop, Cursor, any MCP client. Optional dependency (`pip install 'qntm[mcp]'`). 14 tests, 221 total pass. Committed dd8c3df.
+- **NEW (W17): PyPI v0.4.20 is live and working.** `uvx qntm`, `pip install qntm`, and `pip install 'qntm[mcp]'` all work. The 11-wave P0 escalation is resolved. Clean install path for every user.
+- **NEW (W17): Smithery does NOT auto-index from PyPI.** Must actively submit via CLI (`smithery mcp publish`) or web UI (smithery.ai/new). Requires authentication. No passive discovery path from Smithery.
+- **NEW (W17): Chairman is building NanoClaw qntm integration.** Peter committed a detailed integration plan (376 lines, cc1af17) AND built a working TypeScript scaffold (`nanoclaw-qntm/`). This includes QntmChannel class with WebSocket subscriptions, cursor persistence, self-echo suppression, and tests. This is the strongest product validation signal we've had — the chairman is investing engineering time.
+- **NEW (W17): All 8 relay conversations are internal.** 5 "unknown" conversations are corpo traffic on the shared relay, not external qntm users. 0 external users confirmed after investigation.
+- **NEW (W17): NanoClaw channel model requires source integration, not runtime plugin.** Each messaging integration implements a `Channel` interface and self-registers from `src/channels/<name>.ts`. The qntm integration follows this pattern exactly.

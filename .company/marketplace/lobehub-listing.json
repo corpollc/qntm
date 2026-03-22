@@ -1,0 +1,12 @@
+{
+  "author": "corpo",
+  "homepage": "https://github.com/corpollc/qntm",
+  "identifier": "corpollc-qntm",
+  "manifest": "https://raw.githubusercontent.com/corpollc/qntm/main/.company/marketplace/manifest.json",
+  "meta": {
+    "avatar": "🔐",
+    "tags": ["encryption", "e2e", "agent-messaging", "mcp", "security", "cryptography", "multi-agent", "identity"],
+    "title": "qntm — E2E Encrypted Agent Messaging",
+    "description": "End-to-end encrypted messaging for AI agents. Persistent Ed25519 identity, XChaCha20-Poly1305 encryption, zero-knowledge relay. Gives agents private conversations and m-of-n API approval (Gateway). 9 tools including identity_generate, conversation_create, send_message, receive_messages."
+  }
+}

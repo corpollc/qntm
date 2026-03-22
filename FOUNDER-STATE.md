@@ -1,57 +1,60 @@
 # Founder State — qntm
-Updated: 2026-03-22T18:50:00Z
-Wave: 16 (COMPLETE) — MCP SERVER SHIPPED, Campaign 4 Active
+Updated: 2026-03-22T20:45:00Z
+Wave: 17 (COMPLETE) — PyPI P0 Resolved + NanoClaw Integration Discovery
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies — Monday is the test)
 2. 1 design partner in discussion — IN PROGRESS (aeoess#5 + ADHP#12 + AIM#92 posted, awaiting responses)
-3. PyPI fixed and published — BLOCKED (chairman approval needed, 11 waves of escalation)
+3. PyPI fixed and published — ✅ DONE (v0.4.20 live, P0 resolved wave 17)
 4. Direct outreach to 3+ complementary projects — ✅ DONE (3/3: aeoess ✅, ADHP ✅, AIM ✅)
 5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
-6. **NEW: MCP distribution channel** — ✅ MCP server shipped (dd8c3df), marketplace listing pending approval
+6. MCP distribution channel — ✅ MCP server shipped (dd8c3df), marketplace listing BLOCKED (AUTONOMY ruling needed)
 
 ## Campaign 4 Status (Waves 16-20)
 **Theme: Convert or Pivot**
 
 Wave 16: ✅ MCP server built and shipped. New distribution channel.
-Wave 17: Monitor engagement responses (Monday). List on MCP marketplaces.
-Wave 18-20 (if engagement works): Deepen responding relationship toward design partner.
-Wave 18-20 (if no engagement): Expand MCP marketplace presence, framework integrations, 3 more proposals.
+Wave 17: ✅ PyPI P0 resolved. Install path clean. MCP marketplace materials ready. NanoClaw integration discovered.
+Wave 18: Monitor Monday engagement responses. Get marketplace ruling. Support NanoClaw integration.
+Wave 19-20 (if engagement works): Deepen responding relationship toward design partner.
+Wave 19-20 (if no engagement): Expand MCP presence, NanoClaw launch, 3 more proposals.
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410. Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix + v0.3 migration function + MCP server. **11 WAVES OF ESCALATION — no response.** WORKAROUND: All docs point to `pip install from git` (v0.4.2). PyPI remains broken for organic traffic. Request: IMMEDIATE approval for PyPI publish.
-2. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active but all via GitHub (low-conversion channel). HN would 10x reach. **Request: change any-public-post to ALLOWED or REQUIRES_APPROVAL.**
-3. **🟡 P1 NEW: MCP marketplace listing.** qntm MCP server is built. Need approval to list on LobeHub/Smithery if it counts as "public posting" under AUTONOMY.md.
-4. **🟡 P1: Existential distribution problem.** 16 waves, 6 external engagements, 0 replies, 0 users, 0 customer conversations. Product works + MCP server works. 8+ competitors launched this month. Window is narrowing.
+1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work. Thank you.
+2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md?
+3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active but all via GitHub (low-conversion). HN would 10x reach.
+4. **🟡 P1: Existential distribution problem.** 17 waves, 6 external engagements, 0 replies, 0 users, 0 customer conversations. Product works. 8+ competitors launched this month. Two distribution plays available: MCP marketplace + NanoClaw integration.
 
-## What We Accomplished Wave 16
+## What We Accomplished Wave 17
 - **CHAIRMAN BRIEFING SENT** — 2-page briefing via qntm to Pepper (convo 2d0d)
-- **MCP SERVER BUILT AND SHIPPED** — 9 tools (identity_generate, identity_show, conversation_create, conversation_join, conversation_list, send_message, receive_messages, conversation_history, protocol_info), 2 resources (qntm://identity, qntm://conversations), 1 prompt (setup_agent_messaging). Works with Claude Desktop, Cursor, any MCP client. Optional dep: `pip install 'qntm[mcp]'`. 14 tests, all 221 pass. Committed 64cbbae + dd8c3df.
-- **COMPETITIVE INTELLIGENCE** — DeadDrop (yksanjo/deaddrop-v2) discovered: MCP server for encrypted agent messaging, LobeHub listed, 2 installs. Proves MCP-as-distribution works.
-- **README UPDATES** — Both main and Python READMEs updated with MCP server section, config examples, tool list, and docs link.
-- **DECISION MEMO** — Wrote formal decision memo for MCP server build.
-- **RELAY ACTIVITY SPIKE** — Active conversations jumped from 4 to 8 (4 new, investigating origin).
+- **PyPI P0 RESOLVED** — v0.4.20 live on PyPI. Clean install: `pip install qntm`, `uvx qntm`, `pip install 'qntm[mcp]'`. 11-wave escalation over.
+- **INSTALL DOCS UPDATED** — All install instructions switched from git workaround to PyPI (commit eed1f60)
+- **MCP MARKETPLACE MATERIALS READY** — LobeHub manifest + Smithery config at `.company/marketplace/`
+- **SMITHERY RESEARCH** — No auto-indexing. Must actively submit via CLI (`smithery mcp publish`) or web UI. Requires auth.
+- **RELAY INVESTIGATION** — 8 active conversations, all internal. 5 unknown are corpo traffic on shared relay. 0 external users confirmed.
+- **NANOCLAW INTEGRATION DISCOVERED** — Peter committed NanoClaw qntm integration plan (cc1af17) AND built scaffold (`nanoclaw-qntm/`). Full TypeScript channel with WebSocket subscriptions, cursor persistence, self-echo suppression. Chairman is investing in qntm as NanoClaw channel.
+- **221 TESTS PASS** — 0 failures
 
 ## Metrics
 - Tests: 221 pass (207 python-dist + 14 MCP server) ✅
-- Relay: OPERATIONAL ✅ (WebSocket-only, polling removed)
+- Relay: OPERATIONAL ✅ (WebSocket-only)
 - Echo bot: CF WORKER LIVE ✅ (version 80be631f)
 - TTFM: 1.2 seconds ✅
-- Active conversations (7-day relay): 8 (up from 4 — 4 new this wave)
+- Active conversations (7-day relay): 8 (all internal — corpo shared relay)
 - Active conversations (qntm-only): 1 (echo bot)
 - Design partners: 0
 - External users who've ever messaged: 0
 - **External engagements: 6** — A2A #1575 + #1667 + #1606 + aeoess#5 + ADHP#12 + AIM#92 — **0 replies**
 - **Direct integration proposals: 3** — aeoess#5 + ADHP#12 + AIM#92 — **0 replies**
 - PyPI downloads: 26/day, 862/week, 1,625/month
-- Published version: **BROKEN** (v0.3 uses removed polling API)
+- Published version: **v0.4.20 WORKING** ✅ (P0 resolved)
 - GitHub: 1 star, 0 forks, 0 external issues
 - **GitHub traffic (14 days):** 26 views/11 uniques, 2,929 clones/401 uniques
 - **Deep doc readers:** 4+ unique visitors reading API gateway, getting-started, gateway-deploy, LICENSE
 - **Competitors (March 2026):** 8+ new projects (SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass, DeadDrop)
 - **Campaigns completed:** 3 (C1: 4/5, C2: 2/5, C3: 2.5/5)
-- **Total waves:** 16
-- **Code shipped this wave:** MCP server (64cbbae + dd8c3df)
+- **Total waves:** 17
+- **NanoClaw integration:** scaffold built by chairman, tests passing
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -70,6 +73,7 @@ Wave 18-20 (if no engagement): Expand MCP marketplace presence, framework integr
 - Wave 14: **DOCS INSTALL FIX + TRAFFIC INTELLIGENCE.** Found 11 unique GitHub visitors reading deep docs. 7+ new competitors in March 2026.
 - Wave 15: **CAMPAIGN 3 FINAL + MIGRATION FIX.** Chairman briefing sent. v0.3→v0.4.2 migration function shipped. Campaign 3 scored 2.5/5.
 - Wave 16: **MCP SERVER SHIPPED.** 9 tools, 2 resources, 1 prompt. Works with Claude Desktop, Cursor, any MCP client. DeadDrop competitive intel. Both READMEs updated. Decision memo written. Relay activity spike (4→8 active convos). 221 tests pass.
+- Wave 17: **PyPI P0 RESOLVED + NANOCLAW DISCOVERY.** v0.4.20 live on PyPI. Install path clean. MCP marketplace materials ready. Smithery requires active submission. Relay investigation: 8 convos, all internal. Chairman building NanoClaw qntm integration (significant product validation). 221 tests pass.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
@@ -85,3 +89,4 @@ Wave 18-20 (if no engagement): Expand MCP marketplace presence, framework integr
 - ~~Broken install in docs pages~~ — RESOLVED Wave 14 (getting-started, tutorial, PyPI README)
 - ~~conversations.json v0.3 format incompatibility~~ — RESOLVED Wave 15 (auto-migration function)
 - ~~No MCP distribution channel~~ — RESOLVED Wave 16 (MCP server built and shipped)
+- ~~PyPI CLI broken (v0.3, 11-wave escalation)~~ — RESOLVED Wave 17 (v0.4.20 published by chairman)
