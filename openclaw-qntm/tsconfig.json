@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["DOM", "ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2023",
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@corpollc/qntm": ["../client/src/index.ts"],
+      "openclaw/plugin-sdk/account-helpers": ["./sdk-shims/account-helpers.ts"],
+      "openclaw/plugin-sdk/account-id": ["./sdk-shims/account-id.ts"],
+      "openclaw/plugin-sdk/channel-config-helpers": ["./sdk-shims/channel-config-helpers.ts"],
+      "openclaw/plugin-sdk/channel-reply-pipeline": ["./sdk-shims/channel-reply-pipeline.ts"],
+      "openclaw/plugin-sdk/channel-send-result": ["./sdk-shims/channel-send-result.ts"],
+      "openclaw/plugin-sdk/core": ["./sdk-shims/core.ts"],
+      "openclaw/plugin-sdk/extension-shared": ["./sdk-shims/extension-shared.ts"],
+      "openclaw/plugin-sdk/reply-payload": ["./sdk-shims/reply-payload.ts"],
+      "openclaw/plugin-sdk/state-paths": ["./sdk-shims/state-paths.ts"]
+    }
+  },
+  "include": ["index.ts", "setup-entry.ts", "sdk-shims/**/*.ts", "src/**/*.ts", "tests/**/*.ts"]
+}

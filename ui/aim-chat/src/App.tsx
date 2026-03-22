@@ -13,8 +13,12 @@ import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { HelpPanel } from './components/HelpPanel'
 import { JoinModal } from './components/JoinModal'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
-import { useToast } from './hooks/useToast'
-import { ToastContainer } from './components/ToastContainer'
+import {
+  relayConversationIds,
+  reconcileRelayStates,
+  selectedConversationRelayStatus,
+  type RelayConnectionState,
+} from './relayStatus'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -68,6 +72,7 @@ export default function App() {
   const [dropboxDraft, setDropboxDraft] = useState('')
 
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
+  const [relayStates, setRelayStates] = useState<Record<string, RelayConnectionState>>({})
 
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -78,14 +83,15 @@ export default function App() {
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
   const [showJoinModal, setShowJoinModal] = useState(false)
 
-  const { toasts, addToast, removeToast } = useToast()
-
-  const pollingRef = useRef(false)
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
   const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map())
   const activeProfileIdRef = useRef('')
   const selectedConversationIdRef = useRef('')
+
+  const addToast = useCallback((message: string, _type?: string, _duration?: number) => {
+    setStatus(message)
+  }, [])
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) || null,
@@ -169,9 +175,12 @@ export default function App() {
     return conversations.filter(c => !hiddenConversations.has(c.id))
   }, [conversations, hiddenConversations, showHidden])
 
-  const subscriptionConversationIds = useMemo(
-    () => conversations.map((conversation) => conversation.id).sort().join('|'),
-    [conversations],
+  const relayConversationIdsKey = useMemo(
+    () => relayConversationIds(
+      conversations.map((conversation) => conversation.id),
+      hiddenConversations,
+    ).sort().join('|'),
+    [conversations, hiddenConversations],
   )
 
   const hiddenCount = useMemo(
@@ -206,6 +215,14 @@ export default function App() {
     keys.sort((left, right) => left.localeCompare(right))
     return keys
   }, [messages])
+
+  const relayStatus = useMemo(
+    () => selectedConversationRelayStatus(relayStates, selectedConversationId),
+    [relayStates, selectedConversationId],
+  )
+
+  const footerStatus = relayStatus || status || error
+  const footerStatusIsError = Boolean(error) && footerStatus === error
 
   const shortcutActions = useMemo(() => ({
     focusConversationFilter() {
@@ -296,19 +313,25 @@ export default function App() {
     subscriptionsRef.current = new Map()
 
     if (!activeProfileId) {
+      setRelayStates({})
       return
     }
 
     const profileName = activeProfile?.name || ''
     const nextSubscriptions = new Map<string, DropboxSubscription>()
     subscriptionsRef.current = nextSubscriptions
+    const relayConversationIdList = relayConversationIdsKey
+      ? relayConversationIdsKey.split('|')
+      : []
 
-    for (const conversation of conversations) {
+    setRelayStates((previous) => reconcileRelayStates(previous, relayConversationIdList))
+
+    for (const conversationId of relayConversationIdList) {
       try {
         const subscription = api.subscribeConversation(
           activeProfileId,
           profileName,
-          conversation.id,
+          conversationId,
           {
             onMessage: async () => {
               if (activeProfileIdRef.current !== activeProfileId) {
@@ -317,19 +340,19 @@ export default function App() {
 
               setConversations(api.listConversations(activeProfileId).conversations)
 
-              if (selectedConversationIdRef.current === conversation.id) {
-                setMessages(api.getHistory(activeProfileId, conversation.id).messages)
+              if (selectedConversationIdRef.current === conversationId) {
+                setMessages(api.getHistory(activeProfileId, conversationId).messages)
                 setUnreadCounts((prev) => {
-                  if (!prev[conversation.id]) return prev
+                  if (!prev[conversationId]) return prev
                   const next = { ...prev }
-                  delete next[conversation.id]
+                  delete next[conversationId]
                   return next
                 })
                 setStatus('Received new message')
               } else {
                 setUnreadCounts((prev) => ({
                   ...prev,
-                  [conversation.id]: (prev[conversation.id] || 0) + 1,
+                  [conversationId]: (prev[conversationId] || 0) + 1,
                 }))
               }
 
@@ -340,26 +363,36 @@ export default function App() {
                 return
               }
               setError(subscriptionError.message)
+              setStatus(subscriptionError.message)
             },
             onReconnect: () => {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
               }
-              setStatus('Reconnecting to relay...')
+              setRelayStates((previous) => (
+                previous[conversationId] === 'reconnecting'
+                  ? previous
+                  : { ...previous, [conversationId]: 'reconnecting' }
+              ))
             },
             onOpen: () => {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
               }
-              setStatus('Live')
+              setRelayStates((previous) => (
+                previous[conversationId] === 'live'
+                  ? previous
+                  : { ...previous, [conversationId]: 'live' }
+              ))
               setError('')
             },
           },
         )
-        nextSubscriptions.set(conversation.id, subscription)
+        nextSubscriptions.set(conversationId, subscription)
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to subscribe to conversation'
         setError(msg)
+        setStatus(msg)
       }
     }
 
@@ -371,7 +404,7 @@ export default function App() {
         subscriptionsRef.current = new Map()
       }
     }
-  }, [activeProfileId, activeProfile?.name, subscriptionConversationIds])
+  }, [activeProfileId, activeProfile?.name, relayConversationIdsKey])
 
   async function initializeProfiles() {
     try {
@@ -525,43 +558,20 @@ export default function App() {
     }
   }
 
-  async function receiveMessages(manual: boolean) {
-    if (pollingRef.current) {
-      return
-    }
-
+  async function refreshSelectedConversation() {
     if (!activeProfileId || !selectedConversationId) {
       return
     }
 
-    pollingRef.current = true
     try {
-      const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', selectedConversationId)
-      const relayWarning = response.warning?.trim() || ''
-
-      if (response.messages.length > 0) {
-        await refreshHistory(activeProfileId, selectedConversationId)
-        const baseStatus = `Received ${response.messages.length} new message(s)`
-        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
-        setStatus(fullStatus)
-        addToast(fullStatus, 'info')
-      } else if (manual) {
-        const baseStatus = 'No new messages'
-        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
-        setStatus(fullStatus)
-        addToast(fullStatus, 'info')
-      } else if (relayWarning) {
-        setStatus(relayWarning)
-        addToast(relayWarning, 'info')
-      }
-
+      await refreshHistory(activeProfileId, selectedConversationId)
+      setStatus('Conversation refreshed')
+      addToast('Conversation refreshed', 'info')
       setError('')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to receive messages'
+      const msg = err instanceof Error ? err.message : 'Failed to refresh conversation'
       setError(msg)
       addToast(msg, 'error')
-    } finally {
-      pollingRef.current = false
     }
   }
 
@@ -1126,11 +1136,9 @@ export default function App() {
             isLoadingMessages={isLoadingMessages}
             showGatePanel={showGatePanel}
             setShowGatePanel={setShowGatePanel}
-            activeProfile={activeProfile}
-            status={status}
             messageTailRef={messageTailRef}
             onSendMessage={onSendMessage}
-            onCheckMessages={() => void receiveMessages(true)}
+            onCheckMessages={() => void refreshSelectedConversation()}
             onGateApprove={onGateApprove}
             onGateDisapprove={onGateDisapprove}
             onGovApprove={onGovApprove}
@@ -1180,7 +1188,6 @@ export default function App() {
           } />
           </Routes>
         </div>
-        <ToastContainer toasts={toasts} removeToast={removeToast} />
         {showJoinModal && inviteToken && (
           <JoinModal
             inviteToken={inviteToken}
@@ -1192,8 +1199,12 @@ export default function App() {
             }}
           />
         )}
-        <footer className="status-bar">
+        <footer className="status-bar app-status-bar" aria-live="polite">
           <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
+          <span className={`status-bar-message${footerStatusIsError ? ' status-bar-message-error' : ''}`}>
+            {activeProfile ? `Profile: ${activeProfile.name} · ` : ''}
+            {footerStatus || 'Idle'}
+          </span>
           <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
         </footer>
       </div>

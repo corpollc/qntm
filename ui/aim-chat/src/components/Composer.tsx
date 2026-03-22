@@ -37,7 +37,7 @@ export function Composer({
         disabled={!selectedConversation || isWorking}
         onClick={onCheckMessages}
       >
-        Check for messages
+        Refresh view
       </button>
     </form>
   )

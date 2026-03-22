@@ -115,15 +115,6 @@ export class GatewayConversationDO extends DurableObject<Env> {
       return this.handlePromote(request);
     }
 
-    if (request.method === 'POST' && url.pathname === '/debug/poll-once') {
-      await this.alarm();
-      return this.handleStatus();
-    }
-
-    if (request.method === 'GET' && url.pathname === '/status') {
-      return this.handleStatus();
-    }
-
     return new Response('Not Found', { status: 404 });
   }
 
@@ -163,7 +154,6 @@ export class GatewayConversationDO extends DurableObject<Env> {
       conv_nonce_key: body.conv_nonce_key,
       conv_epoch: body.conv_epoch,
       poll_cursor: 0,
-      polling: false,
       promoted_at: new Date().toISOString(),
       gate_promoted: false,
       rules: [],
@@ -183,23 +173,6 @@ export class GatewayConversationDO extends DurableObject<Env> {
     } satisfies PromoteResponse, { status: 201 });
   }
 
-  private async handleStatus(): Promise<Response> {
-    const existing = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!existing) {
-      return Response.json({ promoted: false });
-    }
-    return Response.json({
-      promoted: true,
-      gate_promoted: existing.gate_promoted,
-      conv_id: existing.conv_id,
-      gateway_kid: existing.kid,
-      polling: existing.polling,
-      poll_cursor: existing.poll_cursor,
-      promoted_at: existing.promoted_at,
-      rules: existing.rules,
-    });
-  }
-
   /**
    * Alarm: keep the live relay subscription attached and run maintenance.
    */
@@ -209,8 +182,6 @@ export class GatewayConversationDO extends DurableObject<Env> {
     if (!initialState) return;
 
     try {
-      initialState.polling = true;
-      await this.ctx.storage.put('conv_state', initialState);
       this.ensureRelaySubscription(initialState);
 
       const currentState = await this.ctx.storage.get<ConversationState>('conv_state');
@@ -221,11 +192,6 @@ export class GatewayConversationDO extends DurableObject<Env> {
         await this.sweepExpiredSecrets(currentState);
       }
     } finally {
-      const currentState = await this.ctx.storage.get<ConversationState>('conv_state');
-      if (currentState) {
-        currentState.polling = false;
-        await this.ctx.storage.put('conv_state', currentState);
-      }
       await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
     }
   }

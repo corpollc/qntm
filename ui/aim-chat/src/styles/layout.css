@@ -182,6 +182,22 @@
   text-decoration: underline;
 }
 
+.app-status-bar {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-bar-message {
+  flex: 1 1 240px;
+  min-width: 0;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.status-bar-message-error {
+  color: var(--danger);
+}
+
 @media (max-width: 980px) {
   .aim-desktop {
     padding: 10px;
@@ -211,6 +227,10 @@
 
   .message {
     max-width: 92%;
+  }
+
+  .status-bar-message {
+    text-align: left;
   }
 }
 

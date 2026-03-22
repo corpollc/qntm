@@ -120,7 +120,9 @@ export function SettingsPage({
                       setStatus('Backup restored — reloading...')
                       setTimeout(() => window.location.reload(), 500)
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Invalid backup file')
+                      const msg = err instanceof Error ? err.message : 'Invalid backup file'
+                      setError(msg)
+                      setStatus(msg)
                     }
                   }
                   reader.readAsText(file)

@@ -43,19 +43,6 @@ function errorResponse(message: string, status: number): Response {
 	return jsonResponse({ error: message }, status);
 }
 
-function parseMessageKey(key: string): { convID: string; ts: number; msgID: string } | null {
-	const match = key.match(/^\/([0-9a-f]{32})\/msg\/(\d+)\/([0-9a-f]{32})\.cbor$/i);
-	if (!match) {
-		return null;
-	}
-
-	return {
-		convID: match[1].toLowerCase(),
-		ts: Number(match[2]),
-		msgID: match[3].toLowerCase(),
-	};
-}
-
 const receiptProto = "qntm-receipt-v1";
 
 type ReadReceiptPayload = {
@@ -72,6 +59,7 @@ type ReadReceiptPayload = {
 type SendPayload = {
 	conv_id: string;
 	envelope_b64: string;
+	msg_id?: string;
 	announce_sig?: string; // hex Ed25519 sig over SHA-256(envelope_b64), required for announce channels
 };
 
@@ -105,16 +93,6 @@ type AnnounceDeletePayload = {
 	conv_id: string;
 	master_pk: string;
 	sig: string;
-};
-
-type PollConversation = {
-	conv_id: string;
-	from_seq: number;
-};
-
-type PollPayload = {
-	conversations: PollConversation[];
-	max_messages?: number;
 };
 
 function toHex(data: Uint8Array): string {
@@ -224,23 +202,10 @@ async function verifyAnnounceSig(publicKeyBase64URL: string, plaintext: string, 
 	return verifyEd25519Hex(publicKeyBase64URL, digest, signatureHex);
 }
 
-async function nextSequence(env: Env, convID: string): Promise<number> {
-	const id = env.CONVO_SEQ_DO.idFromName(convID);
-	const stub = env.CONVO_SEQ_DO.get(id);
-	const response = await stub.fetch("https://convo-seq/next", { method: "POST" });
-	if (!response.ok) {
-		throw new Error(`sequence allocation failed: HTTP ${response.status}`);
-	}
-	const payload = (await response.json()) as { seq?: number };
-	if (!payload || !Number.isInteger(payload.seq) || payload.seq! <= 0) {
-		throw new Error("invalid sequence allocation response");
-	}
-	return payload.seq!;
-}
-
 type RelayPublishPayload = {
 	conv_id: string;
 	envelope_b64: string;
+	msg_id?: string;
 };
 
 type RelayFrame =
@@ -250,6 +215,10 @@ type RelayFrame =
 			envelope_b64: string;
 	  }
 	| {
+			type: "ready";
+			head_seq: number;
+	  }
+	| {
 			type: "pong";
 	  };
 
@@ -257,73 +226,26 @@ function conversationMessageKey(convID: string, seq: number): string {
 	return `/${convID}/msg/${seq}.cbor`;
 }
 
-function conversationMessagePrefix(convID: string): string {
-	return `/${convID}/msg/`;
+function messageSequenceIndexKey(msgID: string): string {
+	return `msg-seq:${msgID}`;
 }
 
-function parseSequencedMessageKey(convID: string, key: string): number | null {
-	const prefix = conversationMessagePrefix(convID);
-	if (!key.startsWith(prefix) || !key.endsWith(".cbor")) {
-		return null;
-	}
-
-	const rawSeq = key.slice(prefix.length, -".cbor".length);
-	const seq = Number.parseInt(rawSeq, 10);
-	if (!Number.isInteger(seq) || seq <= 0) {
-		return null;
-	}
-	return seq;
+function receiptReadersKey(msgID: string): string {
+	return `receipt-readers:${msgID}`;
 }
 
-async function listConversationMessages(
+async function publishConversationMessage(
 	env: Env,
 	convID: string,
-	fromSeq: number,
-	limit: number,
-): Promise<Array<{ seq: number; key: string }>> {
-	if (limit <= 0) {
-		return [];
-	}
-
-	const listed = await env.QNTM_KV.list({ prefix: conversationMessagePrefix(convID), limit: 1000 });
-	return listed.keys
-		.map((entry) => {
-			const seq = parseSequencedMessageKey(convID, entry.name);
-			return seq === null ? null : { seq, key: entry.name };
-		})
-		.filter((entry): entry is { seq: number; key: string } => entry !== null && entry.seq > fromSeq)
-		.sort((left, right) => left.seq - right.seq)
-		.slice(0, limit);
-}
-
-async function loadConversationMessages(
-	env: Env,
-	convID: string,
-	fromSeq: number,
-	limit: number,
-): Promise<Array<{ seq: number; envelope_b64: string }>> {
-	const messageEntries = await listConversationMessages(env, convID, fromSeq, limit);
-	const messages: Array<{ seq: number; envelope_b64: string }> = [];
-	for (const entry of messageEntries) {
-		const value = await env.QNTM_KV.get(entry.key, "arrayBuffer");
-		if (value === null) {
-			continue;
-		}
-		messages.push({
-			seq: entry.seq,
-			envelope_b64: toBase64(new Uint8Array(value)),
-		});
-	}
-	return messages;
-}
-
-async function publishConversationMessage(env: Env, convID: string, envelope_b64: string): Promise<number> {
+	envelope_b64: string,
+	msgID?: string,
+): Promise<number> {
 	const id = env.CONVO_SEQ_DO.idFromName(convID);
 	const stub = env.CONVO_SEQ_DO.get(id);
 	const response = await stub.fetch("https://convo-seq/publish", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ conv_id: convID, envelope_b64 } satisfies RelayPublishPayload),
+		body: JSON.stringify({ conv_id: convID, envelope_b64, msg_id: msgID } satisfies RelayPublishPayload),
 	});
 	if (!response.ok) {
 		throw new Error(`conversation publish failed: HTTP ${response.status}`);
@@ -335,12 +257,30 @@ async function publishConversationMessage(env: Env, convID: string, envelope_b64
 	return payload.seq!;
 }
 
-async function replayConversationMessages(
+async function loadConversationMessagesBySequence(
 	env: Env,
 	convID: string,
 	fromSeq: number,
+	headSeq: number,
+	limit: number,
 ): Promise<Array<{ seq: number; envelope_b64: string }>> {
-	return loadConversationMessages(env, convID, fromSeq, 1000);
+	if (limit <= 0 || headSeq <= fromSeq) {
+		return [];
+	}
+
+	const messages: Array<{ seq: number; envelope_b64: string }> = [];
+	const lastSeq = Math.min(headSeq, fromSeq + limit);
+	for (let seq = fromSeq + 1; seq <= lastSeq; seq += 1) {
+		const value = await env.QNTM_KV.get(conversationMessageKey(convID, seq), "arrayBuffer");
+		if (value === null) {
+			continue;
+		}
+		messages.push({
+			seq,
+			envelope_b64: toBase64(new Uint8Array(value)),
+		});
+	}
+	return messages;
 }
 
 function validateUpgradeRequest(request: Request): Response | null {
@@ -382,6 +322,12 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		}
 
 		const convID = payload.conv_id.toLowerCase();
+		if (payload.msg_id !== undefined) {
+			if (typeof payload.msg_id !== "string" || !isHexID(payload.msg_id, 32)) {
+				return Response.json({ error: "invalid msg_id" }, { status: 400 });
+			}
+			payload.msg_id = payload.msg_id.toLowerCase();
+		}
 		const ttl = parseInt(this.env.ENVELOPE_TTL_SECONDS || "604800", 10);
 		let envelopeBytes: Uint8Array;
 		try {
@@ -394,6 +340,9 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const seq = current + 1;
 		await this.ctx.storage.put("next_seq", seq);
 		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
+		if (payload.msg_id) {
+			await this.ctx.storage.put(messageSequenceIndexKey(payload.msg_id), seq);
+		}
 
 		// Store in SQLite for KV-list-free reads
 		this.ensureSchema();
@@ -445,14 +394,9 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 
-		// Replay from DO SQLite instead of KV to avoid list() limits
-		this.ensureSchema();
-		const replayRows = this.ctx.storage.sql.exec(
-			`SELECT seq, envelope_b64 FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT 1000`,
-			fromSeqRaw
-		).toArray() as Array<{ seq: number; envelope_b64: string }>;
-
-		for (const message of replayRows) {
+		const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
+		const replay = await loadConversationMessagesBySequence(this.env, convID, fromSeqRaw, headSeq, 1000);
+		for (const message of replay) {
 			server.send(
 				JSON.stringify({
 					type: "message",
@@ -461,6 +405,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 				} satisfies RelayFrame),
 			);
 		}
+		server.send(JSON.stringify({ type: "ready", head_seq: headSeq } satisfies RelayFrame));
 
 		return new Response(null, {
 			status: 101,
@@ -468,21 +413,71 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		});
 	}
 
-	private handlePoll(request: Request): Response {
+	private async handleMessageSequenceLookup(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		const fromSeq = Number(url.searchParams.get("from_seq") || "0");
-		const limit = Math.min(Number(url.searchParams.get("limit") || "200"), 1000);
+		const msgID = (url.searchParams.get("msg_id") || "").toLowerCase();
+		if (!isHexID(msgID, 32)) {
+			return Response.json({ error: "invalid msg_id" }, { status: 400 });
+		}
 
-		this.ensureSchema();
-		const rows = this.ctx.storage.sql.exec(
-			`SELECT seq, envelope_b64 FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?`,
-			fromSeq, limit
-		).toArray() as Array<{ seq: number; envelope_b64: string }>;
+		const seq = ((await this.ctx.storage.get<number>(messageSequenceIndexKey(msgID))) ?? null) as number | null;
+		return Response.json({ seq }, { status: 200 });
+	}
 
-		const messages = rows.map(r => ({ seq: r.seq, envelope_b64: r.envelope_b64 }));
-		const upToSeq = messages.length > 0 ? messages[messages.length - 1]!.seq : fromSeq;
+	private async handleRecordReceipt(request: Request): Promise<Response> {
+		let payload: { msg_id?: string; reader_kid?: string; required_acks?: number };
+		try {
+			payload = (await request.json()) as { msg_id?: string; reader_kid?: string; required_acks?: number };
+		} catch {
+			return Response.json({ error: "invalid receipt payload" }, { status: 400 });
+		}
 
-		return Response.json({ messages, up_to_seq: upToSeq });
+		const msgID = (payload.msg_id || "").toLowerCase();
+		const readerKID = (payload.reader_kid || "").toLowerCase();
+		const requiredAcks = payload.required_acks ?? 0;
+		if (!isHexID(msgID, 32) || !isHexID(readerKID, 32)) {
+			return Response.json({ error: "invalid receipt identifiers" }, { status: 400 });
+		}
+		if (!Number.isInteger(requiredAcks) || requiredAcks < 1 || requiredAcks > 256) {
+			return Response.json({ error: "invalid required_acks" }, { status: 400 });
+		}
+
+		const readers = ((await this.ctx.storage.get<string[]>(receiptReadersKey(msgID))) ?? []) as string[];
+		if (!readers.includes(readerKID)) {
+			readers.push(readerKID);
+			await this.ctx.storage.put(receiptReadersKey(msgID), readers);
+		}
+
+		return Response.json(
+			{
+				receipts: readers.length,
+				should_delete: readers.length >= requiredAcks,
+			},
+			{ status: 200 },
+		);
+	}
+
+	private async handleClearMessage(request: Request): Promise<Response> {
+		let payload: { msg_id?: string };
+		try {
+			payload = (await request.json()) as { msg_id?: string };
+		} catch {
+			return Response.json({ error: "invalid clear payload" }, { status: 400 });
+		}
+
+		const msgID = (payload.msg_id || "").toLowerCase();
+		if (!isHexID(msgID, 32)) {
+			return Response.json({ error: "invalid msg_id" }, { status: 400 });
+		}
+
+		await this.ctx.storage.delete(messageSequenceIndexKey(msgID));
+		await this.ctx.storage.delete(receiptReadersKey(msgID));
+		return Response.json({ cleared: true }, { status: 200 });
+	}
+
+	private async handleReset(): Promise<Response> {
+		await this.ctx.storage.deleteAll();
+		return Response.json({ reset: true }, { status: 200 });
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -495,8 +490,20 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			return this.handleSubscribe(request);
 		}
 
-		if (request.method === "GET" && url.pathname === "/poll") {
-			return this.handlePoll(request);
+		if (request.method === "GET" && url.pathname === "/message-seq") {
+			return this.handleMessageSequenceLookup(request);
+		}
+
+		if (request.method === "POST" && url.pathname === "/record-receipt") {
+			return this.handleRecordReceipt(request);
+		}
+
+		if (request.method === "POST" && url.pathname === "/clear-message") {
+			return this.handleClearMessage(request);
+		}
+
+		if (request.method === "POST" && url.pathname === "/reset") {
+			return this.handleReset();
 		}
 
 		if (request.method === "POST" && url.pathname === "/next") {
@@ -556,7 +563,6 @@ export default {
 
 			const ttl = parseInt(env.ENVELOPE_TTL_SECONDS || "604800", 10);
 			const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
-			const maxMessagesPerChannel = parseInt(env.MAX_MESSAGES_PER_CHANNEL || "512", 10);
 
 			if (request.method === "POST" && path === "/v1/send") {
 				let payload: SendPayload;
@@ -571,6 +577,15 @@ export default {
 				}
 
 				payload.conv_id = payload.conv_id.toLowerCase();
+				if (payload.msg_id !== undefined) {
+					if (typeof payload.msg_id !== "string") {
+						return errorResponse("invalid msg_id", 400);
+					}
+					payload.msg_id = payload.msg_id.toLowerCase();
+					if (!isHexID(payload.msg_id, 32)) {
+						return errorResponse("invalid msg_id", 400);
+					}
+				}
 				if (!isHexID(payload.conv_id, 32)) {
 					return errorResponse("invalid conv_id", 400);
 				}
@@ -599,55 +614,17 @@ export default {
 					}
 				}
 
-				const seq = await publishConversationMessage(env, payload.conv_id, payload.envelope_b64);
+				const seq = await publishConversationMessage(
+					env,
+					payload.conv_id,
+					payload.envelope_b64,
+					payload.msg_id,
+				);
 				return jsonResponse({ seq }, 201);
 			}
 
 			if (request.method === "POST" && path === "/v1/poll") {
-				let payload: PollPayload;
-				try {
-					payload = (await request.json()) as PollPayload;
-				} catch {
-					return errorResponse("invalid poll payload", 400);
-				}
-
-				if (!payload || !Array.isArray(payload.conversations) || payload.conversations.length === 0 || payload.conversations.length > 20) {
-					return errorResponse("invalid conversations list", 400);
-				}
-
-				const maxMessagesRaw = payload.max_messages ?? 200;
-				if (!Number.isInteger(maxMessagesRaw) || maxMessagesRaw < 0 || maxMessagesRaw > 1000) {
-					return errorResponse("invalid max_messages", 400);
-				}
-				const maxMessages = maxMessagesRaw;
-
-				const conversationResults: Array<{ conv_id: string; up_to_seq: number; messages: Array<{ seq: number; envelope_b64: string }> }> = [];
-
-				for (const convo of payload.conversations) {
-					if (!convo || typeof convo.conv_id !== "string" || !Number.isInteger(convo.from_seq) || convo.from_seq < 0) {
-						return errorResponse("invalid conversation entry", 400);
-					}
-					const convID = convo.conv_id.toLowerCase();
-					if (!isHexID(convID, 32)) {
-						return errorResponse("invalid conv_id", 400);
-					}
-
-					// Route reads through DO SQLite instead of KV list() to avoid free-tier daily limits
-					const doId = env.CONVO_SEQ_DO.idFromName(convID);
-					const stub = env.CONVO_SEQ_DO.get(doId);
-					const doResp = await stub.fetch(
-						`https://convo-seq/poll?from_seq=${convo.from_seq}&limit=${maxMessages}`
-					);
-					const doResult = await doResp.json() as { messages: Array<{ seq: number; envelope_b64: string }>; up_to_seq: number };
-
-					conversationResults.push({
-						conv_id: convID,
-						up_to_seq: doResult.up_to_seq,
-						messages: doResult.messages,
-					});
-				}
-
-				return jsonResponse({ conversations: conversationResults }, 200);
+				return errorResponse("relay polling has been removed; use /v1/subscribe", 410);
 			}
 
 			if (request.method === "GET" && path === "/v1/subscribe") {
@@ -802,12 +779,18 @@ export default {
 				// Delete channel metadata
 				await env.QNTM_KV.delete(announceMetaKey(payload.conv_id));
 
-				// Delete all messages in the channel
-				const msgPrefix = `/${payload.conv_id}/msg/`;
-				const msgList = await env.QNTM_KV.list({ prefix: msgPrefix, limit: 1000 });
-				for (const entry of msgList.keys) {
-					await env.QNTM_KV.delete(entry.name);
+				const announceDOId = env.CONVO_SEQ_DO.idFromName(payload.conv_id);
+				const announceStub = env.CONVO_SEQ_DO.get(announceDOId);
+				const headResponse = await announceStub.fetch("https://convo-seq/head");
+				if (!headResponse.ok) {
+					throw new Error(`announce head lookup failed: HTTP ${headResponse.status}`);
 				}
+				const headPayload = (await headResponse.json()) as { seq?: number };
+				const headSeq = Number.isInteger(headPayload.seq) && headPayload.seq! > 0 ? headPayload.seq! : 0;
+				for (let seq = 1; seq <= headSeq; seq += 1) {
+					await env.QNTM_KV.delete(conversationMessageKey(payload.conv_id, seq));
+				}
+				await announceStub.fetch("https://convo-seq/reset", { method: "POST" });
 
 				return jsonResponse({ deleted: true, conv_id: payload.conv_id }, 200);
 			}
@@ -874,159 +857,61 @@ export default {
 				return errorResponse("receipts not supported for announce channels", 403);
 			}
 
-			const messagePrefix = `/${payload.conv_id}/msg/`;
-			const messageList = await env.QNTM_KV.list({ prefix: messagePrefix, limit: 1000 });
-			const messageSuffix = `/${payload.msg_id}.cbor`;
-			const messageKey = messageList.keys.map((entry) => entry.name).find((name) => name.endsWith(messageSuffix));
-			if (!messageKey) {
-				return errorResponse("message not found", 404);
-			}
-
-			const receiptPrefix = `/${payload.conv_id}/receipt/${payload.msg_id}/`;
-			const receiptKey = `${receiptPrefix}${payload.reader_kid}.json`;
-			await env.QNTM_KV.put(receiptKey, JSON.stringify(payload), { expirationTtl: ttl });
-
-			const receiptList = await env.QNTM_KV.list({ prefix: receiptPrefix, limit: 1000 });
-			const uniqueReaderKIDs = new Set<string>();
-			for (const entry of receiptList.keys) {
-				const suffix = entry.name.slice(receiptPrefix.length);
-				if (!suffix.endsWith(".json")) {
-					continue;
+				const receiptDOId = env.CONVO_SEQ_DO.idFromName(payload.conv_id);
+				const receiptStub = env.CONVO_SEQ_DO.get(receiptDOId);
+				const lookupResponse = await receiptStub.fetch(`https://convo-seq/message-seq?msg_id=${payload.msg_id}`);
+				if (!lookupResponse.ok) {
+					throw new Error(`receipt lookup failed: HTTP ${lookupResponse.status}`);
 				}
-				const kid = suffix.slice(0, -".json".length).toLowerCase();
-				if (isHexID(kid, 32)) {
-					uniqueReaderKIDs.add(kid);
-				}
-			}
-
-			const shouldDelete = uniqueReaderKIDs.size >= payload.required_acks;
-			if (shouldDelete) {
-				await env.QNTM_KV.delete(messageKey);
-				for (const entry of receiptList.keys) {
-					await env.QNTM_KV.delete(entry.name);
+				const lookupPayload = (await lookupResponse.json()) as { seq?: number | null };
+				const messageSeq = Number.isInteger(lookupPayload.seq) && lookupPayload.seq! > 0 ? lookupPayload.seq! : null;
+				if (messageSeq === null) {
+					return errorResponse("message not found", 404);
 				}
 
-				// Clean up any legacy ACK objects for this message.
-				const legacyAckPrefix = `/${payload.conv_id}/ack/${payload.msg_id}/`;
-				const legacyAckList = await env.QNTM_KV.list({ prefix: legacyAckPrefix, limit: 1000 });
-				for (const ack of legacyAckList.keys) {
-					await env.QNTM_KV.delete(ack.name);
+				const recordResponse = await receiptStub.fetch("https://convo-seq/record-receipt", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						msg_id: payload.msg_id,
+						reader_kid: payload.reader_kid,
+						required_acks: payload.required_acks,
+					}),
+				});
+				if (!recordResponse.ok) {
+					throw new Error(`receipt recording failed: HTTP ${recordResponse.status}`);
 				}
-			}
+				const recordPayload = (await recordResponse.json()) as { receipts?: number; should_delete?: boolean };
+				const receiptCount = Number.isInteger(recordPayload.receipts) ? recordPayload.receipts! : 0;
+				const shouldDelete = recordPayload.should_delete === true;
 
-			return jsonResponse(
-				{
-					recorded: true,
-					deleted: shouldDelete,
-					receipts: uniqueReaderKIDs.size,
-					required_acks: payload.required_acks,
-				},
+				if (shouldDelete) {
+					await env.QNTM_KV.delete(conversationMessageKey(payload.conv_id, messageSeq));
+					await receiptStub.fetch("https://convo-seq/clear-message", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ msg_id: payload.msg_id }),
+					});
+				}
+
+				return jsonResponse(
+					{
+						recorded: true,
+						deleted: shouldDelete,
+						receipts: receiptCount,
+						required_acks: payload.required_acks,
+					},
 				200,
 			);
 		}
 
-		// Route: /v1/drop/:key or /v1/drop/?prefix=
-		if (!path.startsWith("/v1/drop")) {
+			if (path.startsWith("/v1/drop")) {
+				return errorResponse("legacy /v1/drop storage has been removed", 410);
+			}
+
 			return errorResponse("not found", 404);
-		}
 
-		const keyPart = path.slice("/v1/drop".length); // e.g. "" or "/" or "/some/key"
-
-		// LIST: GET /v1/drop/?prefix=...
-		if (request.method === "GET" && (keyPart === "" || keyPart === "/") && url.searchParams.has("prefix")) {
-			const prefix = url.searchParams.get("prefix") || "";
-			const list = await env.QNTM_KV.list({ prefix });
-			const keys = list.keys.map((k) => k.name);
-			return jsonResponse(keys, 200);
-		}
-
-		// All other operations require a key
-		// Key is everything after /v1/drop (including leading /)
-		if (!keyPart || keyPart === "/") {
-			return errorResponse("key required", 400);
-		}
-		const key = keyPart; // includes leading /
-
-		switch (request.method) {
-			case "PUT": {
-				const body = await request.arrayBuffer();
-				if (body.byteLength > maxSize) {
-					return errorResponse("envelope too large", 413);
-				}
-
-				let pruned = 0;
-				const parsed = parseMessageKey(key);
-				if (parsed && maxMessagesPerChannel > 0) {
-					const prefix = `/${parsed.convID}/msg/`;
-					const listed = await env.QNTM_KV.list({ prefix, limit: 1000 });
-					const messageKeys = listed.keys
-						.map((entry) => entry.name)
-						.map((name) => ({ name, parsed: parseMessageKey(name) }))
-						.filter((entry): entry is { name: string; parsed: { convID: string; ts: number; msgID: string } } => entry.parsed !== null)
-						.sort((left, right) => {
-							if (left.parsed.ts !== right.parsed.ts) {
-								return left.parsed.ts - right.parsed.ts;
-							}
-							return left.name.localeCompare(right.name);
-						});
-
-					const pruneCount = Math.max(0, messageKeys.length - maxMessagesPerChannel + 1);
-					for (let i = 0; i < pruneCount; i++) {
-						const victim = messageKeys[i];
-						await env.QNTM_KV.delete(victim.name);
-						pruned++;
-
-						const ackPrefix = `/${parsed.convID}/ack/${victim.parsed.msgID}/`;
-						const ackList = await env.QNTM_KV.list({ prefix: ackPrefix, limit: 1000 });
-						for (const ackKey of ackList.keys) {
-							await env.QNTM_KV.delete(ackKey.name);
-						}
-
-						const receiptPrefix = `/${parsed.convID}/receipt/${victim.parsed.msgID}/`;
-						const receiptList = await env.QNTM_KV.list({ prefix: receiptPrefix, limit: 1000 });
-						for (const receiptKey of receiptList.keys) {
-							await env.QNTM_KV.delete(receiptKey.name);
-						}
-					}
-				}
-
-				await env.QNTM_KV.put(key, body, { expirationTtl: ttl });
-				return new Response(null, {
-					status: 201,
-					headers: {
-						...corsHeaders(),
-						"X-QNTM-Pruned": String(pruned),
-					},
-				});
-			}
-
-			case "GET": {
-				const value = await env.QNTM_KV.get(key, "arrayBuffer");
-				if (value === null) {
-					return errorResponse("not found", 404);
-				}
-				return new Response(value, {
-					status: 200,
-					headers: { "Content-Type": "application/octet-stream", ...corsHeaders() },
-				});
-			}
-
-			case "HEAD": {
-				const value = await env.QNTM_KV.get(key, "arrayBuffer");
-				if (value === null) {
-					return new Response(null, { status: 404, headers: corsHeaders() });
-				}
-				return new Response(null, {
-					status: 200,
-					headers: { "Content-Length": value.byteLength.toString(), ...corsHeaders() },
-				});
-			}
-
-			default:
-				return errorResponse("method not allowed", 405);
-		}
-
-		} catch (err: unknown) {
+			} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
 			const stack = err instanceof Error ? err.stack : undefined;
 			console.error("Unhandled worker error:", message, stack);
