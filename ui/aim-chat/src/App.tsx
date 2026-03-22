@@ -160,7 +160,10 @@ export default function App() {
       delete next[convId]
       return next
     })
-  }, [])
+    if (convId) {
+      navigate(`/c/${convId}`)
+    }
+  }, [navigate])
 
   const toggleHideConversation = useCallback((convId: string) => {
     setHiddenConversations(prev => {
@@ -259,7 +262,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     const token = params.get('invite')
     if (token) {
-      setInviteToken(token)
+      setInviteToken(token.replace(/\s+/g, ''))
       setShowJoinModal(true)
       // Clean the URL so the token isn't visible/bookmarked
       const url = new URL(window.location.href)
@@ -267,6 +270,35 @@ export default function App() {
       window.history.replaceState({}, '', url.pathname + url.hash)
     }
   }, [])
+
+  // Sync selected conversation from URL on mount/navigation
+  useEffect(() => {
+    const match = location.pathname.match(/^\/c\/(.+)$/)
+    if (match) {
+      const convId = match[1]
+      const exists = conversations.some(c => c.id === convId)
+      if (exists) {
+        if (convId !== selectedConversationIdRef.current) {
+          setSelectedConversationId(convId)
+          setUnreadCounts((prev) => {
+            if (!prev[convId]) return prev
+            const next = { ...prev }
+            delete next[convId]
+            return next
+          })
+        }
+      } else if (conversations.length > 0) {
+        // Conv doesn't exist — fall back to first visible
+        const firstVisible = conversations.find(c => !hiddenConversations.has(c.id))
+        const target = firstVisible?.id || conversations[0]?.id || ''
+        if (target) {
+          selectConversation(target)
+        } else {
+          navigate('/', { replace: true })
+        }
+      }
+    }
+  }, [location.pathname, conversations, hiddenConversations, navigate, selectConversation])
 
   useEffect(() => {
     void initializeProfiles()
@@ -486,17 +518,20 @@ export default function App() {
         return next
       })
 
-      setSelectedConversationId((previous) => {
-        if (
-          previous &&
-          conversationsResponse.conversations.some((conversation) => conversation.id === previous)
-        ) {
-          return previous
-        }
-
+      const previousId = selectedConversationIdRef.current
+      const stillExists = conversationsResponse.conversations.some(c => c.id === previousId)
+      if (stillExists) {
+        // Keep current selection, but ensure URL is in sync
+        if (previousId) navigate(`/c/${previousId}`, { replace: true })
+      } else {
         const firstVisible = conversationsResponse.conversations.find((c) => !hiddenConversations.has(c.id))
-        return firstVisible?.id || conversationsResponse.conversations[0]?.id || ''
-      })
+        const target = firstVisible?.id || conversationsResponse.conversations[0]?.id || ''
+        if (target) {
+          selectConversation(target)
+        } else {
+          navigate('/', { replace: true })
+        }
+      }
 
       setError('')
     } catch (err) {
@@ -613,6 +648,7 @@ export default function App() {
     try {
       await api.selectProfile(profileId)
       setActiveProfileId(profileId)
+      navigate('/')
       const switchMsg = `Switched profile to ${profiles.find((profile) => profile.id === profileId)?.name || profileId}`
       setStatus(switchMsg)
       addToast(switchMsg, 'success')
@@ -688,6 +724,7 @@ export default function App() {
     })
     if (selectedConversationId === convId) {
       setSelectedConversationId('')
+      navigate('/')
     }
     setDeleteConfirmConvId(null)
   }
@@ -706,7 +743,7 @@ export default function App() {
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setStatus('Invite created. Token copied below.')
@@ -734,7 +771,7 @@ export default function App() {
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setInviteToken('')
@@ -768,7 +805,7 @@ export default function App() {
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setInviteToken('')
