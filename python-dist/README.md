@@ -39,6 +39,32 @@ Every message is encrypted end-to-end. The relay never sees plaintext.
 - **🛡️ API Gateway** — m-of-n approval before agents can call external APIs
 - **🤖 Agent-first** — JSON output by default, `--human` for humans
 
+## MCP Server — Use with Claude Desktop, Cursor, etc.
+
+qntm includes an MCP server so any AI agent can send and receive encrypted messages:
+
+```bash
+# Install with MCP support
+pip install "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+```
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "qntm": {
+      "command": "python",
+      "args": ["-m", "qntm.mcp"]
+    }
+  }
+}
+```
+
+**9 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+
+[Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
+
 ## Use from Python
 
 ```python

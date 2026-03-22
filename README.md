@@ -213,8 +213,32 @@ python examples/gateway_approval.py  # M-of-N API approval (Stripe charge, 2-of-
 
 See [`examples/`](examples/) for details.
 
+## MCP Server
+
+Use qntm with Claude Desktop, Cursor, or any MCP client:
+
+```bash
+pip install "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+```
+
+```json
+{
+  "mcpServers": {
+    "qntm": {
+      "command": "python",
+      "args": ["-m", "qntm.mcp"]
+    }
+  }
+}
+```
+
+9 tools: `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+
+[Full MCP docs →](docs/mcp-server.md)
+
 ## Documentation
 
+- [MCP Server](docs/mcp-server.md) — use qntm with Claude Desktop, Cursor, any MCP client
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging
 - [Protocol Spec (QSP v1.1)](docs/QSP-v1.1.md) — full cryptographic specification
 - [API Gateway](docs/api-gateway.md) — approved execution, thresholds, secrets
