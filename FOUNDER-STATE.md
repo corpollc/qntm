@@ -1,60 +1,61 @@
 # Founder State — qntm
-Updated: 2026-03-22T20:45:00Z
-Wave: 17 (COMPLETE) — PyPI P0 Resolved + NanoClaw Integration Discovery
+Updated: 2026-03-22T21:45:00Z
+Wave: 18 (COMPLETE) — New Outreach Expansion + NanoClaw Status
 
 ## Horizon Goals (revised wave 10)
-1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies — Monday is the test)
-2. 1 design partner in discussion — IN PROGRESS (aeoess#5 + ADHP#12 + AIM#92 posted, awaiting responses)
+1. 1 external reply/conversation — IN PROGRESS (9 engagements, 0 replies — Monday/Tuesday is the test)
+2. 1 design partner in discussion — IN PROGRESS (6 direct proposals active: aeoess#5, ADHP#12, AIM#92, nono#458, Clawdstrike#216, MCP-Gateway#17)
 3. PyPI fixed and published — ✅ DONE (v0.4.20 live, P0 resolved wave 17)
-4. Direct outreach to 3+ complementary projects — ✅ DONE (3/3: aeoess ✅, ADHP ✅, AIM ✅)
+4. Direct outreach to 3+ complementary projects — ✅ DONE → EXPANDED to 6/6 (3 new in wave 18)
 5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
 6. MCP distribution channel — ✅ MCP server shipped (dd8c3df), marketplace listing BLOCKED (AUTONOMY ruling needed)
 
-## Campaign 4 Status (Waves 16-20)
+## Campaign 4 Status (Waves 16-22, extended)
 **Theme: Convert or Pivot**
 
 Wave 16: ✅ MCP server built and shipped. New distribution channel.
 Wave 17: ✅ PyPI P0 resolved. Install path clean. MCP marketplace materials ready. NanoClaw integration discovered.
-Wave 18: Monitor Monday engagement responses. Get marketplace ruling. Support NanoClaw integration.
-Wave 19-20 (if engagement works): Deepen responding relationship toward design partner.
-Wave 19-20 (if no engagement): Expand MCP presence, NanoClaw launch, 3 more proposals.
+Wave 18: ✅ 3 new integration proposals (nono, clawdstrike, mcp-gateway). Joined All-Hands. NanoClaw live test confirmed. Clone spike analyzed.
+Wave 19: Monitor ALL engagement responses. Get marketplace ruling. Support NanoClaw if needed.
+Wave 20-22: Convert any response to design partner conversation. If no responses by wave 22, major pivot needed.
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work. Thank you.
+1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work.
 2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md?
-3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active but all via GitHub (low-conversion). HN would 10x reach.
-4. **🟡 P1: Existential distribution problem.** 17 waves, 6 external engagements, 0 replies, 0 users, 0 customer conversations. Product works. 8+ competitors launched this month. Two distribution plays available: MCP marketplace + NanoClaw integration.
+3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 9 outbound engagements active but all via GitHub. HN would 10x reach.
+4. **🟡 P1: Distribution at scale.** 18 waves, 9 external engagements, 0 replies, 0 users, 0 customer conversations. Two distribution plays in flight (MCP marketplace + NanoClaw integration). Neither shipped yet.
 
-## What We Accomplished Wave 17
-- **CHAIRMAN BRIEFING SENT** — 2-page briefing via qntm to Pepper (convo 2d0d)
-- **PyPI P0 RESOLVED** — v0.4.20 live on PyPI. Clean install: `pip install qntm`, `uvx qntm`, `pip install 'qntm[mcp]'`. 11-wave escalation over.
-- **INSTALL DOCS UPDATED** — All install instructions switched from git workaround to PyPI (commit eed1f60)
-- **MCP MARKETPLACE MATERIALS READY** — LobeHub manifest + Smithery config at `.company/marketplace/`
-- **SMITHERY RESEARCH** — No auto-indexing. Must actively submit via CLI (`smithery mcp publish`) or web UI. Requires auth.
-- **RELAY INVESTIGATION** — 8 active conversations, all internal. 5 unknown are corpo traffic on shared relay. 0 external users confirmed.
-- **NANOCLAW INTEGRATION DISCOVERED** — Peter committed NanoClaw qntm integration plan (cc1af17) AND built scaffold (`nanoclaw-qntm/`). Full TypeScript channel with WebSocket subscriptions, cursor persistence, self-echo suppression. Chairman is investing in qntm as NanoClaw channel.
-- **221 TESTS PASS** — 0 failures
+## What We Accomplished Wave 18
+- **3 NEW INTEGRATION PROPOSALS POSTED** — Targeting bigger repos:
+  - nono#458 (1,190★) — Agent sandbox + encrypted messaging integration
+  - Clawdstrike#216 (255★) — Fleet communication + identity cross-certification
+  - MCP-Gateway#17 (360★) — Encrypted messaging as MCP plugin
+- **JOINED ALL-HANDS** — qntm All-Hands group conversation (e559) via Pepper's invite
+- **RELAY INVESTIGATION** — 10 active conversations (up from 8). `2211d8d9` confirmed as NanoClaw live test. `a195dbef` unknown (likely corpo internal).
+- **CLONE SPIKE ANALYZED** — March 20 (v0.4.20 release): 560 clones / 134 unique sources. 10-15x baseline. Releases drive discovery.
+- **NANOCLAW STATUS ASSESSED** — qntm-side work complete. Blocked on NanoClaw credential proxy bug (qntm-jfek). Chairman is DRI.
+- **207 TESTS PASS** — 14 skipped, 0 failures
 
 ## Metrics
-- Tests: 221 pass (207 python-dist + 14 MCP server) ✅
+- Tests: 207 pass, 14 skipped ✅
 - Relay: OPERATIONAL ✅ (WebSocket-only)
 - Echo bot: CF WORKER LIVE ✅ (version 80be631f)
 - TTFM: 1.2 seconds ✅
-- Active conversations (7-day relay): 8 (all internal — corpo shared relay)
+- Active conversations (7-day relay): 10 (mostly internal)
 - Active conversations (qntm-only): 1 (echo bot)
 - Design partners: 0
 - External users who've ever messaged: 0
-- **External engagements: 6** — A2A #1575 + #1667 + #1606 + aeoess#5 + ADHP#12 + AIM#92 — **0 replies**
-- **Direct integration proposals: 3** — aeoess#5 + ADHP#12 + AIM#92 — **0 replies**
+- **External engagements: 9** — A2A #1575/#1667/#1606 + aeoess#5 + ADHP#12 + AIM#92 + nono#458 + Clawdstrike#216 + MCP-Gateway#17 — **0 replies**
+- **Direct integration proposals: 6** — aeoess#5, ADHP#12, AIM#92, nono#458, Clawdstrike#216, MCP-Gateway#17 — **0 replies**
 - PyPI downloads: 26/day, 862/week, 1,625/month
-- Published version: **v0.4.20 WORKING** ✅ (P0 resolved)
+- Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
 - **GitHub traffic (14 days):** 26 views/11 uniques, 2,929 clones/401 uniques
-- **Deep doc readers:** 4+ unique visitors reading API gateway, getting-started, gateway-deploy, LICENSE
-- **Competitors (March 2026):** 8+ new projects (SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass, DeadDrop)
-- **Campaigns completed:** 3 (C1: 4/5, C2: 2/5, C3: 2.5/5)
-- **Total waves:** 17
-- **NanoClaw integration:** scaffold built by chairman, tests passing
+- **Clone spike (Mar 20):** 560 clones / 134 uniques (v0.4.20 release effect)
+- **Competitors (March 2026):** 8+ new projects
+- **Campaigns completed:** 3 (Campaign 4 active)
+- **Total waves:** 18
+- **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -74,6 +75,7 @@ Wave 19-20 (if no engagement): Expand MCP presence, NanoClaw launch, 3 more prop
 - Wave 15: **CAMPAIGN 3 FINAL + MIGRATION FIX.** Chairman briefing sent. v0.3→v0.4.2 migration function shipped. Campaign 3 scored 2.5/5.
 - Wave 16: **MCP SERVER SHIPPED.** 9 tools, 2 resources, 1 prompt. Works with Claude Desktop, Cursor, any MCP client. DeadDrop competitive intel. Both READMEs updated. Decision memo written. Relay activity spike (4→8 active convos). 221 tests pass.
 - Wave 17: **PyPI P0 RESOLVED + NANOCLAW DISCOVERY.** v0.4.20 live on PyPI. Install path clean. MCP marketplace materials ready. Smithery requires active submission. Relay investigation: 8 convos, all internal. Chairman building NanoClaw qntm integration (significant product validation). 221 tests pass.
+- Wave 18: **NEW OUTREACH EXPANSION.** 3 new integration proposals to bigger repos: nono (1,190★), Clawdstrike (255★), MCP-Gateway (360★). Joined All-Hands. NanoClaw live test confirmed (conv 2211d8d9). Clone spike analyzed: v0.4.20 release drove 134 unique cloners. Total engagements: 9. Total proposals: 6. Still 0 replies.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
