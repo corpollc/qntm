@@ -707,6 +707,7 @@ def cmd_identity_generate(args):
         "public_key": base64url_encode(identity["publicKey"]),
         "identity": _identity_path(config_dir),
         "spec_version": "QSP-v1.1",
+        "next_step": "Try the echo bot: qntm convo join <token> — see https://github.com/corpo-dev/qntm#try-it-now--echo-bot-",
     })
 
 
