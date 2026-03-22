@@ -492,6 +492,8 @@ export default {
 			return errorResponse("rate limit exceeded", 429);
 		}
 
+		try {
+
 		const url = new URL(request.url);
 		const path = url.pathname;
 
@@ -965,6 +967,13 @@ export default {
 
 			default:
 				return errorResponse("method not allowed", 405);
+		}
+
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			const stack = err instanceof Error ? err.stack : undefined;
+			console.error("Unhandled worker error:", message, stack);
+			return jsonResponse({ error: "internal error", detail: message }, 500);
 		}
 	},
 } satisfies ExportedHandler<Env>;
