@@ -21,6 +21,7 @@ export type OpenClawConfig = {
   channels?: Record<string, unknown>;
   session?: {
     store?: unknown;
+    dmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
   };
   [key: string]: unknown;
 };
@@ -37,8 +38,12 @@ export type ChannelOutboundSessionRoute = {
 
 type AgentRoute = {
   agentId: string;
+  channel: string;
   accountId: string;
   sessionKey: string;
+  mainSessionKey: string;
+  lastRoutePolicy: "main" | "session";
+  matchedBy: string;
 };
 
 export type ChannelAccountSnapshot = {

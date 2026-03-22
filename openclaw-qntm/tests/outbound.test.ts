@@ -55,11 +55,21 @@ describe("qntm outbound", () => {
     expect(result?.conversationId).toBe(group.conversationId);
   });
 
-  test("routes direct conversations to isolated session keys", () => {
+  test.each([
+    { sessionDmScope: undefined, expected: "agent:main:main" },
+    { sessionDmScope: "main" as const, expected: "agent:main:main" },
+    { sessionDmScope: "per-peer" as const, expectedPrefix: "agent:main:direct:" },
+    { sessionDmScope: "per-channel-peer" as const, expectedPrefix: "agent:main:qntm:direct:" },
+    {
+      sessionDmScope: "per-account-channel-peer" as const,
+      expectedPrefix: "agent:main:qntm:default:direct:",
+    },
+  ])("routes direct conversations using OpenClaw dmScope semantics", ({ sessionDmScope, expected, expectedPrefix }) => {
     const identity = createIdentityFixture();
     const direct = createConversationFixture("direct");
     const cfg = createConfig({
       identity: identity.serialized,
+      sessionDmScope,
       conversations: {
         alice: {
           invite: direct.token,
@@ -75,8 +85,37 @@ describe("qntm outbound", () => {
     });
 
     expect(route?.chatType).toBe("direct");
-    expect(route?.sessionKey).toContain(direct.conversationId);
+    if (expected) {
+      expect(route?.sessionKey).toBe(expected);
+    } else {
+      expect(route?.sessionKey).toBe(`${expectedPrefix}${direct.conversationId}`);
+    }
     expect(route?.to).toBe(`qntm:${direct.conversationId}`);
+  });
+
+  test("routes group conversations to channel-scoped session keys regardless of dmScope", () => {
+    const identity = createIdentityFixture();
+    const group = createConversationFixture("group");
+    const cfg = createConfig({
+      identity: identity.serialized,
+      sessionDmScope: "per-account-channel-peer",
+      conversations: {
+        team: {
+          invite: group.token,
+        },
+      },
+    });
+
+    const route = resolveQntmOutboundSessionRoute({
+      cfg,
+      agentId: "main",
+      accountId: "default",
+      target: "team",
+    });
+
+    expect(route?.chatType).toBe("group");
+    expect(route?.sessionKey).toBe(`agent:main:qntm:group:${group.conversationId}`);
+    expect(route?.to).toBe(`qntm:${group.conversationId}`);
   });
 
   test("flattens media sends into attachment text for qntm conversations", async () => {

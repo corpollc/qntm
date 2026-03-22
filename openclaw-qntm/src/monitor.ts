@@ -5,7 +5,7 @@ import {
   createReplyPrefixOptions,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk";
-import { buildQntmSessionKey, CHANNEL_ID } from "./shared.js";
+import { CHANNEL_ID } from "./shared.js";
 import { createFileCursorStore, type ConversationCursorStore } from "./state.js";
 import { decodeQntmBody, flattenQntmReplyPayload, sendQntmText, toHex, type QntmClientLike } from "./qntm.js";
 import type {
@@ -75,11 +75,9 @@ async function dispatchInboundMessage(params: {
       id: params.binding.conversationId,
     },
   });
-  const sessionKey = buildQntmSessionKey({
-    agentId: route.agentId,
-    accountId: route.accountId,
-    binding: params.binding,
-  });
+  const sessionKey = route.sessionKey;
+  const lastRouteSessionKey =
+    route.lastRoutePolicy === "main" ? route.mainSessionKey : route.sessionKey;
   const storePath = params.channelRuntime.session.resolveStorePath(params.cfg.session?.store, {
     agentId: route.agentId,
   });
@@ -138,7 +136,7 @@ async function dispatchInboundMessage(params: {
     ctx,
     createIfMissing: true,
     updateLastRoute: {
-      sessionKey,
+      sessionKey: lastRouteSessionKey,
       channel: CHANNEL_ID,
       to: `qntm:${params.binding.conversationId}`,
       accountId: route.accountId,

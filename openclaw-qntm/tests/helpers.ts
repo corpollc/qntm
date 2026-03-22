@@ -39,12 +39,13 @@ export function createConfig(params: {
   identityDir?: string;
   relayUrl?: string;
   defaultTo?: string;
+  sessionDmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
   conversations?: Record<
     string,
     { invite?: string; convId?: string; name?: string; enabled?: boolean }
   >;
 }): QntmRootConfig {
-  return {
+  const cfg: QntmRootConfig = {
     channels: {
       qntm: {
         relayUrl: params.relayUrl ?? "https://relay.example.test",
@@ -55,6 +56,12 @@ export function createConfig(params: {
       },
     },
   };
+  if (params.sessionDmScope) {
+    cfg.session = {
+      dmScope: params.sessionDmScope,
+    };
+  }
+  return cfg;
 }
 
 export function createIdentityDirFixture(params?: {

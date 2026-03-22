@@ -11,8 +11,56 @@ import { toHex } from "../src/qntm.js";
 import type { QntmRootConfig } from "../src/types.js";
 import { createConfig, createConversationFixture, createIdentityFixture } from "./helpers.js";
 
+function resolveMockRoute(params: {
+  cfg: QntmRootConfig;
+  accountId?: string | null;
+  peer?: { kind?: string; id?: string };
+}) {
+  const agentId = "main";
+  const accountId = params.accountId ?? "default";
+  const mainSessionKey = "agent:main:main";
+  const peerKind = params.peer?.kind ?? "direct";
+  const peerId = params.peer?.id ?? "peer";
+  let sessionKey = mainSessionKey;
+
+  if (peerKind !== "direct") {
+    sessionKey = `agent:${agentId}:qntm:${peerKind}:${peerId}`;
+  } else {
+    switch (params.cfg.session?.dmScope ?? "main") {
+      case "main":
+        sessionKey = mainSessionKey;
+        break;
+      case "per-peer":
+        sessionKey = `agent:${agentId}:direct:${peerId}`;
+        break;
+      case "per-channel-peer":
+        sessionKey = `agent:${agentId}:qntm:direct:${peerId}`;
+        break;
+      case "per-account-channel-peer":
+        sessionKey = `agent:${agentId}:qntm:${accountId}:direct:${peerId}`;
+        break;
+    }
+  }
+
+  return {
+    agentId,
+    channel: "qntm",
+    accountId,
+    sessionKey,
+    mainSessionKey,
+    lastRoutePolicy: sessionKey === mainSessionKey ? "main" : "session",
+    matchedBy: "default",
+  };
+}
+
 function createChannelRuntimeMock() {
-  const recordInboundSession = vi.fn(async (_params: { sessionKey: string }) => undefined);
+  const recordInboundSession = vi.fn(
+    async (_params: {
+      sessionKey: string;
+      ctx?: Record<string, unknown>;
+      updateLastRoute?: Record<string, unknown>;
+    }) => undefined,
+  );
   const dispatchReplyWithBufferedBlockDispatcher = vi.fn(async ({ dispatcherOptions }) => {
     await dispatcherOptions.deliver({ text: "auto reply" });
     return {};
@@ -20,15 +68,7 @@ function createChannelRuntimeMock() {
   return {
     runtime: {
       routing: {
-        resolveAgentRoute: vi.fn(({ accountId }) => ({
-          agentId: "main",
-          channel: "qntm",
-          accountId: accountId ?? "default",
-          sessionKey: "agent:main:main",
-          mainSessionKey: "agent:main:main",
-          lastRoutePolicy: "main",
-          matchedBy: "default",
-        })),
+        resolveAgentRoute: vi.fn((params) => resolveMockRoute(params as Parameters<typeof resolveMockRoute>[0])),
       },
       session: {
         resolveStorePath: vi.fn(() => "/tmp/openclaw-qntm-session-store.json"),
@@ -170,8 +210,8 @@ describe("monitorQntmAccount", () => {
     expect(runtime.recordInboundSession).toHaveBeenCalledTimes(2);
     const firstSessionKey = runtime.recordInboundSession.mock.calls[0]?.[0]?.sessionKey;
     const secondSessionKey = runtime.recordInboundSession.mock.calls[1]?.[0]?.sessionKey;
-    expect(firstSessionKey).toContain(direct.conversationId);
-    expect(secondSessionKey).toContain(group.conversationId);
+    expect(firstSessionKey).toBe("agent:main:main");
+    expect(secondSessionKey).toBe(`agent:main:qntm:group:${group.conversationId}`);
 
     expect(runtime.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(2);
     expect(clientMock.sent).toHaveLength(2);
@@ -238,5 +278,63 @@ describe("monitorQntmAccount", () => {
     expect(cursors.get(direct.conversationId)).toBe(5);
 
     monitor.stop();
+  });
+
+  test("uses dmScope-shaped direct session keys from resolveAgentRoute", async () => {
+    const identity = createIdentityFixture();
+    const direct = createConversationFixture("direct");
+    const cfg = createConfig({
+      identity: identity.serialized,
+      sessionDmScope: "per-account-channel-peer",
+      conversations: {
+        alice: {
+          invite: direct.token,
+        },
+      },
+    });
+    const account = resolveQntmAccount({ cfg });
+    const runtime = createChannelRuntimeMock();
+    const clientMock = createClientMock();
+    const cursors = new Map<string, number>();
+
+    await monitorQntmAccount({
+      account,
+      cfg,
+      channelRuntime: runtime.runtime as never,
+      abortSignal: new AbortController().signal,
+      deps: {
+        createClient: () => clientMock.client,
+        cursorStore: {
+          getCursor: vi.fn(async ({ conversationId }) => cursors.get(conversationId) ?? 0),
+          setCursor: vi.fn(async ({ conversationId, sequence }) => {
+            cursors.set(conversationId, sequence);
+          }),
+        },
+      },
+    });
+
+    const sender = generateIdentity();
+    const envelope = serializeEnvelope(
+      createMessage(
+        sender,
+        direct.conversation,
+        "text",
+        new TextEncoder().encode("hello scoped direct"),
+        undefined,
+        defaultTTL(),
+      ),
+    );
+
+    await clientMock.emit(direct.conversationId, 9, envelope);
+
+    const call = runtime.recordInboundSession.mock.calls[0]?.[0];
+    expect(call?.sessionKey).toBe(`agent:main:qntm:default:direct:${direct.conversationId}`);
+    expect(call?.ctx?.SessionKey).toBe(`agent:main:qntm:default:direct:${direct.conversationId}`);
+    expect(call?.updateLastRoute).toEqual({
+      sessionKey: `agent:main:qntm:default:direct:${direct.conversationId}`,
+      channel: "qntm",
+      to: `qntm:${direct.conversationId}`,
+      accountId: "default",
+    });
   });
 });

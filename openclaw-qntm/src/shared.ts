@@ -52,21 +52,56 @@ const clearBaseFields = [
   "conversations",
 ];
 
-function buildQntmAgentSessionKey(params: {
+type QntmDmScope = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
+
+function resolveQntmDmScope(cfg: Pick<QntmRootConfig, "session">): QntmDmScope {
+  const raw = cfg.session?.dmScope;
+  switch (raw) {
+    case "main":
+    case "per-peer":
+    case "per-channel-peer":
+    case "per-account-channel-peer":
+      return raw;
+    default:
+      return "main";
+  }
+}
+
+function buildQntmDirectSessionKey(params: {
+  cfg: Pick<QntmRootConfig, "session">;
   agentId: string;
   accountId?: string | null;
   binding: ResolvedQntmBinding;
 }): string {
-  const scope = params.binding.chatType === "direct" ? "dm" : "peer";
+  const dmScope = resolveQntmDmScope(params.cfg);
+  if (dmScope === "main") {
+    return ["agent", params.agentId, "main"].join(":").toLowerCase();
+  }
+  if (dmScope === "per-peer") {
+    return ["agent", params.agentId, "direct", params.binding.conversationId].join(":").toLowerCase();
+  }
+  if (dmScope === "per-channel-peer") {
+    return ["agent", params.agentId, CHANNEL_ID, "direct", params.binding.conversationId]
+      .join(":")
+      .toLowerCase();
+  }
   return [
     "agent",
     params.agentId,
     CHANNEL_ID,
     normalizeAccountId(params.accountId ?? DEFAULT_ACCOUNT_ID),
-    params.binding.chatType,
-    scope,
+    "direct",
     params.binding.conversationId,
   ]
+    .join(":")
+    .toLowerCase();
+}
+
+function buildQntmGroupSessionKey(params: {
+  agentId: string;
+  binding: ResolvedQntmBinding;
+}): string {
+  return ["agent", params.agentId, CHANNEL_ID, "group", params.binding.conversationId]
     .join(":")
     .toLowerCase();
 }
@@ -159,11 +194,14 @@ export function parseQntmExplicitTarget(params: { raw: string }) {
 }
 
 export function buildQntmSessionKey(params: {
+  cfg: Pick<QntmRootConfig, "session">;
   agentId: string;
   accountId?: string | null;
   binding: ResolvedQntmBinding;
 }): string {
-  return buildQntmAgentSessionKey(params);
+  return params.binding.chatType === "direct"
+    ? buildQntmDirectSessionKey(params)
+    : buildQntmGroupSessionKey(params);
 }
 
 export function resolveQntmOutboundSessionRoute(params: {
@@ -182,6 +220,7 @@ export function resolveQntmOutboundSessionRoute(params: {
     return null;
   }
   const sessionKey = buildQntmSessionKey({
+    cfg: params.cfg,
     agentId: params.agentId,
     accountId: account.accountId,
     binding,

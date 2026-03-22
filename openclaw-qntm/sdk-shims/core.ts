@@ -11,6 +11,7 @@ export type OpenClawConfig = {
   channels?: Record<string, unknown>;
   session?: {
     store?: unknown;
+    dmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
   };
   [key: string]: unknown;
 };
@@ -230,21 +231,35 @@ export function buildAgentSessionKey(params: {
   channel: string;
   accountId?: string | null;
   peer: RoutePeer;
-  dmScope?: "per-account-channel-peer";
+  dmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
 }): string {
   const normalizedAccountId = normalizeAccountId(params.accountId);
-  const scope = params.dmScope === "per-account-channel-peer" ? "dm" : "peer";
-  return [
-    "agent",
-    params.agentId,
-    params.channel,
-    normalizedAccountId,
-    params.peer.kind,
-    scope,
-    params.peer.id,
-  ]
-    .join(":")
-    .toLowerCase();
+  if (params.peer.kind !== "direct") {
+    return ["agent", params.agentId, params.channel, params.peer.kind, params.peer.id]
+      .join(":")
+      .toLowerCase();
+  }
+  switch (params.dmScope ?? "main") {
+    case "main":
+      return ["agent", params.agentId, "main"].join(":").toLowerCase();
+    case "per-peer":
+      return ["agent", params.agentId, "direct", params.peer.id].join(":").toLowerCase();
+    case "per-channel-peer":
+      return ["agent", params.agentId, params.channel, "direct", params.peer.id]
+        .join(":")
+        .toLowerCase();
+    case "per-account-channel-peer":
+      return [
+        "agent",
+        params.agentId,
+        params.channel,
+        normalizedAccountId,
+        "direct",
+        params.peer.id,
+      ]
+        .join(":")
+        .toLowerCase();
+  }
 }
 
 export function defineChannelPluginEntry<TPlugin extends ChannelPlugin>(params: {
