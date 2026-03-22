@@ -1,9 +1,9 @@
 import { DropboxClient, decryptMessage, deserializeEnvelope } from "@corpollc/qntm";
 import {
+  type ChannelRuntime,
   createNormalizedOutboundDeliverer,
   createReplyPrefixOptions,
   type OpenClawConfig,
-  type RuntimeEnv,
 } from "openclaw/plugin-sdk";
 import { buildQntmSessionKey, CHANNEL_ID } from "./shared.js";
 import { createFileCursorStore, type ConversationCursorStore } from "./state.js";
@@ -14,8 +14,6 @@ import type {
   ResolvedQntmAccount,
   ResolvedQntmBinding,
 } from "./types.js";
-
-type ChannelRuntime = RuntimeEnv["channel"];
 
 type StatusSink = (patch: QntmRuntimeStatus) => void;
 

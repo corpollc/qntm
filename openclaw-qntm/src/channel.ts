@@ -18,7 +18,7 @@ import {
 import { normalizeQntmMessagingTarget, resolveQntmAccount, resolveQntmBinding } from "./accounts.js";
 import { monitorQntmAccount } from "./monitor.js";
 import { flattenQntmReplyPayload, sendQntmText } from "./qntm.js";
-import { patchQntmRuntimeStatus } from "./runtime.js";
+import { getQntmRuntime, patchQntmRuntimeStatus } from "./runtime.js";
 import { qntmSetupAdapter } from "./setup-core.js";
 import type { QntmRootConfig, ResolvedQntmAccount } from "./types.js";
 
@@ -81,6 +81,15 @@ function inferChatType(params: {
     accountId: params.accountId,
   });
   return resolveQntmBinding(account, params.to)?.chatType;
+}
+
+async function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
@@ -263,14 +272,27 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
         lastError: null,
       });
       try {
-        return await monitorQntmAccount({
+        const channelRuntime = ctx.channelRuntime ?? getQntmRuntime()?.channel;
+        if (!channelRuntime) {
+          throw new Error(
+            "qntm channel runtime is unavailable; use OpenClaw Plugin SDK channelRuntime or register the plugin before starting accounts",
+          );
+        }
+
+        const monitor = await monitorQntmAccount({
           account,
           cfg: ctx.cfg,
-          channelRuntime: ctx.runtime.channel,
+          channelRuntime,
           abortSignal: ctx.abortSignal,
           statusSink: patchStatus,
           log: ctx.log,
         });
+        try {
+          await waitForAbort(ctx.abortSignal);
+        } finally {
+          monitor.stop();
+        }
+        return;
       } catch (error) {
         patchStatus({
           running: false,

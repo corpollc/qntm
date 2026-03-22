@@ -59,7 +59,7 @@ export type ChannelLogSink = {
   error?: (message: string) => void;
 };
 
-type ChannelRuntime = {
+export type ChannelRuntime = {
   routing: {
     resolveAgentRoute: (params: {
       cfg: OpenClawConfig;
@@ -108,7 +108,12 @@ export type PluginRuntime = {
   channel: ChannelRuntime;
 };
 
-export type RuntimeEnv = PluginRuntime;
+export type RuntimeEnv = {
+  log?: (...args: unknown[]) => void;
+  error?: (...args: unknown[]) => void;
+  exit?: (code: number) => never;
+  [key: string]: unknown;
+};
 
 export type OpenClawPluginApi = {
   runtime: PluginRuntime;
@@ -244,6 +249,7 @@ export type ChannelPlugin<TResolvedAccount = unknown, TProbe = unknown> = {
       accountId: string;
       account: TResolvedAccount;
       runtime: RuntimeEnv;
+      channelRuntime?: ChannelRuntime;
       abortSignal: AbortSignal;
       log?: ChannelLogSink;
       getStatus: () => ChannelAccountSnapshot;
