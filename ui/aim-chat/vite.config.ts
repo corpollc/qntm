@@ -12,4 +12,7 @@ export default defineConfig({
     // cbor-x uses Buffer.isBuffer() — provide global Buffer for browser
     'globalThis.Buffer': 'globalThis.Buffer',
   },
+  test: {
+    environment: 'happy-dom',
+  },
 })
