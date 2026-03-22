@@ -15,7 +15,9 @@ Two LangChain agents that:
 
 - Python 3.10+
 - `pip install langchain langchain-openai` (or your preferred LLM provider)
-- `pip install qntm` or use `uvx qntm`
+- `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` (recommended — latest version)
+
+> **Note:** The PyPI release (`pip install qntm` / `uvx qntm`) is currently outdated. Install from git to get v0.4.2 with WebSocket support and all fixes.
 
 ## Step 1: Create identities for each agent
 
@@ -24,26 +26,26 @@ Each agent gets its own identity directory. Keys persist across restarts.
 ```bash
 # Agent 1: Research Agent
 export QNTM_HOME=~/.qntm-research-agent
-uvx qntm identity generate
+qntm identity generate
 
 # Agent 2: Writer Agent
 export QNTM_HOME=~/.qntm-writer-agent
-uvx qntm identity generate
+qntm identity generate
 ```
 
 ## Step 2: Create a conversation and exchange invites
 
 ```bash
 # Research Agent creates the channel
-QNTM_HOME=~/.qntm-research-agent uvx qntm convo create --name "research-pipeline"
+QNTM_HOME=~/.qntm-research-agent qntm convo create --name "research-pipeline"
 # Note the conv_id from the output
 
 # Research Agent creates an invite
-QNTM_HOME=~/.qntm-research-agent uvx qntm convo invite <conv-id>
+QNTM_HOME=~/.qntm-research-agent qntm convo invite <conv-id>
 # Note the invite token
 
 # Writer Agent joins
-QNTM_HOME=~/.qntm-writer-agent uvx qntm convo join <invite-token>
+QNTM_HOME=~/.qntm-writer-agent qntm convo join <invite-token>
 ```
 
 ## Step 3: Create a qntm messaging tool for LangChain
@@ -159,17 +161,17 @@ Want to add a Stripe integration where 2-of-3 agents must approve before any cha
 
 ```bash
 # Promote the conversation to require 2-of-3 approval
-uvx qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
+qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
 
 # Store the Stripe key (encrypted to the gateway, not readable by agents or relay)
-uvx qntm gate-secret <conv-id> --name stripe --value sk_live_xxx
+qntm gate-secret <conv-id> --name stripe --value sk_live_xxx
 
 # Agent proposes a charge
-uvx qntm gate-run <conv-id> --recipe stripe.create-charge \
+qntm gate-run <conv-id> --recipe stripe.create-charge \
   --arg amount=5000 --arg currency=usd
 
 # Two agents must approve before it executes
-uvx qntm gate-approve <conv-id> <request-id>
+qntm gate-approve <conv-id> <request-id>
 ```
 
 See the [API Gateway docs](../api-gateway.md) for the full walkthrough.
@@ -185,3 +187,4 @@ See the [API Gateway docs](../api-gateway.md) for the full walkthrough.
 | Multi-sig | API Gateway with m-of-n cryptographic approval |
 
 Questions? Open an issue on [GitHub](https://github.com/corpollc/qntm) or visit [chat.corpo.llc](https://chat.corpo.llc).
+po.llc).

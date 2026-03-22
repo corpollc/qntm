@@ -4,20 +4,29 @@
 
 qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent — and no single person — can act alone on consequential API calls.
 
+## Install
+
+```bash
+# Recommended — latest version with all fixes
+pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+```
+
+> **Note:** The PyPI release is currently outdated (v0.3). Install from git to get v0.4.2 with WebSocket support and all fixes.
+
 ## Try It — 30 Seconds
 
 ```bash
 # Generate your cryptographic identity
-uvx qntm identity generate
+qntm identity generate
 
 # Join the live echo bot conversation (E2E encrypted)
-uvx qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
+qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
 
 # Send an encrypted message
-uvx qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello!"
+qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello!"
 
 # Receive the encrypted echo
-uvx qntm recv 48055654db4bb0f64ec63089b70e1bf4
+qntm recv 48055654db4bb0f64ec63089b70e1bf4
 # → 🔒 echo: Hello!
 ```
 
@@ -36,7 +45,7 @@ Every message is encrypted end-to-end. The relay never sees plaintext.
 import subprocess, json
 
 def qntm(cmd): return json.loads(subprocess.run(
-    ["uvx", "qntm"] + cmd, capture_output=True, text=True).stdout)
+    ["qntm"] + cmd, capture_output=True, text=True).stdout)
 
 # Send a message
 qntm(["send", CONV_ID, "task complete"])
@@ -54,4 +63,4 @@ msgs = qntm(["recv", CONV_ID])["data"]["messages"]
 
 ## License
 
-[BUSL-1.1](https://github.com/corpo-dev/qntm/blob/main/LICENSE) — Business Source License 1.1
+[BUSL-1.1](https://github.com/corpollc/qntm/blob/main/LICENSE) — Business Source License 1.1
