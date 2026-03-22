@@ -48,7 +48,7 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
 - `convId` bindings require `identityDir` because the plugin must load the matching conversation keys from that profile directory.
 - Invite-token bindings are still supported via `identity` or `identityFile`.
 - Each configured binding is addressed by either its binding key, such as `ops`, or the raw qntm `conv_id`.
-- Cursor state is stored under `OPENCLAW_STATE_DIR/plugins/qntm/accounts/<account>/cursors/<conv_id>.json`.
+- Cursor state is stored under `OPENCLAW_STATE_DIR/plugins/qntm/accounts/<account>/cursors/<conv_id>.json`, or `~/.openclaw/state/plugins/qntm/...` when `OPENCLAW_STATE_DIR` is unset.
 - Outbound media is flattened into text lines like `Attachment: https://...` because qntm currently only exposes text sends through this plugin path.
 
 ## Protocol Compatibility

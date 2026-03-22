@@ -6,6 +6,7 @@ import {
   createFileCursorStore,
   readConversationCursor,
   resolveConversationCursorPath,
+  resolveQntmStateRoot,
 } from "../src/state.js";
 
 const tempDirs: string[] = [];
@@ -45,5 +46,22 @@ describe("cursor state", () => {
         stateDir,
       }),
     ).toContain(path.join("accounts", "default", "cursors", "abcd1234.json"));
+  });
+
+  test("defaults cursor state under the user home OpenClaw directory", () => {
+    const originalStateDir = process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_STATE_DIR;
+
+    try {
+      expect(resolveQntmStateRoot()).toBe(
+        path.join(os.homedir(), ".openclaw", "state", "plugins", "qntm"),
+      );
+    } finally {
+      if (originalStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = originalStateDir;
+      }
+    }
   });
 });
