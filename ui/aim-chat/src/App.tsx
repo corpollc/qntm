@@ -13,8 +13,6 @@ import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { HelpPanel } from './components/HelpPanel'
 import { JoinModal } from './components/JoinModal'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
-import { useToast } from './hooks/useToast'
-import { ToastContainer } from './components/ToastContainer'
 import {
   relayConversationIds,
   reconcileRelayStates,
@@ -85,13 +83,15 @@ export default function App() {
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
   const [showJoinModal, setShowJoinModal] = useState(false)
 
-  const { toasts, addToast, removeToast } = useToast()
-
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
   const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map())
   const activeProfileIdRef = useRef('')
   const selectedConversationIdRef = useRef('')
+
+  const addToast = useCallback((message: string, _type?: string, _duration?: number) => {
+    setStatus(message)
+  }, [])
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) || null,
@@ -221,7 +221,8 @@ export default function App() {
     [relayStates, selectedConversationId],
   )
 
-  const footerStatus = relayStatus || status
+  const footerStatus = relayStatus || status || error
+  const footerStatusIsError = Boolean(error) && footerStatus === error
 
   const shortcutActions = useMemo(() => ({
     focusConversationFilter() {
@@ -362,6 +363,7 @@ export default function App() {
                 return
               }
               setError(subscriptionError.message)
+              setStatus(subscriptionError.message)
             },
             onReconnect: () => {
               if (activeProfileIdRef.current !== activeProfileId) {
@@ -390,6 +392,7 @@ export default function App() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to subscribe to conversation'
         setError(msg)
+        setStatus(msg)
       }
     }
 
@@ -1133,8 +1136,6 @@ export default function App() {
             isLoadingMessages={isLoadingMessages}
             showGatePanel={showGatePanel}
             setShowGatePanel={setShowGatePanel}
-            activeProfile={activeProfile}
-            status={footerStatus}
             messageTailRef={messageTailRef}
             onSendMessage={onSendMessage}
             onCheckMessages={() => void refreshSelectedConversation()}
@@ -1187,7 +1188,6 @@ export default function App() {
           } />
           </Routes>
         </div>
-        <ToastContainer toasts={toasts} removeToast={removeToast} />
         {showJoinModal && inviteToken && (
           <JoinModal
             inviteToken={inviteToken}
@@ -1199,8 +1199,12 @@ export default function App() {
             }}
           />
         )}
-        <footer className="status-bar">
+        <footer className="status-bar app-status-bar" aria-live="polite">
           <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
+          <span className={`status-bar-message${footerStatusIsError ? ' status-bar-message-error' : ''}`}>
+            {activeProfile ? `Profile: ${activeProfile.name} · ` : ''}
+            {footerStatus || 'Idle'}
+          </span>
           <a className="status-bar-link" href="https://github.com/corpollc/qntm/issues" target="_blank" rel="noopener noreferrer">Report an Issue</a>
         </footer>
       </div>
