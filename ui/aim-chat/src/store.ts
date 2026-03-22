@@ -350,4 +350,18 @@ export function setDropboxUrl(url: string): void {
   saveStore(store)
 }
 
+export function deleteConversation(profileId: string, conversationId: string): void {
+  const store = loadStore()
+  if (store.conversations[profileId]) {
+    store.conversations[profileId] = store.conversations[profileId].filter(c => c.id !== conversationId)
+  }
+  if (store.history[profileId]) {
+    delete store.history[profileId][conversationId]
+  }
+  if (store.cursors[profileId]) {
+    delete store.cursors[profileId][conversationId]
+  }
+  saveStore(store)
+}
+
 export { DEFAULT_DROPBOX_URL }
