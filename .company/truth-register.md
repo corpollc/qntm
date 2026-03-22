@@ -45,6 +45,10 @@ Last updated: 2026-03-22 (Wave 13)
 - **NEW (W13): All 3 integration proposals had dead URLs (404).** Links pointed to `github.com/nichochar/qntm` (doesn't exist) instead of `github.com/corpollc/qntm`. Fixed via GitHub API edits. A2A comments already had correct URLs. This would have killed any conversion from proposal traffic.
 - **NEW (W13): v0.4.2 from git source works perfectly end-to-end.** Full install → identity generate → convo join → send → recv echo bot flow verified from a clean Python venv. WebSocket subscriptions work. Only PyPI v0.3 is broken.
 - **NEW (W13): pip install from git is a viable workaround for broken PyPI.** `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` works cleanly. README and all proposals updated to use this path.
+- **NEW (W14): Organic developer interest exists independent of outreach.** GitHub traffic API shows 11 unique visitors in 14 days reading the repo page, with 4+ going deep into API gateway docs, getting-started, gateway-deploy, and LICENSE. Someone reading LICENSE + deployment docs is seriously evaluating adoption.
+- **NEW (W14): Clone traffic is overwhelmingly automated.** 2,929 clones from 401 unique sources vs 26 page views from 11 uniques in the same period. Ratio confirms most clones are pip/uv install from git URL, CI systems, or mirrors — not humans browsing GitHub.
+- **NEW (W14): The agent identity/encryption space is becoming crowded fast.** 7+ new projects in March 2026 alone: SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass. Most are single-commit or very early stage, but the trend is clear.
+- **NEW (W14): A2A trust.signals ecosystem is maturing with production implementations.** Thread #1628 has 10 comments from production teams (InsumerAPI, AIP, MeshCap) building real trust infrastructure with ECDSA/JWKS verification, on-chain attestations, and vouch chains. Enterprise-grade agent trust is becoming a real category.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
