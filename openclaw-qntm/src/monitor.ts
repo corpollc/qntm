@@ -1,4 +1,4 @@
-import { DropboxClient, decryptMessage, deserializeEnvelope } from "@corpollc/qntm";
+import { DropboxClient, base64UrlDecode, decryptMessage, deserializeEnvelope } from "@corpollc/qntm";
 import {
   type ChannelRuntime,
   createNormalizedOutboundDeliverer,
@@ -35,6 +35,68 @@ function describeSender(senderKeyId: string): string {
   return `sender:${senderKeyId.slice(0, 8)}`;
 }
 
+function decodeByteField(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "number" &&
+        Number.isInteger(entry) &&
+        entry >= 0 &&
+        entry <= 255,
+    )
+  ) {
+    return Uint8Array.from(value);
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^[0-9a-f]+$/i.test(trimmed) && trimmed.length % 2 === 0) {
+    const bytes = new Uint8Array(trimmed.length / 2);
+    for (let index = 0; index < trimmed.length; index += 2) {
+      bytes[index / 2] = Number.parseInt(trimmed.slice(index, index + 2), 16);
+    }
+    return bytes;
+  }
+  try {
+    return base64UrlDecode(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function toComparableHex(value: unknown): string | null {
+  const bytes = decodeByteField(value);
+  return bytes ? toHex(bytes) : null;
+}
+
+function isSelfAuthoredMessage(
+  message: { inner: { sender_kid: unknown; sender_ik_pk: unknown } },
+  identity: { keyID: Uint8Array; publicKey: Uint8Array },
+): boolean {
+  const senderKeyId = toComparableHex(message.inner.sender_kid);
+  if (senderKeyId && senderKeyId === toComparableHex(identity.keyID)) {
+    return true;
+  }
+
+  const senderPublicKey = toComparableHex(message.inner.sender_ik_pk);
+  return Boolean(senderPublicKey && senderPublicKey === toComparableHex(identity.publicKey));
+}
+
 async function dispatchInboundMessage(params: {
   account: ResolvedQntmAccount;
   binding: ResolvedQntmBinding;
@@ -59,10 +121,10 @@ async function dispatchInboundMessage(params: {
     return;
   }
 
-  const senderKeyId = toHex(message.inner.sender_kid);
-  if (senderKeyId === toHex(params.account.identity.keyID)) {
+  if (isSelfAuthoredMessage(message, params.account.identity)) {
     return;
   }
+  const senderKeyId = toComparableHex(message.inner.sender_kid) ?? "unknown";
 
   const senderDisplay = describeSender(senderKeyId);
   const { rawBody, bodyForAgent } = decodeQntmBody(message.inner.body_type, message.inner.body);

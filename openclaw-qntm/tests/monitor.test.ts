@@ -2,6 +2,7 @@ import {
   createMessage,
   defaultTTL,
   generateIdentity,
+  keyIDFromPublicKey,
   serializeEnvelope,
 } from "@corpollc/qntm";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -9,7 +10,12 @@ import { resolveQntmAccount } from "../src/accounts.js";
 import { monitorQntmAccount } from "../src/monitor.js";
 import { toHex } from "../src/qntm.js";
 import type { QntmRootConfig } from "../src/types.js";
-import { createConfig, createConversationFixture, createIdentityFixture } from "./helpers.js";
+import {
+  createConfig,
+  createConversationFixture,
+  createIdentityDirFixture,
+  createIdentityFixture,
+} from "./helpers.js";
 
 function resolveMockRoute(params: {
   cfg: QntmRootConfig;
@@ -278,6 +284,71 @@ describe("monitorQntmAccount", () => {
     expect(cursors.get(direct.conversationId)).toBe(5);
 
     monitor.stop();
+  });
+
+  test("skips self-authored messages when stored identity key_id is stale but the public key matches", async () => {
+    const identity = generateIdentity();
+    const direct = createConversationFixture("direct");
+    const staleStoredKeyId = keyIDFromPublicKey(generateIdentity().publicKey);
+    const identityDir = createIdentityDirFixture({
+      identity,
+      storedKeyId: staleStoredKeyId,
+      conversations: [direct],
+    });
+    const cfg = createConfig({
+      identityDir: identityDir.dir,
+      conversations: {
+        alice: {
+          convId: direct.conversationId,
+        },
+      },
+    });
+    const account = resolveQntmAccount({ cfg });
+    const runtime = createChannelRuntimeMock();
+    const clientMock = createClientMock();
+    const cursors = new Map<string, number>();
+
+    try {
+      const monitor = await monitorQntmAccount({
+        account,
+        cfg,
+        channelRuntime: runtime.runtime as never,
+        abortSignal: new AbortController().signal,
+        deps: {
+          createClient: () => clientMock.client,
+          cursorStore: {
+            getCursor: vi.fn(async ({ conversationId }) => cursors.get(conversationId) ?? 0),
+            setCursor: vi.fn(async ({ conversationId, sequence }) => {
+              cursors.set(conversationId, sequence);
+            }),
+          },
+        },
+      });
+
+      const envelope = serializeEnvelope(
+        createMessage(
+          {
+            ...identity,
+            keyID: keyIDFromPublicKey(identity.publicKey),
+          },
+          direct.conversation,
+          "text",
+          new TextEncoder().encode("self message"),
+          undefined,
+          defaultTTL(),
+        ),
+      );
+
+      await clientMock.emit(direct.conversationId, 6, envelope);
+
+      expect(runtime.recordInboundSession).not.toHaveBeenCalled();
+      expect(runtime.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+      expect(cursors.get(direct.conversationId)).toBe(6);
+
+      monitor.stop();
+    } finally {
+      identityDir.cleanup();
+    }
   });
 
   test("uses dmScope-shaped direct session keys from resolveAgentRoute", async () => {

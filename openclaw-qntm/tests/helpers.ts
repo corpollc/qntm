@@ -66,6 +66,7 @@ export function createConfig(params: {
 
 export function createIdentityDirFixture(params?: {
   identity?: Identity;
+  storedKeyId?: Uint8Array;
   conversations?: Array<
     ReturnType<typeof createConversationFixture> & {
       name?: string;
@@ -80,7 +81,7 @@ export function createIdentityDirFixture(params?: {
       {
         private_key: toHex(identity.privateKey),
         public_key: toHex(identity.publicKey),
-        key_id: toHex(identity.keyID),
+        key_id: toHex(params?.storedKeyId ?? identity.keyID),
       },
       null,
       2,
