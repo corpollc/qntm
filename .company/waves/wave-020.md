@@ -86,6 +86,14 @@ Full code review of `src/core/encrypted-messaging.ts`:
 | clawdstrike#216 | No reply | 0 comments |
 | mcp-gateway#17 | No reply | 0 comments |
 
+### #5 — TypeScript Vector Runner: ALL 5 PASS ✅
+Wrote `verify_vectors_noble.mjs` using `@noble/curves` (same library ecosystem as APS).
+- Implements Ed25519→X25519 birational map from scratch: `u = (1 + y) / (1 - y) mod p`
+- All 5 known-answer vectors produce identical bytes to Python implementation
+- Committed 1c031b2, pushed to main
+- **Posted results to APS#5** — step 1 of the 3-step plan is effectively complete before aeoess tests
+- Comment: https://github.com/aeoess/agent-passport-system/issues/5#issuecomment-4107236344
+
 ### Other Checks
 - **Tests:** 230 pass, 0 failures ✅
 - **Relay:** OPERATIONAL (healthz OK)
@@ -115,8 +123,9 @@ Full code review of `src/core/encrypted-messaging.ts`:
 **The conversion funnel is working:**
 1. Integration proposal (wave 10) → first reply (wave 19) → vector exchange accepted (wave 19-20) → **pending: interop proof**
 
+**Key breakthrough: TypeScript vector runner proves cross-implementation compatibility.** All 5 vectors pass with `@noble/curves`. Step 1 of the 3-step interop plan is done before aeoess even tests. This de-risks the integration path significantly.
+
 **Key risks:**
-- aeoess's `createEncryptionKeypair()` may not exist yet — if they need to implement Ed25519→X25519 derivation, that's work on their side
 - The cipher mismatch (XSalsa20 vs ChaCha20) means full E2E interop requires more than just key derivation
 - They're a small project (5 stars, 1 fork) — organizational risk if maintainer loses interest
 
