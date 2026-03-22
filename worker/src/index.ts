@@ -351,8 +351,22 @@ function validateUpgradeRequest(request: Request): Response | null {
 }
 
 export class ConversationSequencerDO extends DurableObject<Env> {
+	private sqlReady = false;
+
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
+	}
+
+	private ensureSchema(): void {
+		if (this.sqlReady) return;
+		this.ctx.storage.sql.exec(`
+			CREATE TABLE IF NOT EXISTS messages (
+				seq INTEGER PRIMARY KEY,
+				envelope_b64 TEXT NOT NULL,
+				created_at INTEGER NOT NULL DEFAULT (unixepoch())
+			)
+		`);
+		this.sqlReady = true;
 	}
 
 	private async handlePublish(request: Request): Promise<Response> {
@@ -380,6 +394,17 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const seq = current + 1;
 		await this.ctx.storage.put("next_seq", seq);
 		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
+
+		// Store in SQLite for KV-list-free reads
+		this.ensureSchema();
+		this.ctx.storage.sql.exec(
+			`INSERT OR REPLACE INTO messages (seq, envelope_b64, created_at) VALUES (?, ?, ?)`,
+			seq, payload.envelope_b64, Math.floor(Date.now() / 1000)
+		);
+
+		// Purge expired messages from SQLite (keep in sync with KV TTL)
+		const cutoff = Math.floor(Date.now() / 1000) - ttl;
+		this.ctx.storage.sql.exec(`DELETE FROM messages WHERE created_at < ?`, cutoff);
 
 		const frame = JSON.stringify({
 			type: "message",
@@ -420,8 +445,14 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
 
-		const replay = await replayConversationMessages(this.env, convID, fromSeqRaw);
-		for (const message of replay) {
+		// Replay from DO SQLite instead of KV to avoid list() limits
+		this.ensureSchema();
+		const replayRows = this.ctx.storage.sql.exec(
+			`SELECT seq, envelope_b64 FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT 1000`,
+			fromSeqRaw
+		).toArray() as Array<{ seq: number; envelope_b64: string }>;
+
+		for (const message of replayRows) {
 			server.send(
 				JSON.stringify({
 					type: "message",
@@ -437,6 +468,23 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		});
 	}
 
+	private handlePoll(request: Request): Response {
+		const url = new URL(request.url);
+		const fromSeq = Number(url.searchParams.get("from_seq") || "0");
+		const limit = Math.min(Number(url.searchParams.get("limit") || "200"), 1000);
+
+		this.ensureSchema();
+		const rows = this.ctx.storage.sql.exec(
+			`SELECT seq, envelope_b64 FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?`,
+			fromSeq, limit
+		).toArray() as Array<{ seq: number; envelope_b64: string }>;
+
+		const messages = rows.map(r => ({ seq: r.seq, envelope_b64: r.envelope_b64 }));
+		const upToSeq = messages.length > 0 ? messages[messages.length - 1]!.seq : fromSeq;
+
+		return Response.json({ messages, up_to_seq: upToSeq });
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (request.method === "POST" && url.pathname === "/publish") {
@@ -445,6 +493,10 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		if (request.method === "GET" && url.pathname === "/subscribe") {
 			return this.handleSubscribe(request);
+		}
+
+		if (request.method === "GET" && url.pathname === "/poll") {
+			return this.handlePoll(request);
 		}
 
 		if (request.method === "POST" && url.pathname === "/next") {
@@ -580,13 +632,18 @@ export default {
 						return errorResponse("invalid conv_id", 400);
 					}
 
-					const messages = await loadConversationMessages(env, convID, convo.from_seq, maxMessages);
-					const upToSeq = messages.length > 0 ? messages[messages.length - 1]!.seq : convo.from_seq;
+					// Route reads through DO SQLite instead of KV list() to avoid free-tier daily limits
+					const doId = env.CONVO_SEQ_DO.idFromName(convID);
+					const stub = env.CONVO_SEQ_DO.get(doId);
+					const doResp = await stub.fetch(
+						`https://convo-seq/poll?from_seq=${convo.from_seq}&limit=${maxMessages}`
+					);
+					const doResult = await doResp.json() as { messages: Array<{ seq: number; envelope_b64: string }>; up_to_seq: number };
 
 					conversationResults.push({
 						conv_id: convID,
-						up_to_seq: upToSeq,
-						messages,
+						up_to_seq: doResult.up_to_seq,
+						messages: doResult.messages,
 					});
 				}
 

@@ -17,7 +17,7 @@ Wave: 1 (RELAUNCH — COMPLETE)
 5. Fix remaining test compat issue (TUI vi.hoisted) — NOT STARTED
 
 ## Wave 2 Top 5 (NEXT)
-1. **Get CF token fixed** — ESCALATED. Cannot deploy. This blocks everything customer-facing.
+1. ~~Get CF token fixed~~ — RESOLVED. Peter fixed deploy bug manually. Relay should be deployable now.
 2. Write quick-start code snippet (can do without deploy)
 3. Fix TUI app.test.tsx vi.hoisted compat (300/300 tests)
 4. Draft outbound messages using positioning statements from research
