@@ -202,6 +202,17 @@ gate/recipes/      Starter API recipe catalog
 docs/              Protocol specs and guides
 ```
 
+## Examples
+
+Runnable Python examples — no server needed:
+
+```bash
+python examples/two_agents.py        # E2E encrypted messaging between two agents
+python examples/gateway_approval.py  # M-of-N API approval (Stripe charge, 2-of-3 signers)
+```
+
+See [`examples/`](examples/) for details.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging

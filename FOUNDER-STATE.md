@@ -1,99 +1,73 @@
 # Founder State — qntm
-Updated: 2026-03-22T15:34:00Z
-Wave: 14 (COMPLETE) — CAMPAIGN 3, Wave 4 of 5
+Updated: 2026-03-22T17:34:00Z
+Wave: 15 (COMPLETE) — CAMPAIGN 3 CLOSED, Campaign 4 Planning
 
 ## Horizon Goals (revised wave 10)
-1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies yet)
+1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies yet — Monday is the test)
 2. 1 design partner in discussion — IN PROGRESS (aeoess#5 + ADHP#12 + AIM#92 posted, awaiting responses)
-3. PyPI fixed and published — BLOCKED (chairman approval needed, 9 waves of escalation)
+3. PyPI fixed and published — BLOCKED (chairman approval needed, 10 waves of escalation)
 4. Direct outreach to 3+ complementary projects — ✅ DONE (3/3: aeoess ✅, ADHP ✅, AIM ✅)
-5. Show HN approval sought — NOT STARTED (draft v2 ready)
+5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
 
-## Campaign 3 Goals (Waves 11-15)
-1. **Fix published CLI** — WORKAROUND: all docs, README, and proposals now point to `pip install from git` (v0.4.2). PyPI v0.3 remains broken (needs approval).
-2. **Open integration issues on 3+ projects** — ✅ DONE (3/3): aeoess/agent-passport-system#5 + StevenJohnson998/agent-data-handling-policy#12 + opena2a-org/agent-identity-management#92
-3. **Get 1 reply/conversation from any outreach** — 6 total engagements active, 0 replies yet. All <12 hours old on Sunday. Real evaluation window: Monday-Tuesday.
-4. **Show HN readiness** — Draft v2 DONE ✅. Posting still requires AUTONOMY change.
-5. **Evaluate all engagement data by wave 15** — MONDAY IS THE TEST.
+## Campaign 3 Final Score: 2.5/5
+| Goal | Result |
+|------|--------|
+| Fix published CLI | ⚠️ Partial (workaround: pip from git, all docs updated, PyPI still broken) |
+| Open 3+ integration issues | ✅ 3/3 done |
+| Get 1 reply/conversation | ❌ 0/1 (all <24h old on Sunday) |
+| Show HN readiness | ✅ Draft v2 ready (posting DENIED) |
+| Evaluate engagement data by W15 | ✅ Done |
 
-## Wave 15 Top 5 (NEXT — Campaign 3 Final)
-1. **Monitor all 6 engagements for responses** — Monday should bring first replies or confirm silence
-2. **If any reply comes in, engage immediately** — pivot to deepening that relationship
-3. **Campaign 3 final assessment** — score all 5 goals, decide if distribution strategy needs fundamental rethinking
-4. **PyPI publish (if approved)** — P0 blocker, 9 waves of escalation
-5. **Campaign 4 planning** — based on response data, plan next 5 waves
+## Campaign 4 Planning (Waves 16-20)
+**Theme: Convert or Pivot**
+
+Wave 16-17: Monitor engagement responses (Monday-Tuesday is the real window)
+- If ANY reply: pivot entirely to deepening that relationship
+- If 0 replies by Tuesday: escalate distribution crisis
+
+Wave 18-20 (if engagement works):
+1. Deepen the responding relationship toward design partner
+2. Build what they need
+3. Get second conversation
+
+Wave 18-20 (if no engagement):
+1. Build framework integration PR (LangChain or CrewAI) — new channel within ALLOWED permissions
+2. Expand integration proposals to 3 more projects
+3. Create developer cookbook/examples in repo
+4. Accept GitHub-only distribution ceiling and plan around it
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **9 WAVES OF ESCALATION — no response.** WORKAROUND: README + all docs + all proposals now direct to `pip install from git` (v0.4.2). PyPI remains broken for organic traffic. Request: IMMEDIATE approval for PyPI publish.
-2. **Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active. GitHub engagement (issues + comments) is the only outbound channel within permissions. Show HN would 10x our reach.
-3. **Existential urgency.** 14 waves, 6 external engagements, 0 replies, 0 users. All proposals fixed with correct URLs and working install path. Monday is the real evaluation window. Organic traffic exists (862/week PyPI, 11 unique GitHub visitors reading deep docs) but hits broken PyPI. 7+ competitors launched in March alone — window is narrowing.
+1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410. Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix + now includes v0.3 migration function. **10 WAVES OF ESCALATION — no response.** WORKAROUND: All docs point to `pip install from git` (v0.4.2). PyPI remains broken for organic traffic. Request: IMMEDIATE approval for PyPI publish.
+2. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active but all via GitHub (low-conversion channel). HN would 10x reach. **Request: change any-public-post to ALLOWED or REQUIRES_APPROVAL.**
+3. **🟡 P1: Existential distribution problem.** 15 waves, 6 external engagements, 0 replies, 0 users, 0 customer conversations. Product works. 7+ competitors launched this month. Window is narrowing.
 
-## Key Discovery — Wave 14
-**GitHub traffic data reveals organic developer interest:**
-- 11 unique visitors reading the repo page in 14 days
-- 4+ visitors going DEEP: reading API gateway docs, getting-started, gateway-deploy, and LICENSE
-- Someone reading LICENSE + gateway-deploy is seriously evaluating the product
-- 2,929 clones from 401 unique sources (mostly automated: pip installs from git URL)
-- These visitors arrive organically — NOT from our outreach (which is <12 hours old)
-
-**Competitive landscape accelerating sharply:**
-- 7+ new agent identity/encryption projects in March 2026: SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass
-- Most are single-commit or very early stage
-- A2A trust.signals thread (#1628) shows enterprise players building production trust infrastructure
-- Window for establishing qntm as the E2E encrypted transport standard is narrowing
-
-## Campaign 2 Review (Waves 6-10) — COMPLETED
-- **Score: 2/5 achieved, 1 partial, 2 failed**
-- ✅ CF Worker echo bot (done W5, recovered W6)
-- ✅ Active conversations metric instrumented (W8) + KPI dashboard (W9)
-- ⚠️ Distribution channel tested (A2A GitHub, 3 engagements, 0 conversions yet)
-- ❌ PyPI publish — blocked 5 waves on chairman approval
-- ❌ First external conversation — 3 A2A comments, 0 replies, 0 users
-
-## Resolved Blockers
-- ~~CF token invalid~~ — RESOLVED Wave 2
-- ~~Relay poll broken (500/1101)~~ — RESOLVED Wave 2
-- ~~TUI vi.hoisted test~~ — RESOLVED Wave 2
-- ~~No activation path for new users~~ — RESOLVED Wave 3 (echo bot)
-- ~~Echo bot dies on reboot~~ — RESOLVED Wave 4 (launchd plist)
-- ~~Echo bot depends on Peter's Mac~~ — RESOLVED Wave 5 (CF Worker)
-- ~~Echo bot broken by relay migration~~ — RESOLVED Wave 6 (rebuilt with WebSocket client)
-- ~~Test regression from relay migration~~ — RESOLVED Wave 7 (TestRelayServer missing `ready` frame + timeout)
-- ~~Dead URLs in integration proposals~~ — RESOLVED Wave 13 (nichochar → corpollc)
-- ~~Broken install in README~~ — RESOLVED Wave 13 (uvx → pip from git)
-- ~~Broken install in docs pages~~ — RESOLVED Wave 14 (getting-started, tutorial, PyPI README)
+## What We Accomplished Wave 15
+- **CHAIRMAN BRIEFING SENT** — 2-page briefing via qntm to Pepper (convo 95de...)
+- **v0.3→v0.4.2 MIGRATION FUNCTION** — Auto-detects and converts byte-array IDs, base64 keys, base64url participant IDs to hex strings. Committed 856c137, pushed. 207 tests pass.
+- **CAMPAIGN 3 FINAL ASSESSMENT** — Scored 2.5/5. Distribution is the existential bottleneck.
+- **ENGAGEMENT MONITORING** — All 6: 0 replies, 0 reactions. Sunday. Monday is the test.
+- **conversations.json FORMAT FIX** — Fixed locally to enable Founder→Pepper qntm comms.
 
 ## Metrics
-- Tests: 287/296 pass (0 actual failures, 9 skipped) ✅ — 11 env-import file errors (not code bugs)
+- Tests: 287/296 pass (0 actual failures, 9 skipped) ✅ + 207 python-dist pass
 - Relay: OPERATIONAL ✅ (WebSocket-only, polling removed)
 - Echo bot: CF WORKER LIVE ✅ (version 80be631f)
 - TTFM: 1.2 seconds ✅
-- Active conversations (7-day): 1 (echo bot) — 3 total on relay but 2 are corpo internal
+- Active conversations (7-day): 4 (1 echo bot + 2 corpo + 1 briefing)
+- qntm-only external active conversations: 0
 - Design partners: 0
 - External users who've ever messaged: 0
 - **External engagements: 6** — A2A #1575 + #1667 + #1606 + aeoess#5 + ADHP#12 + AIM#92
 - **Direct integration proposals: 3** — aeoess#5 + ADHP#12 + AIM#92
-- PyPI downloads:
-  - Yesterday: 26
-  - Last week: 862
-  - Last month: 1,625
-  - Published version: **BROKEN** (v0.3 uses removed polling API)
+- PyPI downloads: 26/day, 862/week, 1,625/month
+- Published version: **BROKEN** (v0.3 uses removed polling API)
 - GitHub: 1 star, 0 forks, 0 external issues
-- **GitHub traffic (14 days):**
-  - Page views: 26 views, 11 uniques
-  - Clones: 2,929 clones, 401 uniques
-  - Deep doc readers: 4+ (api-gateway, getting-started, gateway-deploy, LICENSE)
-  - Referrers: HN (noise — qntm.org confusion), qntm.corpo.llc (1)
-- A2A engagement: 3 comments posted (#1575, #1667, #1606)
-- Direct outreach: 3 integration issues posted (aeoess#5, ADHP#12, AIM#92)
-- **Competitors (March 2026):** SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass
-- KPI dashboard: `.company/scripts/kpi-check.sh`
-
-## What We Accomplished Wave 14
-- **DOCS INSTALL FIX** — Found and fixed broken `uvx qntm` install instructions in docs/getting-started.md, docs/tutorials/e2e-encryption-langchain-agents.md, and python-dist/README.md. These pages receive real traffic per GitHub API.
-- **GITHUB TRAFFIC ANALYSIS** — Discovered 11 unique visitors reading deep docs (API gateway, getting-started, gateway-deploy, LICENSE). Someone is seriously evaluating qntm organically.
-- **COMPETITIVE LANDSCAPE UPDATE** — Found 7+ new agent identity/encryption projects from March 2026. Most are thin/abandoned but the trend shows the space is heating up.
-- **ENGAGEMENT MONITORING** — All 6 engagements: 0 replies. Expected — Sunday. All target repos remain active (aeoess committed 5 times since our post).
+- **GitHub traffic (14 days):** 26 views/11 uniques, 2,929 clones/401 uniques
+- **Deep doc readers:** 4+ unique visitors reading API gateway, getting-started, gateway-deploy, LICENSE
+- **Competitors (March 2026):** 7+ new projects (SDAP, Sigil, nostr-agent-mcp, XINNIX, aip-mcp-server, skytale, TigerPass)
+- **Campaigns completed:** 3 (C1: 4/5, C2: 2/5, C3: 2.5/5)
+- **Total waves:** 15
+- **Code shipped this wave:** v0.3→v0.4.2 migration function (856c137)
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -110,3 +84,18 @@ Wave: 14 (COMPLETE) — CAMPAIGN 3, Wave 4 of 5
 - Wave 12: **THIRD INTEGRATION PROPOSAL — CAMPAIGN 3 TARGET HIT (3/3).** AIM#92: E2E encrypted transport for AIM-identified agents. Five integration points: Ed25519 key reuse, trust-gated channels, capability-scoped transport, encrypted audit, MCP attestation. AIM evaluated as strongest integration target (29 stars, multi-language SDKs, cloud service). **6 total engagements, 3 direct integration proposals, 0 replies.** All engagements <24 hours old on Sunday — real evaluation window starts Monday.
 - Wave 13: **CRITICAL CONVERSION FUNNEL FIX.** All 3 integration proposals linked to `github.com/nichochar/qntm` (404). Fixed to `corpollc/qntm`. README changed from broken `uvx qntm` to working `pip install from git`. All proposals updated. Full clean-install flow verified. **Without this fix, even positive responses would have died at "try it" step.**
 - Wave 14: **DOCS INSTALL FIX + TRAFFIC INTELLIGENCE.** Fixed broken install instructions in getting-started.md, tutorial, PyPI README — pages with real visitor traffic. Discovered 11 unique GitHub visitors reading deep docs (API gateway, deployment, license). Found 7+ new competitors in March 2026. **Conversion funnel now fully consistent across all pages.**
+- Wave 15: **CAMPAIGN 3 FINAL + MIGRATION FIX.** Chairman briefing sent via qntm. v0.3→v0.4.2 conversations.json migration function built and shipped (856c137). Campaign 3 scored 2.5/5 — outreach targets hit but 0 conversations. Distribution is the existential bottleneck. Monday is the moment of truth for engagement responses.
+
+## Resolved Blockers
+- ~~CF token invalid~~ — RESOLVED Wave 2
+- ~~Relay poll broken (500/1101)~~ — RESOLVED Wave 2
+- ~~TUI vi.hoisted test~~ — RESOLVED Wave 2
+- ~~No activation path for new users~~ — RESOLVED Wave 3 (echo bot)
+- ~~Echo bot dies on reboot~~ — RESOLVED Wave 4 (launchd plist)
+- ~~Echo bot depends on Peter's Mac~~ — RESOLVED Wave 5 (CF Worker)
+- ~~Echo bot broken by relay migration~~ — RESOLVED Wave 6 (rebuilt with WebSocket client)
+- ~~Test regression from relay migration~~ — RESOLVED Wave 7 (TestRelayServer missing `ready` frame + timeout)
+- ~~Dead URLs in integration proposals~~ — RESOLVED Wave 13 (nichochar → corpollc)
+- ~~Broken install in README~~ — RESOLVED Wave 13 (uvx → pip from git)
+- ~~Broken install in docs pages~~ — RESOLVED Wave 14 (getting-started, tutorial, PyPI README)
+- ~~conversations.json v0.3 format incompatibility~~ — RESOLVED Wave 15 (auto-migration function)

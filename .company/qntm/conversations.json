@@ -1,0 +1,18 @@
+[
+  {
+    "id": "2d0d3ec2b36f83337a143512043ce8bc",
+    "name": "Pepper",
+    "type": "direct",
+    "keys": {
+      "root": "c5159f55653ad4d5470676c41ac81ba03d1a00290f1873e63d9dfa7f82a2066f",
+      "aead_key": "c1c0be23b23f4b06d737c80dd609189fe4f5a9cbb0b99f30af1e7e27becc5849",
+      "nonce_key": "be7b772b7fd0097275ce1af821b1f8d64fea134f3f1ca6b818d59cfac5620931"
+    },
+    "participants": [
+      "ea645eab62b8551a1bec6d49519c22fc",
+      "f0a6e0c2a1cbbebc0306b5f744d2be70"
+    ],
+    "created_at": "2026-03-22T17:43:57Z",
+    "current_epoch": 0
+  }
+]
