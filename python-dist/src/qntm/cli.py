@@ -257,8 +257,58 @@ def _save_identity(config_dir, identity):
     })
 
 
+def _migrate_v03_conversations(conversations):
+    """Auto-detect and convert v0.3 format (byte-array IDs, base64 keys) to v0.4.2 format (hex strings)."""
+    import base64 as _b64
+
+    migrated = False
+    for c in conversations:
+        # Convert byte-array IDs to hex strings
+        if isinstance(c.get("id"), list):
+            c["id"] = bytes(c["id"]).hex()
+            migrated = True
+
+        # Convert base64 keys to hex strings
+        if "keys" in c and isinstance(c["keys"], dict):
+            for key_name in ("root", "aead_key", "nonce_key"):
+                val = c["keys"].get(key_name, "")
+                if isinstance(val, str) and val and not all(
+                    ch in "0123456789abcdef" for ch in val.lower()
+                ):
+                    try:
+                        c["keys"][key_name] = _b64.b64decode(val).hex()
+                        migrated = True
+                    except Exception:
+                        pass
+
+        # Convert base64url participant IDs to hex strings
+        if "participants" in c and isinstance(c["participants"], list):
+            new_parts = []
+            for p in c["participants"]:
+                if isinstance(p, str) and (
+                    "-" in p or "_" in p or "=" in p
+                ):
+                    try:
+                        decoded = _b64.urlsafe_b64decode(p + "==")
+                        new_parts.append(decoded.hex())
+                        migrated = True
+                    except Exception:
+                        new_parts.append(p)
+                elif isinstance(p, list):
+                    new_parts.append(bytes(p).hex())
+                    migrated = True
+                else:
+                    new_parts.append(p)
+            c["participants"] = new_parts
+
+    return migrated
+
+
 def _load_conversations(config_dir):
-    return _load_json(_conversations_path(config_dir), [])
+    conversations = _load_json(_conversations_path(config_dir), [])
+    if conversations and _migrate_v03_conversations(conversations):
+        _save_json(_conversations_path(config_dir), conversations)
+    return conversations
 
 
 def _save_conversations(config_dir, conversations):
