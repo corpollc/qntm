@@ -1,8 +1,9 @@
 import {
-  buildAgentSessionKey,
   buildChannelConfigSchema,
-  createScopedChannelConfigBase,
+  deleteAccountFromConfigSection,
   DEFAULT_ACCOUNT_ID,
+  normalizeAccountId,
+  setAccountEnabledInConfigSection,
 } from "openclaw/plugin-sdk";
 import {
   listQntmAccountIds,
@@ -50,13 +51,24 @@ const clearBaseFields = [
   "conversations",
 ];
 
-const qntmConfigBase = createScopedChannelConfigBase<ResolvedQntmAccount, QntmRootConfig>({
-  sectionKey: CHANNEL_ID,
-  listAccountIds: listQntmAccountIds,
-  resolveAccount: (cfg, accountId) => resolveQntmAccount({ cfg, accountId }),
-  defaultAccountId: resolveDefaultQntmAccountId,
-  clearBaseFields,
-});
+function buildQntmAgentSessionKey(params: {
+  agentId: string;
+  accountId?: string | null;
+  binding: ResolvedQntmBinding;
+}): string {
+  const scope = params.binding.chatType === "direct" ? "dm" : "peer";
+  return [
+    "agent",
+    params.agentId,
+    CHANNEL_ID,
+    normalizeAccountId(params.accountId ?? DEFAULT_ACCOUNT_ID),
+    params.binding.chatType,
+    scope,
+    params.binding.conversationId,
+  ]
+    .join(":")
+    .toLowerCase();
+}
 
 export function buildQntmAccountSnapshot(params: {
   account: ResolvedQntmAccount;
@@ -85,7 +97,29 @@ export function buildQntmAccountSnapshot(params: {
 }
 
 export const qntmConfigAdapter = {
-  ...qntmConfigBase,
+  listAccountIds: (cfg: QntmRootConfig) => listQntmAccountIds(cfg),
+  resolveAccount: (cfg: QntmRootConfig, accountId?: string | null) =>
+    resolveQntmAccount({ cfg, accountId }),
+  defaultAccountId: (cfg: QntmRootConfig) => resolveDefaultQntmAccountId(cfg),
+  setAccountEnabled: (params: {
+    cfg: QntmRootConfig;
+    accountId: string;
+    enabled: boolean;
+  }) =>
+    setAccountEnabledInConfigSection({
+      cfg: params.cfg,
+      sectionKey: CHANNEL_ID,
+      accountId: params.accountId,
+      enabled: params.enabled,
+      allowTopLevel: true,
+    }) as QntmRootConfig,
+  deleteAccount: (params: { cfg: QntmRootConfig; accountId: string }) =>
+    deleteAccountFromConfigSection({
+      cfg: params.cfg,
+      sectionKey: CHANNEL_ID,
+      accountId: params.accountId,
+      clearBaseFields,
+    }) as QntmRootConfig,
   isEnabled: (account: ResolvedQntmAccount) => account.enabled,
   isConfigured: (account: ResolvedQntmAccount) => account.configured,
   unconfiguredReason: (account: ResolvedQntmAccount, _cfg?: QntmRootConfig) => {
@@ -128,18 +162,7 @@ export function buildQntmSessionKey(params: {
   accountId?: string | null;
   binding: ResolvedQntmBinding;
 }): string {
-  return buildAgentSessionKey({
-    agentId: params.agentId,
-    channel: CHANNEL_ID,
-    accountId: params.accountId ?? DEFAULT_ACCOUNT_ID,
-    peer: {
-      kind: params.binding.chatType,
-      id: params.binding.conversationId,
-    },
-    ...(params.binding.chatType === "direct"
-      ? { dmScope: "per-account-channel-peer" as const }
-      : {}),
-  }).toLowerCase();
+  return buildQntmAgentSessionKey(params);
 }
 
 export function resolveQntmOutboundSessionRoute(params: {

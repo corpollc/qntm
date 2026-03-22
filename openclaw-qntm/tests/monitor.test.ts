@@ -4,7 +4,6 @@ import {
   generateIdentity,
   serializeEnvelope,
 } from "@corpollc/qntm";
-import { buildAgentSessionKey } from "openclaw/plugin-sdk";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { resolveQntmAccount } from "../src/accounts.js";
 import { monitorQntmAccount } from "../src/monitor.js";
@@ -30,7 +29,6 @@ function createChannelRuntimeMock() {
           lastRoutePolicy: "main",
           matchedBy: "default",
         })),
-        buildAgentSessionKey,
       },
       session: {
         resolveStorePath: vi.fn(() => "/tmp/openclaw-qntm-session-store.json"),

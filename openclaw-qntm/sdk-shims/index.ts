@@ -1,6 +1,5 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "./account-id.js";
 import { createAccountListHelpers } from "./account-helpers.js";
-import { createScopedChannelConfigBase } from "./channel-config-helpers.js";
 import {
   createNormalizedOutboundDeliverer,
   type OutboundReplyPayload,
@@ -9,7 +8,6 @@ import {
 export { DEFAULT_ACCOUNT_ID, normalizeAccountId };
 export { createAccountListHelpers };
 export { createNormalizedOutboundDeliverer };
-export { createScopedChannelConfigBase };
 export type { OutboundReplyPayload };
 
 export type RoutePeerKind = "direct" | "group" | "channel" | "thread";
@@ -301,26 +299,109 @@ export function buildChannelConfigSchema<T>(schema: T): T {
   return schema;
 }
 
-export function buildAgentSessionKey(params: {
-  agentId: string;
-  channel: string;
-  accountId?: string | null;
-  peer: RoutePeer;
-  dmScope?: "per-account-channel-peer";
-}): string {
-  const normalizedAccountId = normalizeAccountId(params.accountId);
-  const scope = params.dmScope === "per-account-channel-peer" ? "dm" : "peer";
-  return [
-    "agent",
-    params.agentId,
-    params.channel,
-    normalizedAccountId,
-    params.peer.kind,
-    scope,
-    params.peer.id,
-  ]
-    .join(":")
-    .toLowerCase();
+export function setAccountEnabledInConfigSection(params: {
+  cfg: OpenClawConfig;
+  sectionKey: string;
+  accountId: string;
+  enabled: boolean;
+  allowTopLevel?: boolean;
+}): OpenClawConfig {
+  const accountId = normalizeAccountId(params.accountId);
+  const channels = params.cfg.channels ?? {};
+  const base = (channels[params.sectionKey] ?? {}) as {
+    accounts?: Record<string, Record<string, unknown>>;
+    enabled?: boolean;
+  };
+  const hasAccounts = Boolean(base.accounts);
+  if (params.allowTopLevel && accountId === DEFAULT_ACCOUNT_ID && !hasAccounts) {
+    return {
+      ...params.cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          enabled: params.enabled,
+        },
+      },
+    };
+  }
+
+  const accounts = { ...(base.accounts ?? {}) };
+  accounts[accountId] = {
+    ...(accounts[accountId] ?? {}),
+    enabled: params.enabled,
+  };
+  return {
+    ...params.cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: {
+        ...base,
+        accounts,
+      },
+    },
+  };
+}
+
+export function deleteAccountFromConfigSection(params: {
+  cfg: OpenClawConfig;
+  sectionKey: string;
+  accountId: string;
+  clearBaseFields?: string[];
+}): OpenClawConfig {
+  const accountId = normalizeAccountId(params.accountId);
+  const channels = params.cfg.channels ?? {};
+  const base = channels[params.sectionKey] as
+    | ({
+        accounts?: Record<string, Record<string, unknown>>;
+      } & Record<string, unknown>)
+    | undefined;
+  if (!base) {
+    return params.cfg;
+  }
+
+  const accounts = base.accounts ? { ...base.accounts } : {};
+  if (accountId !== DEFAULT_ACCOUNT_ID) {
+    delete accounts[accountId];
+    return {
+      ...params.cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          accounts: Object.keys(accounts).length > 0 ? accounts : undefined,
+        },
+      },
+    };
+  }
+
+  if (Object.keys(accounts).length > 0) {
+    delete accounts[accountId];
+    const nextBase = { ...base };
+    for (const field of params.clearBaseFields ?? []) {
+      nextBase[field] = undefined;
+    }
+    return {
+      ...params.cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...nextBase,
+          accounts: Object.keys(accounts).length > 0 ? accounts : undefined,
+        },
+      },
+    };
+  }
+
+  const nextChannels = { ...channels };
+  delete nextChannels[params.sectionKey];
+  const nextCfg = { ...params.cfg };
+  if (Object.keys(nextChannels).length > 0) {
+    nextCfg.channels = nextChannels;
+  } else {
+    delete nextCfg.channels;
+  }
+  return nextCfg;
 }
 
 export function createReplyPrefixOptions(_params: {

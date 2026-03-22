@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 4)
+Last updated: 2026-03-22 (Wave 6)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -15,32 +15,46 @@ Last updated: 2026-03-22 (Wave 4)
 - PyPI spikes correlate with GitHub commit activity. Feb 15 (353), Feb 27 (234), Mar 10 (229), Mar 20 (823) — all align with commit bursts.
 - Echo bot works. Full round-trip: user sends → bot decrypts → bot echoes encrypted → user receives. E2E verified.
 - Activation path exists. 3 commands from install to seeing encryption work: identity generate → convo join → send → recv echo.
-- **NEW: Echo bot survives reboots.** launchd plist installed and verified. Auto-restarts on crash.
-- **NEW: PyPI README is the activation bottleneck.** 862 weekly downloads → 0 echo bot joins. The published PyPI page has a bare-bones README with NO echo bot mention, NO value prop. Users who `pip install qntm` or `uvx qntm` never discover the demo.
-- **NEW: Published package (v0.3) wraps Go binary.** Dev version (v0.4.2) is pure Python CLI. Both work but are different codebases. The PyPI README belongs to the Python package.
-- **NEW: Full first-run flow works with published v0.3.** Tested: identity generate → convo join → send → recv echo. All 4 commands succeed with the Go binary.
+- Echo bot survives reboots. launchd plist installed and verified.
+- PyPI README is the activation bottleneck. 862 weekly downloads → 0 echo bot joins. The published PyPI page has NO echo bot mention.
+- Published package (v0.3) wraps Go binary. Dev version (v0.4.2) is pure Python CLI. Both work.
+- Full first-run flow works with published v0.3.
+- **NEW: CF Worker echo bot deployed and working.** https://qntm-echo-bot.peter-078.workers.dev. Cron every 60s. Full E2E encryption. No host dependency. 88% reduction in DO requests.
+- **NEW: A2A has no E2E encryption.** Red Hat explicitly wrote "A2A does not include any specific security control against cross-agent prompt injection." A2A GitHub has active discussions about identity, trust, and delegation gaps.
+- **NEW: Active community on A2A GitHub discussing exactly our value prop.** Issue #1575 (12 comments) describes "Agent Passport System" with Ed25519 identity + delegation — closely mirrors qntm's approach but without encrypted messaging.
+- **NEW: Zero external traces of qntm anywhere.** Despite 862 weekly downloads, no one has mentioned qntm on Reddit, SO, HN, Twitter, blogs, or anywhere. GitHub: 1 star, 0 forks, 0 external issues.
+- **NEW: Competitive landscape accelerating.** IBM wrote about AI agent protocols 2 weeks ago. Microsoft Foundry has A2A tool preview. OpenAgents has MCP+A2A. Security Boulevard covered secure agent comms in Feb 2026. Window is narrowing.
+- **NEW (W6): Published `uvx qntm` (v0.3) is BROKEN.** Relay removed polling API, published CLI gets 410 on recv. Every PyPI user is affected.
+- **NEW (W6): A2A GitHub has 5+ projects building agent identity/delegation.** APS, AIP, Kanoniv, QHermes, MeshCap — all using Ed25519, none providing encrypted transport. This is the exact gap qntm fills.
+- **NEW (W6): First external engagement posted.** Comment on A2A#1575, positioned as encrypted transport complement to identity work. Genuinely useful contribution, not marketing.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
 - "Poll returns 1101" — FALSE as of Wave 2. Fixed via DO SQLite migration.
 - "Nobody is finding qntm" — FALSE. 2,029+ real downloads in 35 days with zero marketing.
-- **NEW: "Echo bot in README is enough for discoverability" — FALSE.** The echo bot is only mentioned in the GitHub README, not the PyPI README. Most downloaders come from PyPI and never see it.
+- "Echo bot in README is enough for discoverability" — FALSE. Echo bot only in GitHub README, not PyPI.
+- **NEW: "862 weekly downloads implies user engagement" — FALSE.** Downloads ≠ usage. Zero echo bot joins, zero external conversations, zero GitHub issues. Downloads without activation are vanity metrics.
 
 ## UNRESOLVED (we don't know yet)
 - Do agent developers care enough about encryption to adopt a new tool? (No customer evidence beyond downloads)
 - Does the API Gateway concept resonate before they try it?
 - Where do agent developers actually discover tools? (Research says r/AI_Agents, HN, framework Discords — untested)
 - What pricing model works for agent-to-agent messaging?
-- Will existing messages in KV (stored before SQLite migration) be readable? (Old messages won't appear via poll)
+- Will existing messages in KV (stored before SQLite migration) be readable?
 - Is QNTM_HOME env-based identity isolation sufficient for multi-agent setups?
-- What causes the PyPI download spikes? Best hypothesis: GitHub commit activity → GitHub trending/search → PyPI installs. But unconfirmed.
-- **UPDATED: What happens after people download?** 862 weekly downloads → 0 echo bot joins. Now we know the PyPI README is the gap. New question: will an updated PyPI README convert downloaders to echo bot users?
+- What causes the PyPI download spikes? Hypothesis: GitHub commit → trending → PyPI. Unconfirmed.
+- Will an updated PyPI README convert downloaders to echo bot users?
+- **NEW: Will GitHub-based engagement (A2A issues) generate interest?** The A2A community is discussing exactly our value prop. Technical participation is within permissions.
+- **NEW: Would the Agent Passport System author (aeoess) be a design partner?** They built Ed25519 identity + delegation. qntm adds the encrypted messaging layer they don't have.
+- **NEW (W6): Will the A2A comment generate responses or engagement?** First test of GitHub as a distribution channel. The issue is active (12+ comments) with the right audience.
+- **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
 
 ## ASSUMPTIONS (beliefs without evidence, ranked by risk)
 1. **HIGH RISK:** r/AI_Agents is the #1 distribution channel → untested, posting blocked
-2. **HIGH RISK:** "Signal for agents" positioning will resonate → no customer feedback yet
-3. **HIGH RISK → ELEVATED:** Updating PyPI README will convert downloads → conversations → must test with next release
+2. **HIGH RISK:** "Signal for agents" positioning will resonate → no customer feedback yet  
+3. **HIGH RISK → ELEVATED:** Updating PyPI README will convert downloads → conversations → must test
 4. **MEDIUM RISK:** API Gateway is the differentiator vs pure messaging → no customer evidence
 5. **MEDIUM RISK:** Free tier → design partners → paid conversion is viable path
-6. **LOW RISK:** E2E encryption is a real need (not just nice-to-have) for agent developers
+6. **LOW RISK → EVIDENCE GROWING:** E2E encryption is a real need for agent developers — IBM, Security Boulevard, Red Hat, and A2A GitHub all discuss the gap
 7. **CONFIRMED:** Organic discovery happens without marketing — 862/week baseline with zero marketing
+8. **NEW HIGH RISK:** Downloads are vanity. 5 waves, 0 customer contact. The company has never spoken to a user.

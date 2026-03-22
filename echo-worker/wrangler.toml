@@ -1,0 +1,22 @@
+name = "qntm-echo-bot"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+# Run every 60 seconds to poll for messages
+[triggers]
+crons = ["* * * * *"]
+
+# KV namespace for cursor persistence
+[[kv_namespaces]]
+binding = "ECHO_KV"
+id = "bd393aae4c6f448592171800f79698dc"
+
+# Secrets (set via `wrangler secret put`):
+# IDENTITY_PRIVATE_KEY - base64 encoded 64-byte Ed25519 private key
+# IDENTITY_PUBLIC_KEY - base64 encoded 32-byte Ed25519 public key
+# CONV_AEAD_KEY - base64 encoded conversation AEAD key
+# CONV_NONCE_KEY - base64 encoded conversation nonce key
+
+[vars]
+CONV_ID_HEX = "48055654db4bb0f64ec63089b70e1bf4"
+RELAY_URL = "https://inbox.qntm.corpo.llc"
