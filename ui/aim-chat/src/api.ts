@@ -67,6 +67,16 @@ export const api = {
     return { conversations: store.listConversations(profileId).map(formatConversation) }
   },
 
+  renameConversation(profileId: string, conversationId: string, newName: string): { conversations: Conversation[] } {
+    store.updateConversation(profileId, conversationId, (conv) => ({ ...conv, name: newName.trim() || conv.name }))
+    return { conversations: store.listConversations(profileId).map(formatConversation) }
+  },
+
+  deleteConversation(profileId: string, conversationId: string): { conversations: Conversation[] } {
+    store.deleteConversation(profileId, conversationId)
+    return { conversations: store.listConversations(profileId).map(formatConversation) }
+  },
+
   listContacts(profileId: string): { contacts: ContactAlias[] } {
     return { contacts: store.listContacts(profileId) }
   },

@@ -83,3 +83,37 @@ describe('api', () => {
     expect(response.message.bodyType).toBe('gate.promote')
   })
 })
+
+describe('api.renameConversation', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', new MemoryStorage())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('updates the conversation name', async () => {
+    const { profile, identity } = api.createProfile('Alice')
+    const invite = api.createInvite(profile.id, 'Original Name')
+    const convId = invite.conversationId
+    const result = api.renameConversation(profile.id, convId, 'New Name')
+    expect(result.conversations.find(c => c.id === convId)?.name).toBe('New Name')
+  })
+})
+
+describe('api.deleteConversation', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', new MemoryStorage())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('removes the conversation', () => {
+    const { profile } = api.createProfile('Alice')
+    const invite = api.createInvite(profile.id, 'To Delete')
+    const convId = invite.conversationId
+    const result = api.deleteConversation(profile.id, convId)
+    expect(result.conversations.find(c => c.id === convId)).toBeUndefined()
+  })
+})
