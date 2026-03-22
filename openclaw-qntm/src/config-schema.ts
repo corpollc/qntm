@@ -6,10 +6,18 @@ const QntmConversationSchema = z
     name: z.string().optional(),
     enabled: z.boolean().optional(),
     invite: z.string().optional(),
+    convId: z.string().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
     if (!value.invite?.trim()) {
+      if (value.convId?.trim() && !/^[0-9a-f]{32}$/i.test(value.convId.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["convId"],
+          message: "invalid qntm conversation id: expected 32 hex characters",
+        });
+      }
       return;
     }
     try {
@@ -30,6 +38,7 @@ export const QntmAccountSchemaBase = z
     relayUrl: z.string().optional(),
     identity: z.string().optional(),
     identityFile: z.string().optional(),
+    identityDir: z.string().optional(),
     defaultTo: z.string().optional(),
     conversations: z.record(z.string(), QntmConversationSchema.optional()).optional(),
   })

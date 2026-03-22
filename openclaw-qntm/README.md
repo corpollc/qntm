@@ -12,7 +12,7 @@
 
 ## Configuration
 
-Add the plugin to an OpenClaw extensions install and configure `channels.qntm` with an identity plus one or more invite tokens.
+Add the plugin to an OpenClaw extensions install and configure `channels.qntm` with either invite tokens or an OpenClaw-owned qntm profile directory. Inbound delivery is relay-websocket based; this plugin does not expose a webhook receiver.
 
 ```json
 {
@@ -23,15 +23,15 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
         "default": {
           "enabled": true,
           "relayUrl": "https://inbox.qntm.corpo.llc",
-          "identityFile": "/Users/pv/.openclaw/qntm-identity.txt",
+          "identityDir": "/Users/pv/.openclaw/qntm/default",
           "defaultTo": "ops",
           "conversations": {
             "alice": {
-              "invite": "qntm://...",
+              "convId": "be96bcc53fa787c1f6cfc1f20afc0049",
               "name": "Alice"
             },
             "ops": {
-              "invite": "qntm://...",
+              "convId": "0050a49f0b2e738063a89621d1c9b055",
               "name": "Ops Room"
             }
           }
@@ -44,6 +44,9 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
 
 ## Runtime Notes
 
+- `identityDir` reads `identity.json` and `conversations.json` from a dedicated qntm profile directory managed for OpenClaw.
+- `convId` bindings require `identityDir` because the plugin must load the matching conversation keys from that profile directory.
+- Invite-token bindings are still supported via `identity` or `identityFile`.
 - Each configured binding is addressed by either its binding key, such as `ops`, or the raw qntm `conv_id`.
 - Cursor state is stored under `OPENCLAW_STATE_DIR/plugins/qntm/accounts/<account>/cursors/<conv_id>.json`.
 - Outbound media is flattened into text lines like `Attachment: https://...` because qntm currently only exposes text sends through this plugin path.

@@ -5,6 +5,7 @@ export type QntmConversationConfig = {
   name?: string;
   enabled?: boolean;
   invite?: string;
+  convId?: string;
 };
 
 export type QntmAccountConfig = {
@@ -13,6 +14,7 @@ export type QntmAccountConfig = {
   relayUrl?: string;
   identity?: string;
   identityFile?: string;
+  identityDir?: string;
   defaultTo?: string;
   conversations?: Record<string, QntmConversationConfig | undefined>;
 };
@@ -33,7 +35,7 @@ export type ResolvedQntmBinding = {
   target: string;
   label: string;
   enabled: boolean;
-  invite: string;
+  invite?: string;
   conversationId: string;
   conversation: Conversation;
   chatType: "direct" | "group";
@@ -46,7 +48,7 @@ export type ResolvedQntmAccount = {
   configured: boolean;
   relayUrl: string;
   identity?: Identity;
-  identitySource: "config" | "identityFile" | "none";
+  identitySource: "config" | "identityFile" | "identityDir" | "none";
   defaultTo?: string;
   bindings: ResolvedQntmBinding[];
   config: QntmAccountConfig;

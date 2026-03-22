@@ -13,6 +13,7 @@ const plugin = {
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     setQntmRuntime(api.runtime);
+    console.info("qntm: registered (relay websocket monitor)");
     api.registerChannel({ plugin: qntmPlugin as ChannelPlugin });
   },
 };

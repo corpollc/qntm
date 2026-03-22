@@ -47,6 +47,7 @@ const clearBaseFields = [
   "relayUrl",
   "identity",
   "identityFile",
+  "identityDir",
   "defaultTo",
   "conversations",
 ];

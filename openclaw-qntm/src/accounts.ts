@@ -10,6 +10,7 @@ import type {
   ResolvedQntmBinding,
 } from "./types.js";
 import {
+  loadQntmConversationFromDir,
   resolveInviteConversation,
   resolveQntmIdentity,
   toHex,
@@ -95,10 +96,28 @@ export function normalizeQntmBindingKey(raw: string): string | undefined {
   return normalizeTargetToken(raw);
 }
 
+function normalizeConversationId(raw: string): string | undefined {
+  const normalized = normalizeTargetToken(raw);
+  if (!normalized || !/^[0-9a-f]{32}$/i.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function resolveConversationStoreDir(config: QntmAccountConfig): string | undefined {
+  return config.identityDir?.trim() || undefined;
+}
+
 function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQntmBinding[] {
   const bindings: ResolvedQntmBinding[] = [];
+  const conversationStoreDir = resolveConversationStoreDir(config);
   for (const [rawKey, value] of Object.entries(config.conversations ?? {})) {
-    if (!value?.invite?.trim()) {
+    if (!value) {
+      continue;
+    }
+    const invite = value?.invite?.trim();
+    const convId = normalizeConversationId(value?.convId ?? "");
+    if (!invite && !value?.convId?.trim()) {
       continue;
     }
     const key = normalizeQntmBindingKey(rawKey);
@@ -106,20 +125,37 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
       errors.push(`invalid qntm conversation key: ${rawKey}`);
       continue;
     }
+    if (!invite && !convId) {
+      errors.push(`invalid qntm conversation id for "${rawKey}": expected 32 hex characters`);
+      continue;
+    }
     try {
-      const conversation = resolveInviteConversation(value.invite);
+      const conversation = invite
+        ? resolveInviteConversation(invite)
+        : loadQntmConversationFromDir(conversationStoreDir ?? "", convId!);
+      const bindingInvite = invite ?? conversation.inviteToken?.trim();
       bindings.push({
         key,
         target: key,
-        label: value.name?.trim() || rawKey || toHex(conversation.id),
+        label: value.name?.trim() || conversation.name?.trim() || rawKey || toHex(conversation.id),
         enabled: value.enabled !== false,
-        invite: value.invite.trim(),
+        invite: bindingInvite || undefined,
         conversationId: toHex(conversation.id),
         conversation,
         chatType: conversation.type === "group" ? "group" : "direct",
       });
     } catch (error) {
-      errors.push(`invalid qntm invite for "${rawKey}": ${String(error)}`);
+      if (!invite && !conversationStoreDir) {
+        errors.push(
+          `qntm conversation "${rawKey}" uses convId but no identityDir is configured`,
+        );
+        continue;
+      }
+      errors.push(
+        invite
+          ? `invalid qntm invite for "${rawKey}": ${String(error)}`
+          : `invalid qntm conversation for "${rawKey}": ${String(error)}`,
+      );
     }
   }
   return bindings.toSorted((left, right) => left.key.localeCompare(right.key));
@@ -160,6 +196,7 @@ export function resolveQntmAccount(params: {
       const resolvedIdentity = resolveQntmIdentity({
         identity: config.identity,
         identityFile: config.identityFile,
+        identityDir: config.identityDir,
       });
       identity = resolvedIdentity.identity;
       identitySource = resolvedIdentity.source;
