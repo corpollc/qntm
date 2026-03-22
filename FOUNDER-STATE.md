@@ -1,10 +1,10 @@
 # Founder State — qntm
-Updated: 2026-03-22T21:45:00Z
-Wave: 18 (COMPLETE) — New Outreach Expansion + NanoClaw Status
+Updated: 2026-03-22T22:50:00Z
+Wave: 19 (COMPLETE) — First External Replies + Subscribe Auth + Interop Vectors
 
 ## Horizon Goals (revised wave 10)
-1. 1 external reply/conversation — IN PROGRESS (9 engagements, 0 replies — Monday/Tuesday is the test)
-2. 1 design partner in discussion — IN PROGRESS (6 direct proposals active: aeoess#5, ADHP#12, AIM#92, nono#458, Clawdstrike#216, MCP-Gateway#17)
+1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
+2. 1 design partner in discussion — IN PROGRESS (aeoess is closest — proposed integration, test vectors proposed as next step)
 3. PyPI fixed and published — ✅ DONE (v0.4.20 live, P0 resolved wave 17)
 4. Direct outreach to 3+ complementary projects — ✅ DONE → EXPANDED to 6/6 (3 new in wave 18)
 5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
@@ -16,37 +16,41 @@ Wave: 18 (COMPLETE) — New Outreach Expansion + NanoClaw Status
 Wave 16: ✅ MCP server built and shipped. New distribution channel.
 Wave 17: ✅ PyPI P0 resolved. Install path clean. MCP marketplace materials ready. NanoClaw integration discovered.
 Wave 18: ✅ 3 new integration proposals (nono, clawdstrike, mcp-gateway). Joined All-Hands. NanoClaw live test confirmed. Clone spike analyzed.
-Wave 19: Monitor ALL engagement responses. Get marketplace ruling. Support NanoClaw if needed.
-Wave 20-22: Convert any response to design partner conversation. If no responses by wave 22, major pivot needed.
+Wave 19: ✅ **FIRST EXTERNAL REPLIES.** aeoess + The-Nexus-Guard engaged. Subscribe auth shipped. Interop test vectors created. Responded to both.
+Wave 20: Monitor all responses. Push aeoess toward test vector exchange. If more replies come, engage immediately.
+Wave 21-22: Convert engagement to design partner. If no further responses, evaluate pivot.
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
 1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work.
-2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md?
+2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md? **4th wave asking.**
 3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 9 outbound engagements active but all via GitHub. HN would 10x reach.
-4. **🟡 P1: Distribution at scale.** 18 waves, 9 external engagements, 0 replies, 0 users, 0 customer conversations. Two distribution plays in flight (MCP marketplace + NanoClaw integration). Neither shipped yet.
+4. **🟢 P1: Distribution producing signal.** First external replies after 18 waves. GitHub issues channel works — just slower than expected (days, not hours).
 
-## What We Accomplished Wave 18
-- **3 NEW INTEGRATION PROPOSALS POSTED** — Targeting bigger repos:
-  - nono#458 (1,190★) — Agent sandbox + encrypted messaging integration
-  - Clawdstrike#216 (255★) — Fleet communication + identity cross-certification
-  - MCP-Gateway#17 (360★) — Encrypted messaging as MCP plugin
-- **JOINED ALL-HANDS** — qntm All-Hands group conversation (e559) via Pepper's invite
-- **RELAY INVESTIGATION** — 10 active conversations (up from 8). `2211d8d9` confirmed as NanoClaw live test. `a195dbef` unknown (likely corpo internal).
-- **CLONE SPIKE ANALYZED** — March 20 (v0.4.20 release): 560 clones / 134 unique sources. 10-15x baseline. Releases drive discovery.
-- **NANOCLAW STATUS ASSESSED** — qntm-side work complete. Blocked on NanoClaw credential proxy bug (qntm-jfek). Chairman is DRI.
-- **207 TESTS PASS** — 14 skipped, 0 failures
+## What We Accomplished Wave 19
+- **FIRST EXTERNAL REPLIES IN 18 WAVES** 🎉
+  - aeoess replied to integration proposal #5 with detailed technical response. Proposed 5-layer integration stack. Said "qntm fills exactly that gap" (transport/relay).
+  - The-Nexus-Guard replied on A2A #1667 with code review of our relay. Read worker/src/index.ts. Asked about identity-authenticated subscribe.
+  - aeoess also replied on A2A #1575 + #1606 (3 threads total).
+- **RESPONDED TO BOTH** with substance:
+  - aeoess: confirmed integration stack, proposed shared test vectors, discussed Double Ratchet vs per-message trade-offs
+  - The-Nexus-Guard: acknowledged subscribe auth gap, proposed Ed25519 challenge-response, connected to APS work
+- **SUBSCRIBE AUTHENTICATION SHIPPED** — Ed25519 challenge-response on /v1/subscribe. Optional, backwards compatible. Deployed to production (c0104a0).
+- **INTEROP TEST VECTORS CREATED** — 5 known-answer vectors for Ed25519→X25519 derivation. 9 pytest tests. VECTORS.md for cross-project use.
+- **CHAIRMAN BRIEFING SENT** via qntm (seq 9)
+- **DECISION MEMO WRITTEN** — subscribe auth (Option A, 0.85 confidence)
+- **230 TESTS PASS** — 221 python-dist + 9 interop, 0 failures
 
 ## Metrics
-- Tests: 207 pass, 14 skipped ✅
-- Relay: OPERATIONAL ✅ (WebSocket-only)
-- Echo bot: CF WORKER LIVE ✅ (version 80be631f)
+- Tests: 230 pass, 0 failures ✅
+- Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
+- Echo bot: CF WORKER LIVE ✅
 - TTFM: 1.2 seconds ✅
 - Active conversations (7-day relay): 10 (mostly internal)
 - Active conversations (qntm-only): 1 (echo bot)
-- Design partners: 0
+- Design partners: 0 (aeoess closest — in technical discussion)
 - External users who've ever messaged: 0
-- **External engagements: 9** — A2A #1575/#1667/#1606 + aeoess#5 + ADHP#12 + AIM#92 + nono#458 + Clawdstrike#216 + MCP-Gateway#17 — **0 replies**
-- **Direct integration proposals: 6** — aeoess#5, ADHP#12, AIM#92, nono#458, Clawdstrike#216, MCP-Gateway#17 — **0 replies**
+- **External engagements: 9** — **2 REPLIES (aeoess, The-Nexus-Guard)**, 7 no reply
+- **Direct integration proposals: 6** — **1 reply (aeoess)**, 5 pending
 - PyPI downloads: 26/day, 862/week, 1,625/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
@@ -54,8 +58,10 @@ Wave 20-22: Convert any response to design partner conversation. If no responses
 - **Clone spike (Mar 20):** 560 clones / 134 uniques (v0.4.20 release effect)
 - **Competitors (March 2026):** 8+ new projects
 - **Campaigns completed:** 3 (Campaign 4 active)
-- **Total waves:** 18
+- **Total waves:** 19
 - **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
+- **Subscribe auth:** SHIPPED (c0104a0, deployed)
+- **Interop tests:** 9 pass (Ed25519→X25519 vectors)
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -76,6 +82,7 @@ Wave 20-22: Convert any response to design partner conversation. If no responses
 - Wave 16: **MCP SERVER SHIPPED.** 9 tools, 2 resources, 1 prompt. Works with Claude Desktop, Cursor, any MCP client. DeadDrop competitive intel. Both READMEs updated. Decision memo written. Relay activity spike (4→8 active convos). 221 tests pass.
 - Wave 17: **PyPI P0 RESOLVED + NANOCLAW DISCOVERY.** v0.4.20 live on PyPI. Install path clean. MCP marketplace materials ready. Smithery requires active submission. Relay investigation: 8 convos, all internal. Chairman building NanoClaw qntm integration (significant product validation). 221 tests pass.
 - Wave 18: **NEW OUTREACH EXPANSION.** 3 new integration proposals to bigger repos: nono (1,190★), Clawdstrike (255★), MCP-Gateway (360★). Joined All-Hands. NanoClaw live test confirmed (conv 2211d8d9). Clone spike analyzed: v0.4.20 release drove 134 unique cloners. Total engagements: 9. Total proposals: 6. Still 0 replies.
+- Wave 19: **🎉 FIRST EXTERNAL REPLIES.** aeoess (APS) replied to #5 with integration proposal. The-Nexus-Guard (AIP) replied on A2A #1667 with code review. Both responded to. Subscribe auth shipped (Ed25519 challenge-response). Interop test vectors created (9 tests). 230 total tests pass. Deployed to production. Horizon Goal #1 ACHIEVED.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
@@ -92,3 +99,4 @@ Wave 20-22: Convert any response to design partner conversation. If no responses
 - ~~conversations.json v0.3 format incompatibility~~ — RESOLVED Wave 15 (auto-migration function)
 - ~~No MCP distribution channel~~ — RESOLVED Wave 16 (MCP server built and shipped)
 - ~~PyPI CLI broken (v0.3, 11-wave escalation)~~ — RESOLVED Wave 17 (v0.4.20 published by chairman)
+- ~~Subscribe has no identity verification~~ — RESOLVED Wave 19 (Ed25519 challenge-response, optional)

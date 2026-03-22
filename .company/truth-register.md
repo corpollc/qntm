@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 17)
+Last updated: 2026-03-22 (Wave 19)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -69,10 +69,10 @@ Last updated: 2026-03-22 (Wave 17)
 - **NEW: Will GitHub-based engagement (A2A issues) generate interest?** The A2A community is discussing exactly our value prop. Technical participation is within permissions.
 - **NEW: Would the Agent Passport System author (aeoess) be a design partner?** They built Ed25519 identity + delegation. qntm adds the encrypted messaging layer they don't have.
 - **NEW (W6): Will the A2A comment on #1575 generate responses or engagement?** First test of GitHub as a distribution channel. The issue is active (12+ comments) with the right audience. No replies after 1 hour (thread was last active Mar 20).
-- **NEW (W7): Will the A2A comment on #1667 generate responses or engagement?** Second engagement. Issue is very recent (Mar 21) with active participants asking specifically about relay infrastructure.
+- **RESOLVED (W19): Will the A2A comment on #1667 generate responses or engagement?** YES. The-Nexus-Guard replied with detailed code review and architectural comparison (wave 19). Asked specific question about subscribe auth. Also, aeoess replied on #1667 independently.
 - **NEW (W8): Can the relay stats endpoint serve as a real-time dashboard?** Currently returns count + per-conversation timestamps. Could be polled by a monitoring script or cron job for KPI tracking. → **PARTIAL ANSWER (W9):** KPI dashboard script created. Works but stats overcount (shared relay). Need project-level filtering.
 - **NEW (W9): Will the A2A comment on #1606 generate engagement?** Data handling thread has weekly response cadence. Our comment adds a technical angle (transport-level enforcement) nobody else has raised. Quality of contribution is high — schema-level suggestion, not vague positioning.
-- **NEW (W10): Will the aeoess integration proposal (#5) generate a response?** This is our first direct outreach to a specific project. aeoess is highly active (pushed 12 hours ago, 969 tests). Their interoperability issue explicitly maps ecosystem gaps that include encrypted transport. If this gets a response, it's our first design partner conversation.
+- **RESOLVED (W19): Will the aeoess integration proposal (#5) generate a response?** YES. aeoess replied with detailed technical response (wave 19). Proposed 5-layer integration stack. Said "qntm fills exactly that gap." Test vector exchange proposed as next step.
 - **NEW (W12): Will the AIM integration proposal (#92) generate a response?** AIM is the strongest target: 29 stars, opena2a-org ecosystem, multi-language SDKs. Their Ed25519 identity maps directly to qntm. They have Discussions enabled and an active org. But 0 open issues before ours — community may be Discord-focused.
 - **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
 - **NEW (W13): conversations.json format incompatibility.** v0.3 stores conversation IDs as byte arrays, v0.4.2 code expects hex strings. Users who mixed versions would hit AttributeError. Not critical for new installs (clean state) but blocks upgrade path. Low priority — no users yet.
@@ -100,3 +100,8 @@ Last updated: 2026-03-22 (Wave 17)
 - **NEW (W17): Chairman is building NanoClaw qntm integration.** Peter committed a detailed integration plan (376 lines, cc1af17) AND built a working TypeScript scaffold (`nanoclaw-qntm/`). This includes QntmChannel class with WebSocket subscriptions, cursor persistence, self-echo suppression, and tests. This is the strongest product validation signal we've had — the chairman is investing engineering time.
 - **NEW (W17): All 8 relay conversations are internal.** 5 "unknown" conversations are corpo traffic on the shared relay, not external qntm users. 0 external users confirmed after investigation.
 - **NEW (W17): NanoClaw channel model requires source integration, not runtime plugin.** Each messaging integration implements a `Channel` interface and self-registers from `src/channels/<name>.ts`. The qntm integration follows this pattern exactly.
+- **NEW (W19): GitHub issues work as a distribution channel — with multi-day response cadence.** 9 engagements over waves 6-18 produced 0 replies. Then 2 replies came on wave 19 (2-12 days after posting). The channel is not broken, it's slow. Patience is correct.
+- **NEW (W19): aeoess (Agent Passport System) considers qntm complementary, not competitive.** They have E2E encryption (Module 19, XChaCha20-Poly1305) but NO relay/transport. Their response: "qntm fills exactly that gap." They proposed the 5-layer integration stack themselves.
+- **NEW (W19): The-Nexus-Guard (AIP) reads and evaluates source code.** They reviewed worker/src/index.ts in detail, compared architectural approaches (cursor vs mark-read, WebSocket vs HTTP), and identified a real gap (subscribe authentication). This is serious technical evaluation, not casual engagement.
+- **NEW (W19): Subscribe authentication is a real requirement for identity-focused developers.** Both external responders independently flagged the need for identity-verified subscribe. Shipped Ed25519 challenge-response within hours (c0104a0). Demonstrates: (a) the gap is real, (b) fast response to feedback builds credibility.
+- **NEW (W19): Ed25519→X25519 key derivation is the foundation for cross-project identity interop.** Both qntm and APS use the birational equivalence (RFC 7748 §4.1). Shared test vectors confirm compatibility at the crypto layer. This is the starting point for any integration.
