@@ -40,6 +40,8 @@ Last updated: 2026-03-22 (Wave 10)
 - **NEW (W10): Campaign 2 confirmed that passive A2A commenting generates presence but not conversations.** 3 comments across 3 threads over 5 waves = 0 replies. Thread response cycles are multi-day to multi-week. This channel is necessary but insufficient as sole distribution.
 - **NEW (W11): ADHP (Agent Data Handling Policy) explicitly identifies encrypted transport as future work.** Their Phase 4 verification roadmap lists "encrypted data envelopes that enforce retention policies" — this is exactly what qntm provides today. Integration proposal posted as ADHP#12.
 - **NEW (W11): StevenJohnson998 is active across A2A ecosystem.** Authored A2A #1606 (data handling), replies to thread comments, maintains ADHP spec v0.2 with interactive playground and SDK. Highest-probability reply among our outreach targets.
+- **NEW (W12): AIM (opena2a-org/agent-identity-management) is the most mature identity platform in the ecosystem.** 29 stars, Ed25519 + OAuth 2.0, 8-factor trust scoring, capability enforcement, MCP attestation, multi-language SDKs (Python/Java/TypeScript), cloud service + dashboard. Part of opena2a-org ecosystem with 6 repos (HackMyAgent, Secretless, Browser Guard, DVAA). Post-quantum crypto support (ML-DSA) server-side. NO encrypted transport — identity/governance only. Our third integration proposal (#92) is the first issue on the repo.
+- **NEW (W12): agent-security GitHub topic has 160 repos.** The agent security space is active and growing. Categories include: vulnerability scanning (agentic_security, medusa), sandbox enforcement (nono, cupcake, rampart), identity management (AIM), MCP security (mcp-gateway, agentseal), and fleet monitoring (clawdstrike). None provide encrypted agent-to-agent transport.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
@@ -64,6 +66,7 @@ Last updated: 2026-03-22 (Wave 10)
 - **NEW (W8): Can the relay stats endpoint serve as a real-time dashboard?** Currently returns count + per-conversation timestamps. Could be polled by a monitoring script or cron job for KPI tracking. → **PARTIAL ANSWER (W9):** KPI dashboard script created. Works but stats overcount (shared relay). Need project-level filtering.
 - **NEW (W9): Will the A2A comment on #1606 generate engagement?** Data handling thread has weekly response cadence. Our comment adds a technical angle (transport-level enforcement) nobody else has raised. Quality of contribution is high — schema-level suggestion, not vague positioning.
 - **NEW (W10): Will the aeoess integration proposal (#5) generate a response?** This is our first direct outreach to a specific project. aeoess is highly active (pushed 12 hours ago, 969 tests). Their interoperability issue explicitly maps ecosystem gaps that include encrypted transport. If this gets a response, it's our first design partner conversation.
+- **NEW (W12): Will the AIM integration proposal (#92) generate a response?** AIM is the strongest target: 29 stars, opena2a-org ecosystem, multi-language SDKs. Their Ed25519 identity maps directly to qntm. They have Discussions enabled and an active org. But 0 open issues before ours — community may be Discord-focused.
 - **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
 
 ## ASSUMPTIONS (beliefs without evidence, ranked by risk)
@@ -77,3 +80,4 @@ Last updated: 2026-03-22 (Wave 10)
 8. **NEW HIGH RISK → CONFIRMED:** Downloads are vanity. 10 waves, 0 customer contact. The company has never spoken to a user. Campaign 2 closed with 0 customer-facing goals met.
 9. **NEW (W10):** Direct integration proposals may be more effective than A2A thread comments. First proposal posted to aeoess/agent-passport-system#5. Results pending.
 10. **NEW (W11):** ADHP is a natural integration partner — their Phase 4 verification roadmap maps directly to qntm's existing capabilities. Proposal posted as ADHP#12. Results pending.
+11. **NEW (W12):** AIM (opena2a-org) is the strongest integration target found. 29 stars, multi-language SDKs, cloud service, active development. Ed25519 identity maps directly to qntm identity keys. Part of broader opena2a-org ecosystem (6 repos). Proposal posted as AIM#92. Results pending.

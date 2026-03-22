@@ -1,32 +1,32 @@
 # Founder State — qntm
-Updated: 2026-03-22T12:34:00Z
-Wave: 11 (COMPLETE) — CAMPAIGN 3, Wave 1
+Updated: 2026-03-22T13:37:00Z
+Wave: 12 (COMPLETE) — CAMPAIGN 3, Wave 2
 
 ## Horizon Goals (revised wave 10)
-1. 1 external reply/conversation — IN PROGRESS (5 engagements, 0 replies yet)
-2. 1 design partner in discussion — IN PROGRESS (aeoess#5 + ADHP#12 posted, awaiting responses)
-3. PyPI fixed and published — BLOCKED (chairman approval needed, 7 waves of escalation)
-4. Direct outreach to 3+ complementary projects — IN PROGRESS (2/3: aeoess ✅, ADHP ✅)
+1. 1 external reply/conversation — IN PROGRESS (6 engagements, 0 replies yet)
+2. 1 design partner in discussion — IN PROGRESS (aeoess#5 + ADHP#12 + AIM#92 posted, awaiting responses)
+3. PyPI fixed and published — BLOCKED (chairman approval needed, 8 waves of escalation)
+4. Direct outreach to 3+ complementary projects — ✅ DONE (3/3: aeoess ✅, ADHP ✅, AIM ✅)
 5. Show HN approval sought — NOT STARTED (draft v2 ready)
 
 ## Campaign 3 Goals (Waves 11-15)
 1. **Fix published CLI** — P0 CRITICAL: published CLI is BROKEN (410 on recv). Blocks ALL organic adoption.
-2. **Open integration issues on 3+ projects** — IN PROGRESS: 2/3 done (aeoess/agent-passport-system#5, StevenJohnson998/agent-data-handling-policy#12). Next: QHermes or better candidate.
-3. **Get 1 reply/conversation from any outreach** — 5 total engagements active, 0 replies yet. StevenJohnson998 is highest-probability reply (active A2A contributor).
+2. **Open integration issues on 3+ projects** — ✅ DONE (3/3): aeoess/agent-passport-system#5 + StevenJohnson998/agent-data-handling-policy#12 + opena2a-org/agent-identity-management#92
+3. **Get 1 reply/conversation from any outreach** — 6 total engagements active, 0 replies yet. All <24 hours old on Sunday. Real evaluation window: Monday-Tuesday.
 4. **Show HN readiness** — Draft v2 DONE ✅. Posting still requires AUTONOMY change.
 5. **Evaluate all engagement data by wave 15** — decide if distribution strategy needs rethinking.
 
-## Wave 12 Top 5 (NEXT)
-1. **Monitor aeoess#5 and ADHP#12 for responses** — highest-probability outreach channels
-2. **Monitor A2A #1575, #1667, #1606 for responses** — if replies, engage immediately
-3. **Third integration proposal** — QHermes (Copertino-Research) or identify better candidate. Need 3+ per campaign goal.
-4. **PyPI publish (if approved)** — P0 blocker
-5. **Engagement evaluation** — if any replies come in, pivot to deepening that relationship immediately
+## Wave 13 Top 5 (NEXT)
+1. **Monitor all 6 engagements for responses** — Monday should be the first real response window
+2. **If any reply comes in, engage immediately** — pivot to deepening that relationship
+3. **PyPI publish (if approved)** — P0 blocker, 8 waves of escalation
+4. **Prepare for response scenarios** — have technical answers ready for likely questions from each project
+5. **Campaign 3 midpoint assessment** — with 3/3 proposals done, focus shifts entirely to conversion
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **7 WAVES OF ESCALATION — no response.** Request: IMMEDIATE approval for PyPI publish.
-2. **Public posting DENIED** — Show HN draft v2 ready, 5 outbound engagements active. GitHub engagement (issues + comments) is the only outbound channel within permissions. Show HN would 10x our reach.
-3. **Existential urgency.** 11 waves, 5 external engagements, 0 replies, 0 users. We've shifted from passive commenting to active integration proposals — the quality of outreach is much higher now (2 concrete technical proposals on complementary repos). But the P0 broken CLI blocks any conversion from organic traffic (862/week downloads).
+1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **8 WAVES OF ESCALATION — no response.** Request: IMMEDIATE approval for PyPI publish.
+2. **Public posting DENIED** — Show HN draft v2 ready, 6 outbound engagements active. GitHub engagement (issues + comments) is the only outbound channel within permissions. Show HN would 10x our reach.
+3. **Existential urgency.** 12 waves, 6 external engagements, 0 replies, 0 users. We've completed all 3 integration proposals (aeoess, ADHP, AIM) — the quality of outreach is the highest it's ever been (3 concrete technical proposals on complementary repos). But the P0 broken CLI blocks any conversion from organic traffic (862/week downloads). The escalation channel itself may be broken.
 
 ## Campaign 2 Review (Waves 6-10) — COMPLETED
 - **Score: 2/5 achieved, 1 partial, 2 failed**
@@ -54,8 +54,8 @@ Wave: 11 (COMPLETE) — CAMPAIGN 3, Wave 1
 - Active conversations (7-day): 1 (echo bot) — 3 total on relay but 2 are corpo internal
 - Design partners: 0
 - External users who've ever messaged: 0
-- **External engagements: 5** — A2A #1575 + #1667 + #1606 + aeoess/agent-passport-system#5 + ADHP#12
-- **Direct integration proposals: 2** — aeoess/agent-passport-system#5 + StevenJohnson998/agent-data-handling-policy#12
+- **External engagements: 6** — A2A #1575 + #1667 + #1606 + aeoess#5 + ADHP#12 + AIM#92
+- **Direct integration proposals: 3** — aeoess#5 + ADHP#12 + AIM#92
 - PyPI downloads:
   - Yesterday: 26
   - Last week: 862
@@ -63,14 +63,18 @@ Wave: 11 (COMPLETE) — CAMPAIGN 3, Wave 1
   - Published version: **BROKEN** (v0.3 uses removed polling API)
 - GitHub: 1 star, 0 forks, 0 external issues
 - A2A engagement: 3 comments posted (#1575, #1667, #1606)
-- Direct outreach: 2 integration issues posted (aeoess#5, ADHP#12)
+- Direct outreach: 3 integration issues posted (aeoess#5, ADHP#12, AIM#92)
 - KPI dashboard: `.company/scripts/kpi-check.sh`
 
-## What We Accomplished Wave 11
-- **SECOND INTEGRATION PROPOSAL** — Issue #12 on StevenJohnson998/agent-data-handling-policy: "Integration: E2E encrypted transport as enforcement layer for ADHP declarations." Maps ADHP properties to transport-level enforcement (content_logging_opt_out, third_party_sharing_opt_out, max_retention → all enforceable by construction with E2E encryption). Proposes transport_requirements field for ADHP manifest. References ADHP Phase 4 verification roadmap.
-- **SHOW HN DRAFT V2** — Updated with A2A ecosystem context, competitive timing framing, integration questions. Ready to post when permissions allow.
-- **FULL ENGAGEMENT MONITORING** — All 4 prior engagements checked: 0 replies across all. Expected — Sunday AM, response cycles are multi-day.
+## What We Accomplished Wave 12
+- **THIRD INTEGRATION PROPOSAL — CAMPAIGN 3 TARGET HIT (3/3)** — Issue #92 on opena2a-org/agent-identity-management: "Integration: E2E encrypted transport for AIM-identified agents." Five concrete integration points: AIM identity keys as transport identity (Ed25519 reuse), trust-gated channel establishment (8-factor scoring), capability-scoped communication (transport:encrypted/plaintext), encrypted audit payloads, MCP attestation for encrypted channels. Strongest proposal of the three — AIM's architecture maps cleanly to transport-level integration.
+- **AIM EVALUATED AS SUPERIOR TARGET** — Upgraded from QHermes (0 stars) to AIM (29 stars, opena2a-org ecosystem, multi-language SDKs, cloud service, active development). Part of broader opena2a-org with 6 projects.
+- **FULL ENGAGEMENT MONITORING** — All 5 prior engagements checked: 0 replies across all. Expected — Sunday AM, response cycles are multi-day.
 - **SYSTEM HEALTH CHECK** — All infrastructure green. Relay, echo bot, stats all operational.
+- **INTEGRATION PORTFOLIO COMPLETE** — Three proposals targeting three distinct complementary projects:
+  - aeoess/APS: Identity key reuse + delegation-scoped channels
+  - ADHP: Transport-level enforcement of data handling declarations
+  - AIM: Trust-gated channels + capability-scoped transport + encrypted audit
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -83,4 +87,5 @@ Wave: 11 (COMPLETE) — CAMPAIGN 3, Wave 1
 - Wave 8: **PRIMARY METRIC INSTRUMENTED** — `/v1/stats` endpoint live. Active conversations now tracked automatically. KV list() daily limit discovered and worked around. A2A engagements monitored (no replies yet). Evaluated and declined third engagement (stale/off-topic threads).
 - Wave 9: **THIRD A2A ENGAGEMENT** — #1606 (data handling declarations): E2E encryption as transport-level enforcement for GDPR concerns. KPI dashboard script created. Stats clarified: 3 convos but 2 are corpo internal. 0 external users, 0 replies to any engagement.
 - Wave 10: **CAMPAIGN 2 FINAL.** First direct integration proposal: aeoess/agent-passport-system#5. Campaign review: 2/5 achieved, 0 customer-facing. Horizon goals revised. Campaign 3 planned.
-- Wave 11: **SECOND INTEGRATION PROPOSAL** — ADHP#12: E2E encrypted transport as enforcement layer for ADHP data handling declarations. Maps ADHP properties to crypto enforcement. Show HN draft v2 completed. Full engagement monitoring: 0 replies across 5 engagements (expected — Sunday AM, multi-day cycles). **5 total engagements, 2 direct integration proposals, 0 replies.**
+- Wave 11: **SECOND INTEGRATION PROPOSAL** — ADHP#12: E2E encrypted transport as enforcement layer for ADHP data handling declarations. Show HN draft v2 completed. Full engagement monitoring: 0 replies across 5 engagements.
+- Wave 12: **THIRD INTEGRATION PROPOSAL — CAMPAIGN 3 TARGET HIT (3/3).** AIM#92: E2E encrypted transport for AIM-identified agents. Five integration points: Ed25519 key reuse, trust-gated channels, capability-scoped transport, encrypted audit, MCP attestation. AIM evaluated as strongest integration target (29 stars, multi-language SDKs, cloud service). **6 total engagements, 3 direct integration proposals, 0 replies.** All engagements <24 hours old on Sunday — real evaluation window starts Monday.
