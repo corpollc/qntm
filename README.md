@@ -116,6 +116,20 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
+| **OpenClaw plugin** | [`openclaw-qntm/`](openclaw-qntm/) | OpenClaw channel integration |
+
+## Client / Integration Compatibility
+
+`gate.*` refers to the qntm API Gateway conversation protocol, including `gate.request`, `gate.approval`, `gate.disapproval`, `gate.promote`, and related message types.
+
+| Surface | Text chat | Multiple conversations | `gate.*` parse / display | `gate.*` send / actions | Notes |
+|---------|:---------:|:----------------------:|:------------------------:|:-----------------------:|-------|
+| **Python CLI** | ✅ | ✅ | ✅ | ✅ | Full gateway command surface, including `gate-run`, `gate-approve`, `gate-disapprove`, `gate-promote`, and `gate-secret`. |
+| **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
+| **Terminal UI** | ✅ | ✅ | Partial | ❌ | Renders some gateway cards, but `/approve` is still a placeholder and gateway actions are not implemented. |
+| **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
+
+The OpenClaw plugin should be treated as chat transport for now, not as a qntm API Gateway controller.
 
 ## Security & Threat Model
 

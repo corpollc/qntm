@@ -48,6 +48,16 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
 - Cursor state is stored under `OPENCLAW_STATE_DIR/plugins/qntm/accounts/<account>/cursors/<conv_id>.json`.
 - Outbound media is flattened into text lines like `Attachment: https://...` because qntm currently only exposes text sends through this plugin path.
 
+## Protocol Compatibility
+
+| qntm capability | Status | Notes |
+|-----------------|:------:|-------|
+| Text conversations | ✅ | Inbound decrypt + outbound reply are implemented. |
+| Multiple bound conversations | ✅ | One relay subscription and cursor per enabled binding. |
+| Non-text `body_type` ingest | Partial | Delivered to the agent as contextual text like `[gate.request] ...`, not parsed into typed workflow objects. |
+| qntm API Gateway `gate.*` actions | ❌ | The plugin does not create or submit `gate.request`, `gate.approval`, `gate.disapproval`, `gate.promote`, `gate.secret`, or related message types. |
+| Media attachments | Partial | OpenClaw media sends are flattened into attachment URLs inside a text message. |
+
 ## Local Verification
 
 ```bash
