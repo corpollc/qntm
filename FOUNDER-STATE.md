@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-22T08:50:00Z
-Wave: 7 (COMPLETE)
+Updated: 2026-03-22T09:45:00Z
+Wave: 8 (COMPLETE)
 
 ## Horizon Goals (set wave 1, review wave 10)
 1. 5+ active external conversations per week — IN PROGRESS (2 engagements, 0 conversations yet)
@@ -13,15 +13,15 @@ Wave: 7 (COMPLETE)
 1. **Get PyPI v0.5.0 published** — CRITICAL: published CLI is BROKEN (410 on recv). Chairman approval needed.
 2. **First external conversation** — IN PROGRESS: 2 A2A comments posted, awaiting responses
 3. **Deploy CF Worker echo bot** — DONE ✅ (completed wave 5, recovered wave 6)
-4. **Instrument active conversations metric** — NOT STARTED
+4. **Instrument active conversations metric** — DONE ✅ (`/v1/stats` endpoint live, tracking sends)
 5. **Identify and attempt ONE distribution channel** — IN PROGRESS: A2A GitHub tested (2 engagements)
 
-## Wave 8 Top 5 (NEXT)
-1. **Monitor A2A #1575 and #1667 for responses** — check for replies, engage thoughtfully. These are our only active distribution channel tests.
-2. **Instrument active conversations metric** — add relay endpoint to count 7-day active conversations. Can deploy (CF deploy ALLOWED). This is the PRIMARY METRIC and we can't measure it.
-3. **Find and engage a third A2A issue** — look for new issues or threads where encrypted transport / relay patterns are relevant.
-4. **PyPI publish (if approved)** — THE P0 fix. Published CLI is broken.
-5. **Prepare Show HN draft v2** — update with 2 A2A engagements and echo bot story. Ready to publish the moment public posting is approved.
+## Wave 9 Top 5 (NEXT)
+1. **Monitor A2A #1575 and #1667 for responses** — if replies, engage immediately. These are our only external conversations.
+2. **PyPI publish (if approved)** — THE P0 fix. Published CLI is broken. Every wave this isn't fixed is lost users.
+3. **Build automated KPI dashboard** — now that `/v1/stats` exists, create a simple monitoring script that logs metrics to kpis.jsonl automatically.
+4. **Find new A2A issues to engage** — only where qntm's relay/encryption is genuinely relevant. Don't force it.
+5. **Prepare Show HN draft v2** — update with instrumented metrics and echo bot story.
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
 1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. This is no longer "nice to have updated README" — this is "existing users cannot use the product." Request: IMMEDIATE approval for PyPI publish.
@@ -55,10 +55,13 @@ Wave: 7 (COMPLETE)
 - GitHub: 1 star, 0 forks, 0 external issues
 - A2A engagement: 2 comments posted (#1575 identity/transport, #1667 relay pattern)
 
-## What We Accomplished Wave 7
-- **FIXED TEST REGRESSION** — 287 pass, 0 actual failures (was 264/47 failures). Root cause: TestRelayServer missing WebSocket `ready` frame after backlog delivery. PTY smoke tests also needed timeout increase.
-- **SECOND EXTERNAL ENGAGEMENT** — Posted on A2A#1667 (heartbeat agents / relay pattern). The issue specifically asks "Is there prior art for relay layers?" — we ARE the relay layer. Positioned qntm's store-and-forward WebSocket model as the answer.
-- **A2A #1575 monitoring** — Our comment (posted wave 6) has no replies yet. Thread was last active Mar 20; our comment at Mar 22 07:45 UTC. Will check next wave.
+## What We Accomplished Wave 8
+- **INSTRUMENTED PRIMARY METRIC** — `/v1/stats` endpoint live on relay. Tracks active conversations (7-day) automatically via KV. First real reading: 1 active conversation (echo bot). This was Campaign 2 Goal #4.
+- **DEPLOYED RELAY UPDATE** — CF Worker v8617aade with stats tracking on every `/v1/send`. Zero impact on existing functionality.
+- **DISCOVERED KV LIMITS** — Free-tier KV `list()` has daily limits. Redesigned from per-conversation activity keys to single aggregate JSON key.
+- **A2A MONITORING** — Both #1575 and #1667 checked. No replies to our comments yet. Both threads positioned correctly. #1667 is fresh (Mar 21-22 activity).
+- **EVALUATED THIRD ENGAGEMENT** — Declined. #1029 is stale (6 weeks), #1628 is off-topic. Don't force weak engagements.
+- **CONFIRMED P0** — `qntm recv` still returns 410. Every PyPI user who tries `recv` gets a broken error.
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -68,3 +71,4 @@ Wave: 7 (COMPLETE)
 - Wave 5: **CF Worker echo bot deployed (24/7, global, no host dep).** Campaign 1 review: 4/5 done, 0 customer contact. Mapped competitive landscape. Zero external traces of qntm. Hard truth: 5 waves, 0 users.
 - Wave 6: **FIRST EXTERNAL ENGAGEMENT** — A2A GitHub #1575 comment. Fixed echo bot (relay removed polling, rebuilt with WebSocket). Discovered published CLI is broken (P0). Test regression: 47 tests failing.
 - Wave 7: **TEST REGRESSION FIXED** (287 pass, 0 failures). **SECOND EXTERNAL ENGAGEMENT** — A2A#1667 (relay for heartbeat agents). Monitored #1575 (no replies yet).
+- Wave 8: **PRIMARY METRIC INSTRUMENTED** — `/v1/stats` endpoint live. Active conversations now tracked automatically. KV list() daily limit discovered and worked around. A2A engagements monitored (no replies yet). Evaluated and declined third engagement (stale/off-topic threads).

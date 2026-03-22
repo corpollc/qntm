@@ -226,6 +226,8 @@ function conversationMessageKey(convID: string, seq: number): string {
 	return `/${convID}/msg/${seq}.cbor`;
 }
 
+const STATS_KEY = "/__stats__/active_conversations";
+
 function messageSequenceIndexKey(msgID: string): string {
 	return `msg-seq:${msgID}`;
 }
@@ -620,6 +622,22 @@ export default {
 					payload.envelope_b64,
 					payload.msg_id,
 				);
+
+				// Track conversation activity for stats
+				try {
+					const statsRaw = await env.QNTM_KV.get(STATS_KEY, "text");
+					const stats: Record<string, number> = statsRaw ? JSON.parse(statsRaw) : {};
+					stats[payload.conv_id] = Date.now();
+					// Prune entries older than 7 days
+					const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+					for (const [k, v] of Object.entries(stats)) {
+						if (v < cutoff) delete stats[k];
+					}
+					await env.QNTM_KV.put(STATS_KEY, JSON.stringify(stats));
+				} catch {
+					// Stats tracking is best-effort, don't fail the send
+				}
+
 				return jsonResponse({ seq }, 201);
 			}
 
@@ -907,6 +925,28 @@ export default {
 
 			if (path.startsWith("/v1/drop")) {
 				return errorResponse("legacy /v1/drop storage has been removed", 410);
+			}
+
+			// --- Stats endpoint: active conversations in last 7 days ---
+			if (request.method === "GET" && path === "/v1/stats") {
+				const now = Date.now();
+				const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+
+				const statsRaw = await env.QNTM_KV.get(STATS_KEY, "text");
+				const stats: Record<string, number> = statsRaw ? JSON.parse(statsRaw) : {};
+
+				const conversations: Array<{ conv_id: string; last_message_ts: number }> = [];
+				for (const [convId, ts] of Object.entries(stats)) {
+					if (ts >= cutoff) {
+						conversations.push({ conv_id: convId, last_message_ts: ts });
+					}
+				}
+
+				return jsonResponse({
+					active_conversations_7d: conversations.length,
+					conversations,
+					measured_at: new Date(now).toISOString(),
+				}, 200);
 			}
 
 			return errorResponse("not found", 404);
