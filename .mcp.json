@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "qntm": {
+      "command": "bun",
+      "args": ["/Users/peter/src/qntm/channel/server.ts"]
+    }
+  }
+}
