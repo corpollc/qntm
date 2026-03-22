@@ -17,7 +17,7 @@ Two LangChain agents that:
 - `pip install langchain langchain-openai` (or your preferred LLM provider)
 - `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` (recommended — latest version)
 
-> **Note:** The PyPI release (`pip install qntm` / `uvx qntm`) is currently outdated. Install from git to get v0.4.2 with WebSocket support and all fixes.
+> **Note:** The PyPI release (`pip install qntm` / `uvx qntm`) is currently outdated. Install from git to get v0.4.20 with WebSocket support and all fixes.
 
 ## Step 1: Create identities for each agent
 
