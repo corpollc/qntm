@@ -20,7 +20,7 @@ dependencies = [
 authors = [
     { name = "Corpo LLC", email = "hello@corpo.llc" },
 ]
-keywords = ["messaging", "encryption", "security", "cli"]
+keywords = ["messaging", "encryption", "security", "cli", "mcp", "ai-agents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -36,8 +36,12 @@ classifiers = [
 Homepage = "https://qntm.corpo.llc"
 Repository = "https://github.com/corpollc/qntm"
 
+[project.optional-dependencies]
+mcp = ["mcp[cli]>=1.0.0"]
+
 [project.scripts]
 qntm = "qntm.cli:main"
+qntm-mcp = "qntm.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qntm"]

@@ -1,0 +1,15 @@
+{
+  "company": "qntm",
+  "identity": {
+    "config_dir": ".company/qntm",
+    "key_id": "f0a6e0c2a1cbbebc0306b5f744d2be70",
+    "public_key": "irD_bAvvt_KuQXaKAebRJBcp3SFFycDb2mEaxBCEC8k"
+  },
+  "channels": {
+    "pepper": {
+      "conversation_id": "2d0d3ec2b36f83337a143512043ce8bc",
+      "purpose": "Escalation channel to Chief of Staff"
+    }
+  },
+  "employee_identities": {}
+}

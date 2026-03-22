@@ -14,5 +14,21 @@
     ],
     "created_at": "2026-03-22T17:43:57Z",
     "current_epoch": 0
+  },
+  {
+    "id": "78f72cb2bf3b1740d52ad4dfe76b1c91",
+    "name": "qntm Leadership",
+    "type": "direct",
+    "keys": {
+      "root": "991a5537ec5dc022b662ef9557ac59d4f546db77834c015c3f0ca5793f283e74",
+      "aead_key": "bc4da8d1b9482eca54c0e259f61f68bc0a2a8f4c3f46a3d78037631f312545bd",
+      "nonce_key": "5e953f7d07f0f245ad27be378ac666fc54cbc15eefde8991cba0a78a8f9d1b64"
+    },
+    "participants": [
+      "cafa7e731eea9bf80ce64e5a2bda66db",
+      "f0a6e0c2a1cbbebc0306b5f744d2be70"
+    ],
+    "created_at": "2026-03-22T17:51:06Z",
+    "current_epoch": 0
   }
 ]

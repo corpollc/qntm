@@ -28,7 +28,7 @@
 - pypi-publish: REQUIRES_APPROVAL
 
 ## Communications
-- qntm-to-pepper: ALLOWED (once available)
+- qntm-to-pepper: ALLOWED — LIVE (conv 2d0d, config at .company/qntm, use `uvx qntm@latest --config-dir .company/qntm send 2d0d "message"`)
 - github-issues-prs: ALLOWED
 - whatsapp-direct-to-peter: DENIED — go through Pepper
 - email-send: DENIED
