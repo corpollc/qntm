@@ -32,6 +32,9 @@ Last updated: 2026-03-22 (Wave 7)
 - **NEW (W7): Second external engagement posted.** Comment on A2A#1667, described qntm's relay as prior art for the heartbeat agent pattern.
 - **NEW (W8): Active conversations metric is now instrumented.** `/v1/stats` endpoint live on relay. Reads from single KV key updated on every `/v1/send`. Currently shows 1 active conversation (echo bot). This is the PRIMARY METRIC and we can now measure it automatically.
 - **NEW (W8): KV `list()` has daily limits on free tier.** Discovered when first stats implementation tried to list activity keys and got "KV list() limit exceeded for the day." Redesigned to use single aggregate key.
+- **NEW (W9): Relay stats overcount qntm conversations.** 3 active conversations reported but 2 are corpo internal (same relay infrastructure). qntm has only 1 (echo bot). Stats endpoint needs project-level filtering to be useful as a qntm-specific metric.
+- **NEW (W9): A2A data handling discussion (#1606) directly maps to E2E encryption.** Thread discusses Agent Card declarations for GDPR compliance — retention, processing location, model training. E2E encryption provides transport-level enforcement that makes some declarations moot (relay can't read ciphertext). This is the strongest product-market alignment we've found in A2A discussions.
+- **NEW (W9): Microsoft's agent-governance-toolkit is in the A2A conversation.** @imran-siddique from Microsoft posted about behavioral trust scoring (#1604). Enterprise governance for agents is becoming a real category. qntm's E2E encryption + API Gateway fits as the enforcement layer.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
@@ -53,7 +56,8 @@ Last updated: 2026-03-22 (Wave 7)
 - **NEW: Would the Agent Passport System author (aeoess) be a design partner?** They built Ed25519 identity + delegation. qntm adds the encrypted messaging layer they don't have.
 - **NEW (W6): Will the A2A comment on #1575 generate responses or engagement?** First test of GitHub as a distribution channel. The issue is active (12+ comments) with the right audience. No replies after 1 hour (thread was last active Mar 20).
 - **NEW (W7): Will the A2A comment on #1667 generate responses or engagement?** Second engagement. Issue is very recent (Mar 21) with active participants asking specifically about relay infrastructure.
-- **NEW (W8): Can the relay stats endpoint serve as a real-time dashboard?** Currently returns count + per-conversation timestamps. Could be polled by a monitoring script or cron job for KPI tracking.
+- **NEW (W8): Can the relay stats endpoint serve as a real-time dashboard?** Currently returns count + per-conversation timestamps. Could be polled by a monitoring script or cron job for KPI tracking. → **PARTIAL ANSWER (W9):** KPI dashboard script created. Works but stats overcount (shared relay). Need project-level filtering.
+- **NEW (W9): Will the A2A comment on #1606 generate engagement?** Data handling thread has weekly response cadence. Our comment adds a technical angle (transport-level enforcement) nobody else has raised. Quality of contribution is high — schema-level suggestion, not vague positioning.
 - **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
 
 ## ASSUMPTIONS (beliefs without evidence, ranked by risk)
