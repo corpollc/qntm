@@ -18,25 +18,34 @@ Think of it as **Gnosis Safe, but for any API** — not just on-chain transactio
 
 ## Quick Start
 
+### Install
+
+```bash
+# Install from source (recommended — latest version with all fixes)
+pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+```
+
+> **Note:** The PyPI release (`uvx qntm`) is currently outdated. Install from git to get the latest version (v0.4.2) with WebSocket support and all fixes.
+
 ### Two agents talking in 30 seconds
 
 ```bash
 # Terminal 1 — Agent Alice
 export QNTM_HOME=/tmp/alice
-uvx qntm identity generate
-uvx qntm convo create --name "ops-channel"
+qntm identity generate
+qntm convo create --name "ops-channel"
 # → conv_id: abc123...
-uvx qntm convo invite abc123
+qntm convo invite abc123
 # → invite token: qtok1_...
 
 # Terminal 2 — Agent Bob
 export QNTM_HOME=/tmp/bob
-uvx qntm identity generate
-uvx qntm convo join qtok1_...
-uvx qntm send abc123 "deploy approved"
+qntm identity generate
+qntm convo join qtok1_...
+qntm send abc123 "deploy approved"
 
 # Terminal 1 — Alice receives (encrypted end-to-end)
-uvx qntm recv abc123
+qntm recv abc123
 # → {"sender":"bob_key","body":"deploy approved"}
 ```
 
@@ -47,10 +56,10 @@ Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
 Talk to our live echo bot to see E2E encryption in action:
 
 ```bash
-uvx qntm identity generate
-uvx qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
-uvx qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello, echo bot!"
-uvx qntm recv 48055654db4bb0f64ec63089b70e1bf4
+qntm identity generate
+qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
+qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello, echo bot!"
+qntm recv 48055654db4bb0f64ec63089b70e1bf4
 # → 🔒 echo: Hello, echo bot!
 ```
 
@@ -62,7 +71,7 @@ Every message is encrypted end-to-end. The relay never sees plaintext — only y
 import subprocess, json
 
 def qntm(cmd): return json.loads(subprocess.run(
-    ["uvx", "qntm"] + cmd, capture_output=True, text=True).stdout)
+    ["qntm"] + cmd, capture_output=True, text=True).stdout)
 
 # Send a message from your agent
 qntm(["send", CONV_ID, "task complete: 3 files processed"])
@@ -83,7 +92,7 @@ Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a c
 
 ```bash
 # From any client — CLI, web UI, or terminal UI
-uvx qntm convo join <invite-link-or-token>
+qntm convo join <invite-link-or-token>
 ```
 
 ## How It Works
@@ -103,14 +112,14 @@ The gateway lets any conversation pull up and approve / reject API calls. Any pa
 
 ```bash
 # Promote a conversation to require 2-of-3 approval
-uvx qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
+qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
 
 # Propose a bank wire transfer
-uvx qntm gate-run <conv-id> --recipe mercury.create-payment \
+qntm gate-run <conv-id> --recipe mercury.create-payment \
   --arg recipient="Acme Corp" --arg amount=15000 --arg currency=USD
 
 # Another participant approves
-uvx qntm gate-approve <conv-id> <request-id>
+qntm gate-approve <conv-id> <request-id>
 ```
 
 ### How the Gateway Works
@@ -147,7 +156,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 
 | Client | Install | Best for |
 |--------|---------|----------|
-| **Python CLI** | `uvx qntm --help` | Agents, automation, scripts |
+| **Python CLI** | `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` | Agents, automation, scripts |
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
