@@ -191,6 +191,21 @@ export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+/**
+ * Try to parse an invite token and return the conversation ID as a hex string.
+ * Returns null if the token is invalid.
+ * Pure function — no network calls, no state changes.
+ */
+export function parseInviteConvId(token: string): string | null {
+  if (!token) return null
+  try {
+    const invite = inviteFromURL(token)
+    return bytesToHex(invite.conv_id).toLowerCase()
+  } catch {
+    return null
+  }
+}
+
 export function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < hex.length; i += 2) {

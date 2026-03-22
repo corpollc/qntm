@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { extractToken } from './utils'
+import { parseInviteConvId } from './qntm'
 
 describe('extractToken', () => {
   it('returns bare token as-is', () => {
@@ -28,5 +29,15 @@ describe('extractToken', () => {
 
   it('returns empty string for empty input', () => {
     expect(extractToken('')).toBe('')
+  })
+})
+
+describe('parseInviteConvId', () => {
+  it('returns null for garbage input', () => {
+    expect(parseInviteConvId('not-a-token')).toBeNull()
+  })
+
+  it('returns null for empty string', () => {
+    expect(parseInviteConvId('')).toBeNull()
   })
 })
