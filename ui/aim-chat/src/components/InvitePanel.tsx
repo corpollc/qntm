@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { Ref } from 'react'
 import type { IdentityInfo } from '../types'
 import { Tooltip } from './Tooltip'
+import { extractToken } from '../utils'
 
 const INVITE_BASE_URL = `${window.location.origin}${window.location.pathname}`
 
@@ -14,20 +15,6 @@ function tokenToLink(token: string): string {
   return `${INVITE_BASE_URL}?invite=${encodeURIComponent(token)}`
 }
 
-/** Extract a raw token from a pasted invite link or bare token */
-function extractToken(input: string): string {
-  const trimmed = input.trim()
-  try {
-    const url = new URL(trimmed)
-    const invite = url.searchParams.get('invite')
-    if (invite) return invite
-    // Also accept fragment-style URLs
-    if (url.hash) return url.hash.replace(/^#/, '')
-  } catch {
-    // Not a URL — treat as bare token
-  }
-  return trimmed
-}
 
 export interface InvitePanelProps {
   inviteToken: string

@@ -109,3 +109,17 @@ export function parseGateMessage(text: string): GateRequestBody | GateApprovalBo
     return null
   }
 }
+
+/** Extract a raw token from a pasted invite link or bare token, stripping all whitespace */
+export function extractToken(input: string): string {
+  const trimmed = input.trim()
+  try {
+    const url = new URL(trimmed)
+    const invite = url.searchParams.get('invite')
+    if (invite) return invite.replace(/\s+/g, '')
+    if (url.hash) return url.hash.replace(/^#/, '').replace(/\s+/g, '')
+  } catch {
+    // Not a URL — treat as bare token
+  }
+  return trimmed.replace(/\s+/g, '')
+}
