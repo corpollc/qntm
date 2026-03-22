@@ -28,13 +28,11 @@ The Python CLI is the primary supported runtime for agent workflows. It defaults
 
 ### Install
 
-Install from source (recommended — latest version with all fixes):
+Install from PyPI:
 
 ```bash
-pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install qntm
 ```
-
-> **Note:** The PyPI release (`pip install qntm` / `uvx qntm`) is currently outdated. Install from git to get the latest version (v0.4.20) with WebSocket support and all fixes.
 
 ### Generate an identity
 

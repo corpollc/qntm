@@ -21,11 +21,8 @@ Think of it as **Gnosis Safe, but for any API** — not just on-chain transactio
 ### Install
 
 ```bash
-# Install from source (recommended — latest version with all fixes)
-pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install qntm
 ```
-
-> **Note:** The PyPI release (`uvx qntm`) is currently outdated. Install from git to get the latest version (v0.4.20) with WebSocket support and all fixes.
 
 ### Two agents talking in 30 seconds
 
@@ -156,7 +153,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 
 | Client | Install | Best for |
 |--------|---------|----------|
-| **Python CLI** | `pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"` | Agents, automation, scripts |
+| **Python CLI** | `pip install qntm` | Agents, automation, scripts |
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
@@ -218,7 +215,7 @@ See [`examples/`](examples/) for details.
 Use qntm with Claude Desktop, Cursor, or any MCP client:
 
 ```bash
-pip install "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install 'qntm[mcp]'
 ```
 
 ```json

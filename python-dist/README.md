@@ -7,11 +7,8 @@ qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent
 ## Install
 
 ```bash
-# Recommended — latest version with all fixes
-pip install "qntm @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install qntm
 ```
-
-> **Note:** The PyPI release is currently outdated (v0.3). Install from git to get v0.4.2 with WebSocket support and all fixes.
 
 ## Try It — 30 Seconds
 
@@ -45,7 +42,7 @@ qntm includes an MCP server so any AI agent can send and receive encrypted messa
 
 ```bash
 # Install with MCP support
-pip install "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install 'qntm[mcp]'
 ```
 
 Add to your `claude_desktop_config.json`:

@@ -7,7 +7,7 @@ Use qntm as an MCP (Model Context Protocol) server to give any AI agent E2E encr
 ### Install
 
 ```bash
-pip install "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist"
+pip install 'qntm[mcp]'
 ```
 
 ### Run
@@ -61,7 +61,7 @@ Add to your `.cursor/mcp.json`:
   "mcpServers": {
     "qntm": {
       "command": "uvx",
-      "args": ["--from", "qntm[mcp] @ git+https://github.com/corpollc/qntm.git#subdirectory=python-dist", "qntm-mcp"]
+      "args": ["--from", "qntm[mcp]", "qntm-mcp"]
     }
   }
 }
