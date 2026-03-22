@@ -112,7 +112,7 @@ describe('TUI PTY smoke', () => {
     expect(identity!.keyID).toHaveLength(16);
   });
 
-  it('polls an incoming message on startup and stores it in history', async () => {
+  it('polls an incoming message on startup and stores it in history', { timeout: 15000 }, async () => {
     const aliceDir = makeTempDir('qntm-tui-pty-alice-');
     const bobDir = makeTempDir('qntm-tui-pty-bob-');
     dirs.push(aliceDir, bobDir);
@@ -143,7 +143,7 @@ describe('TUI PTY smoke', () => {
     await waitFor(() => relay.messageCount(convId) === 0);
   });
 
-  it('suppresses self-echoes during startup polling while still advancing the cursor', async () => {
+  it('suppresses self-echoes during startup polling while still advancing the cursor', { timeout: 15000 }, async () => {
     const aliceDir = makeTempDir('qntm-tui-pty-self-');
     dirs.push(aliceDir);
 

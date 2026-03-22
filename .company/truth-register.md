@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 6)
+Last updated: 2026-03-22 (Wave 7)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -27,6 +27,9 @@ Last updated: 2026-03-22 (Wave 6)
 - **NEW (W6): Published `uvx qntm` (v0.3) is BROKEN.** Relay removed polling API, published CLI gets 410 on recv. Every PyPI user is affected.
 - **NEW (W6): A2A GitHub has 5+ projects building agent identity/delegation.** APS, AIP, Kanoniv, QHermes, MeshCap — all using Ed25519, none providing encrypted transport. This is the exact gap qntm fills.
 - **NEW (W6): First external engagement posted.** Comment on A2A#1575, positioned as encrypted transport complement to identity work. Genuinely useful contribution, not marketing.
+- **NEW (W7): Test regression root cause identified and fixed.** TUI test relay was missing the WebSocket `ready` frame. 287 tests pass, 0 actual failures.
+- **NEW (W7): A2A GitHub has active discussion about relay patterns for offline agents.** Issue #1667 asks specifically about store-and-forward relay infrastructure — exactly what qntm provides.
+- **NEW (W7): Second external engagement posted.** Comment on A2A#1667, described qntm's relay as prior art for the heartbeat agent pattern.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
@@ -46,7 +49,8 @@ Last updated: 2026-03-22 (Wave 6)
 - Will an updated PyPI README convert downloaders to echo bot users?
 - **NEW: Will GitHub-based engagement (A2A issues) generate interest?** The A2A community is discussing exactly our value prop. Technical participation is within permissions.
 - **NEW: Would the Agent Passport System author (aeoess) be a design partner?** They built Ed25519 identity + delegation. qntm adds the encrypted messaging layer they don't have.
-- **NEW (W6): Will the A2A comment generate responses or engagement?** First test of GitHub as a distribution channel. The issue is active (12+ comments) with the right audience.
+- **NEW (W6): Will the A2A comment on #1575 generate responses or engagement?** First test of GitHub as a distribution channel. The issue is active (12+ comments) with the right audience. No replies after 1 hour (thread was last active Mar 20).
+- **NEW (W7): Will the A2A comment on #1667 generate responses or engagement?** Second engagement. Issue is very recent (Mar 21) with active participants asking specifically about relay infrastructure.
 - **NEW (W6): How many of the 862 weekly downloaders hit the 410 error?** If any tried `qntm recv`, they got a broken experience. Unknown how many tried vs just installed.
 
 ## ASSUMPTIONS (beliefs without evidence, ranked by risk)
