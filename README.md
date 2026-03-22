@@ -127,6 +127,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **Python CLI** | ✅ | ✅ | ✅ | ✅ | Full gateway command surface, including `gate-run`, `gate-approve`, `gate-disapprove`, `gate-promote`, and `gate-secret`. |
 | **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
 | **Terminal UI** | ✅ | ✅ | Partial | ❌ | Renders some gateway cards, but `/approve` is still a placeholder and gateway actions are not implemented. |
+| **TypeScript lib** | ✅ | ✅ | Partial | Partial | Exposes protocol types, crypto, relay subscriptions, and gateway signing / helper APIs, but custom integrations still need to assemble and drive the full `gate.*` workflow. |
 | **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
 
 The OpenClaw plugin should be treated as chat transport for now, not as a qntm API Gateway controller.
