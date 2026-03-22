@@ -24,6 +24,8 @@ export interface SidebarProps {
   showHidden: boolean
   setShowHidden: (fn: (prev: boolean) => boolean) => void
   toggleHideConversation: (convId: string) => void
+  onRenameConversation: (convId: string, newName: string) => void
+  onDeleteConversation: (convId: string) => void
   visibleContactKeys: string[]
   contactDrafts: Record<string, string>
   contactNameByKey: Record<string, string>
@@ -65,6 +67,8 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   showHidden,
   setShowHidden,
   toggleHideConversation,
+  onRenameConversation,
+  onDeleteConversation,
   visibleContactKeys,
   contactDrafts,
   contactNameByKey,
@@ -189,6 +193,8 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           showHidden={showHidden}
           setShowHidden={setShowHidden}
           toggleHideConversation={toggleHideConversation}
+          onRenameConversation={onRenameConversation}
+          onDeleteConversation={onDeleteConversation}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
           filterInputRef={filterInputRef}

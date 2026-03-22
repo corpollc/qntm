@@ -12,6 +12,7 @@ import { GatePanel } from './components/GatePanel'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { HelpPanel } from './components/HelpPanel'
 import { JoinModal } from './components/JoinModal'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import {
   relayConversationIds,
@@ -82,6 +83,7 @@ export default function App() {
 
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
   const [showJoinModal, setShowJoinModal] = useState(false)
+  const [deleteConfirmConvId, setDeleteConfirmConvId] = useState<string | null>(null)
 
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
@@ -651,6 +653,45 @@ export default function App() {
     }
   }
 
+  function handleRenameConversation(convId: string, newName: string) {
+    if (!activeProfileId) return
+    const result = api.renameConversation(activeProfileId, convId, newName)
+    setConversations(result.conversations)
+  }
+
+  function requestDeleteConversation(convId: string) {
+    setDeleteConfirmConvId(convId)
+  }
+
+  function confirmDeleteConversation() {
+    const convId = deleteConfirmConvId
+    if (!convId || !activeProfileId) {
+      setDeleteConfirmConvId(null)
+      return
+    }
+    // Close relay subscription
+    const sub = subscriptionsRef.current.get(convId)
+    if (sub) {
+      sub.close()
+      subscriptionsRef.current.delete(convId)
+    }
+    // Remove from store
+    const result = api.deleteConversation(activeProfileId, convId)
+    setConversations(result.conversations)
+    // Clean up related state
+    setHiddenConversations(prev => {
+      if (!prev.has(convId)) return prev
+      const next = new Set(prev)
+      next.delete(convId)
+      window.localStorage.setItem('aim-hidden-conversations', JSON.stringify([...next]))
+      return next
+    })
+    if (selectedConversationId === convId) {
+      setSelectedConversationId('')
+    }
+    setDeleteConfirmConvId(null)
+  }
+
   async function onCreateInvite(name: string) {
     if (!activeProfileId) {
       return
@@ -1109,6 +1150,8 @@ export default function App() {
             showHidden={showHidden}
             setShowHidden={setShowHidden}
             toggleHideConversation={toggleHideConversation}
+            onRenameConversation={handleRenameConversation}
+            onDeleteConversation={requestDeleteConversation}
             visibleContactKeys={visibleContactKeys}
             contactDrafts={contactDrafts}
             contactNameByKey={contactNameByKey}
@@ -1197,6 +1240,15 @@ export default function App() {
             }}
           />
         )}
+        <ConfirmDialog
+          open={deleteConfirmConvId !== null}
+          title="Delete Conversation"
+          message="You won't be able to rejoin without a new invitation."
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDeleteConversation}
+          onCancel={() => setDeleteConfirmConvId(null)}
+        />
         <footer className="status-bar app-status-bar" aria-live="polite">
           <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
           <span className={`status-bar-message${footerStatusIsError ? ' status-bar-message-error' : ''}`}>
