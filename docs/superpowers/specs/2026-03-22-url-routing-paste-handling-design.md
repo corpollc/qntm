@@ -23,7 +23,7 @@
 - `onAcceptInvite`, `onJoinFromModal`, `onCreateInvite` all set `selectedConversationId` after creating/joining — must also navigate
 
 **Edge cases:**
-- Deep-linking to a conversation that doesn't exist (deleted, wrong profile) → silently ignore, show empty chat pane
+- Deep-linking to a conversation that doesn't exist (deleted, wrong profile) → select the first visible (non-hidden) conversation instead, or no selection if there are none
 - Switching profiles → navigate to `#/` since the convId may not exist in the new profile
 
 ## 2. Strip all whitespace from pasted invite tokens
