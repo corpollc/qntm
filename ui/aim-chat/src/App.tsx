@@ -15,6 +15,12 @@ import { JoinModal } from './components/JoinModal'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useToast } from './hooks/useToast'
 import { ToastContainer } from './components/ToastContainer'
+import {
+  relayConversationIds,
+  reconcileRelayStates,
+  selectedConversationRelayStatus,
+  type RelayConnectionState,
+} from './relayStatus'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -68,6 +74,7 @@ export default function App() {
   const [dropboxDraft, setDropboxDraft] = useState('')
 
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
+  const [relayStates, setRelayStates] = useState<Record<string, RelayConnectionState>>({})
 
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -168,9 +175,12 @@ export default function App() {
     return conversations.filter(c => !hiddenConversations.has(c.id))
   }, [conversations, hiddenConversations, showHidden])
 
-  const subscriptionConversationIds = useMemo(
-    () => conversations.map((conversation) => conversation.id).sort().join('|'),
-    [conversations],
+  const relayConversationIdsKey = useMemo(
+    () => relayConversationIds(
+      conversations.map((conversation) => conversation.id),
+      hiddenConversations,
+    ).sort().join('|'),
+    [conversations, hiddenConversations],
   )
 
   const hiddenCount = useMemo(
@@ -205,6 +215,13 @@ export default function App() {
     keys.sort((left, right) => left.localeCompare(right))
     return keys
   }, [messages])
+
+  const relayStatus = useMemo(
+    () => selectedConversationRelayStatus(relayStates, selectedConversationId),
+    [relayStates, selectedConversationId],
+  )
+
+  const footerStatus = relayStatus || status
 
   const shortcutActions = useMemo(() => ({
     focusConversationFilter() {
@@ -295,19 +312,25 @@ export default function App() {
     subscriptionsRef.current = new Map()
 
     if (!activeProfileId) {
+      setRelayStates({})
       return
     }
 
     const profileName = activeProfile?.name || ''
     const nextSubscriptions = new Map<string, DropboxSubscription>()
     subscriptionsRef.current = nextSubscriptions
+    const relayConversationIdList = relayConversationIdsKey
+      ? relayConversationIdsKey.split('|')
+      : []
 
-    for (const conversation of conversations) {
+    setRelayStates((previous) => reconcileRelayStates(previous, relayConversationIdList))
+
+    for (const conversationId of relayConversationIdList) {
       try {
         const subscription = api.subscribeConversation(
           activeProfileId,
           profileName,
-          conversation.id,
+          conversationId,
           {
             onMessage: async () => {
               if (activeProfileIdRef.current !== activeProfileId) {
@@ -316,19 +339,19 @@ export default function App() {
 
               setConversations(api.listConversations(activeProfileId).conversations)
 
-              if (selectedConversationIdRef.current === conversation.id) {
-                setMessages(api.getHistory(activeProfileId, conversation.id).messages)
+              if (selectedConversationIdRef.current === conversationId) {
+                setMessages(api.getHistory(activeProfileId, conversationId).messages)
                 setUnreadCounts((prev) => {
-                  if (!prev[conversation.id]) return prev
+                  if (!prev[conversationId]) return prev
                   const next = { ...prev }
-                  delete next[conversation.id]
+                  delete next[conversationId]
                   return next
                 })
                 setStatus('Received new message')
               } else {
                 setUnreadCounts((prev) => ({
                   ...prev,
-                  [conversation.id]: (prev[conversation.id] || 0) + 1,
+                  [conversationId]: (prev[conversationId] || 0) + 1,
                 }))
               }
 
@@ -344,18 +367,26 @@ export default function App() {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
               }
-              setStatus('Reconnecting to relay...')
+              setRelayStates((previous) => (
+                previous[conversationId] === 'reconnecting'
+                  ? previous
+                  : { ...previous, [conversationId]: 'reconnecting' }
+              ))
             },
             onOpen: () => {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
               }
-              setStatus('Live')
+              setRelayStates((previous) => (
+                previous[conversationId] === 'live'
+                  ? previous
+                  : { ...previous, [conversationId]: 'live' }
+              ))
               setError('')
             },
           },
         )
-        nextSubscriptions.set(conversation.id, subscription)
+        nextSubscriptions.set(conversationId, subscription)
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to subscribe to conversation'
         setError(msg)
@@ -370,7 +401,7 @@ export default function App() {
         subscriptionsRef.current = new Map()
       }
     }
-  }, [activeProfileId, activeProfile?.name, subscriptionConversationIds])
+  }, [activeProfileId, activeProfile?.name, relayConversationIdsKey])
 
   async function initializeProfiles() {
     try {
@@ -1103,7 +1134,7 @@ export default function App() {
             showGatePanel={showGatePanel}
             setShowGatePanel={setShowGatePanel}
             activeProfile={activeProfile}
-            status={status}
+            status={footerStatus}
             messageTailRef={messageTailRef}
             onSendMessage={onSendMessage}
             onCheckMessages={() => void refreshSelectedConversation()}
