@@ -651,15 +651,15 @@ export default function App() {
     }
   }
 
-  async function onCreateInvite() {
+  async function onCreateInvite(name: string) {
     if (!activeProfileId) {
       return
     }
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Room`
-      const response = await api.createInvite(activeProfileId, name)
+      const convName = name.trim() || `${activeProfile?.name || 'Conversation'} Room`
+      const response = await api.createInvite(activeProfileId, convName)
 
       setCreatedInviteToken(response.inviteToken)
       setConversations(response.conversations)
@@ -710,7 +710,7 @@ export default function App() {
     }
   }
 
-  async function onAcceptInvite() {
+  async function onAcceptInvite(name: string) {
     if (!activeProfileId) {
       return
     }
@@ -722,8 +722,8 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Link`
-      const response = await api.acceptInvite(activeProfileId, token, name)
+      const convName = name.trim() || `${activeProfile?.name || 'Conversation'} Link`
+      const response = await api.acceptInvite(activeProfileId, token, convName)
       setConversations(response.conversations)
 
       if (response.conversationId) {
@@ -1097,8 +1097,6 @@ export default function App() {
             identity={identity}
             newProfileName={newProfileName}
             setNewProfileName={setNewProfileName}
-            inviteName={inviteName}
-            setInviteName={setInviteName}
             inviteToken={inviteToken}
             setInviteToken={setInviteToken}
             createdInviteToken={createdInviteToken}

@@ -30,21 +30,17 @@ function extractToken(input: string): string {
 }
 
 export interface InvitePanelProps {
-  inviteName: string
-  setInviteName: (value: string) => void
   inviteToken: string
   setInviteToken: (value: string) => void
   createdInviteToken: string
   identity: IdentityInfo
   isWorking: boolean
-  onCreateInvite: () => void
-  onAcceptInvite: () => void
+  onCreateInvite: (name: string) => void
+  onAcceptInvite: (name: string) => void
   newConversationInputRef?: Ref<HTMLInputElement>
 }
 
 export function InvitePanel({
-  inviteName,
-  setInviteName,
   inviteToken,
   setInviteToken,
   createdInviteToken,
@@ -54,7 +50,7 @@ export function InvitePanel({
   onAcceptInvite,
   newConversationInputRef,
 }: InvitePanelProps) {
-  const [createName, setCreateName] = useState(inviteName)
+  const [createName, setCreateName] = useState('')
   const [joinName, setJoinName] = useState('')
   const [copied, setCopied] = useState(false)
   const [joinSuccess, setJoinSuccess] = useState(false)
@@ -73,14 +69,11 @@ export function InvitePanel({
   }, [inviteToken])
 
   function handleCreate() {
-    setInviteName(createName)
-    // Allow setInviteName to propagate before calling handler
-    setTimeout(() => onCreateInvite(), 0)
+    onCreateInvite(createName)
   }
 
   function handleJoin() {
-    setInviteName(joinName)
-    setTimeout(() => onAcceptInvite(), 0)
+    onAcceptInvite(joinName)
   }
 
   async function handleCopyLink() {
