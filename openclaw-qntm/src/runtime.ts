@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import type { PluginRuntime } from "openclaw/plugin-sdk";
 import type { QntmRuntimeStatus } from "./types.js";
 
 let runtime: PluginRuntime | undefined;

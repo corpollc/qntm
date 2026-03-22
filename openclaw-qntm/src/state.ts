@@ -1,7 +1,10 @@
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import { normalizeAccountId } from "openclaw/plugin-sdk";
+
+function resolveOpenClawStateDir(env: NodeJS.ProcessEnv): string {
+  return env.OPENCLAW_STATE_DIR || path.join(process.cwd(), ".openclaw", "state");
+}
 
 export type ConversationCursorStore = {
   getCursor: (params: { accountId: string; conversationId: string }) => Promise<number>;
@@ -13,7 +16,7 @@ function normalizeConversationId(conversationId: string): string {
 }
 
 export function resolveQntmStateRoot(options?: { stateDir?: string }): string {
-  return path.join(options?.stateDir ?? resolveStateDir(process.env), "plugins", "qntm");
+  return path.join(options?.stateDir ?? resolveOpenClawStateDir(process.env), "plugins", "qntm");
 }
 
 export function resolveConversationCursorPath(params: {

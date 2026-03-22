@@ -1,5 +1,5 @@
 import type { Conversation, Identity } from "@corpollc/qntm";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 export type QntmConversationConfig = {
   name?: string;

@@ -1,9 +1,9 @@
 import {
   buildAgentSessionKey,
   buildChannelConfigSchema,
-} from "openclaw/plugin-sdk/core";
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
-import { createScopedChannelConfigBase } from "openclaw/plugin-sdk/channel-config-helpers";
+  createScopedChannelConfigBase,
+  DEFAULT_ACCOUNT_ID,
+} from "openclaw/plugin-sdk";
 import {
   listQntmAccountIds,
   normalizeQntmMessagingTarget,

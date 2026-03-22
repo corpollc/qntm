@@ -1,8 +1,9 @@
 import { DropboxClient } from "@corpollc/qntm";
-import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
-import { createAttachedChannelResultAdapter } from "openclaw/plugin-sdk/channel-send-result";
-import { runStoppablePassiveMonitor } from "openclaw/plugin-sdk/extension-shared";
+import {
+  DEFAULT_ACCOUNT_ID,
+  type ChannelPlugin,
+  type OpenClawConfig,
+} from "openclaw/plugin-sdk";
 import {
   listQntmDirectoryEntries,
   looksLikeQntmTargetId,
@@ -194,18 +195,19 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
   outbound: {
     deliveryMode: "direct",
     textChunkLimit: 4000,
-    ...createAttachedChannelResultAdapter({
+    sendText: async ({ cfg, to, text, accountId }) => ({
       channel: CHANNEL_ID,
-      sendText: async ({ cfg, to, text, accountId }) =>
-        await sendOutbound({ cfg, accountId, to, text }),
-      sendMedia: async ({ cfg, to, text, mediaUrl, accountId }) =>
-        await sendOutbound({
-          cfg,
-          accountId,
-          to,
-          text,
-          mediaUrl,
-        }),
+      ...(await sendOutbound({ cfg, accountId, to, text })),
+    }),
+    sendMedia: async ({ cfg, to, text, mediaUrl, accountId }) => ({
+      channel: CHANNEL_ID,
+      ...(await sendOutbound({
+        cfg,
+        accountId,
+        to,
+        text,
+        mediaUrl,
+      })),
     }),
   },
   status: {
@@ -231,10 +233,6 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
   },
   gateway: {
     startAccount: async (ctx) => {
-      if (!ctx.channelRuntime) {
-        throw new Error("qntm channelRuntime is required");
-      }
-      const channelRuntime = ctx.channelRuntime;
       const account = ctx.account;
       if (!account.configured || !account.identity) {
         const reason =
@@ -258,25 +256,29 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
       ctx.log?.info?.(
         `[${account.accountId}] starting qntm relay monitor (${account.bindings.filter((binding) => binding.enabled).length} conversations)`,
       );
-      await runStoppablePassiveMonitor({
-        abortSignal: ctx.abortSignal,
-        start: async () => {
-          patchStatus({
-            running: true,
-            lastStartAt: Date.now(),
-            lastStopAt: null,
-            lastError: null,
-          });
-          return await monitorQntmAccount({
-            account,
-            cfg: ctx.cfg,
-            channelRuntime,
-            abortSignal: ctx.abortSignal,
-            statusSink: patchStatus,
-            log: ctx.log,
-          });
-        },
+      patchStatus({
+        running: true,
+        lastStartAt: Date.now(),
+        lastStopAt: null,
+        lastError: null,
       });
+      try {
+        return await monitorQntmAccount({
+          account,
+          cfg: ctx.cfg,
+          channelRuntime: ctx.runtime.channel,
+          abortSignal: ctx.abortSignal,
+          statusSink: patchStatus,
+          log: ctx.log,
+        });
+      } catch (error) {
+        patchStatus({
+          running: false,
+          lastStopAt: Date.now(),
+          lastError: String(error),
+        });
+        throw error;
+      }
     },
   },
 };

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { normalizeAccountId } from "openclaw/plugin-sdk";
 import { normalizeQntmBindingKey } from "./accounts.js";
 import { loadQntmIdentityFromString, resolveInviteConversation, toHex } from "./qntm.js";
 import type { QntmAccountConfig, QntmRootConfig } from "./types.js";

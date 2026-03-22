@@ -1,7 +1,10 @@
 import { DropboxClient, decryptMessage, deserializeEnvelope } from "@corpollc/qntm";
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
-import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
-import { createNormalizedOutboundDeliverer } from "openclaw/plugin-sdk/reply-payload";
+import {
+  createNormalizedOutboundDeliverer,
+  createReplyPrefixOptions,
+  type OpenClawConfig,
+  type RuntimeEnv,
+} from "openclaw/plugin-sdk";
 import { buildQntmSessionKey, CHANNEL_ID } from "./shared.js";
 import { createFileCursorStore, type ConversationCursorStore } from "./state.js";
 import { decodeQntmBody, flattenQntmReplyPayload, sendQntmText, toHex, type QntmClientLike } from "./qntm.js";
@@ -12,7 +15,7 @@ import type {
   ResolvedQntmBinding,
 } from "./types.js";
 
-type ChannelRuntime = PluginRuntime["channel"];
+type ChannelRuntime = RuntimeEnv["channel"];
 
 type StatusSink = (patch: QntmRuntimeStatus) => void;
 
@@ -163,21 +166,25 @@ async function dispatchInboundMessage(params: {
       lastError: null,
     });
   });
+  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
+    cfg: params.cfg as QntmRootConfig,
+    agentId: route.agentId,
+    channel: CHANNEL_ID,
+    accountId: route.accountId,
+  });
 
   await params.channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx,
     cfg: params.cfg,
     dispatcherOptions: {
-      ...createChannelReplyPipeline({
-        cfg: params.cfg,
-        agentId: route.agentId,
-        channel: CHANNEL_ID,
-        accountId: route.accountId,
-      }),
+      ...prefixOptions,
       deliver,
       onError: (error, info) => {
         params.log?.error?.(`qntm ${info.kind} reply failed: ${String(error)}`);
       },
+    },
+    replyOptions: {
+      onModelSelected,
     },
   });
 }

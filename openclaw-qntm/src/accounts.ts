@@ -1,5 +1,8 @@
-import { createAccountListHelpers } from "openclaw/plugin-sdk/account-helpers";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import {
+  createAccountListHelpers,
+  DEFAULT_ACCOUNT_ID,
+  normalizeAccountId,
+} from "openclaw/plugin-sdk";
 import type {
   QntmAccountConfig,
   QntmRootConfig,

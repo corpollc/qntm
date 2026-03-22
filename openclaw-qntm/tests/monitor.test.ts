@@ -4,7 +4,7 @@ import {
   generateIdentity,
   serializeEnvelope,
 } from "@corpollc/qntm";
-import { buildAgentSessionKey } from "openclaw/plugin-sdk/core";
+import { buildAgentSessionKey } from "openclaw/plugin-sdk";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { resolveQntmAccount } from "../src/accounts.js";
 import { monitorQntmAccount } from "../src/monitor.js";

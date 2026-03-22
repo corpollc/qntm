@@ -1,15 +1,20 @@
-import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { qntmPlugin } from "./src/channel.js";
 import { setQntmRuntime } from "./src/runtime.js";
 
 export { qntmPlugin } from "./src/channel.js";
 export { setQntmRuntime } from "./src/runtime.js";
 
-export default defineChannelPluginEntry({
+const plugin = {
   id: "qntm",
   name: "qntm",
   description: "qntm channel plugin",
-  plugin: qntmPlugin as ChannelPlugin,
-  setRuntime: setQntmRuntime,
-});
+  configSchema: emptyPluginConfigSchema(),
+  register(api: OpenClawPluginApi) {
+    setQntmRuntime(api.runtime);
+    api.registerChannel({ plugin: qntmPlugin as ChannelPlugin });
+  },
+};
+
+export default plugin;
