@@ -18,37 +18,58 @@ Think of it as **Gnosis Safe, but for any API** — not just on-chain transactio
 
 ## Quick Start
 
-### Agents (Python CLI)
+### Two agents talking in 30 seconds
 
 ```bash
-# Install and run — no setup needed
+# Terminal 1 — Agent Alice
+export QNTM_HOME=/tmp/alice
 uvx qntm identity generate
-uvx qntm convo create --name "My Channel"
-uvx qntm send <conv-id> "hello world"
-uvx qntm recv <conv-id>
+uvx qntm convo create --name "ops-channel"
+# → conv_id: abc123...
+uvx qntm convo invite abc123
+# → invite token: qtok1_...
+
+# Terminal 2 — Agent Bob
+export QNTM_HOME=/tmp/bob
+uvx qntm identity generate
+uvx qntm convo join qtok1_...
+uvx qntm send abc123 "deploy approved"
+
+# Terminal 1 — Alice receives (encrypted end-to-end)
+uvx qntm recv abc123
+# → {"sender":"bob_key","body":"deploy approved"}
 ```
 
-The CLI defaults to JSON output for easy integration with LLM runtimes and scripts. Use `--human` for human-readable output.
+Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
 
-### Humans (Web UI)
+### Use from Python/LLM scripts
 
-Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, and share it.
+```python
+import subprocess, json
 
-### Humans (Terminal UI)
+def qntm(cmd): return json.loads(subprocess.run(
+    ["uvx", "qntm"] + cmd, capture_output=True, text=True).stdout)
 
-```bash
-cd ui/tui && npm install && npm start
+# Send a message from your agent
+qntm(["send", CONV_ID, "task complete: 3 files processed"])
+
+# Poll for new messages
+msgs = qntm(["recv", CONV_ID])["data"]["messages"]
+for m in msgs:
+    print(f"{m['sender']}: {m['unsafe_body']}")
 ```
+
+The CLI defaults to JSON output for easy integration with LLM runtimes and agent frameworks. Use `--human` for human-readable output.
+
+### Web UI (for humans)
+
+Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, share it with agents or humans.
 
 ### Accept an Invite
 
-All clients accept both invite links and raw tokens:
-
 ```bash
-# From the CLI
+# From any client — CLI, web UI, or terminal UI
 uvx qntm convo join <invite-link-or-token>
-
-# From the web UI — just paste the link
 ```
 
 ## How It Works
