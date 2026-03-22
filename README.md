@@ -150,6 +150,7 @@ docs/              Protocol specs and guides
 - [API Gateway](docs/api-gateway.md) — approved execution, thresholds, secrets
 - [Threat Model](docs/threat-model.md) — security guarantees and limitations
 - [Gateway Deployment](docs/gateway-deploy.md) — hosted and self-hosted setup
+- [Deployment Checklist](docs/deployment-checklist.md) — release order for workers, UI, and published clients
 
 ## Building
 

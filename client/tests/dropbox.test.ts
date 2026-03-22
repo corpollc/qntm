@@ -153,39 +153,37 @@ describe('DropboxClient', () => {
   // === receiveMessages ===
 
   describe('receiveMessages', () => {
-    it('sends POST to /v1/poll and returns decoded envelopes', async () => {
+    it('replays websocket messages until the relay sends ready', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+
       const convID = fakeConvID();
       const env1 = new Uint8Array([0xaa, 0xbb]);
       const env2 = new Uint8Array([0xcc, 0xdd]);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          conversations: [{
-            conv_id: toHex(convID),
-            up_to_seq: 5,
-            messages: [
-              { seq: 3, envelope_b64: toBase64(env1) },
-              { seq: 5, envelope_b64: toBase64(env2) },
-            ],
-          }],
-        }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      const resultPromise = client.receiveMessages(convID, 2);
 
-      const result = await client.receiveMessages(convID, 2);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(FakeWebSocket.instances[0]!.url).toBe(
+        `${baseUrl.replace('https://', 'wss://')}/v1/subscribe?conv_id=${toHex(convID)}&from_seq=2`,
+      );
 
-      expect(mockFetch).toHaveBeenCalledOnce();
-      const [url, opts] = mockFetch.mock.calls[0];
-      expect(url).toBe(`${baseUrl}/v1/poll`);
-      expect(opts.method).toBe('POST');
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'message',
+        seq: 3,
+        envelope_b64: toBase64(env1),
+      }));
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'message',
+        seq: 5,
+        envelope_b64: toBase64(env2),
+      }));
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'ready',
+        head_seq: 5,
+      }));
 
-      const body = JSON.parse(opts.body);
-      expect(body.conversations).toEqual([{
-        conv_id: toHex(convID),
-        from_seq: 2,
-      }]);
+      const result = await resultPromise;
 
       expect(result.sequence).toBe(5);
       expect(result.messages).toHaveLength(2);
@@ -193,81 +191,21 @@ describe('DropboxClient', () => {
       expect(result.messages[1]).toEqual(env2);
     });
 
-    it('defaults fromSequence to 0', async () => {
+    it('returns immediately when ready reports no new messages', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+
       const convID = fakeConvID();
+      const resultPromise = client.receiveMessages(convID);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          conversations: [{
-            conv_id: toHex(convID),
-            up_to_seq: 0,
-            messages: [],
-          }],
-        }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(JSON.stringify({
+        type: 'ready',
+        head_seq: 0,
+      }));
 
-      const result = await client.receiveMessages(convID);
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.conversations[0].from_seq).toBe(0);
+      const result = await resultPromise;
       expect(result.messages).toEqual([]);
       expect(result.sequence).toBe(0);
-    });
-
-    it('returns empty when no conversations in response', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ conversations: [] }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const result = await client.receiveMessages(fakeConvID());
-      expect(result.messages).toEqual([]);
-      expect(result.sequence).toBe(0);
-    });
-
-    it('throws on HTTP error', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 502,
-        text: async () => 'bad gateway',
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await expect(
-        client.receiveMessages(fakeConvID()),
-      ).rejects.toThrow(/502/);
-    });
-
-    it('skips messages with invalid base64', async () => {
-      const convID = fakeConvID();
-      const validEnv = new Uint8Array([0x01, 0x02]);
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          conversations: [{
-            conv_id: toHex(convID),
-            up_to_seq: 3,
-            messages: [
-              { seq: 1, envelope_b64: '!!!invalid!!!' },
-              { seq: 3, envelope_b64: toBase64(validEnv) },
-            ],
-          }],
-        }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const result = await client.receiveMessages(convID);
-      // Should still return valid messages and not throw
-      expect(result.sequence).toBe(3);
-      // At least the valid one should be present
-      expect(result.messages.length).toBeGreaterThanOrEqual(1);
     });
   });
 

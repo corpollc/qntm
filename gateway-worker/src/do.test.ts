@@ -99,7 +99,6 @@ function promotedState(overrides?: Partial<ConversationState>): ConversationStat
     conv_nonce_key: base64UrlEncode(new Uint8Array(32)),
     conv_epoch: 0,
     poll_cursor: 0,
-    polling: false,
     promoted_at: new Date().toISOString(),
     gate_promoted: true,
     rules: [{ service: '*', endpoint: '', verb: '', m: 2 }],

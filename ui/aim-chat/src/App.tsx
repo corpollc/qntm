@@ -80,7 +80,6 @@ export default function App() {
 
   const { toasts, addToast, removeToast } = useToast()
 
-  const pollingRef = useRef(false)
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
   const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map())
@@ -525,43 +524,20 @@ export default function App() {
     }
   }
 
-  async function receiveMessages(manual: boolean) {
-    if (pollingRef.current) {
-      return
-    }
-
+  async function refreshSelectedConversation() {
     if (!activeProfileId || !selectedConversationId) {
       return
     }
 
-    pollingRef.current = true
     try {
-      const response = await api.receiveMessages(activeProfileId, activeProfile?.name || '', selectedConversationId)
-      const relayWarning = response.warning?.trim() || ''
-
-      if (response.messages.length > 0) {
-        await refreshHistory(activeProfileId, selectedConversationId)
-        const baseStatus = `Received ${response.messages.length} new message(s)`
-        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
-        setStatus(fullStatus)
-        addToast(fullStatus, 'info')
-      } else if (manual) {
-        const baseStatus = 'No new messages'
-        const fullStatus = relayWarning ? `${baseStatus} · ${relayWarning}` : baseStatus
-        setStatus(fullStatus)
-        addToast(fullStatus, 'info')
-      } else if (relayWarning) {
-        setStatus(relayWarning)
-        addToast(relayWarning, 'info')
-      }
-
+      await refreshHistory(activeProfileId, selectedConversationId)
+      setStatus('Conversation refreshed')
+      addToast('Conversation refreshed', 'info')
       setError('')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to receive messages'
+      const msg = err instanceof Error ? err.message : 'Failed to refresh conversation'
       setError(msg)
       addToast(msg, 'error')
-    } finally {
-      pollingRef.current = false
     }
   }
 
@@ -1130,7 +1106,7 @@ export default function App() {
             status={status}
             messageTailRef={messageTailRef}
             onSendMessage={onSendMessage}
-            onCheckMessages={() => void receiveMessages(true)}
+            onCheckMessages={() => void refreshSelectedConversation()}
             onGateApprove={onGateApprove}
             onGateDisapprove={onGateDisapprove}
             onGovApprove={onGovApprove}

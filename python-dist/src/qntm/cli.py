@@ -12,6 +12,7 @@ import time
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from . import __version__
 from .constants import PROTOCOL_VERSION, SPEC_VERSION
@@ -621,10 +622,15 @@ except ImportError:
 def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
     """Send envelope to remote dropbox via POST /v1/send."""
     envelope_b64 = base64.b64encode(envelope_bytes).decode()
-    payload = json.dumps({
+    payload_obj = {
         "conv_id": conv_id_hex,
         "envelope_b64": envelope_b64,
-    }).encode()
+    }
+    try:
+        payload_obj["msg_id"] = bytes(deserialize_envelope(envelope_bytes)["msg_id"]).hex()
+    except Exception:
+        pass
+    payload = json.dumps(payload_obj).encode()
 
     req = urllib.request.Request(
         f"{dropbox_url}/v1/send",
@@ -639,27 +645,50 @@ def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
         return json.loads(resp.read())
 
 
+def _subscribe_url(dropbox_url, conv_id_hex, from_seq):
+    parsed = urlsplit(dropbox_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    query = urlencode({"conv_id": conv_id_hex, "from_seq": from_seq})
+    return urlunsplit((scheme, parsed.netloc, "/v1/subscribe", query, ""))
+
+
+def _recv_once(dropbox_url, conv_id_hex, from_seq):
+    """Receive messages once via websocket replay on /v1/subscribe."""
+    from websockets.sync.client import connect
+
+    raw_messages = []
+    up_to_seq = from_seq
+    head_seq = None
+    ws_url = _subscribe_url(dropbox_url, conv_id_hex, from_seq)
+    connect_kwargs = {
+        "open_timeout": 30,
+        "close_timeout": 5,
+        "additional_headers": {"User-Agent": f"qntm-python/{__version__}"},
+        "max_size": None,
+    }
+    if ws_url.startswith("wss://"):
+        connect_kwargs["ssl"] = _ssl_context
+
+    with connect(
+        ws_url,
+        **connect_kwargs,
+    ) as websocket:
+        while True:
+            frame = json.loads(websocket.recv(timeout=30))
+            if frame.get("type") == "message":
+                raw_messages.append(frame)
+                up_to_seq = max(up_to_seq, int(frame.get("seq", from_seq)))
+            elif frame.get("type") == "ready":
+                head_seq = max(from_seq, int(frame.get("head_seq", from_seq)))
+                break
+
+    return raw_messages, (head_seq if head_seq is not None else up_to_seq)
+
+
 def _http_poll(dropbox_url, conv_id_hex, from_seq, limit=200):
-    """Poll remote dropbox via POST /v1/poll."""
-    payload = json.dumps({
-        "conversations": [{"conv_id": conv_id_hex, "from_seq": from_seq}],
-        "max_messages": limit,
-    }).encode()
-
-    req = urllib.request.Request(
-        f"{dropbox_url}/v1/poll",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": f"qntm-python/{__version__}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
-        result = json.loads(resp.read())
-
-    conv_result = result.get("conversations", [{}])[0]
-    return conv_result.get("messages", []), conv_result.get("up_to_seq", from_seq)
+    """Compatibility wrapper for one-shot receive semantics."""
+    del limit
+    return _recv_once(dropbox_url, conv_id_hex, from_seq)
 
 
 # --- Output ---

@@ -5,6 +5,8 @@ Published artifacts:
 - npm: `@corpollc/qntm` from `client/`
 - PyPI: `qntm` from `python-dist/`
 
+For the full hosted deploy sequence across workers, UI, npm, and PyPI, use [Deployment Checklist](deployment-checklist.md). This file only covers package release mechanics.
+
 ## Prerequisites
 
 - GitHub Actions must be configured as a trusted publisher for the npm package `@corpollc/qntm`.
