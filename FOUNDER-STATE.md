@@ -1,32 +1,40 @@
 # Founder State — qntm
-Updated: 2026-03-22T10:42:00Z
-Wave: 9 (COMPLETE)
+Updated: 2026-03-22T11:34:00Z
+Wave: 10 (COMPLETE) — CAMPAIGN 2 FINAL
 
-## Horizon Goals (set wave 1, review wave 10)
-1. 5+ active external conversations per week — IN PROGRESS (2 engagements, 0 conversations yet)
-2. 3+ design partners using the protocol — NOT STARTED (0)
-3. At least 1 team using the API Gateway — NOT STARTED (0)
-4. TTFM measured and optimized to <10s — DONE ✅ (1.2s!)
-5. All tests green, relay fully functional — RECOVERED ✅ (287 pass, 0 actual failures)
+## Horizon Goals (revised wave 10)
+1. 1 external reply/conversation — IN PROGRESS (4 engagements, 0 replies yet)
+2. 1 design partner in discussion — IN PROGRESS (aeoess integration proposal posted)
+3. PyPI fixed and published — BLOCKED (chairman approval needed, 5 waves of escalation)
+4. Direct outreach to 3+ complementary projects — IN PROGRESS (1/3: aeoess ✅)
+5. Show HN approval sought — NOT STARTED
 
-## Campaign 2 Goals (Waves 6-10)
-1. **Get PyPI v0.5.0 published** — CRITICAL: published CLI is BROKEN (410 on recv). Chairman approval needed.
-2. **First external conversation** — IN PROGRESS: 3 A2A comments posted, awaiting responses
-3. **Deploy CF Worker echo bot** — DONE ✅ (completed wave 5, recovered wave 6)
-4. **Instrument active conversations metric** — DONE ✅ (`/v1/stats` endpoint live, KPI dashboard script created)
-5. **Identify and attempt ONE distribution channel** — IN PROGRESS: A2A GitHub tested (3 engagements)
+## Campaign 3 Goals (Waves 11-15)
+1. **Fix published CLI** — P0 CRITICAL: published CLI is BROKEN (410 on recv). Blocks ALL organic adoption.
+2. **Open integration issues on 3+ projects** — IN PROGRESS: 1/3 done (aeoess/agent-passport-system#5). Next: StevenJohnson998, Copertino-Research.
+3. **Get 1 reply/conversation from any outreach** — 4 total engagements active, 0 replies yet.
+4. **Show HN readiness** — Draft v2 + seek posting approval.
+5. **Evaluate all engagement data by wave 15** — decide if distribution strategy needs rethinking.
 
-## Wave 10 Top 5 (NEXT — CAMPAIGN 2 FINAL)
-1. **Monitor A2A #1575, #1667, #1606 for responses** — if replies, engage immediately. These are our three external conversations.
-2. **PyPI publish (if approved)** — THE P0 fix. Published CLI is broken. Every wave this isn't fixed is lost users.
-3. **Campaign 2 review + Campaign 3 planning** — Wave 10 closes Campaign 2. Review all 5 goals. Set Campaign 3 (waves 11-15) priorities.
-4. **Review horizon goals** — Wave 10 was the scheduled review point. 0/5 customer-facing goals met. Re-evaluate.
-5. **Prepare Show HN draft v2** — update with 3 A2A engagements, instrumented metrics, and echo bot story.
+## Wave 11 Top 5 (NEXT)
+1. **Monitor aeoess/agent-passport-system#5 for response** — most promising outreach yet (direct integration proposal to complementary project)
+2. **Monitor A2A #1575, #1667, #1606 for responses** — if replies, engage immediately
+3. **Second integration proposal** — StevenJohnson998/agent-data-handling-policy or Copertino-Research (QHermes). Concrete technical proposals.
+4. **PyPI publish (if approved)** — P0 blocker
+5. **Show HN draft v2** — update with 4 engagements, integration proposal story, instrumented metrics
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
-1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. This is no longer "nice to have updated README" — this is "existing users cannot use the product." Request: IMMEDIATE approval for PyPI publish.
-2. **Public posting DENIED** — Show HN draft ready, 5 outbound messages drafted. A2A GitHub engagement is the only outbound channel within permissions.
-3. **Existential urgency.** 7 waves, 2 external engagements (A2A comments), 0 conversations, 0 users. Downloads are vanity — 862/week but published CLI is broken so anyone who tried to use it got errors.
+1. **🔴 P0: PyPI CLI IS BROKEN.** Published `uvx qntm` v0.3 calls `/v1/poll` which returns HTTP 410 ("relay polling has been removed; use /v1/subscribe"). Every user who runs `qntm recv` gets an error. The dev version (v0.4.2) has the fix. **6 WAVES OF ESCALATION — no response.** Request: IMMEDIATE approval for PyPI publish.
+2. **Public posting DENIED** — Show HN draft ready, 5 outbound messages drafted. GitHub engagement (issues + comments) is the only outbound channel within permissions.
+3. **Existential urgency.** 10 waves, 4 external engagements, 0 replies, 0 users. Downloads are vanity — 862/week but published CLI is broken. We've now shifted from passive commenting to active integration proposals, but the P0 broken CLI blocks any conversion.
+
+## Campaign 2 Review (Waves 6-10) — COMPLETED
+- **Score: 2/5 achieved, 1 partial, 2 failed**
+- ✅ CF Worker echo bot (done W5, recovered W6)
+- ✅ Active conversations metric instrumented (W8) + KPI dashboard (W9)
+- ⚠️ Distribution channel tested (A2A GitHub, 3 engagements, 0 conversions yet)
+- ❌ PyPI publish — blocked 5 waves on chairman approval
+- ❌ First external conversation — 3 A2A comments, 0 replies, 0 users
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
@@ -43,25 +51,27 @@ Wave: 9 (COMPLETE)
 - Relay: OPERATIONAL ✅ (WebSocket-only, polling removed)
 - Echo bot: CF WORKER LIVE ✅ (version 80be631f)
 - TTFM: 1.2 seconds ✅
-- Active conversations (7-day): 1 (echo bot)
+- Active conversations (7-day): 1 (echo bot) — 3 total on relay but 2 are corpo internal
 - Design partners: 0
 - External users who've ever messaged: 0
-- **External engagements: 3** — A2A GitHub #1575 + #1667 + #1606
+- **External engagements: 4** — A2A GitHub #1575 + #1667 + #1606 + aeoess/agent-passport-system#5
+- **Direct integration proposals: 1** — aeoess/agent-passport-system#5 (NEW)
 - PyPI downloads:
   - Yesterday: 26
   - Last week: 862
   - Last month: 1,625
   - Published version: **BROKEN** (v0.3 uses removed polling API)
 - GitHub: 1 star, 0 forks, 0 external issues
-- A2A engagement: 3 comments posted (#1575 identity/transport, #1667 relay pattern, #1606 data handling/E2E encryption)
-- KPI dashboard: `.company/scripts/kpi-check.sh` — automated checks for relay, echo bot, CLI status
+- A2A engagement: 3 comments posted (#1575, #1667, #1606)
+- Direct outreach: 1 integration issue posted (aeoess/agent-passport-system#5)
+- KPI dashboard: `.company/scripts/kpi-check.sh`
 
-## What We Accomplished Wave 9
-- **THIRD A2A ENGAGEMENT** — Comment on #1606 (data handling declarations). Proposed `transport_encryption` and `relay_data_access` fields for data handling extension. E2E encryption provides cryptographic enforcement layer — relay physically can't read data, making some declarations moot at transport layer. Genuine technical contribution.
-- **KPI DASHBOARD** — `.company/scripts/kpi-check.sh` automates relay health, stats endpoint, echo bot status, GitHub, and published CLI checks. Detects P0 (410 on poll) automatically.
-- **STATS CLARIFICATION** — 3 active conversations but 2 are corpo internal (shared relay). qntm has 1 (echo bot). 0 external users.
-- **A2A MONITORING** — All 3 threads checked (#1575, #1667, #1606). No replies to our comments yet. Multi-day response cycle normal for A2A discussions.
-- **P0 STILL BLOCKING** — Published CLI returns 410. No chairman response through 4 waves of escalation.
+## What We Accomplished Wave 10
+- **FIRST DIRECT INTEGRATION PROPOSAL** — Issue #5 on aeoess/agent-passport-system: "Integration: Encrypted transport layer for Passport-authenticated agents." Concrete technical proposal covering identity key reuse (Ed25519→X3DH), delegation-scoped channels, signed envelopes inside encrypted channels, and data handling enforcement. This is a NEW outreach vector — not commenting on threads, but proposing integration on a complementary project's repo.
+- **CAMPAIGN 2 REVIEW** — Final assessment: 2/5 goals achieved (both infrastructure), 0/3 customer-facing. Honest reckoning with 10 waves of zero external contact.
+- **HORIZON GOALS REVISED** — Downgraded from aspirational (5 conversations, 3 partners) to realistic (1 reply, 1 partner discussion). Added direct outreach and Show HN as new goals.
+- **CAMPAIGN 3 PLANNED** — Theme: Direct Outreach + Product Readiness. Shift from passive commenting to active integration proposals on complementary project repos.
+- **A2A MONITORING** — All 3 threads checked. No replies to our comments. Multi-day cycles normal.
 
 ## Ops Log
 - Wave 1: Full relaunch. All Day One docs. TTFM 1.2s. Distribution + competitive research. CF token blocker escalated.
@@ -73,3 +83,4 @@ Wave: 9 (COMPLETE)
 - Wave 7: **TEST REGRESSION FIXED** (287 pass, 0 failures). **SECOND EXTERNAL ENGAGEMENT** — A2A#1667 (relay for heartbeat agents). Monitored #1575 (no replies yet).
 - Wave 8: **PRIMARY METRIC INSTRUMENTED** — `/v1/stats` endpoint live. Active conversations now tracked automatically. KV list() daily limit discovered and worked around. A2A engagements monitored (no replies yet). Evaluated and declined third engagement (stale/off-topic threads).
 - Wave 9: **THIRD A2A ENGAGEMENT** — #1606 (data handling declarations): E2E encryption as transport-level enforcement for GDPR concerns. KPI dashboard script created. Stats clarified: 3 convos but 2 are corpo internal. 0 external users, 0 replies to any engagement.
+- Wave 10: **CAMPAIGN 2 FINAL.** First direct integration proposal: aeoess/agent-passport-system#5 (encrypted transport for passport-authenticated agents). Campaign review: 2/5 achieved, 0 customer-facing. Horizon goals revised to realistic targets. Campaign 3 planned: direct outreach + product readiness. A2A monitoring: 0 replies across 3 threads. **4 total external engagements, 1 direct integration proposal, 0 replies, 0 users.**
