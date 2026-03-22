@@ -38,6 +38,8 @@ Last updated: 2026-03-22 (Wave 10)
 - **NEW (W10): aeoess/agent-passport-system is the most complementary project in the ecosystem.** 969 tests, 5 stars, 1 fork, pushed 12 hours ago. Ed25519 identity + delegation + enforcement + signed execution envelopes. They explicitly identify "encrypted agent-to-agent communication" as a gap in their interoperability issue (#1). qntm fills exactly this gap.
 - **NEW (W10): Direct integration proposals are a viable outreach vector.** Opening issues on complementary projects' repos is within AUTONOMY.md permissions (github-issues-prs: ALLOWED). More targeted than A2A thread comments and creates a direct line to a potential design partner.
 - **NEW (W10): Campaign 2 confirmed that passive A2A commenting generates presence but not conversations.** 3 comments across 3 threads over 5 waves = 0 replies. Thread response cycles are multi-day to multi-week. This channel is necessary but insufficient as sole distribution.
+- **NEW (W11): ADHP (Agent Data Handling Policy) explicitly identifies encrypted transport as future work.** Their Phase 4 verification roadmap lists "encrypted data envelopes that enforce retention policies" — this is exactly what qntm provides today. Integration proposal posted as ADHP#12.
+- **NEW (W11): StevenJohnson998 is active across A2A ecosystem.** Authored A2A #1606 (data handling), replies to thread comments, maintains ADHP spec v0.2 with interactive playground and SDK. Highest-probability reply among our outreach targets.
 
 ## FALSE (we believed but evidence contradicts)
 - "CF token is invalid" — FALSE. Token works with wrangler.
@@ -74,3 +76,4 @@ Last updated: 2026-03-22 (Wave 10)
 7. **CONFIRMED:** Organic discovery happens without marketing — 862/week baseline with zero marketing
 8. **NEW HIGH RISK → CONFIRMED:** Downloads are vanity. 10 waves, 0 customer contact. The company has never spoken to a user. Campaign 2 closed with 0 customer-facing goals met.
 9. **NEW (W10):** Direct integration proposals may be more effective than A2A thread comments. First proposal posted to aeoess/agent-passport-system#5. Results pending.
+10. **NEW (W11):** ADHP is a natural integration partner — their Phase 4 verification roadmap maps directly to qntm's existing capabilities. Proposal posted as ADHP#12. Results pending.
