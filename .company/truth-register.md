@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-23 (Wave 21)
+Last updated: 2026-03-23 (Wave 23)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -116,3 +116,7 @@ Last updated: 2026-03-23 (Wave 21)
 - **NEW (W22): Campaign 4 confirmed: engagement works, conversion doesn't.** 22 waves, 3 external responders, 11 engagements, 0 product users. The gap between "interesting GitHub project" and "tool I use" has not been bridged. GitHub issues produce validation but not adoption.
 - **NEW (W22): up2itnow0822 (agentwallet-sdk) is building spending-policy + legal-entity integration with Peter/Corpo.** Active on Paystack#26 and smolagents#2112. SpendingPolicy module has AuditTrail, FailClosed, caps, allowlists. Agreed to add legal_entity_id field. Adjacent to qntm (agent identity layer feeds into both).
 - **NEW (W22): Relay stable at 16 active conversations.** All internal (corpo/NanoClaw). 0 external qntm users after 22 waves.
+- **NEW (W23): VECTOR EXCHANGE COMPLETE — cross-project cryptographic interop PROVEN.** aeoess shipped `deriveEncryptionKeypair()` (commit 40f82af). 5/5 known-answer vectors pass, 8 total tests, 1081 total APS suite green. Three implementations byte-for-byte compatible: libsodium (APS/TypeScript), @noble/curves (TypeScript runner), Python cryptography (qntm). This is the first concrete cross-project artifact in the agent identity ecosystem.
+- **NEW (W23): XChaCha20-Poly1305 alignment confirmed with zero negotiation.** aeoess proposed XChaCha20-Poly1305 (24-byte nonce) as the common AEAD for interop. qntm already uses exactly this cipher (PyNaCl/libsodium). Both projects converged independently on the same encryption primitive.
+- **NEW (W23): APS→qntm bridge proof-of-concept built.** Python script that takes an APS Ed25519 seed, derives X25519 via the proven path, and creates a qntm identity. Lowers the barrier from "discuss interop" to "run this code."
+- **NEW (W23): aeoess driving Step 2 (envelope format spec).** Proposed double-signature envelope with taint hash header. Will push spec next. They are driving the integration roadmap, not just responding to ours. Design-partner behavior.

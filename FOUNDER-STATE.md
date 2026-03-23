@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T01:45:00Z
-Wave: 22 (COMPLETE) — Campaign 4 Final Assessment + New Responder
+Updated: 2026-03-23T02:50:00Z
+Wave: 23 (COMPLETE) — VECTOR EXCHANGE COMPLETE + Campaign 5 Launch
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -25,16 +25,27 @@ Wave 22: ✅ **CAMPAIGN 4 CLOSED.** haroldmalikfrimpong-ops replied on #1672 (3r
 **Theme: Bridge the Gap — Convert engagement to product usage**
 
 Goal 1: First external `qntm identity generate`
-Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel)
+Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel) — ✅ BRIDGE SCRIPT BUILT (wave 23)
 Goal 3: MCP marketplace listing (requires AUTONOMY ruling)
-Goal 4: aeoess vector exchange complete
+Goal 4: aeoess vector exchange complete — ✅ ACHIEVED WAVE 23 (5/5 vectors, code shipped)
 Goal 5: One integration PR (code contributed to/from external project)
+
+Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` — 5/5 vectors pass, 8 tests, 1081 suite green. XChaCha20-Poly1305 alignment confirmed (we already use it!). APS→qntm bridge PoC built. Reply posted proposing Step 3 (actual relay test). aeoess also engaged on Corpo entity binding (A2A#1575).
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
 1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work.
 2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md? **6th wave asking.**
 3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 10 outbound engagements active but all via GitHub. HN would 10x reach.
 4. **🟢 P1: Distribution producing signal.** First external replies after 18 waves. aeoess engagement deepening. 10 total engagements now.
+
+## What We Accomplished Wave 23
+- **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` — 5/5 vectors pass, 8 tests (including DH key agreement), 1081 total APS suite green. Three implementations byte-for-byte compatible: libsodium (APS/TypeScript), @noble/curves (TypeScript runner), Python cryptography (qntm).
+- **XCHACHA20-POLY1305 ALIGNMENT.** aeoess proposed XChaCha20-Poly1305 as common AEAD — which is exactly what qntm already uses (PyNaCl/libsodium). Zero cipher negotiation needed.
+- **APS→QNTM BRIDGE PoC BUILT.** Python script that takes an APS Ed25519 seed → derives X25519 → creates qntm identity. Lowers barrier from "discuss interop on GitHub" to "run this code."
+- **REPLIED ON APS#5** — confirmed XChaCha20 alignment, shared QSP 1.1 envelope structure, proposed Step 3: actual encrypted relay test.
+- **aeoess engaged on Corpo entity binding (A2A#1575)** — authority_ceiling → ScopedPermission mapping. Peter responded with technical detail. Multi-project alignment deepening.
+- **CHAIRMAN BRIEFING SENT** — Wave 23, Page 1/2 format.
+- **216 TESTS PASS** — python-dist, 14 skipped, 0 failures
 
 ## What We Accomplished Wave 22
 - **3RD EXTERNAL RESPONDER: haroldmalikfrimpong-ops** on A2A #1672. Validated identity→transport thesis. Called qntm/APS/AIM "complementary pieces, not competing ones." Wants to explore Agent Card-level interop. Network node: builds across A2A, crewAI, getagentid.dev.
@@ -51,10 +62,11 @@ Goal 5: One integration PR (code contributed to/from external project)
 - Wave 19-20: aeoess accepted vector exchange with 3-step plan
 - Wave 20: We posted vectors + compatibility analysis + TypeScript runner
 - Wave 21: No new activity (Sunday night — expected)
-- Wave 22: Still pending (Sunday night). haroldmalikfrimpong-ops directed to APS#5.
+- Wave 22: Still pending. haroldmalikfrimpong-ops directed to APS#5.
+- **Wave 23: VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` in commit `40f82af`. 5/5 vectors pass, 8 tests, 1081 suite green. Three implementations compatible. Proposed XChaCha20-Poly1305 as common AEAD (we already use it!). Moving to Step 2: envelope format spec. Also engaged deeply on Corpo entity binding (A2A#1575 — authority_ceiling → ScopedPermission mapping).
 - Across threads: aeoess engaged on APS#5, A2A#1575, A2A#1606, A2A#1667
-- Peter engaged directly on A2A#1575 (Corpo legal entity binding)
-- **Status:** PENDING aeoess running vectors against their derivation function (step 2)
+- Peter engaged directly on A2A#1575 (Corpo legal entity binding + response to aeoess mapping)
+- **Status:** STEP 2 — envelope format spec (aeoess driving). We proposed Step 3: actual relay test message.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Potential Design Partner #2)
 - Wave 21: Our comment on A2A #1672 (his proposal)
@@ -70,26 +82,28 @@ Goal 5: One integration PR (code contributed to/from external project)
 - TTFM: 1.2 seconds ✅
 - Active conversations (7-day relay): **16** (stable)
 - Active conversations (qntm-only): 1 (echo bot)
-- Design partners: 0 formal → **aeoess at proto-design-partner stage, haroldmalikfrimpong-ops emerging**
+- Design partners: 0 formal → **aeoess at ACTIVE design-partner stage (code shipped!), haroldmalikfrimpong-ops emerging**
 - External users who've ever messaged: 0
-- **External engagements: 11** — **3 REPLIES (aeoess deepening, The-Nexus-Guard stable, haroldmalikfrimpong-ops NEW)**, 8 no reply
-- **Direct integration proposals: 6** — **1 active (aeoess)**, 5 pending
+- **External engagements: 12** — **3 REPLIES (aeoess DEEPENING with code, The-Nexus-Guard stable, haroldmalikfrimpong-ops active)**, 8 no reply, 1 new reply on APS#5
+- **Direct integration proposals: 6** — **1 active with code (aeoess)**, 5 pending
 - PyPI downloads: 26/day, 862/week, 1,625/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
-- **GitHub traffic (Mar 21):** 1 view/1 unique, 150 clones/29 uniques (Sunday normal)
 - **Competitors (March 2026):** 10+ new projects (leyline, HuiNet latest)
-- **Campaigns completed:** 4 (Campaign 5 active, wave 0/6)
-- **Total waves:** 22
+- **Campaigns completed:** 4 (Campaign 5 active, wave 1/6)
+- **Total waves:** 23
 - **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
 - **Subscribe auth:** SHIPPED (c0104a0, deployed)
 - **Interop tests:** 9 pass (Ed25519→X25519 vectors)
-- **Vector exchange:** ACCEPTED by aeoess, pending their results
+- **Vector exchange:** ✅ COMPLETE — aeoess shipped code, 5/5 pass, 3 implementations compatible
+- **APS→qntm bridge PoC:** BUILT (python-dist/examples/aps_bridge.py)
+- **Cipher alignment:** XChaCha20-Poly1305 confirmed — both projects use same AEAD
 
 ## Ops Log
 - Wave 1-20: [see wave logs for full history]
 - Wave 21: **EXPANDED ENGAGEMENT.** Commented on A2A #1672 (10th engagement). Competitive analysis: leyline (P2P, Ed25519, XChaCha20, launched today — threat LOW-MEDIUM). Relay active conversations 10→16 (internal). All threads monitored. aeoess quiet (Sunday night). 5 proposals pending (Monday).
 - Wave 22: **CAMPAIGN 4 CLOSED (3.5/5). 3RD RESPONDER.** haroldmalikfrimpong-ops replied on #1672 — validated identity→transport thesis, wants interop. Facilitated APS connection. Campaign 5 opened: "Bridge the Gap." Chairman briefing sent.
+- Wave 23: **VECTOR EXCHANGE COMPLETE. CAMPAIGN 5 WAVE 1.** aeoess shipped deriveEncryptionKeypair() — 5/5 vectors, 8 tests, 1081 APS suite green. XChaCha20-Poly1305 alignment confirmed. APS→qntm bridge PoC built. Step 3 (relay test) proposed. Corpo entity mapping deepening on #1575.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
