@@ -26,8 +26,7 @@ Define the interface for resolving a DID URI to an Ed25519 public key, enabling 
 - **Owner:** W3C Credentials Community Group
 - **Key encoding:** Three formats supported (in priority order): `publicKeyMultibase` (Ed25519VerificationKey2020, base58btc with 0xed01 multicodec prefix), `publicKeyBase58` (Ed25519VerificationKey2018, legacy), `publicKeyJwk` (OKP/Ed25519, base64url `x` field)
 - **Resolution:** `did:web:example.com` fetches `https://example.com/.well-known/did.json`; `did:web:example.com:path:to` fetches `https://example.com/path/to/did.json`. Extracts first Ed25519 key from `verificationMethod` array.
-- **Features:** Server-hosted DID document, no blockchain dependency, path-based sub-identities, standard HTTPS transport, enterprise-compatible. Well-suited for server-to-server trust (e.g. `did:web:trust.arkforge.tech`).
-- **Status:** Already implemented in `qntm/did.py` as `resolve_did_web()`, covered by existing test suite.
+- **Features:** Server-hosted DID document, no blockchain dependency, path-based sub-identities, standard HTTPS transport. Already implemented in `qntm/did.py` (`resolve_did_web`), covered by existing test suite.
 - **Reference:** [W3C DID Web Method](https://w3c-ccg.github.io/did-method-web/) / `corpollc/qntm` `python-dist/src/qntm/did.py`
 
 ### `did:key:<multibase-encoded-key>`
