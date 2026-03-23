@@ -1,0 +1,71 @@
+{
+  "description": "AIP ↔ qntm interoperability test vectors",
+  "version": "0.1",
+  "purpose": "Verify that an AIP Ed25519 identity can derive X25519 keys compatible with qntm's encrypted transport",
+  "references": {
+    "key_derivation": "RFC 7748 §4.1 (Ed25519 → X25519 birational map via libsodium)",
+    "hkdf": "RFC 5869 (HKDF-SHA256)",
+    "cipher": "XChaCha20-Poly1305 (24-byte nonce, 16-byte tag)"
+  },
+  "vectors": [
+    {
+      "name": "aip_identity_to_qntm_x25519_1",
+      "description": "Derive X25519 public key from AIP Ed25519 identity (RFC 8032 seed #1)",
+      "input": {
+        "ed25519_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+        "ed25519_public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+      },
+      "expected": {
+        "x25519_public_hex": "d85e07ec22b0ad881537c2f44d662d1a143cf830c57aca4305d85c7a90f6b62e"
+      }
+    },
+    {
+      "name": "aip_identity_to_qntm_x25519_2",
+      "description": "Derive X25519 public key from AIP Ed25519 identity (RFC 8032 seed #2)",
+      "input": {
+        "ed25519_seed_hex": "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+        "ed25519_public_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+      },
+      "expected": {
+        "x25519_public_hex": "25c704c594b88afc00a76b69d1ed2b984d7e22550f3ed0802d04fbcd07d38d47"
+      }
+    },
+    {
+      "name": "aip_identity_to_qntm_x25519_3",
+      "description": "Derive X25519 public key from AIP Ed25519 identity (RFC 8032 seed #3)",
+      "input": {
+        "ed25519_seed_hex": "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+        "ed25519_public_hex": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+      },
+      "expected": {
+        "x25519_public_hex": "cbb22fc9f790bd3eba9b84680c157ca4950a9894362601701f89c3c4d9fda23a"
+      }
+    }
+  ],
+  "quick_start": {
+    "description": "Verify AIP → qntm key derivation in 5 lines of Python",
+    "code": [
+      "from nacl.signing import SigningKey",
+      "",
+      "seed = bytes.fromhex('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60')",
+      "sk = SigningKey(seed)",
+      "x25519_pub = bytes(sk.to_curve25519_private_key().public_key).hex()",
+      "assert x25519_pub == 'd85e07ec22b0ad881537c2f44d662d1a143cf830c57aca4305d85c7a90f6b62e'"
+    ]
+  },
+  "verify_script": "verify_aip_interop.py",
+  "integration_path": {
+    "steps": [
+      "1. AIP agent creates Ed25519 identity (existing: AgentIdentity)",
+      "2. Derive X25519 keypair: sk.to_curve25519_private_key()",
+      "3. Join qntm conversation via invite token (HKDF → conversation keys)",
+      "4. Send/receive XChaCha20-Poly1305 encrypted messages via relay",
+      "5. Verify sender identity using did:aip + qntm entity verification"
+    ],
+    "echo_bot": {
+      "test_conversation": "dca83b70ccd763a89b5953b2cd2ee678",
+      "relay_send": "https://inbox.qntm.corpo.llc/v1/send",
+      "relay_subscribe": "wss://inbox.qntm.corpo.llc/v1/subscribe"
+    }
+  }
+}
