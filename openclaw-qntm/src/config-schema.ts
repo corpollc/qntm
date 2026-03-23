@@ -7,6 +7,8 @@ const QntmConversationSchema = z
     enabled: z.boolean().optional(),
     invite: z.string().optional(),
     convId: z.string().optional(),
+    trigger: z.enum(["all", "mention"]).optional(),
+    triggerNames: z.array(z.string()).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

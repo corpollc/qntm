@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T00:50:00Z
-Wave: 21 (COMPLETE) — Expanded Engagement + Competitive Intelligence
+Updated: 2026-03-23T01:45:00Z
+Wave: 22 (COMPLETE) — Campaign 4 Final Assessment + New Responder
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -10,7 +10,7 @@ Wave: 21 (COMPLETE) — Expanded Engagement + Competitive Intelligence
 5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
 6. MCP distribution channel — ✅ MCP server shipped (dd8c3df), marketplace listing BLOCKED (AUTONOMY ruling needed)
 
-## Campaign 4 Status (Waves 16-22, extended)
+## Campaign 4 Status (Waves 16-22) — CLOSED, Score 3.5/5
 **Theme: Convert or Pivot**
 
 Wave 16: ✅ MCP server built and shipped. New distribution channel.
@@ -19,7 +19,16 @@ Wave 18: ✅ 3 new integration proposals (nono, clawdstrike, mcp-gateway). Joine
 Wave 19: ✅ **FIRST EXTERNAL REPLIES.** aeoess + The-Nexus-Guard engaged. Subscribe auth shipped. Interop test vectors created. Responded to both.
 Wave 20: ✅ **VECTOR EXCHANGE ACTIVATED.** aeoess explicitly accepted 3-step interop plan. Responded with vectors + compatibility analysis. APS source code reviewed — genuine complement, not competitor. Peter engaging directly with aeoess on Corpo.
 Wave 21: ✅ **EXPANDED ENGAGEMENT.** Commented on A2A #1672 (agent identity verification). Competitive analysis: leyline launched same day with same thesis (P2P, Ed25519, XChaCha20). Relay stats surging (10→16). All threads monitored.
-Wave 22: Final campaign assessment. Convert or pivot decision.
+Wave 22: ✅ **CAMPAIGN 4 CLOSED.** haroldmalikfrimpong-ops replied on #1672 (3rd responder). Facilitated APS connection. Campaign assessment written. Score: 3.5/5.
+
+## Campaign 5 Status (Waves 23-28)
+**Theme: Bridge the Gap — Convert engagement to product usage**
+
+Goal 1: First external `qntm identity generate`
+Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel)
+Goal 3: MCP marketplace listing (requires AUTONOMY ruling)
+Goal 4: aeoess vector exchange complete
+Goal 5: One integration PR (code contributed to/from external project)
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
 1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work.
@@ -27,13 +36,13 @@ Wave 22: Final campaign assessment. Convert or pivot decision.
 3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 10 outbound engagements active but all via GitHub. HN would 10x reach.
 4. **🟢 P1: Distribution producing signal.** First external replies after 18 waves. aeoess engagement deepening. 10 total engagements now.
 
-## What We Accomplished Wave 21
-- **COMMENTED ON A2A #1672** — agent identity verification proposal. Compared CA-issued (ECDSA P-256) vs self-sovereign (Ed25519) identity models. Referenced APS, AIM, qntm as prior art. Raised identity→encrypted-transport gap. 10th engagement.
-- **COMPETITIVE ANALYSIS: LEYLINE** — MissyLabs/leyline launched TODAY. Same thesis (Ed25519, encrypted agent messaging, XChaCha20). But P2P not relay, no store-and-forward, no Double Ratchet. Architecturally different. Threat: LOW-MEDIUM.
-- **COMPETITIVE ANALYSIS: HUINET** — decentralized A2A networking. Too early. Watching.
-- **RELAY STATS: 10→16** — 6 new active conversations in ~1 hour. Likely corpo/NanoClaw internal.
-- **ALL 10 ENGAGEMENTS MONITORED** — aeoess waiting (Sunday night expected). 5 proposals still pending. Monday is the test.
-- **230 TESTS PASS** — 221 python-dist + 9 interop, 0 failures
+## What We Accomplished Wave 22
+- **3RD EXTERNAL RESPONDER: haroldmalikfrimpong-ops** on A2A #1672. Validated identity→transport thesis. Called qntm/APS/AIM "complementary pieces, not competing ones." Wants to explore Agent Card-level interop. Network node: builds across A2A, crewAI, getagentid.dev.
+- **REPLIED ON #1672** — facilitated connection to @aeoess/APS#5, positioned qntm as identity→transport bridge, offered to spec AgentID→qntm flow.
+- **CAMPAIGN 4 CLOSED** — Score 3.5/5. Strong engagement (0→3 responders), weak conversion (0 product users).
+- **CAMPAIGN 5 OPENED** — "Bridge the Gap." Convert GitHub engagement into actual product usage.
+- **ECOSYSTEM CONNECTIONS** — Peter engaging up2itnow0822 (agentwallet-sdk) on Corpo entity integration. haroldmalikfrimpong-ops expanding AgentID across crewAI.
+- **216 TESTS PASS** — python-dist, 14 skipped, 0 failures
 
 ## aeoess Engagement Timeline (Design Partner #1)
 - Wave 10: Integration proposal posted (APS#5)
@@ -42,28 +51,36 @@ Wave 22: Final campaign assessment. Convert or pivot decision.
 - Wave 19-20: aeoess accepted vector exchange with 3-step plan
 - Wave 20: We posted vectors + compatibility analysis + TypeScript runner
 - Wave 21: No new activity (Sunday night — expected)
+- Wave 22: Still pending (Sunday night). haroldmalikfrimpong-ops directed to APS#5.
 - Across threads: aeoess engaged on APS#5, A2A#1575, A2A#1606, A2A#1667
 - Peter engaged directly on A2A#1575 (Corpo legal entity binding)
 - **Status:** PENDING aeoess running vectors against their derivation function (step 2)
 
+## haroldmalikfrimpong-ops Engagement Timeline (Potential Design Partner #2)
+- Wave 21: Our comment on A2A #1672 (his proposal)
+- Wave 22: He replied — validated thesis, asked to connect with APS team
+- Wave 22: We facilitated connection, offered to spec AgentID→qntm flow
+- Also active: crewAI#5019 (cryptographic identity for crews), getagentid.dev (AgentID platform)
+- **Status:** ACTIVE — waiting for response to connection offer
+
 ## Metrics
-- Tests: 230 pass, 0 failures ✅
+- Tests: 216 pass, 14 skipped, 0 failures ✅
 - Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
 - Echo bot: CF WORKER LIVE ✅
 - TTFM: 1.2 seconds ✅
-- Active conversations (7-day relay): **16** (up from 10 — mostly internal)
+- Active conversations (7-day relay): **16** (stable)
 - Active conversations (qntm-only): 1 (echo bot)
-- Design partners: 0 formal → **aeoess at proto-design-partner stage**
+- Design partners: 0 formal → **aeoess at proto-design-partner stage, haroldmalikfrimpong-ops emerging**
 - External users who've ever messaged: 0
-- **External engagements: 10** — **2 REPLIES (aeoess deepening, The-Nexus-Guard stable)**, 8 no reply
+- **External engagements: 11** — **3 REPLIES (aeoess deepening, The-Nexus-Guard stable, haroldmalikfrimpong-ops NEW)**, 8 no reply
 - **Direct integration proposals: 6** — **1 active (aeoess)**, 5 pending
 - PyPI downloads: 26/day, 862/week, 1,625/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
 - **GitHub traffic (Mar 21):** 1 view/1 unique, 150 clones/29 uniques (Sunday normal)
-- **Competitors (March 2026):** 9+ new projects (leyline added today)
-- **Campaigns completed:** 3 (Campaign 4 active, wave 6/7)
-- **Total waves:** 21
+- **Competitors (March 2026):** 10+ new projects (leyline, HuiNet latest)
+- **Campaigns completed:** 4 (Campaign 5 active, wave 0/6)
+- **Total waves:** 22
 - **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
 - **Subscribe auth:** SHIPPED (c0104a0, deployed)
 - **Interop tests:** 9 pass (Ed25519→X25519 vectors)
@@ -72,6 +89,7 @@ Wave 22: Final campaign assessment. Convert or pivot decision.
 ## Ops Log
 - Wave 1-20: [see wave logs for full history]
 - Wave 21: **EXPANDED ENGAGEMENT.** Commented on A2A #1672 (10th engagement). Competitive analysis: leyline (P2P, Ed25519, XChaCha20, launched today — threat LOW-MEDIUM). Relay active conversations 10→16 (internal). All threads monitored. aeoess quiet (Sunday night). 5 proposals pending (Monday).
+- Wave 22: **CAMPAIGN 4 CLOSED (3.5/5). 3RD RESPONDER.** haroldmalikfrimpong-ops replied on #1672 — validated identity→transport thesis, wants interop. Facilitated APS connection. Campaign 5 opened: "Bridge the Gap." Chairman briefing sent.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2

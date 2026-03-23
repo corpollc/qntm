@@ -6,6 +6,16 @@ export type QntmConversationConfig = {
   enabled?: boolean;
   invite?: string;
   convId?: string;
+  /** When to dispatch inbound messages to the agent.
+   *  - "all" (default): every message is dispatched
+   *  - "mention": only when body contains one of `triggerNames` (case-insensitive)
+   */
+  trigger?: "all" | "mention";
+  /** Names that trigger the agent when `trigger` is "mention".
+   *  Matched case-insensitively anywhere in the message body.
+   *  If empty/missing and trigger is "mention", the conversation `name` is used as fallback.
+   */
+  triggerNames?: string[];
 };
 
 export type QntmAccountConfig = {
@@ -39,6 +49,8 @@ export type ResolvedQntmBinding = {
   conversationId: string;
   conversation: Conversation;
   chatType: "direct" | "group";
+  trigger: "all" | "mention";
+  triggerNames: string[];
 };
 
 export type ResolvedQntmAccount = {

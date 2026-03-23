@@ -124,6 +124,19 @@ async function dispatchInboundMessage(params: {
   if (isSelfAuthoredMessage(message, params.account.identity)) {
     return;
   }
+
+  // Mention-only trigger filtering
+  if (params.binding.trigger === "mention" && params.binding.triggerNames.length > 0) {
+    const { bodyForAgent: bodyText } = decodeQntmBody(message.inner.body_type, message.inner.body);
+    const lower = (bodyText ?? "").toLowerCase();
+    const mentioned = params.binding.triggerNames.some((name) =>
+      lower.includes(name.toLowerCase()),
+    );
+    if (!mentioned) {
+      return;
+    }
+  }
+
   const senderKeyId = toComparableHex(message.inner.sender_kid) ?? "unknown";
 
   const senderDisplay = describeSender(senderKeyId);

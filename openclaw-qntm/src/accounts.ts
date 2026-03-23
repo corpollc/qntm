@@ -134,6 +134,17 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
         ? resolveInviteConversation(invite)
         : loadQntmConversationFromDir(conversationStoreDir ?? "", convId!);
       const bindingInvite = invite ?? conversation.inviteToken?.trim();
+      const triggerMode = value.trigger === "mention" ? "mention" : "all";
+      const triggerNames = value.triggerNames?.length
+        ? value.triggerNames.map((n) => n.trim()).filter(Boolean)
+        : [];
+      // Fallback: if trigger is "mention" but no names given, use the conversation name
+      if (triggerMode === "mention" && triggerNames.length === 0) {
+        const fallbackName = value.name?.trim() || conversation.name?.trim();
+        if (fallbackName) {
+          triggerNames.push(fallbackName);
+        }
+      }
       bindings.push({
         key,
         target: key,
@@ -143,6 +154,8 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
         conversationId: toHex(conversation.id),
         conversation,
         chatType: conversation.type === "group" ? "group" : "direct",
+        trigger: triggerMode,
+        triggerNames,
       });
     } catch (error) {
       if (!invite && !conversationStoreDir) {
