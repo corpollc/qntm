@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-23 (Wave 25)
+Last updated: 2026-03-23 (Wave 26)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -131,3 +131,8 @@ Last updated: 2026-03-23 (Wave 25)
 - **NEW (W25): QSP-1 key derivation spec published externally for first time.** Exact HKDF info strings (`qntm/qsp/v1/root`, `qntm/qsp/v1/aead`, `qntm/qsp/v1/nonce`), known-answer test vectors, and full key derivation flow shared on GitHub. Enables any developer to implement a qntm-compatible client.
 - **NEW (W25): Live test conversation with echo bot responding.** `dca83b70ccd763a89b5953b2cd2ee678` — echo bot verified on 2 conversations (CF Worker v3b772402). Invite token shared publicly. Ready for external connection.
 - **NEW (W25): Symmetric key model (invite token + HKDF) is simpler for integration than X3DH.** aeoess's question about prekey bundles revealed that the invite-secret model is actually easier for external builders — no prekey infrastructure needed, just HKDF from shared secret. This is a product strength for the integration use case.
+- **NEW (W26): CROSS-PROJECT E2E ENCRYPTED MESSAGE EXCHANGE PROVEN.** Three independent implementations (APS/TypeScript, AgentID/Python, qntm native) encrypted messages, sent to relay, and echo bot decrypted + echoed all 4. Full crypto chain verified end-to-end across projects.
+- **NEW (W26): External builders use different CBOR envelope field names.** APS/AgentID use `nonce`/`ct`/`aad`; qntm native uses `msg_id`/`ciphertext`/`aad_hash`. This caused silent decryption failures. Fixed with bridge compatibility layer. Lesson: need formal envelope spec ASAP.
+- **NEW (W26): Cloudflare KV free-tier has daily write limits that block operations.** KV `put()` limit exceeded within the worker AND via API. Cursor management breaks when limit is hit. Need paid plan ($5/mo) or switch to DO storage.
+- **NEW (W26): aeoess is building production-quality integration code.** 369-line bridge with 18 tests, zero new deps, handles CBOR/HKDF/XChaCha20/relay transport. This is not a prototype — it's SDK-quality code.
+- **NEW (W26): haroldmalikfrimpong-ops moves from concept to relay proof in one wave.** Fastest external contribution cycle. Connected, derived keys, sent encrypted message, committed to PR — all in one session.
