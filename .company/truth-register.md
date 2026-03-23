@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-22 (Wave 19)
+Last updated: 2026-03-23 (Wave 21)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -108,3 +108,6 @@ Last updated: 2026-03-22 (Wave 19)
 - **NEW (W20): Ed25519→X25519 cross-implementation interop PROVEN.** TypeScript runner using `@noble/curves` produces identical X25519 public keys from the same Ed25519 seeds as Python `cryptography`. All 5 known-answer vectors pass. The identity layer alignment is byte-for-byte proven before aeoess independently tests.
 - **NEW (W20): aeoess treats qntm as ecosystem infrastructure.** 6+ comments across 4 threads (APS#5, A2A#1575, #1606, #1667) in one day. Validated subscribe auth design. Accepted test vector exchange. Engaged with chairman on Corpo legal entity binding. This is design partner behavior, not casual interest.
 - **NEW (W20): APS encryption architecture is genuinely complementary.** Code review of `encrypted-messaging.ts` confirms: APS has double-signature envelopes, taint hashing, padding, ephemeral keys. qntm has relay, store-and-forward, Double Ratchet, subscribe auth. Neither project can replace the other. Integration = both wins.
+- **NEW (W21): Leyline (MissyLabs) launched same day with same thesis.** P2P agent messaging, Ed25519 identity, XChaCha20-Poly1305, @noble/curves. 134 tests. Created Mar 22. Key difference: fully P2P (no relay, no store-and-forward for offline agents). Same crypto primitives but fundamentally different architecture. No Double Ratchet (static shared secrets → no forward secrecy).
+- **NEW (W21): Relay active conversations surging.** 10 → 16 in one hour. Likely corpo/NanoClaw internal traffic on shared relay. Still 0 external qntm users.
+- **NEW (W21): A2A #1672 proposes agent identity verification for Agent Cards.** Uses ECDSA P-256 + centralized CA (getagentid.dev). Different trust model from Ed25519 self-sovereign approach but same problem space. Our comment posted — 10th engagement.
