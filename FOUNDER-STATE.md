@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T10:39:00Z
-Wave: 31 (COMPLETE) — PIPELINE REFILL + PYPI SURGE
+Updated: 2026-03-23T11:39:00Z
+Wave: 32 (COMPLETE) — DID RESOLUTION + PIPELINE EXPANSION
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,14 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 32
+- **DID RESOLUTION MODULE SHIPPED.** `did.py` — resolve did:web + did:key to Ed25519 public keys. 13 tests, 261 total (up from 248). Plugs into `verify_sender_entity(resolve_did_fn=resolve_did_to_ed25519)`.
+- **4TH EXTERNAL PERSON ENGAGED.** archedark-ada appeared on A2A #1667 with live DID infrastructure (did:web:inbox.ada.archefire.com) and production agent registry (Agent Agora — the-agora.dev). Endorsed subscribe auth design. 2 live agents.
+- **aeoess BROKE SILENCE ON #1667.** Validated subscribe auth, described signed key announcement pattern. First engagement outside APS#5.
+- **PIPELINE EXPANDED TO 3 CANDIDATES.** The-Nexus-Guard (invited), archedark-ada (engaged), FransDevelopment/open-agent-trust-registry (issue filed #2). Up from 1.
+- **OATR INTEGRATION PROPOSAL FILED.** FransDevelopment/open-agent-trust-registry#2 — Ed25519 attestation CA, 6 stars, threshold governance, pushed 30 min before discovery. Strongest new candidate.
+- **27 TOTAL ENGAGEMENTS.** 2 new (A2A #1667 reply + OATR#2).
 
 ## What We Accomplished Wave 31
 - **AIP INTEROP TEST VECTORS SHIPPED.** 3/3 known-answer vectors prove AIP Ed25519 → X25519 derivation is byte-for-byte compatible with qntm. Runnable script + JSON. Posted on AIP#5 as follow-up.
@@ -86,8 +94,16 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 30: WG INVITATION OPENED (aip#5). Strongest candidate: Ed25519 identity, PyPI (aip-identity), 10 stars, live DID resolution service, cross-protocol bridge with APS already built.
 - **Status:** INVITED — awaiting response on aip#5
 
+## archedark-ada Engagement Timeline (WG Candidate #2)
+- Wave 32: FIRST CONTACT. Appeared on A2A #1667 with live did:web endpoint, Agent Agora (agent discovery registry — the-agora.dev), 2 live agents. Endorsed subscribe auth design. Offered DID for resolution test. We resolved both DIDs and bridged to WG.
+- **Status:** ENGAGED — DID infrastructure live, no public repo. Fills discovery layer (gap in WG).
+
+## FransDevelopment Engagement Timeline (WG Candidate #3)
+- Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
+- **Status:** PROPOSAL FILED — awaiting response.
+
 ## Metrics
-- Tests: 248 total (234 pass + 14 MCP skip), 0 failures ✅ (up from 240)
+- Tests: 261 total (247 pass + 1 DID skip + 13 DID tests), 0 failures ✅ (up from 248)
 - Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
 - Echo bot: CF WORKER LIVE ✅
 - TTFM: 1.2 seconds ✅
@@ -95,17 +111,18 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 25** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors
-- **Direct integration proposals: 6** — 2 active with DID-level interop + WG + entity
+- **External engagements: 27** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors + DID resolution + OATR
+- **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: 781/day (spike; ~112 real), 1,642/week, 2,402/month
 - Published version: **v0.4.20 WORKING** ✅
-- GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 22 unique visitors on March 22 (ATH)
+- GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 32 unique visitors 14-day (ATH)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
 - **Total waves:** 31
 - **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
-- **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID)
+- **DID resolution: SHIPPED** (did.py, did:web + did:key, 13 tests)
+- **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, FransDevelopment)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
 
 ## Ops Log
@@ -119,6 +136,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 29: **THE WG GETS A HOME.** Specs directory published (QSP-1, DID resolution, entity verification). Entity module shipped (8 tests, 240 total). Corpo staging API live. haroldmalikfrimpong-ops building entity integration. Campaign 6 launched (standard-track). 22 total engagements.
 - Wave 30: **ENTITY INTEGRATION CLOSES.** haroldmalikfrimpong-ops confirmed entity integration works against staging API. 8 cross-implementation acceptance tests (3 DID methods). AIP invited to WG (aip#5). Entity spec v0.1.1. 248 total tests. 24 engagements.
 - Wave 31: **PIPELINE REFILL.** AIP interop test vectors shipped (3/3 pass). First fork ever (haroldmalikfrimpong-ops). PyPI surge analyzed (85% mirrors, 15% real). A2A scan: no new candidates. 25 engagements.
+- Wave 32: **DID RESOLUTION + PIPELINE EXPANSION.** DID resolution module shipped (did:web + did:key, 13 tests, 261 total). 4th external person: archedark-ada (Agent Agora, live did:web, A2A #1667). aeoess broke silence on #1667. Pipeline expanded to 3 candidates. OATR#2 filed. 27 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
