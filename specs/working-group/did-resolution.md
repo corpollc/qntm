@@ -1,7 +1,7 @@
 # DID Resolution Interface — v0.1 DRAFT
 
 ## Status
-Draft. Two DID methods implemented and cross-verified (did:agentid, did:aps). DID key method (did:key) supported as generic fallback.
+Draft. Two DID methods implemented and cross-verified (did:agentid, did:aps). DID key method (did:key) supported as generic fallback. did:web documented (already implemented in qntm/did.py).
 
 ## Purpose
 Define the interface for resolving a DID URI to an Ed25519 public key, enabling qntm envelope sender verification across identity systems.
@@ -21,6 +21,13 @@ Define the interface for resolving a DID URI to an Ed25519 public key, enabling 
 - **Resolution:** Query AgentID CA → extract certificate → extract Ed25519 public key
 - **Features:** CA-issued identity, trust scoring (8-factor), framework integrations (CrewAI, LangChain, MCP)
 - **Reference:** `haroldmalikfrimpong-ops/getagentid`
+
+### `did:web:<domain>[:<path>]`
+- **Owner:** W3C Credentials Community Group
+- **Key encoding:** Three formats supported (in priority order): `publicKeyMultibase` (Ed25519VerificationKey2020, base58btc with 0xed01 multicodec prefix), `publicKeyBase58` (Ed25519VerificationKey2018, legacy), `publicKeyJwk` (OKP/Ed25519, base64url `x` field)
+- **Resolution:** `did:web:example.com` fetches `https://example.com/.well-known/did.json`; `did:web:example.com:path:to` fetches `https://example.com/path/to/did.json`. Extracts first Ed25519 key from `verificationMethod` array.
+- **Features:** Server-hosted DID document, no blockchain dependency, path-based sub-identities, standard HTTPS transport. Already implemented in `qntm/did.py` (`resolve_did_web`), covered by existing test suite.
+- **Reference:** [W3C DID Web Method](https://w3c-ccg.github.io/did-method-web/) / `corpollc/qntm` `python-dist/src/qntm/did.py`
 
 ### `did:key:<multibase-encoded-key>`
 - **Owner:** W3C DID Key method (generic)
