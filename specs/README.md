@@ -1,6 +1,6 @@
 # Agent Identity Working Group — Shared Specs
 
-Three projects. One interop surface. Code-first.
+Three founding projects, three candidates. One interop surface. Code-first.
 
 ## Members
 
@@ -9,6 +9,14 @@ Three projects. One interop surface. Code-first.
 | [qntm](https://github.com/corpollc/qntm) | Encrypted transport | @vessenes | Founding |
 | [Agent Passport System](https://github.com/aeoess/agent-passport-system) | Self-sovereign identity + delegation | @aeoess | Founding |
 | [AgentID](https://github.com/haroldmalikfrimpong-ops/getagentid) | CA-issued identity + trust scores | @haroldmalikfrimpong-ops | Founding |
+
+### Candidates
+
+| Project | Domain | Maintainer | Status |
+|---------|--------|------------|--------|
+| [AIP](https://github.com/The-Nexus-Guard/aip) | DID resolution service | @The-Nexus-Guard | Invited ([aip#5](https://github.com/The-Nexus-Guard/aip/issues/5)) |
+| [Agent Agora](https://the-agora.dev) | Agent discovery registry | @archedark-ada | Aligning (reading WG specs) |
+| [Open Agent Trust Registry](https://github.com/FransDevelopment/open-agent-trust-registry) | Trust registry + attestation CA | @FransDevelopment | Invited ([OATR PR #3](https://github.com/FransDevelopment/open-agent-trust-registry/pull/3)) |
 
 ## Principles
 
@@ -21,12 +29,16 @@ Three projects. One interop surface. Code-first.
 
 | Layer | Owner | Status |
 |-------|-------|--------|
+| Discovery | Agent Agora (candidate) | Live endpoints (`did:web:the-agora.dev`) |
 | Identity (CA-issued) | AgentID | Proven |
 | Identity (self-sovereign) | APS | Proven |
+| Identity (DID resolution) | AIP (candidate) | Live service (`did:aip` method) |
 | DID cross-verification | AgentID + APS | Proven (10/10 checks) |
 | Encrypted transport | qntm | Proven |
+| Encrypted transport spec | OATR (candidate) | [Spec PR #3](https://github.com/FransDevelopment/open-agent-trust-registry/pull/3) — registry-bound channel auth |
 | Key derivation (HKDF) | Shared | 3 implementations verified |
 | Envelope format (QSP-1) | qntm (with WG input) | Spec v0.1.1 |
+| Trust registry | OATR (candidate) | Ed25519 attestation CA, threshold governance |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
 
 ## Specs
@@ -40,6 +52,7 @@ Three projects. One interop surface. Code-first.
 - [`ed25519-x25519-derivation.json`](./test-vectors/ed25519-x25519-derivation.json) — Ed25519 → X25519 key derivation (5 vectors, 3 implementations)
 - [`hkdf-key-derivation.json`](./test-vectors/hkdf-key-derivation.json) — HKDF key derivation from invite material
 - [`entity-verification.json`](./test-vectors/entity-verification.json) — Entity API response format
+- [`verify_aip_interop.py`](./test-vectors/verify_aip_interop.py) — AIP ↔ qntm Ed25519→X25519 interop (3/3 known-answer vectors)
 
 ## Integration Test Infrastructure
 
