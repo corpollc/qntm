@@ -32,6 +32,11 @@ interface Env {
   CONV_ROOT_KEY: string;         // base64
   CONV_ID_HEX: string;
   RELAY_URL: string;
+  // Additional conversations (optional)
+  CONV2_AEAD_KEY?: string;
+  CONV2_NONCE_KEY?: string;
+  CONV2_ROOT_KEY?: string;
+  CONV2_ID_HEX?: string;
 }
 
 const CURSOR_KEY = 'echo-bot-cursor';
@@ -84,13 +89,13 @@ function loadConversation(env: Env, identity: Identity): Conversation {
   };
 }
 
-async function getCursor(kv: KVNamespace): Promise<number> {
-  const val = await kv.get(CURSOR_KEY);
+async function getCursor(kv: KVNamespace, key: string = CURSOR_KEY): Promise<number> {
+  const val = await kv.get(key);
   return val ? parseInt(val, 10) : 0;
 }
 
-async function setCursor(kv: KVNamespace, cursor: number): Promise<void> {
-  await kv.put(CURSOR_KEY, String(cursor));
+async function setCursor(kv: KVNamespace, cursor: number, key: string = CURSOR_KEY): Promise<void> {
+  await kv.put(key, String(cursor));
 }
 
 function uint8ArrayEquals(a: Uint8Array, b: Uint8Array): boolean {
@@ -101,53 +106,78 @@ function uint8ArrayEquals(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-async function handleCron(env: Env): Promise<void> {
-  const identity = loadIdentity(env);
-  const conversation = loadConversation(env, identity);
-  const dropbox = new DropboxClient(env.RELAY_URL);
+function loadConversations(env: Env, identity: Identity): Conversation[] {
+  const conversations: Conversation[] = [];
 
-  // Get cursor
-  const fromSeq = await getCursor(env.ECHO_KV);
+  // Primary conversation
+  conversations.push(loadConversation(env, identity));
 
-  // Poll for new messages
+  // Additional conversations (if configured)
+  if (env.CONV2_ID_HEX && env.CONV2_AEAD_KEY && env.CONV2_NONCE_KEY && env.CONV2_ROOT_KEY) {
+    const convId = hexToBytes(env.CONV2_ID_HEX);
+    const keys: ConversationKeys = {
+      root: base64ToBytes(env.CONV2_ROOT_KEY),
+      aeadKey: base64ToBytes(env.CONV2_AEAD_KEY),
+      nonceKey: base64ToBytes(env.CONV2_NONCE_KEY),
+    };
+    conversations.push({
+      id: convId,
+      name: 'qntm Echo Bot (Test)',
+      type: 'direct',
+      keys,
+      participants: [identity.keyID],
+      createdAt: new Date(),
+      currentEpoch: 0,
+    });
+  }
+
+  return conversations;
+}
+
+async function handleConversation(
+  env: Env,
+  identity: Identity,
+  conversation: Conversation,
+  dropbox: DropboxClient,
+  cursorKeySuffix: string,
+): Promise<number> {
+  const cursorKey = `${CURSOR_KEY}${cursorKeySuffix}`;
+  const fromSeq = await getCursor(env.ECHO_KV, cursorKey);
+
   const result = await dropbox.receiveMessages(conversation.id, fromSeq);
 
   if (result.messages.length === 0) {
-    // No new messages — just update cursor if it advanced
     if (result.sequence > fromSeq) {
-      await setCursor(env.ECHO_KV, result.sequence);
+      await setCursor(env.ECHO_KV, result.sequence, cursorKey);
     }
-    return;
+    return 0;
   }
 
-  console.log(`[echo-bot] ${result.messages.length} new message(s) from seq ${fromSeq}`);
+  const convIdHex = bytesToHex(conversation.id).slice(0, 8);
+  console.log(`[echo-bot:${convIdHex}] ${result.messages.length} new message(s) from seq ${fromSeq}`);
 
   let echoed = 0;
 
   for (const envelopeBytes of result.messages) {
     if (echoed >= MAX_ECHO_PER_TICK) {
-      console.log(`[echo-bot] Hit max echo limit (${MAX_ECHO_PER_TICK}), deferring rest`);
+      console.log(`[echo-bot:${convIdHex}] Hit max echo limit (${MAX_ECHO_PER_TICK}), deferring rest`);
       break;
     }
 
     try {
-      // Deserialize and decrypt
       const envelope = deserializeEnvelope(envelopeBytes);
       const message = decryptMessage(envelope, conversation);
 
-      // Skip our own messages
       if (uint8ArrayEquals(message.inner.sender_kid, identity.keyID)) {
         continue;
       }
 
-      // Get body text
       const bodyText = new TextDecoder().decode(message.inner.body);
       if (!bodyText.trim()) continue;
 
       const senderShort = bytesToHex(message.inner.sender_kid).slice(0, 8);
-      console.log(`[echo-bot] From ${senderShort}: ${bodyText.slice(0, 100)}`);
+      console.log(`[echo-bot:${convIdHex}] From ${senderShort}: ${bodyText.slice(0, 100)}`);
 
-      // Create echo response
       const echoText = `🔒 echo: ${bodyText}`;
       const echoBody = new TextEncoder().encode(echoText);
       const echoEnvelope = createMessage(
@@ -159,21 +189,35 @@ async function handleCron(env: Env): Promise<void> {
         defaultTTL(),
       );
 
-      // Serialize and send
       const echoBytes = serializeEnvelope(echoEnvelope);
       await dropbox.postMessage(conversation.id, echoBytes);
       echoed++;
-      console.log(`[echo-bot] Echoed to ${senderShort}`);
+      console.log(`[echo-bot:${convIdHex}] Echoed to ${senderShort}`);
 
     } catch (err) {
-      console.error(`[echo-bot] Failed to process message:`, err);
-      // Continue processing other messages
+      console.error(`[echo-bot:${convIdHex}] Failed to process message:`, err);
     }
   }
 
-  // Update cursor
-  await setCursor(env.ECHO_KV, result.sequence);
-  console.log(`[echo-bot] Cursor updated to ${result.sequence}, echoed ${echoed} message(s)`);
+  await setCursor(env.ECHO_KV, result.sequence, cursorKey);
+  console.log(`[echo-bot:${convIdHex}] Cursor updated to ${result.sequence}, echoed ${echoed} message(s)`);
+  return echoed;
+}
+
+async function handleCron(env: Env): Promise<void> {
+  const identity = loadIdentity(env);
+  const conversations = loadConversations(env, identity);
+  const dropbox = new DropboxClient(env.RELAY_URL);
+
+  let totalEchoed = 0;
+  for (let i = 0; i < conversations.length; i++) {
+    const suffix = i === 0 ? '' : `-conv${i + 1}`;
+    totalEchoed += await handleConversation(env, identity, conversations[i], dropbox, suffix);
+  }
+
+  if (totalEchoed > 0) {
+    console.log(`[echo-bot] Total echoed across ${conversations.length} conversation(s): ${totalEchoed}`);
+  }
 }
 
 export default {

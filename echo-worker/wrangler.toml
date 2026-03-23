@@ -19,4 +19,5 @@ id = "bd393aae4c6f448592171800f79698dc"
 
 [vars]
 CONV_ID_HEX = "48055654db4bb0f64ec63089b70e1bf4"
+CONV2_ID_HEX = "dca83b70ccd763a89b5953b2cd2ee678"
 RELAY_URL = "https://inbox.qntm.corpo.llc"

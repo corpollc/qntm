@@ -47,5 +47,22 @@
     ],
     "created_at": "2026-03-22T21:44:06Z",
     "current_epoch": 0
+  },
+  {
+    "id": "dca83b70ccd763a89b5953b2cd2ee678",
+    "name": "relay-test-aeoess",
+    "type": "direct",
+    "keys": {
+      "root": "5b9f2361408c3932d4685d8ccb9733a1da980086c49a7b6615f6bca5e1a67c01",
+      "aead_key": "b557d6071c2237eff670aa965f8f3bb516f9ba1d788166f8faf7388f5a260ec3",
+      "nonce_key": "d88a1a1dee9dd0761a61a228a368ad72c15b96108c04cb072cc2b8fd63056c4f"
+    },
+    "participants": [
+      "f0a6e0c2a1cbbebc0306b5f744d2be70",
+      "77a377688fee4fc041809274457499e0"
+    ],
+    "created_at": "2026-03-23T04:45:12Z",
+    "current_epoch": 0,
+    "invite_token": "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUNyoO3DM12Oom1lTss0u5nhraW52aXRlX3NhbHRYIJnHTkpBRQwpSj_7ZHMUHvPKnpf3r7yY_8gPRXk5RN2AbWludml0ZV9zZWNyZXRYIKbYnBf7banlbzaMK1YpeMzUNJAKg1Bi0P37WzHwvaqibWludml0ZXJfaWtfcGtYIIqw_2wL77fyrkF2igHm0SQXKd0hRcnA29phGsQQhAvJ"
   }
 ]

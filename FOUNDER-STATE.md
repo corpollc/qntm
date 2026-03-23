@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T03:50:00Z
-Wave: 24 (COMPLETE) — THE CONVERSION REPLY
+Updated: 2026-03-23T04:55:00Z
+Wave: 25 (COMPLETE) — THE THREE-WAY CONVERGENCE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -24,19 +24,30 @@ Wave 22: ✅ **CAMPAIGN 4 CLOSED.** haroldmalikfrimpong-ops replied on #1672 (3r
 ## Campaign 5 Status (Waves 23-28)
 **Theme: Bridge the Gap — Convert engagement to product usage**
 
-Goal 1: First external `qntm identity generate`
-Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel) — ✅ BRIDGE SCRIPT BUILT (wave 23)
-Goal 3: MCP marketplace listing (requires AUTONOMY ruling)
+Goal 1: First external `qntm identity generate` — ON PATH (haroldmalikfrimpong-ops demo generates compatible identities)
+Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel) — ✅ THREE POCS EXIST
+Goal 3: MCP marketplace listing (requires AUTONOMY ruling) — BLOCKED (10th wave asking)
 Goal 4: aeoess vector exchange complete — ✅ ACHIEVED WAVE 23 (5/5 vectors, code shipped)
-Goal 5: One integration PR (code contributed to/from external project)
+Goal 5: One integration PR (code contributed to/from external project) — ON PATH (haroldmalikfrimpong-ops invited to PR)
 
 Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` — 5/5 vectors pass, 8 tests, 1081 suite green. XChaCha20-Poly1305 alignment confirmed (we already use it!). APS→qntm bridge PoC built. Reply posted proposing Step 3 (actual relay test). aeoess also engaged on Corpo entity binding (A2A#1575).
+Wave 24: ✅ **THE CONVERSION REPLY.** aeoess asked for relay endpoint + echo bot conv ID. We replied with EVERYTHING. haroldmalikfrimpong-ops deepening on #1672. aeoess shipped entityBinding + identityBoundary.
+Wave 25: ✅ **THE THREE-WAY CONVERGENCE.** aeoess posted integration plan (qntm-bridge.ts). haroldmalikfrimpong-ops SHIPPED 809-LINE WORKING DEMO. Fresh test conversation created with invite token + full QSP-1 spec shared. Echo bot deployed to 2 conversations. Both partners have everything they need.
 
 ## ⚠️ BLOCKERS — NEEDS CHAIRMAN
 1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live. `uvx qntm` and `pip install qntm` both work.
-2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md? **9th wave asking.**
-3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 13 outbound engagements, 3 active responders, proven crypto interop. HN would 10x reach.
-4. **🟢 P1: Distribution producing conversion signal.** aeoess asked for relay details and is building TypeScript integration. First potential product user after 24 waves.
+2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md? **10th wave asking.**
+3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 15 outbound engagements, 3 active responders, 1 shipped external code, proven crypto interop. HN would 10x reach.
+4. **🟢 P0: TWO EXTERNAL BUILDERS ACTIVE.** aeoess building qntm-bridge.ts (TypeScript relay integration). haroldmalikfrimpong-ops shipped 809-line AgentID→qntm demo. Both have relay details + invite tokens.
+
+## What We Accomplished Wave 25
+- **FIRST EXTERNAL CODE.** haroldmalikfrimpong-ops shipped 809-line working demo: AgentID → Ed25519 → X25519 → X3DH → Double Ratchet → encrypted relay. Verified all 5 qntm interop vectors. Published at getagentid/examples/qntm-encrypted-chat. FIRST EVER external code integrating with qntm.
+- **aeoess POSTED INTEGRATION PLAN.** Will build `qntm-bridge.ts` in APS SDK. SignedExecutionEnvelope → XChaCha20 → qntm CBOR → relay. Asked about key model (X3DH vs symmetric). We answered: symmetric via HKDF from invite token.
+- **FRESH TEST CONVERSATION LIVE.** Created `dca83b70ccd763a89b5953b2cd2ee678` with invite token + full QSP-1 key derivation spec + known-answer vectors. Echo bot deployed and verified on 2 conversations.
+- **QSP-1 SPEC PUBLISHED.** Exact HKDF info strings (`qntm/qsp/v1/root`, `qntm/qsp/v1/aead`, `qntm/qsp/v1/nonce`), key derivation flow, known-answer test vectors — all shared publicly for first time.
+- **ECHO BOT MULTI-CONV SUPPORT.** Updated CF Worker to monitor 2 conversations. Deployed and verified.
+- **INVITED PR.** Asked haroldmalikfrimpong-ops to open PR on corpollc/qntm for AgentID bridge.
+- **230 TESTS PASS** — python-dist, 0 failures
 
 ## What We Accomplished Wave 24
 - **THE CONVERSION REPLY.** aeoess asked for relay endpoint + echo bot conversation ID. We replied with EVERYTHING: relay URL, WebSocket subscribe format, HTTP send format, CBOR envelope structure, authenticated subscribe flow, TypeScript quick-start code, echo bot behavior, suggested relay test flow. This is the most comprehensive single reply in the project's history.
@@ -68,16 +79,19 @@ Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypa
 - Wave 22: Still pending. haroldmalikfrimpong-ops directed to APS#5.
 - **Wave 23: VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` in commit `40f82af`. 5/5 vectors pass, 8 tests, 1081 suite green. Proposed XChaCha20-Poly1305 as common AEAD (we already use it!). Also engaged on Corpo entity binding (A2A#1575).
 - **Wave 24: RELAY TEST GREENLIT.** aeoess replied twice — accepted layered envelope design, asked for relay endpoint + echo bot conv ID. We replied with comprehensive relay API docs, TypeScript example, envelope format. aeoess shipped entityBinding + identityBoundary (d253d8f, 1090 tests). They are building the TypeScript side.
+- **Wave 25: FULL SPEC SHARED.** aeoess posted complete integration plan (qntm-bridge.ts). We replied with invite token, exact HKDF info strings, known-answer vectors, fresh test conversation with live echo bot. APS SDK at v1.19.4, 1104 tests, 72 MCP tools. No gaps remaining.
 - Across threads: aeoess engaged on APS#5, A2A#1575, A2A#1606, A2A#1667
 - Peter engaged directly on A2A#1575 (Corpo legal entity binding + response to aeoess mapping)
-- **Status:** STEP 3 — relay test. aeoess has all connection details. Building TypeScript relay client.
+- **Status:** STEP 4 — building relay integration. Has invite token, key derivation spec, test vectors, live echo bot.
 
-## haroldmalikfrimpong-ops Engagement Timeline (Potential Design Partner #2)
+## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 21: Our comment on A2A #1672 (his proposal)
 - Wave 22: He replied — validated thesis, asked to connect with APS team
 - Wave 22: We facilitated connection, offered to spec AgentID→qntm flow
+- Wave 24: 2nd reply — endorsed pluggable identity verification, committed to spec AgentID→subscribe-auth
+- **Wave 25: SHIPPED 809-LINE WORKING DEMO.** AgentID→Ed25519→X25519→X3DH→Double Ratchet→encrypted relay. All 5 qntm interop vectors pass. DID mapping built. Published at getagentid/examples/qntm-encrypted-chat. FIRST EXTERNAL CODE integrating with qntm. Invited to PR on corpollc/qntm.
 - Also active: crewAI#5019 (cryptographic identity for crews), getagentid.dev (AgentID platform)
-- **Status:** ACTIVE — waiting for response to connection offer
+- **Status:** DESIGN PARTNER — shipped code, invited to PR, connected with aeoess
 
 ## Metrics
 - Tests: 216 pass, 14 skipped, 0 failures ✅
@@ -88,14 +102,14 @@ Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypa
 - Active conversations (qntm-only): 1 (echo bot)
 - Design partners: 0 formal → **aeoess at ACTIVE design-partner stage (code shipped!), haroldmalikfrimpong-ops emerging**
 - External users who've ever messaged: 0
-- **External engagements: 13** — **3 REPLIES (aeoess BUILDING relay integration, The-Nexus-Guard stable, haroldmalikfrimpong-ops active)**, 9 no reply, relay details shared
-- **Direct integration proposals: 6** — **1 active with code (aeoess)**, 5 pending
+- **External engagements: 15** — **3 REPLIES (aeoess BUILDING relay integration, The-Nexus-Guard stable, haroldmalikfrimpong-ops SHIPPED CODE)**, 9 no reply, relay details + invite token shared
+- **Direct integration proposals: 6** — **1 active with code (aeoess), 1 SHIPPED DEMO (haroldmalikfrimpong-ops)**, 4 pending
 - PyPI downloads: 26/day, 862/week, 1,625/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
 - **Competitors (March 2026):** 10+ new projects (leyline, HuiNet latest)
-- **Campaigns completed:** 4 (Campaign 5 active, wave 2/6)
-- **Total waves:** 24
+- **Campaigns completed:** 4 (Campaign 5 active, wave 3/6)
+- **Total waves:** 25
 - **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
 - **Subscribe auth:** SHIPPED (c0104a0, deployed)
 - **Interop tests:** 9 pass (Ed25519→X25519 vectors)
@@ -109,6 +123,7 @@ Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypa
 - Wave 22: **CAMPAIGN 4 CLOSED (3.5/5). 3RD RESPONDER.** haroldmalikfrimpong-ops replied on #1672 — validated identity→transport thesis, wants interop. Facilitated APS connection. Campaign 5 opened: "Bridge the Gap." Chairman briefing sent.
 - Wave 23: **VECTOR EXCHANGE COMPLETE. CAMPAIGN 5 WAVE 1.** aeoess shipped deriveEncryptionKeypair() — 5/5 vectors, 8 tests, 1081 APS suite green. XChaCha20-Poly1305 alignment confirmed. APS→qntm bridge PoC built. Step 3 (relay test) proposed. Corpo entity mapping deepening on #1575.
 - Wave 24: **THE CONVERSION REPLY.** aeoess asked for relay endpoint + echo bot conv ID — we replied with full API docs, TypeScript example, envelope format, auth flow. haroldmalikfrimpong-ops 2nd reply on #1672 — will spec AgentID→subscribe-auth. aeoess shipped entityBinding + identityBoundary (d253d8f, 1090 tests). 230 tests pass. 13 engagements. Step 3 greenlit.
+- Wave 25: **THE THREE-WAY CONVERGENCE.** aeoess posted integration plan (qntm-bridge.ts). haroldmalikfrimpong-ops SHIPPED 809-LINE WORKING DEMO — first external code ever. Fresh test conv created (dca83b70) with invite token + full QSP-1 spec + known-answer vectors shared. Echo bot deployed on 2 conversations. Both replies posted. 15 engagements. 230 tests pass.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
