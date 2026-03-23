@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T05:59:00Z
-Wave: 26 (COMPLETE) — THE BRIDGE WORKS
+Updated: 2026-03-23T06:50:00Z
+Wave: 27 (COMPLETE) — DID CONVERGENCE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -28,7 +28,7 @@ Goal 1: First external `qntm identity generate` — ON PATH (haroldmalikfrimpong
 Goal 2: Interop proof-of-concept code (APS identity → qntm encrypted channel) — ✅ THREE POCS EXIST
 Goal 3: MCP marketplace listing (requires AUTONOMY ruling) — BLOCKED (10th wave asking)
 Goal 4: aeoess vector exchange complete — ✅ ACHIEVED WAVE 23 (5/5 vectors, code shipped)
-Goal 5: One integration PR (code contributed to/from external project) — ON PATH (haroldmalikfrimpong-ops invited to PR)
+Goal 5: One integration PR (code contributed to/from external project) — ✅ ACHIEVED WAVE 27 (PR #3 merged)
 
 Wave 23: ✅ **VECTOR EXCHANGE COMPLETE.** aeoess shipped `deriveEncryptionKeypair()` — 5/5 vectors pass, 8 tests, 1081 suite green. XChaCha20-Poly1305 alignment confirmed (we already use it!). APS→qntm bridge PoC built. Reply posted proposing Step 3 (actual relay test). aeoess also engaged on Corpo entity binding (A2A#1575).
 Wave 24: ✅ **THE CONVERSION REPLY.** aeoess asked for relay endpoint + echo bot conv ID. We replied with EVERYTHING. haroldmalikfrimpong-ops deepening on #1672. aeoess shipped entityBinding + identityBoundary.
@@ -40,6 +40,17 @@ Wave 26: ✅ **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess
 2. **🟡 P1: MCP marketplace listing.** Materials ready (LobeHub manifest + Smithery config). Smithery requires active submission (no auto-indexing). RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post" under AUTONOMY.md? **10th wave asking.**
 3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready, 15 outbound engagements, 3 active responders, 1 shipped external code, proven crypto interop. HN would 10x reach.
 4. **🟢 P0: TWO EXTERNAL BUILDERS ACTIVE.** aeoess building qntm-bridge.ts (TypeScript relay integration). haroldmalikfrimpong-ops shipped 809-line AgentID→qntm demo. Both have relay details + invite tokens.
+
+## What We Accomplished Wave 27
+- **FIRST EXTERNAL PR MERGED.** haroldmalikfrimpong-ops opened PR #3 on corpollc/qntm — 298-line AgentID bridge example (relay_test.py). Code reviewed, approved, merged. First external contribution in project history.
+- **DID INTEROP EMERGED ORGANICALLY.** Both partners independently moved from relay-proven to DID cross-verification. haroldmalikfrimpong-ops shipped `did:agentid` ↔ `did:aps` mutual verification (10/10 checks, 82 tests, deterministic test vectors). aeoess proposed 5-step DID test sequence.
+- **CONVERSATION IS SELF-SUSTAINING.** Partners collaborating directly on APS#5 without qntm driving. haroldmalikfrimpong-ops posted DID test vectors for TypeScript-side validation. aeoess ready to test.
+- **haroldmalikfrimpong-ops UPDATED CBOR TO NATIVE FIELD NAMES.** Bridge compatibility layer no longer needed for AgentID messages.
+- **QSP-1 ENVELOPE SPEC DRAFTED.** Formal spec at `.company/specs/qsp1-envelope-spec-v0.1.md`. Canonical field names, cryptographic operations, test vectors, bridge alias table.
+- **CUSTOMER EVIDENCE DIRECTORY CREATED.** Partner profiles logged at `.company/customers/`.
+- **REPLIED ON APS#5 AND A2A#1672.** Acknowledged DID milestone, announced PR merge, committed to formal envelope spec. 18 total engagements.
+- **CHAIRMAN BRIEFING SENT** — Wave 27, Page 1/2 format.
+- **230 TESTS PASS** — python-dist, 0 failures
 
 ## What We Accomplished Wave 26
 - **FIRST CROSS-PROJECT E2E ENCRYPTED MESSAGE EXCHANGE.** aeoess (APS/TypeScript) and haroldmalikfrimpong-ops (AgentID/Python) both connected to the live relay, sent encrypted messages, and received echo responses. Three identity systems in one conversation.
@@ -95,7 +106,8 @@ Wave 26: ✅ **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess
 - **Wave 26: RELAY ROUNDTRIP PROVEN.** aeoess shipped qntm-bridge.ts (369 lines, 18/18 tests, 1122 total APS). Relay send confirmed (HTTP 201, seq=6&7). WebSocket subscribe works. Echo bot responded (seq 10-11) after bridge fix. Full E2E proven: APS encrypt → relay → echo bot bridge decrypt → echo response.
 - Across threads: aeoess engaged on APS#5, A2A#1575, A2A#1606, A2A#1667
 - Peter engaged directly on A2A#1575 (Corpo legal entity binding + response to aeoess mapping)
-- **Status:** STEP 5 — RELAY INTEROP PROVEN. Needs to decrypt echo bot's native qntm response to complete bidirectional proof.
+- **Wave 27: DID INTEROP PROPOSED.** Proposed 5-step `did:aps` ↔ `did:agentid` cross-verification test sequence on APS#5. Ready to validate haroldmalikfrimpong-ops's test vectors on TypeScript side.
+- **Status:** STEP 6 — DID CROSS-VERIFICATION. Relay interop proven. Now extending to DID-level identity interop.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 21: Our comment on A2A #1672 (his proposal)
@@ -106,7 +118,8 @@ Wave 26: ✅ **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess
 - Also active: crewAI#5019 (cryptographic identity for crews), getagentid.dev (AgentID platform)
 - **Wave 26: RELAY ROUNDTRIP PROVEN.** Connected to live relay, HKDF 3/3 match byte-for-byte, relay delivery (HTTP 201, seq=8). Echo bot responded (seq 12-13) after bridge fix. Committed to opening PR on corpollc/qntm.
 - Also active: crewAI#5019 (cryptographic identity for crews), getagentid.dev (AgentID platform)
-- **Status:** DESIGN PARTNER — shipped code, relay proven, PR incoming
+- **Wave 27: PR MERGED + DID INTEROP SHIPPED.** PR #3 merged on corpollc/qntm (298-line AgentID bridge example). Updated CBOR to native qntm field names. Shipped DID cross-verification (`did:agentid` ↔ `did:aps`, 10/10 checks, 82 tests). Posted deterministic test vectors for TypeScript validation.
+- **Status:** DESIGN PARTNER — first contributor, PR merged, DID interop proven
 
 ## Metrics
 - Tests: 216 pass, 14 skipped, 0 failures ✅
@@ -117,14 +130,15 @@ Wave 26: ✅ **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess
 - Active conversations (qntm-only): 1 (echo bot)
 - Design partners: 0 formal → **aeoess at ACTIVE design-partner stage (code shipped!), haroldmalikfrimpong-ops emerging**
 - External users who've ever messaged: 0
-- **External engagements: 17** — **3 REPLIES (aeoess RELAY PROVEN, The-Nexus-Guard stable, haroldmalikfrimpong-ops RELAY PROVEN)**, 9 no reply, relay details + invite tokens shared
-- **Direct integration proposals: 6** — **2 active with shipped code + relay proof (aeoess bridge + haroldmalikfrimpong-ops demo)**, 4 pending
+- **External engagements: 18** — **3 REPLIES (aeoess DID INTEROP, The-Nexus-Guard stable, haroldmalikfrimpong-ops PR MERGED + DID SHIPPED)**, 9 no reply, relay details + invite tokens shared
+- **Direct integration proposals: 6** — **2 active with shipped code + DID interop (aeoess bridge + haroldmalikfrimpong-ops demo+PR)**, 4 pending
+- **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: 26/day, 862/week, 1,625/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, 0 forks, 0 external issues
 - **Competitors (March 2026):** 10+ new projects (leyline, HuiNet latest)
-- **Campaigns completed:** 4 (Campaign 5 active, wave 3/6)
-- **Total waves:** 25
+- **Campaigns completed:** 4 (Campaign 5 active, wave 5/6)
+- **Total waves:** 27
 - **NanoClaw integration:** live relay round-trip confirmed, blocked on credential proxy bug
 - **Subscribe auth:** SHIPPED (c0104a0, deployed)
 - **Interop tests:** 9 pass (Ed25519→X25519 vectors)
@@ -140,6 +154,7 @@ Wave 26: ✅ **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess
 - Wave 24: **THE CONVERSION REPLY.** aeoess asked for relay endpoint + echo bot conv ID — we replied with full API docs, TypeScript example, envelope format, auth flow. haroldmalikfrimpong-ops 2nd reply on #1672 — will spec AgentID→subscribe-auth. aeoess shipped entityBinding + identityBoundary (d253d8f, 1090 tests). 230 tests pass. 13 engagements. Step 3 greenlit.
 - Wave 25: **THE THREE-WAY CONVERGENCE.** aeoess posted integration plan (qntm-bridge.ts). haroldmalikfrimpong-ops SHIPPED 809-LINE WORKING DEMO — first external code ever. Fresh test conv created (dca83b70) with invite token + full QSP-1 spec + known-answer vectors shared. Echo bot deployed on 2 conversations. Both replies posted. 15 engagements. 230 tests pass.
 - Wave 26: **THE BRIDGE WORKS.** Both partners connected to live relay. aeoess: qntm-bridge.ts shipped (369 lines, 18/18 tests), relay HTTP 201, WebSocket subscribe works. haroldmalikfrimpong-ops: HKDF 3/3, relay HTTP 201 seq=8, PR committed. Echo bot bridge fix shipped (4e6a4e0) — 4 external messages decrypted and echoed. CF KV free-tier limit hit. 17 engagements. 230 tests pass. FIRST CROSS-PROJECT E2E ENCRYPTED MESSAGE EXCHANGE.
+- Wave 27: **DID CONVERGENCE.** FIRST EXTERNAL PR MERGED (haroldmalikfrimpong-ops, PR #3, 298 lines). DID interop emerged organically — haroldmalikfrimpong-ops shipped did:agentid ↔ did:aps cross-verification (10/10, 82 tests). aeoess proposed 5-step DID test sequence. QSP-1 envelope spec drafted. Customer evidence directory created. Replied on APS#5 + A2A#1672. 18 engagements. 230 tests pass. Conversation self-sustaining.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
