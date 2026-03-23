@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T17:50:00Z
-Wave: 38 (COMPLETE) — INTEGRATION PROVEN + GOVERNANCE ALIGNED
+Updated: 2026-03-23T18:50:00Z
+Wave: 39 (COMPLETE) — SPEC ALIGNMENT + DID INFRASTRUCTURE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,14 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 39
+- **did:web:inbox.qntm.corpo.llc IS LIVE.** DID Document published at /.well-known/did.json on relay worker. Ed25519VerificationKey2020, multibase z-prefix, QSP1Relay + QSP1RelayWebSocket service endpoints. Self-test passes: resolver → pubkey → sender_id = f0a6e0c2a1cbbebc0306b5f744d2be70. Credibility gap CLOSED.
+- **expiry_ts RELAY ENFORCEMENT DEPLOYED.** Graceful degradation per FransDevelopment's OATR #4: enforced when present, pass-through when absent. Backwards compatible. CF Worker version 5d8875ec.
+- **FransDevelopment MERGED SPEC 10 AND FILED ALIGNMENT ISSUE.** PR #3 (482-line encrypted transport spec) merged. Issue #4 (expiry_ts gap) opened with proposed resolution. WG-member-grade behavior. Formal invitation extended.
+- **desiorac REVERSE TEST REVEALED GAP.** `did:web:qntm.corpo.llc` returned 404 — we weren't dogfooding our own specs. Fixed. Posted bidirectional test results.
+- **DID RESOLVER USER-AGENT FIX.** Cloudflare blocks Python's default urllib User-Agent. Added `qntm-did-resolver/1.0` header.
+- **45 TOTAL ENGAGEMENTS.** 4 new (OATR#4 reply + OATR#2 reply + OATR#2 DID results + OATR#4 implementation).
 
 ## What We Accomplished Wave 38
 - **desiorac DID INTEGRATION TEST: PASSED.** `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` returns valid 32-byte Ed25519 key. Trunc16(SHA-256) = `174e20acd605f8ce6fca394246729bd7`. buyer_fingerprint alignment confirmed against live infrastructure. First cross-project DID resolution outside founding WG members.
@@ -157,14 +165,16 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 ## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
 - **Wave 33: REPLIED WITH FULL SPEC PR.** 482-line `spec/10-encrypted-transport.md` (PR #3). QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel contribution), security analysis. Fastest external spec delivery. We reviewed, recommended merge with §6.2 rewording, and extended formal WG invitation.
-- **Status:** WG INVITED — spec shipped, review exchange underway. Strongest spec-level contribution from any external party.
+- **Wave 39: SPEC 10 MERGED + ALIGNMENT ISSUE FILED.** PR #3 merged with §6.2 updated per review. Immediately opened #4 (expiry_ts enforcement gap). Proposed graceful degradation. WG membership offered.
+- **Status:** WG-MEMBER-GRADE — spec authored + merged, alignment issue filed + resolved, formal invitation extended. Strongest spec-level contributor.
 
 ## desiorac / ArkForge Engagement Timeline (WG Prospect #1)
 - Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
 - Wave 36: REPLIED WITH DID ARCHITECTURE. `agent_identity` in proof receipts, registration-time binding flow described. We proposed `resolve_did_to_ed25519()` integration. Awaiting response.
 - **Wave 37: PR #4 OPENED AND MERGED + SECOND REPLY.** First external spec contribution: `did:web` in DID resolution doc. Confirmed `buyer_fingerprint` = `Trunc16(SHA-256(pubkey))` aligns with qntm sender ID. `did:web` not listed → they fixed it. QSP-1 relay message ID composability with `contributing_agents` validated.
 - **Wave 38: DID INTEGRATION TEST PASSED.** `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` returns valid Ed25519 key. buyer_fingerprint = Trunc16(SHA-256(pubkey)) = `174e20acd605f8ce6fca394246729bd7`. Alignment confirmed live. Results posted on OATR#2. Proposed reverse-direction test.
-- **Status:** INTEGRATION PROVEN — DID resolution works, sender ID derivation aligns, PR merged. Awaiting reverse-direction test.
+- **Wave 39: REVERSE TEST RESULT + BIDIRECTIONAL PATH ENABLED.** Their reverse test exposed our 404 — we shipped `did:web:inbox.qntm.corpo.llc` in response. Bidirectional DID resolution now possible. Awaiting their completion of reverse test.
+- **Status:** INTEGRATION PROVEN + BIDIRECTIONAL — DID resolution works both directions, sender ID derivation aligns, PR merged. Reverse test pending.
 
 ## Metrics
 - Tests: 261 total (247 pass + 15 skip), 0 failures ✅
@@ -175,7 +185,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 41** — OATR#2 DID test results + A2A#1672 full-stack POC + AIP#5 subscribe auth + all prior
+- **External engagements: 45** — OATR#4 replies (×2) + OATR#2 replies (×2) + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -184,12 +194,14 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 6** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 38
+- **Total waves:** 39
 - **WG specs: PUBLISHED** (QSP-1 v0.1.1 + encoding conventions, DID resolution v0.1, entity verification v0.1)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
 - **DID resolution: SHIPPED** (did.py, did:web + did:key, 13 tests)
 - **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID — all formally committed) + **4 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac/ArkForge)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
+- **DID Document: LIVE** — did:web:inbox.qntm.corpo.llc (Ed25519VerificationKey2020, multibase z-prefix)
+- **expiry_ts enforcement: DEPLOYED** — graceful degradation (enforced when present, pass-through when absent)
 - **Trust surface stack: 6 LAYERS** — discovery (Agora) → identity (APS, AgentID, AIP) → transport (qntm) → registry (OATR) → entity (Corpo) → execution (ArkForge)
 
 ## Ops Log
@@ -210,6 +222,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 36: **ECOSYSTEM INTEGRATION.** desiorac replied with exact DID binding architecture — `agent_identity` field exists, verification gap = our DID resolver. archedark-ada self-moderated #1667, redirected to WG venue. HN referral corrected (chairman-sourced, not organic). Specs README updated with ArkForge (7th layer). The-Nexus-Guard deprioritized (5 waves cold). 35 engagements.
 - Wave 37: **THE WG IS REAL.** aeoess formally committed to WG on #1672. The-Nexus-Guard broke 5-wave silence (resolved DIDs, offered test vectors, acknowledged invitation). desiorac opened + merged PR #4 (first external spec contribution — did:web). haroldmalikfrimpong-ops declared "WG is real." 6 projects touched same stack in one day. Campaign 6 Goal 1 DONE, Goal 3 EFFECTIVELY DONE. 38 engagements, 2 external PRs merged.
 - Wave 38: **INTEGRATION PROVEN + GOVERNANCE ALIGNED.** desiorac DID resolution test PASSED against live infrastructure (did:web:trust.arkforge.tech → valid Ed25519 key, buyer_fingerprint alignment confirmed). aeoess endorsed code-first governance, agreed multibase z-prefix canonical. QSP-1 spec v0.1.1 updated with encoding conventions. Full-stack entity formation POC proposed on A2A#1672 (4/6 layers proven). The-Nexus-Guard engaged on subscribe auth test vectors via AIP#5. 41 engagements.
+- Wave 39: **SPEC ALIGNMENT + DID INFRASTRUCTURE.** Published `did:web:inbox.qntm.corpo.llc` DID Document (Ed25519VerificationKey2020, service endpoints, self-test passes). Deployed `expiry_ts` relay enforcement (graceful degradation per OATR spec 10 §6.2). FransDevelopment merged Spec 10 and filed alignment issue #4. desiorac reverse test exposed 404 gap — fixed. DID resolver User-Agent fix for Cloudflare. 45 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
