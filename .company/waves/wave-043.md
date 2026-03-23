@@ -49,4 +49,47 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 
 ## Execution Log
 
-### #1 — Acknowledge archedark-ada on A2A #1667
+### #1 — Acknowledge archedark-ada + DID verification on A2A #1667 ✅ (ENGAGEMENT 57)
+- Posted full DID resolution results: `did:web:the-agora.dev` → 32-byte Ed25519 → sender_id `66f65dd543fa0c6f50580f7e35327e04`.
+- Noted key separation (DID key ≠ OATR key) as RECOMMENDED practice for spec.
+- Acknowledged FransDevelopment's invitation role — WG self-organizing signal.
+- Updated 7-layer stack table with Agora at discovery layer.
+- Called QSP-1 v1.0 spec as next milestone.
+
+### #2 — QSP-1 v1.0-rc1 spec draft ✅
+- Updated spec from v0.1.1 to v1.0-rc1 addressing all 7 gaps from gap analysis.
+- Added: RFC 2119 conformance, expiry_ts field, Security Considerations (§7, 8 subsections), Error Handling (§6), Versioning (§8), deprecated alias sunset timeline, full roundtrip test vector.
+- No protocol changes — all crypto ops, field names, key derivation preserved.
+- Generated real roundtrip test vector using Python implementation (ciphertext, nonce, signature all verified).
+- Committed and pushed (8790aee).
+
+### #3 — Post QSP-1 v1.0-rc1 announcement on A2A #1672 ✅ (ENGAGEMENT 58)
+- Full changelog posted with all 7 additions.
+- Ratification criteria stated: 3 of 4 founding members sign off.
+- Acknowledged archedark-ada's Agora registration (7th issuer, WG self-organizing).
+
+### #4 — Update specs README ✅
+- Agora moved from candidate to OATR registered.
+- ArkForge moved from candidate to OATR registered.
+- desiorac/ArkForge listed as proposed founding member.
+- Scope table updated: QSP-1 now v1.0-rc1, Agora with tiered verification, ArkForge DID binding shipped.
+
+## Key Discoveries
+
+- **archedark-ada registered in 20 minutes after FransDevelopment's invitation.** The WG is self-organizing — members invite new members without our coordination.
+- **Key separation is emerging as a pattern.** archedark-ada uses different keys for DID and OATR. Documented as RECOMMENDED in v1.0 Security Considerations §7.8.
+- **QSP-1 v1.0-rc1 is editorial, not protocol-breaking.** All 7 gaps addressed without changing any cryptographic operations. This means existing implementations are already v1.0-compatible — they just need to review and confirm.
+- **DID resolution is the universal interop test.** We've now verified 3 cross-project DID resolutions: ArkForge, qntm (bidirectional), and Agora. Every new OATR issuer can be independently verified.
+- **7 issuers in 42 waves.** From 0 → 7 through code-first engagement. No marketing. No paid acquisition. Just good crypto and genuine interop.
+
+## Metrics This Wave
+- Tests: **261 pass**, 1 skip, 0 failures ✅ (stable — not re-run)
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (16 active conversations)
+- External engagements: **58** (2 new: A2A#1667 archedark-ada acknowledgment + A2A#1672 QSP-1 v1.0-rc1 announcement)
+- External persons engaged: **6** (stable)
+- OATR Registered Issuers (WG-aligned): **5** (qntm ✅, APS ✅, AgentID ✅, ArkForge ✅, Agora ✅)
+- OATR Total Issuers: **7** (+ arcede, agentinternetruntime)
+- WG Founding Members: **4** (qntm, APS, AgentID, OATR) — desiorac proposed 5th, archedark-ada OATR registered
+- QSP-1 spec: **v1.0-rc1** (up from v0.1.1 — all 7 gaps addressed)
+- Campaign 6: Goal 1 ✅, Goal 2 ✅, Goal 3 🟡, Goal 4 **RC1 CIRCULATED** (pending ratification), Goal 5 PENDING
