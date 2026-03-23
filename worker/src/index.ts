@@ -723,6 +723,24 @@ export default {
 				});
 			}
 
+			// OATR domain verification — /.well-known/agent-trust.json
+			// Used by FransDevelopment/open-agent-trust-registry CI pipeline
+			// to verify domain ownership during issuer registration.
+			if (request.method === "GET" && path === "/.well-known/agent-trust.json") {
+				const agentTrust = {
+					"issuer_id": "qntm",
+					"public_key_fingerprint": "8KbgwqHLvrwDBrX3RNK-cIkmgLf4_zrieDSWNbK1zTo"
+				};
+				return new Response(JSON.stringify(agentTrust, null, 2), {
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+						"Cache-Control": "public, max-age=3600",
+						...corsHeaders()
+					}
+				});
+			}
+
 			// Health check — no auth, no rate limit, no DO access
 			if (request.method === "GET" && path === "/healthz") {
 				return jsonResponse({ status: "ok", ts: Date.now() }, 200);

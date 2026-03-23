@@ -1,6 +1,6 @@
 # Agent Identity Working Group — Shared Specs
 
-Three founding projects, three candidates. One interop surface. Code-first.
+Four founding projects, three candidates. One interop surface. Code-first.
 
 ## Members
 
@@ -9,6 +9,7 @@ Three founding projects, three candidates. One interop surface. Code-first.
 | [qntm](https://github.com/corpollc/qntm) | Encrypted transport | @vessenes | Founding |
 | [Agent Passport System](https://github.com/aeoess/agent-passport-system) | Self-sovereign identity + delegation | @aeoess | Founding |
 | [AgentID](https://github.com/haroldmalikfrimpong-ops/getagentid) | CA-issued identity + trust scores | @haroldmalikfrimpong-ops | Founding |
+| [Open Agent Trust Registry](https://github.com/FransDevelopment/open-agent-trust-registry) | Trust registry + attestation CA | @FransDevelopment | Founding |
 
 ### Candidates
 
@@ -16,8 +17,7 @@ Three founding projects, three candidates. One interop surface. Code-first.
 |---------|--------|------------|--------|
 | [AIP](https://github.com/The-Nexus-Guard/aip) | DID resolution service | @The-Nexus-Guard | Invited ([aip#5](https://github.com/The-Nexus-Guard/aip/issues/5)) |
 | [Agent Agora](https://the-agora.dev) | Agent discovery registry | @archedark-ada | Aligning ([#1667 → WG](https://github.com/a2aproject/A2A/issues/1667)) |
-| [Open Agent Trust Registry](https://github.com/FransDevelopment/open-agent-trust-registry) | Trust registry + attestation CA | @FransDevelopment | Invited ([OATR PR #3](https://github.com/FransDevelopment/open-agent-trust-registry/pull/3)) |
-| [ArkForge](https://trust.arkforge.tech) | Execution attestation | @desiorac | Engaged ([OATR#2](https://github.com/FransDevelopment/open-agent-trust-registry/issues/2)) |
+| [ArkForge](https://trust.arkforge.tech) | Execution attestation | @desiorac | Engaged ([OATR#2](https://github.com/FransDevelopment/open-agent-trust-registry/issues/2), [PR #4 merged](https://github.com/corpollc/qntm/pull/4)) |
 
 ## Principles
 
@@ -36,10 +36,11 @@ Three founding projects, three candidates. One interop surface. Code-first.
 | Identity (DID resolution) | AIP (candidate) | Live service (`did:aip` method) |
 | DID cross-verification | AgentID + APS | Proven (10/10 checks) |
 | Encrypted transport | qntm | Proven |
-| Encrypted transport spec | OATR (candidate) | [Spec PR #3](https://github.com/FransDevelopment/open-agent-trust-registry/pull/3) — registry-bound channel auth |
+| Encrypted transport spec | OATR | [Spec 10](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/10-encrypted-transport.md) — registry-bound channel auth (merged) |
+| Proof of key ownership | OATR | [Spec 11](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/11-proof-of-key-ownership.md) — permissionless issuer registration verification |
 | Key derivation (HKDF) | Shared | 3 implementations verified |
 | Envelope format (QSP-1) | qntm (with WG input) | Spec v0.1.1 |
-| Trust registry | OATR (candidate) | Ed25519 attestation CA, threshold governance |
+| Trust registry | OATR | Ed25519 attestation CA, threshold governance, proof-of-key CI |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
 | Execution attestation | [ArkForge](https://trust.arkforge.tech) (candidate) | Live service, Ed25519 + Sigstore/Rekor, [DID binding proposed](https://github.com/FransDevelopment/open-agent-trust-registry/issues/2) |
 
