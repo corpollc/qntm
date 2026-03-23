@@ -25,6 +25,7 @@ envelope_b64 = Base64(CBOR(envelope_map))
 | Ciphertext | `ciphertext` | bstr | YES | XChaCha20-Poly1305 encrypted payload. |
 | AAD Hash | `aad_hash` | bstr(32) | YES | `SHA-256(conv_id)`. Bound as AAD during encryption. |
 | Signature | `sig` | bstr(64) | YES | `Ed25519.sign(ciphertext, sender_private_key)` |
+| DID | `did` | tstr | NO | Sender's DID URI (e.g. `did:aps:z...`, `did:agentid:agent_xxx`). Identity metadata — NOT covered by signature. |
 
 ### Deprecated Aliases (bridge compatibility)
 
@@ -75,9 +76,16 @@ sender = SHA-256(ed25519_public_key)[:16]
 
 This is a routing identifier, not a DID. DID resolution (`did:agentid`, `did:aps`, etc.) is an identity-layer concern above the transport.
 
-### DID Extension (future)
+### DID Extension (SHIPPED)
 
-A future version may add an optional `did` field (text string) containing the sender's DID URI. This would allow receivers to resolve the full identity document without a separate lookup.
+The optional `did` field (text string) contains the sender's DID URI. This allows receivers to resolve the full identity document without a separate lookup. Backwards compatible — receivers that don't understand DIDs ignore the field.
+
+Supported DID methods:
+- `did:aps:<ed25519-public-key-multibase>` — Agent Passport System (self-sovereign)
+- `did:agentid:<agent-identifier>` — AgentID (CA-issued + trust scores)
+- `did:key:<multibase-encoded-key>` — W3C DID Key method (generic)
+
+The `did` field is NOT covered by the envelope signature — it's identity metadata, not transport data. Receivers MUST verify the DID resolves to the same Ed25519 public key as the `sender` key ID.
 
 ## Transport
 
@@ -124,4 +132,5 @@ nonce_key: d88a1a1dee9dd0761a61a228a368ad72c15b96108c04cb072cc2b8fd63056c4f
 - Python (AgentID bridge) — `cryptography` library
 
 ## Changelog
+- v0.1.1 (2026-03-23): Added optional `did` field for DID metadata. Shipped in Python client, 2 tests. Backwards compatible.
 - v0.1 (2026-03-23): Initial draft. Formalizes what's proven across 3 implementations.
