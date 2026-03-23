@@ -1,0 +1,27 @@
+{
+  "description": "HKDF-SHA256 key derivation from invite material. Used by QSP-1 to derive per-conversation encryption keys from a shared invite secret.",
+  "method": "HKDF-SHA256 Extract + Expand with conversation-bound info strings",
+  "info_strings": {
+    "root": "qntm/qsp/v1/root || conv_id",
+    "aead": "qntm/qsp/v1/aead || conv_id",
+    "nonce": "qntm/qsp/v1/nonce || conv_id"
+  },
+  "verified_by": [
+    "Python/cryptography (qntm native)",
+    "TypeScript/@noble/hashes (APS bridge)",
+    "Python/cryptography (AgentID bridge)"
+  ],
+  "vectors": [
+    {
+      "label": "echo bot test conversation",
+      "invite_secret_hex": "a6d89c17fb6da9e56f368c2b562978ccd434900a835062d0fdfb5b31f0bdaaa2",
+      "invite_salt_hex": "99c74e4a41450c294a3ffb6473141ef3ca9e97f7afbc98ffc80f45793944dd80",
+      "conv_id_hex": "dca83b70ccd763a89b5953b2cd2ee678",
+      "derived": {
+        "root_key_hex": "5b9f2361408c3932d4685d8ccb9733a1da980086c49a7b6615f6bca5e1a67c01",
+        "aead_key_hex": "b557d6071c2237eff670aa965f8f3bb516f9ba1d788166f8faf7388f5a260ec3",
+        "nonce_key_hex": "d88a1a1dee9dd0761a61a228a368ad72c15b96108c04cb072cc2b8fd63056c4f"
+      }
+    }
+  ]
+}
