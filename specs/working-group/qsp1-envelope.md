@@ -1,7 +1,7 @@
-# QSP-1 Envelope Specification — v0.1 DRAFT
+# QSP-1 Envelope Specification — v0.1.1 DRAFT
 
 ## Status
-Draft. Three implementations exist (Python/qntm, TypeScript/APS, Python/AgentID). This spec formalizes what's been proven in production.
+Draft. Three implementations exist (Python/qntm, TypeScript/APS, Python/AgentID). FransDevelopment's encrypted transport spec (OATR PR #3) references QSP-1 for conformance. This spec formalizes what's been proven in production.
 
 ## Overview
 A QSP-1 envelope is a CBOR-encoded map containing an encrypted message, sender identity, and signature. It is transported as base64 over the qntm relay HTTP API.
@@ -131,6 +131,31 @@ nonce_key: d88a1a1dee9dd0761a61a228a368ad72c15b96108c04cb072cc2b8fd63056c4f
 - TypeScript (APS bridge) — `@noble/hashes`
 - Python (AgentID bridge) — `cryptography` library
 
+## Encoding Conventions
+
+### Multibase Encoding (WG Decision — Wave 37-38)
+
+Public keys in DID documents and WG specs MUST use **`z`-prefixed base58btc** (multibase) as the canonical encoding. Hex encoding is accepted as an alias.
+
+**Canonical:** `z6QQ5asBUnXiM4JsgfnG36...` (base58btc with `z` prefix)
+**Alias:** `64b94613478dd1e4cd504f6f68ad6d4ad7fa02ea05516a8906fab1ed08317c46` (hex)
+
+This was agreed by all three founding WG members (qntm, APS, AgentID) on A2A #1672:
+- aeoess (APS): will update `createDID()` to emit multibase by default
+- haroldmalikfrimpong-ops (AgentID): already uses z-prefix, no changes needed
+- qntm: `did:key` resolution already handles multibase; `did:web` resolution accepts both
+
+Implementations SHOULD emit multibase and MUST accept both encodings.
+
+### Sender ID Derivation
+
+`Trunc16(SHA-256(ed25519_public_key))` — first 16 bytes of the SHA-256 hash.
+
+This derivation is shared by:
+- qntm: envelope `sender` field
+- ArkForge: `buyer_fingerprint` in proof receipts
+- Proven interop: `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` → sender_id `174e20acd605f8ce6fca394246729bd7` (tested wave 38)
+
 ## Changelog
-- v0.1.1 (2026-03-23): Added optional `did` field for DID metadata. Shipped in Python client, 2 tests. Backwards compatible.
+- v0.1.1 (2026-03-23): Added optional `did` field for DID metadata. Multibase encoding convention (`z`-prefix base58btc canonical, hex alias). Sender ID derivation cross-project alignment documented (ArkForge buyer_fingerprint). Shipped in Python client. Backwards compatible.
 - v0.1 (2026-03-23): Initial draft. Formalizes what's proven across 3 implementations.
