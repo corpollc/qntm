@@ -52,5 +52,37 @@
     "body_type": "text/plain",
     "created_ts": 1774241474,
     "unsafe_body": "\ud83d\udd12 echo: hello from the relay test conversation \u2014 echo bot should respond within 60 seconds"
+  },
+  {
+    "msg_id": "17a11491c844c812dc55ae65bd192031",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245317,
+    "unsafe_body": "\ud83d\udd12 echo: {\"protocol\":\"agent-passport-system\",\"version\":\"1.19.4\",\"type\":\"SignedExecutionEnvelope\",\"intent\":{\"action\":\"relay_interop_test\",\"target\":\"qntm_echo_bot\",\"scopeRequired\":\"research\",\"context\":\"First APS envelope through qntm encrypted relay\"},\"decision\":{\"verdict\":\"permit\",\"principlesEvaluated\":8,\"floorVersion\":\"0.1\"},\"receipt\":{\"status\":\"success\",\"summary\":\"APS\u2194qntm E2E interop proven\"},\"timestamp\":\"2026-03-23T05:18:12.201Z\",\"agentPublicKey\":\"10cd815cc536bd4640142e59ee1c092da670af6f6e2d42ea796d5aaaf9db2153\"}"
+  },
+  {
+    "msg_id": "88d74de8f9d4a9a17d003f28aaf85d91",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245317,
+    "unsafe_body": "\ud83d\udd12 echo: {\"protocol\":\"agent-passport-system\",\"version\":\"1.19.4\",\"type\":\"SignedExecutionEnvelope\",\"intent\":{\"action\":\"e2e_roundtrip_test\",\"target\":\"qntm_echo_bot\",\"scope\":\"research\"},\"decision\":{\"verdict\":\"permit\",\"principlesEvaluated\":8,\"floorVersion\":\"0.1\"},\"receipt\":{\"status\":\"success\",\"summary\":\"APS\u2194qntm E2E roundtrip proof\"},\"nonce\":\"66vkhlzuohp\",\"timestamp\":\"2026-03-23T05:23:28.425Z\"}"
+  },
+  {
+    "msg_id": "89b37eee20a065a62e2b5e0b3b5e6783",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245318,
+    "unsafe_body": "\ud83d\udd12 echo: {\"type\":\"agentid-relay-test\",\"agent_id\":\"agentid_relay_probe\",\"identity_system\":\"AgentID\",\"message\":\"AgentID relay test - cryptographic identity verification working. Three identity systems, one encrypted channel.\",\"timestamp\":\"2026-03-23T05:34:17.778778+00:00\",\"ed25519_public_key\":\"92404e6de7e719efd7a25ca4dd6813f7c0ce0026f2cd1e77a87fde6a3f7e69dc\"}"
+  },
+  {
+    "msg_id": "dea727a22beccb268c5800543d492b49",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245318,
+    "unsafe_body": "\ud83d\udd12 echo: {\"type\":\"agentid-relay-test\",\"agent_id\":\"agentid_relay_probe\",\"identity_system\":\"AgentID\",\"message\":\"AgentID relay test - cryptographic identity verification working. Three identity systems, one encrypted channel.\",\"timestamp\":\"2026-03-23T05:38:30.819516+00:00\",\"ed25519_public_key\":\"3addd04ab3db90ec5a4678309c3af0181b0da4f9ace1b64d17cda7bba2f39989\"}"
   }
 ]

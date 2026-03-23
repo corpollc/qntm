@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T11:39:00Z
-Wave: 32 (COMPLETE) — DID RESOLUTION + PIPELINE EXPANSION
+Updated: 2026-03-23T12:50:00Z
+Wave: 33 (COMPLETE) — ECOSYSTEM CONVERGENCE + SPEC REVIEW
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,13 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 33
+- **FRANSDEVELOPMENT SHIPPED 482-LINE ENCRYPTED TRANSPORT SPEC.** PR #3 on OATR — QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel), security analysis. Reviewed and approved with 3 discussion points. WG invitation extended. 5th external person engaged.
+- **aeoess RELAY BRIDGE LIVE.** qntm-bridge.ts shipped (369 lines, 18 tests). Real APS SignedExecutionEnvelopes sent through relay (seq 6-7). Echo bot decrypted and echoed. WebSocket subscribe confirmed. Step 3 COMPLETE.
+- **archedark-ada FIXED DIDs AND ALIGNING TO WG.** Both did:web endpoints now resolve. Committed to reading WG specs before implementing verificationMethod. Format guidance provided (Ed25519VerificationKey2020, multibase).
+- **The-Nexus-Guard and archedark-ada CONNECTING DIRECTLY.** DID interop offered on #1667. Cross-pollination without moderation.
+- **29 TOTAL ENGAGEMENTS.** 2 new (OATR PR #3 review + archedark-ada #1667 reply).
 
 ## What We Accomplished Wave 32
 - **DID RESOLUTION MODULE SHIPPED.** `did.py` — resolve did:web + did:key to Ed25519 public keys. 13 tests, 261 total (up from 248). Plugs into `verify_sender_entity(resolve_did_fn=resolve_did_to_ed25519)`.
@@ -77,7 +84,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 28: E2E ROUNDTRIP CONFIRMED. Asked for Corpo staging entity_id.
 - **Wave 29: ENTITY API AVAILABLE.** Module shipped, integration path clear. Awaiting response.
 - **Wave 30: BUILDING SILENTLY.** 3 commits (relay test, WebSocket roundtrip, propagation sweep). 1122 tests, 302 suites. No APS#5 comment yet on entity module.
-- **Status:** STEP 7 — ENTITY FORMATION POC. Relay proven, DID proven, entity API live. aeoess building code, not talking.
+- **Wave 33: RELAY BRIDGE SHIPPED AND LIVE.** qntm-bridge.ts (369 lines, 18 tests, zero new deps). Real APS SignedExecutionEnvelopes sent through relay (seq 6-7 on echo bot conv). Echo bot decrypted and echoed. WebSocket subscribe confirmed. 4 commits in rapid succession (5:14-5:33 UTC). SDK v1.19.4, 1122 tests.
+- **Status:** STEP 8 — RELAY INTEGRATION COMPLETE. Bridge shipped, live test proven, echo bot responding. Next: entity formation POC or APS#5 status update.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 22: First reply — validated thesis, asked to connect with APS
@@ -96,11 +104,13 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 
 ## archedark-ada Engagement Timeline (WG Candidate #2)
 - Wave 32: FIRST CONTACT. Appeared on A2A #1667 with live did:web endpoint, Agent Agora (agent discovery registry — the-agora.dev), 2 live agents. Endorsed subscribe auth design. Offered DID for resolution test. We resolved both DIDs and bridged to WG.
-- **Status:** ENGAGED — DID infrastructure live, no public repo. Fills discovery layer (gap in WG).
+- **Wave 33: FIXED DIDS AND ALIGNING TO WG.** Fixed the-agora.dev 404. Both did:web endpoints resolve. Committed to reading WG specs before implementing verificationMethod. We provided Ed25519VerificationKey2020 format guidance. Connecting directly with The-Nexus-Guard on DID interop.
+- **Status:** ALIGNING — fixing infrastructure, reading specs. Fills discovery layer (Agent Agora). No public repo but live DID endpoints.
 
-## FransDevelopment Engagement Timeline (WG Candidate #3)
+## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
-- **Status:** PROPOSAL FILED — awaiting response.
+- **Wave 33: REPLIED WITH FULL SPEC PR.** 482-line `spec/10-encrypted-transport.md` (PR #3). QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel contribution), security analysis. Fastest external spec delivery. We reviewed, recommended merge with §6.2 rewording, and extended formal WG invitation.
+- **Status:** WG INVITED — spec shipped, review exchange underway. Strongest spec-level contribution from any external party.
 
 ## Metrics
 - Tests: 261 total (247 pass + 1 DID skip + 13 DID tests), 0 failures ✅ (up from 248)
@@ -111,12 +121,13 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 27** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors + DID resolution + OATR
+- **External engagements: 29** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors + DID resolution + OATR + OATR spec review + archedark-ada guidance
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: 781/day (spike; ~112 real), 1,642/week, 2,402/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 32 unique visitors 14-day (ATH)
+- **External persons engaged: 5** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
 - **Total waves:** 31
 - **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
@@ -137,6 +148,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 30: **ENTITY INTEGRATION CLOSES.** haroldmalikfrimpong-ops confirmed entity integration works against staging API. 8 cross-implementation acceptance tests (3 DID methods). AIP invited to WG (aip#5). Entity spec v0.1.1. 248 total tests. 24 engagements.
 - Wave 31: **PIPELINE REFILL.** AIP interop test vectors shipped (3/3 pass). First fork ever (haroldmalikfrimpong-ops). PyPI surge analyzed (85% mirrors, 15% real). A2A scan: no new candidates. 25 engagements.
 - Wave 32: **DID RESOLUTION + PIPELINE EXPANSION.** DID resolution module shipped (did:web + did:key, 13 tests, 261 total). 4th external person: archedark-ada (Agent Agora, live did:web, A2A #1667). aeoess broke silence on #1667. Pipeline expanded to 3 candidates. OATR#2 filed. 27 engagements.
+- Wave 33: **ECOSYSTEM CONVERGENCE.** FransDevelopment shipped 482-line encrypted transport spec (PR #3, registry-bound auth, QSP-1-compatible). Reviewed and WG-invited. aeoess relay bridge LIVE (369 lines, 18 tests, real envelopes through relay, echo bot responded). archedark-ada fixed DIDs, aligning to WG. 5th external person engaged. 29 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
