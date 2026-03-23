@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T09:55:00Z
-Wave: 30 (COMPLETE) — ENTITY INTEGRATION CLOSES
+Updated: 2026-03-23T10:39:00Z
+Wave: 31 (COMPLETE) — PIPELINE REFILL + PYPI SURGE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,13 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 31
+- **AIP INTEROP TEST VECTORS SHIPPED.** 3/3 known-answer vectors prove AIP Ed25519 → X25519 derivation is byte-for-byte compatible with qntm. Runnable script + JSON. Posted on AIP#5 as follow-up.
+- **FIRST FORK EVER.** haroldmalikfrimpong-ops forked corpollc/qntm at 05:37 UTC. Precursor to specs PRs. Campaign 6 Goal 1 imminent.
+- **PYPI SURGE ANALYZED.** 781/day on March 22 — but ~85% is mirrors/bots (`null` platform). Real downloads ~112/day during spikes. 4x baseline. Source unknown.
+- **A2A ECOSYSTEM SCAN.** No new WG candidates beyond The-Nexus-Guard. Pipeline thin. AIP#5 still 0 replies (1 hour old).
+- **25 TOTAL ENGAGEMENTS.** 1 new (AIP#5 follow-up with test vectors).
 
 ## What We Accomplished Wave 30
 - **ENTITY INTEGRATION PROVEN.** haroldmalikfrimpong-ops confirmed `verify_agent_full()` works against Corpo staging API. Bridge to qntm's `verify_sender_entity()` is one function call. Campaign 6 Goal 2: DONE.
@@ -88,14 +95,14 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 24** — 3 REPLIES + WG + entity integration + AIP WG invitation
+- **External engagements: 25** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors
 - **Direct integration proposals: 6** — 2 active with DID-level interop + WG + entity
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
-- PyPI downloads: 26/day, 862/week, 1,625/month
+- PyPI downloads: 781/day (spike; ~112 real), 1,642/week, 2,402/month
 - Published version: **v0.4.20 WORKING** ✅
-- GitHub: 1 star, 0 forks, 0 external issues — BUT: 22 unique visitors on March 22 (ATH)
+- GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 22 unique visitors on March 22 (ATH)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 29
+- **Total waves:** 31
 - **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
 - **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID)
@@ -111,6 +118,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 28: **WORKING GROUP FORMATION.** WG proposed, endorsed, Campaign 5 closed (3/5).
 - Wave 29: **THE WG GETS A HOME.** Specs directory published (QSP-1, DID resolution, entity verification). Entity module shipped (8 tests, 240 total). Corpo staging API live. haroldmalikfrimpong-ops building entity integration. Campaign 6 launched (standard-track). 22 total engagements.
 - Wave 30: **ENTITY INTEGRATION CLOSES.** haroldmalikfrimpong-ops confirmed entity integration works against staging API. 8 cross-implementation acceptance tests (3 DID methods). AIP invited to WG (aip#5). Entity spec v0.1.1. 248 total tests. 24 engagements.
+- Wave 31: **PIPELINE REFILL.** AIP interop test vectors shipped (3/3 pass). First fork ever (haroldmalikfrimpong-ops). PyPI surge analyzed (85% mirrors, 15% real). A2A scan: no new candidates. 25 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
