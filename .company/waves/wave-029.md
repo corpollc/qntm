@@ -47,4 +47,48 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 4. **Set Campaign 6 goals** (standard-track path)
 5. **Update state, KPIs, truth register, wave log**
 
+## Campaign 6 Goals — "Standard or Product?" (Waves 29-34)
+**Theme:** Lean into the standard path. Build the WG infrastructure. Ship specs and tools that make qntm the transport layer every agent identity project uses.
+
+**Strategic assumption:** Chairman's actions (entity API, direct participation, WG endorsement) signal "standard" path. This campaign tests whether that's correct by measuring whether WG artifacts attract new members.
+
+1. **WG shared repo/specs used by both partners** — at least 1 PR or issue from a non-qntm member on the specs directory
+2. **Entity verification integration complete** — aeoess or haroldmalikfrimpong-ops ships code calling Corpo entity API through qntm's interface
+3. **One new WG member** — someone new ships compatible code (from A2A ecosystem, not existing partners)
+4. **QSP-1 spec ratified at v1.0** — all three implementations agree on field names, crypto ops, verification rules
+5. **Chairman strategic direction confirmed** — explicit ruling on standard vs product path
+
 ## Execution Log
+
+### #1 — Created WG specs directory ✅
+- `specs/` at repo root: README (members, principles, scope), 3 spec docs, 3 test vector files
+- QSP-1 envelope v0.1.1, DID resolution interface v0.1, entity verification interface v0.1
+- Test vectors: 5 Ed25519→X25519, HKDF derivation, entity API format
+- Commit f4f2f87, pushed to main
+
+### #2 — Built entity verification module ✅
+- `entity.py`: `verify_entity()`, `verify_sender_entity()`, `EntityVerification` dataclass
+- Full chain: DID → resolve key → verify sender key ID → verify Corpo entity
+- 8 tests with mock HTTP server (active, suspended, dissolved, not found, key mismatch, full chain)
+- 240 total tests pass (up from 232)
+
+### #3 — Posted WG spec links on A2A #1672 ✅
+- https://github.com/a2aproject/A2A/issues/1672#issuecomment-4108942690
+- Linked all specs, test vectors, integration infrastructure
+
+### #4 — Posted entity module on APS#5 ✅
+- https://github.com/aeoess/agent-passport-system/issues/5#issuecomment-4108943717
+- Code example for both partners, integration guidance
+
+### #5 — Campaign 6 goals set ✅ (see above)
+
+## Metrics This Wave
+- Tests: 240 pass, 0 failures ✅ (up from 232, +8 entity tests)
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (16 active conversations)
+- External engagements: **22** (2 new: WG specs + entity module)
+- External PRs: 1 merged
+- GitHub traffic: ATH on March 22 (22 uniques)
+- Campaign 6: LAUNCHED (standard-track)
+- New code: entity.py + test_entity.py + specs/ directory (835 lines)
+- Corpo staging API: LIVE and verified
