@@ -249,10 +249,11 @@ def main():
         "sender": key_id,
         "seq": seq,
         "ts": ts,
+        "msg_id": msg_id,
         "nonce": nonce,
-        "ct": ciphertext,
+        "ciphertext": ciphertext,
         "sig": signature,
-        "aad": CONV_ID,
+        "aad_hash": hashlib.sha256(CONV_ID).digest(),
     }
 
     cbor_bytes = cbor_encode(envelope_map)
