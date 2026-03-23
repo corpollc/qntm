@@ -1,7 +1,13 @@
-# QSP-1 Envelope Specification — v0.1.1 DRAFT
+# QSP-1 Envelope Specification — v1.0-rc1 DRAFT
 
 ## Status
-Draft. Three implementations exist (Python/qntm, TypeScript/APS, Python/AgentID). FransDevelopment's encrypted transport spec (OATR PR #3) references QSP-1 for conformance. This spec formalizes what's been proven in production.
+Release Candidate 1. Three implementations exist (Python/qntm, TypeScript/APS, Python/AgentID). FransDevelopment's encrypted transport spec (OATR Spec 10) references QSP-1 for conformance. All four founding WG members (qntm, APS, AgentID, OATR) and three additional issuers (ArkForge, Agora, arcede) have registered in the Open Agent Trust Registry. This spec formalizes what's been proven in production across 7 registered issuers.
+
+Ratification requires sign-off from 3 of 4 founding WG members.
+
+## Normative References
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## Overview
 A QSP-1 envelope is a CBOR-encoded map containing an encrypted message, sender identity, and signature. It is transported as base64 over the qntm relay HTTP API.
@@ -26,16 +32,17 @@ envelope_b64 = Base64(CBOR(envelope_map))
 | AAD Hash | `aad_hash` | bstr(32) | YES | `SHA-256(conv_id)`. Bound as AAD during encryption. |
 | Signature | `sig` | bstr(64) | YES | `Ed25519.sign(ciphertext, sender_private_key)` |
 | DID | `did` | tstr | NO | Sender's DID URI (e.g. `did:aps:z...`, `did:agentid:agent_xxx`). Identity metadata — NOT covered by signature. |
+| Expiry | `expiry_ts` | uint | NO | Unix milliseconds (UTC). If present, relays SHOULD reject messages past this time. See §6.2. |
 
 ### Deprecated Aliases (bridge compatibility)
 
-Implementations SHOULD use canonical field names above. For backwards compatibility, receivers SHOULD accept these aliases:
+Implementations MUST emit canonical field names. For backwards compatibility, receivers SHOULD accept these aliases until **v1.1 or 6 months after v1.0 ratification** (whichever comes first), at which point support for aliases MAY be removed.
 
-| Alias | Canonical |
-|-------|-----------|
-| `nonce` | Derived from `msg_id` — if present, use as raw nonce instead of deriving |
-| `ct` | `ciphertext` |
-| `aad` | `aad_hash` |
+| Alias | Canonical | Notes |
+|-------|-----------|-------|
+| `nonce` | Derived from `msg_id` | If present as raw 24-byte nonce, use directly instead of deriving from `msg_id` |
+| `ct` | `ciphertext` | |
+| `aad` | `aad_hash` | |
 
 ## Cryptographic Operations
 
@@ -110,6 +117,123 @@ Upgrade: websocket
 
 Messages arrive as WebSocket text frames containing JSON with `envelope_b64`.
 
+## Expiry Enforcement (§6.2)
+
+Per OATR Spec 10 §6.2 (FransDevelopment):
+
+- If `expiry_ts` is present and the current time exceeds it, the relay SHOULD reject the message with HTTP 400 and reason `expired`.
+- If `expiry_ts` is absent, the relay MUST pass the message through (graceful degradation).
+- Senders SHOULD set `expiry_ts` for time-sensitive operations (API approvals, ephemeral sessions).
+- Receivers SHOULD check `expiry_ts` after decryption and discard expired payloads.
+
+This provides backwards compatibility: legacy senders that omit `expiry_ts` are unaffected. New senders opt into relay-level expiry enforcement.
+
+## Error Handling (§6)
+
+### Receiver Behavior
+
+| Condition | Action |
+|-----------|--------|
+| CBOR decode failure | MUST skip envelope, SHOULD log error |
+| Unknown CBOR keys | MUST ignore (forward compatibility) |
+| `v` != 1 | MUST reject envelope |
+| Signature verification failure | MUST reject envelope, MUST NOT process plaintext |
+| Nonce derivation produces different nonce than expected | MUST reject envelope |
+| `expiry_ts` present and expired | SHOULD discard, MAY log |
+| `did` present but does not resolve to `sender` key | SHOULD warn, MAY continue processing (DID is metadata, not transport) |
+
+### Relay Behavior
+
+| Condition | Action |
+|-----------|--------|
+| Malformed JSON request | MUST return HTTP 400 |
+| Missing required fields (`conv_id`, `envelope_b64`) | MUST return HTTP 400 |
+| `expiry_ts` present and expired | SHOULD return HTTP 400 with `{"error": "expired"}` |
+| `envelope_b64` not valid base64 | SHOULD return HTTP 400 |
+| Valid envelope | MUST store and deliver to subscribers |
+
+Relays are honest-but-curious: they store and forward CBOR envelopes but MUST NOT require access to plaintext. Relays SHOULD validate envelope structure (base64 decode, CBOR parse) but MUST NOT validate signatures (they don't have recipient keys).
+
+## Security Considerations (§7)
+
+### 7.1 Threat Model
+
+The relay is assumed to be an **honest-but-curious** adversary:
+- It faithfully stores and delivers envelopes (honest)
+- It may inspect envelope metadata: `conv`, `sender`, `seq`, `ts`, `did`, `expiry_ts` (curious)
+- It CANNOT read plaintext (XChaCha20-Poly1305 encryption with key material derived from invite secret)
+- It CANNOT forge signatures (Ed25519 signing key held only by sender)
+
+### 7.2 Replay Protection
+
+Each envelope contains a unique `msg_id` (16 random bytes). The nonce is derived deterministically from `msg_id`:
+```
+nonce = Trunc24(HMAC-SHA256(nonce_key, msg_id))
+```
+
+Receivers SHOULD maintain a window of recently-seen `msg_id` values and reject duplicates. The `seq` field provides an additional ordering signal — receivers MAY reject envelopes with `seq` values below a threshold.
+
+### 7.3 Nonce Reuse Prevention
+
+Nonces are derived from random `msg_id` values via HMAC-SHA256, not generated directly. This ensures:
+- Two messages with the same `msg_id` produce the same nonce (idempotent replay)
+- Two messages with different `msg_id` values produce different nonces with overwhelming probability (collision resistance of HMAC-SHA256 truncated to 24 bytes)
+
+Implementations MUST generate `msg_id` from a cryptographically secure random source.
+
+### 7.4 Forward Secrecy
+
+QSP-1 v1.0 uses a **static shared secret** model (invite token → HKDF → conversation keys). This means:
+- Compromise of the invite secret reveals ALL past and future messages in that conversation
+- This is a deliberate trade-off: the invite model is simpler for agent-to-agent integration than X3DH prekey infrastructure
+
+Implementations requiring forward secrecy SHOULD layer a Double Ratchet protocol on top of QSP-1 (as the qntm reference implementation does internally). A future QSP-2 spec MAY formalize Double Ratchet integration.
+
+### 7.5 AAD Binding
+
+The `conv_id` is bound as Additional Authenticated Data (AAD) during encryption:
+```
+ciphertext = XChaCha20-Poly1305.Encrypt(key, nonce, plaintext, aad=conv_id)
+```
+
+This prevents cross-conversation attacks: an envelope encrypted for conversation A cannot be transplanted into conversation B — decryption will fail due to AAD mismatch.
+
+### 7.6 Signature Scope
+
+The Ed25519 signature covers **only the ciphertext**, not the full envelope:
+```
+sig = Ed25519.Sign(signing_key, ciphertext)
+```
+
+This is intentional:
+- Relay-level metadata (`seq`, `ts`) can be updated by the relay without invalidating the signature
+- The ciphertext is the only field that proves the sender had the signing key AND the encryption key
+- Metadata fields are untrusted by design — receivers derive trust from the ciphertext and signature
+
+### 7.7 DID Field Trust
+
+The `did` field is NOT covered by the envelope signature. An attacker who controls the relay could substitute a different DID. Mitigation:
+- Receivers MUST verify the DID resolves to an Ed25519 public key whose `Trunc16(SHA-256(pubkey))` matches the `sender` field
+- The `sender` field IS bound to the signature via the signing key
+
+### 7.8 Key Separation
+
+RECOMMENDED: Use separate key material for different trust surfaces:
+- **Transport key:** Ed25519 key pair for QSP-1 envelope signing and AEAD key derivation
+- **DID key:** Ed25519 key pair for DID Document `verificationMethod`
+- **OATR key:** Ed25519 key pair for attestation issuer registration
+
+This practice is already followed by archedark-ada (Agora) and RECOMMENDED for all issuers.
+
+## Versioning (§8)
+
+The `v` field MUST be `1` for this specification. Implementations:
+- MUST reject envelopes with `v` > 1 (fail-safe)
+- MUST NOT attempt to decode unknown versions
+- Version negotiation is out of scope for v1.0
+
+Future versions (v2+) will be published as separate specifications. Implementations SHOULD support concurrent operation of multiple versions during transition periods.
+
 ## Known-Answer Test Vectors
 
 ### Invite Material
@@ -130,6 +254,35 @@ nonce_key: d88a1a1dee9dd0761a61a228a368ad72c15b96108c04cb072cc2b8fd63056c4f
 - Python (qntm native) — `cryptography` library
 - TypeScript (APS bridge) — `@noble/hashes`
 - Python (AgentID bridge) — `cryptography` library
+
+### Full Roundtrip Vector
+
+Using the invite material above with a fixed sender key and message:
+
+```
+# Sender key (Ed25519 seed)
+seed:        deadbeefcafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef
+public_key:  8aa49008d58bad4ccd3494960da49848331a78bc06e23c36d731322c35b35fa9
+sender:      1f60f7ef29e27d280400a7f3e5f4899c    # Trunc16(SHA-256(public_key))
+
+# Message
+msg_id:      0102030405060708090a0b0c0d0e0f10
+plaintext:   "Hello from QSP-1 test vector"       # 28 bytes
+
+# Derived nonce
+nonce:       a7f98b27bb1aab6f8b216a587dc78b1b53f6b23ce7fe3413
+
+# Ciphertext (XChaCha20-Poly1305, AAD = conv_id)
+ciphertext:  e6be3866938c2e8085cfdbc61102cc4f3dc66638528e37e47e81e8ce954b1824086f3c52de0a66085c309425
+
+# AAD hash
+aad_hash:    b17148a47096a25b259b276fd03632231e308b8e29ed898eab8ecbae6ad4d7b9
+
+# Signature (Ed25519.Sign(seed, ciphertext))
+sig:         dd47f05e079dd4460c90da592a6cc7de472ccbc748fa620063af969f061e2cb4e741dd759ff2409169458390d48be9060db36eff1575f3c50b182ff3a1d25a0d
+```
+
+A conforming implementation MUST produce identical `nonce`, `ciphertext`, `sender`, and `aad_hash` from the same inputs. The `sig` will differ if the implementation uses a different Ed25519 key — verify by checking `Ed25519.Verify(public_key, sig, ciphertext)` returns true.
 
 ## Encoding Conventions
 
@@ -157,5 +310,6 @@ This derivation is shared by:
 - Proven interop: `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` → sender_id `174e20acd605f8ce6fca394246729bd7` (tested wave 38)
 
 ## Changelog
+- v1.0-rc1 (2026-03-23): Release candidate. Added `expiry_ts` field (OPTIONAL, §6.2 enforcement per OATR Spec 10). Added Security Considerations (§7): threat model, replay protection, nonce reuse, forward secrecy, AAD binding, signature scope, DID trust, key separation. Added Error Handling (§6). Added Versioning (§8). Formalized RFC 2119 language. Deprecated alias sunset timeline (v1.1 or 6 months). Full roundtrip test vector. 7 registered OATR issuers, 4 founding WG members.
 - v0.1.1 (2026-03-23): Added optional `did` field for DID metadata. Multibase encoding convention (`z`-prefix base58btc canonical, hex alias). Sender ID derivation cross-project alignment documented (ArkForge buyer_fingerprint). Shipped in Python client. Backwards compatible.
 - v0.1 (2026-03-23): Initial draft. Formalizes what's proven across 3 implementations.
