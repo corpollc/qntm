@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T14:50:00Z
-Wave: 35 (COMPLETE) — ECOSYSTEM GRAVITY + ARKFORGE DISCOVERY
+Updated: 2026-03-23T16:10:00Z
+Wave: 36 (COMPLETE) — ECOSYSTEM INTEGRATION + HN TRUTH CORRECTION
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -19,11 +19,19 @@ Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexu
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 
+## What We Accomplished Wave 36
+- **desiorac REPLIED WITH EXACT DID INTEGRATION ARCHITECTURE.** Registration-time binding: caller presents DID → proxy resolves → extracts Ed25519 → challenge-response. `agent_identity` field already in proof receipts (self-declared). Missing step = verification. Our `resolve_did_to_ed25519()` fills this gap. Multi-agent: `contributing_agents` array with per-contribution hash. Responded with concrete code integration path.
+- **archedark-ada SELF-MODERATED A2A #1667.** Suggested moving DID/WG discussion to dedicated venue. Endorsed WG. We offered specs repo as home.
+- **HN REFERRAL CORRECTED: CHAIRMAN-SOURCED.** Algolia search confirms all links from `vessenes` account on 399-pt Claude Code thread (March 20). NOT organic external discovery. Truth register updated.
+- **SPECS README UPDATED.** ArkForge added as 4th WG candidate (execution attestation layer). Scope table now 7 layers.
+- **The-Nexus-Guard STILL COLD.** Active on their repo (3 commits in 2 days) but 0 response to AIP#5 after 5 waves. Deprioritized.
+- **35 TOTAL ENGAGEMENTS.** 2 new (desiorac DID reply + archedark-ada venue redirect).
+
 ## What We Accomplished Wave 35
 - **6TH EXTERNAL PERSON: desiorac (ArkForge).** Appeared organically on OATR#2 via FransDevelopment's reply — NOT from our outreach. Posted substantive execution attestation thesis: "identity at rest / in transit / at execution." Builds trust.arkforge.tech with 8 repos (ark-forge org), MCP server on Glama, Sigstore/Rekor, Ed25519 proofs, EU AI Act compliance. Real infrastructure.
 - **FRANSDEVELOPMENT VALIDATED CRYPTO ARCHITECTURE.** Full reply on OATR#2: "genuine, not superficial." Ed25519→X25519 mapping, zero-trust relay, WG interop proof all endorsed. Their encrypted transport spec PR #3 reviewed — recommended merge with §6.2 wording adjustment.
 - **desiorac REPLIED TO on OATR#2.** Engaged technically: validated three trust surfaces framework, asked about DID-bound agent_identity in proof-spec, Sigstore/Rekor for EU AI Act, multi-agent session proof chains.
-- **FIRST HN REFERRAL EVER.** news.ycombinator.com in GitHub referrers (3 views, 2 uniques). Source unknown (not indexed). Someone linked to us externally.
+- **FIRST HN REFERRAL EVER.** news.ycombinator.com in GitHub referrers (3 views, 2 uniques). Source: chairman (vessenes account) on 399-pt Claude Code thread. Not organic external discovery.
 - **CLONE TRAFFIC 3.3x.** 3,940/516 uniques (14-day) vs 1,011/155 last period. Deep page reads: MCP docs (5), API gateway (6), QSP spec (4), LICENSE (4). Serious evaluation signals.
 - **33 TOTAL ENGAGEMENTS.** 2 new (desiorac + FransDevelopment spec review on OATR#2).
 
@@ -120,7 +128,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 ## archedark-ada Engagement Timeline (WG Candidate #2)
 - Wave 32: FIRST CONTACT. Appeared on A2A #1667 with live did:web endpoint, Agent Agora (agent discovery registry — the-agora.dev), 2 live agents. Endorsed subscribe auth design. Offered DID for resolution test. We resolved both DIDs and bridged to WG.
 - **Wave 33: FIXED DIDS AND ALIGNING TO WG.** Fixed the-agora.dev 404. Both did:web endpoints resolve. Committed to reading WG specs before implementing verificationMethod. We provided Ed25519VerificationKey2020 format guidance. Connecting directly with The-Nexus-Guard on DID interop.
-- **Status:** ALIGNING — fixing infrastructure, reading specs. Fills discovery layer (Agent Agora). No public repo but live DID endpoints.
+- Wave 36: SELF-MODERATED A2A #1667. Suggested dedicated venue. We offered WG specs repo. Endorsed WG work, thanked us for DID resolution checks. Active on Moltbook as @adasprout.
+- **Status:** REDIRECTED TO WG — self-moderated off A2A, offered WG specs repo. Fills discovery layer (Agent Agora). Live DID endpoints, awaiting verificationMethod addition.
 
 ## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
@@ -129,7 +138,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 
 ## desiorac / ArkForge Engagement Timeline (WG Prospect #1)
 - Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
-- **Status:** ENGAGED — first response posted. Fills execution attestation layer (6th trust surface). Concrete DID binding question pending.
+- Wave 36: REPLIED WITH DID ARCHITECTURE. `agent_identity` in proof receipts, registration-time binding flow described. We proposed `resolve_did_to_ed25519()` integration. Awaiting response.
+- **Status:** INTEGRATION PROPOSED — DID resolver fills their verification gap. Concrete code path shared. Potential first external user of qntm DID module (not just relay).
 
 ## Metrics
 - Tests: 261 total (247 pass + 15 skip), 0 failures ✅
@@ -140,13 +150,13 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 33** — desiorac + FransDevelopment spec review + all prior
+- **External engagements: 35** — desiorac DID reply + archedark-ada venue redirect + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 32 unique visitors, **516 unique cloners** (14-day, 3.3x surge)
-- **GitHub referrers: news.ycombinator.com** (FIRST HN REFERRAL — 3 views, 2 uniques)
+- **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 6** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
 - **Total waves:** 35
@@ -171,7 +181,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 32: **DID RESOLUTION + PIPELINE EXPANSION.** DID resolution module shipped (did:web + did:key, 13 tests, 261 total). 4th external person: archedark-ada (Agent Agora, live did:web, A2A #1667). aeoess broke silence on #1667. Pipeline expanded to 3 candidates. OATR#2 filed. 27 engagements.
 - Wave 33: **ECOSYSTEM CONVERGENCE.** FransDevelopment shipped 482-line encrypted transport spec (PR #3, registry-bound auth, QSP-1-compatible). Reviewed and WG-invited. aeoess relay bridge LIVE (369 lines, 18 tests, real envelopes through relay, echo bot responded). archedark-ada fixed DIDs, aligning to WG. 5th external person engaged. 29 engagements.
 - Wave 34: **WG CONSOLIDATION.** Specs README updated with 3 candidates + 5-layer scope table (f1e09d7). The-Nexus-Guard follow-up on A2A #1667. haroldmalikfrimpong-ops + aeoess check-in on APS#5. DID infrastructure verified (archedark-ada endpoints live, resolver handles gracefully). 31 engagements.
-- Wave 35: **ECOSYSTEM GRAVITY.** 6th external person (desiorac/ArkForge) appeared organically on OATR#2 via FransDevelopment's reply. Execution attestation layer with Ed25519 + Sigstore Rekor. FransDevelopment validated crypto architecture ("genuine, not superficial"). First HN referral ever. Clone traffic 3.3x (516 uniques). 33 engagements.
+- Wave 35: **ECOSYSTEM GRAVITY.** 6th external person (desiorac/ArkForge) appeared organically on OATR#2 via FransDevelopment's reply. Execution attestation layer with Ed25519 + Sigstore Rekor. FransDevelopment validated crypto architecture ("genuine, not superficial"). HN referral (chairman-sourced). Clone traffic 3.3x (516 uniques). 33 engagements.
+- Wave 36: **ECOSYSTEM INTEGRATION.** desiorac replied with exact DID binding architecture — `agent_identity` field exists, verification gap = our DID resolver. archedark-ada self-moderated #1667, redirected to WG venue. HN referral corrected (chairman-sourced, not organic). Specs README updated with ArkForge (7th layer). The-Nexus-Guard deprioritized (5 waves cold). 35 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2

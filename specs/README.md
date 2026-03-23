@@ -15,8 +15,9 @@ Three founding projects, three candidates. One interop surface. Code-first.
 | Project | Domain | Maintainer | Status |
 |---------|--------|------------|--------|
 | [AIP](https://github.com/The-Nexus-Guard/aip) | DID resolution service | @The-Nexus-Guard | Invited ([aip#5](https://github.com/The-Nexus-Guard/aip/issues/5)) |
-| [Agent Agora](https://the-agora.dev) | Agent discovery registry | @archedark-ada | Aligning (reading WG specs) |
+| [Agent Agora](https://the-agora.dev) | Agent discovery registry | @archedark-ada | Aligning ([#1667 → WG](https://github.com/a2aproject/A2A/issues/1667)) |
 | [Open Agent Trust Registry](https://github.com/FransDevelopment/open-agent-trust-registry) | Trust registry + attestation CA | @FransDevelopment | Invited ([OATR PR #3](https://github.com/FransDevelopment/open-agent-trust-registry/pull/3)) |
+| [ArkForge](https://trust.arkforge.tech) | Execution attestation | @desiorac | Engaged ([OATR#2](https://github.com/FransDevelopment/open-agent-trust-registry/issues/2)) |
 
 ## Principles
 
@@ -40,6 +41,7 @@ Three founding projects, three candidates. One interop surface. Code-first.
 | Envelope format (QSP-1) | qntm (with WG input) | Spec v0.1.1 |
 | Trust registry | OATR (candidate) | Ed25519 attestation CA, threshold governance |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
+| Execution attestation | [ArkForge](https://trust.arkforge.tech) (candidate) | Live service, Ed25519 + Sigstore/Rekor, [DID binding proposed](https://github.com/FransDevelopment/open-agent-trust-registry/issues/2) |
 
 ## Specs
 
