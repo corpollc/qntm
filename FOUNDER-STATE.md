@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T08:39:00Z
-Wave: 29 (COMPLETE) — THE WG GETS A HOME
+Updated: 2026-03-23T09:55:00Z
+Wave: 30 (COMPLETE) — ENTITY INTEGRATION CLOSES
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -13,11 +13,19 @@ Wave: 29 (COMPLETE) — THE WG GETS A HOME
 ## Campaign 6 Status (Waves 29+) — ACTIVE
 **Theme: "Standard or Product?" — Lean into the standard path**
 
-Goal 1: WG specs used by both partners (1 PR/issue from non-qntm member) — IN PROGRESS (specs directory published)
-Goal 2: Entity verification integration complete (partner ships code calling Corpo API) — IN PROGRESS (module shipped, partners notified)
-Goal 3: One new WG member (ships compatible code) — NOT YET
-Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published)
+Goal 1: WG specs used by both partners (1 PR/issue from non-qntm member) — 🟡 IMMINENT (haroldmalikfrimpong promised PRs, specs reviewed)
+Goal 2: Entity verification integration complete (partner ships code calling Corpo API) — ✅ DONE (haroldmalikfrimpong shipped verify_agent_full() against staging API, bridge proven)
+Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
+Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 30
+- **ENTITY INTEGRATION PROVEN.** haroldmalikfrimpong-ops confirmed `verify_agent_full()` works against Corpo staging API. Bridge to qntm's `verify_sender_entity()` is one function call. Campaign 6 Goal 2: DONE.
+- **8 CROSS-IMPLEMENTATION ACCEPTANCE TESTS.** Prove AgentID/APS/AIP resolve_did → qntm entity verification chain works for all 3 DID methods. Multi-method resolver pattern tested. 248 total tests (234 + 14 MCP skip).
+- **AIP WG INVITATION OPENED.** The-Nexus-Guard/aip#5 — strongest WG candidate. Ed25519 identity, PyPI (aip-identity), 10 stars, live service, already reviewed our code (wave 19), cross-protocol bridge with APS already built.
+- **ENTITY VERIFICATION SPEC UPDATED TO v0.1.1.** Incorporates AgentID's proven implementation patterns, acceptance test table.
+- **aeoess BUILDING SILENTLY.** 3 commits in 4 hours: live relay test, WebSocket roundtrip, propagation sweep. 1122 tests, 302 suites.
+- **24 TOTAL ENGAGEMENTS.** 2 new (APS#5 entity milestone reply + AIP#5 WG invitation).
 
 ## What We Accomplished Wave 29
 - **WG SPECS DIRECTORY PUBLISHED.** `specs/` at repo root with README (members, principles, scope), QSP-1 envelope spec, DID resolution interface, entity verification interface, and test vectors. Posted links on A2A #1672. The WG has a home.
@@ -53,7 +61,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 27: DID INTEROP PROPOSED — 5-step cross-verification test sequence
 - Wave 28: E2E ROUNDTRIP CONFIRMED. Asked for Corpo staging entity_id.
 - **Wave 29: ENTITY API AVAILABLE.** Module shipped, integration path clear. Awaiting response.
-- **Status:** STEP 7 — ENTITY FORMATION POC. Relay proven, DID proven, entity API live.
+- **Wave 30: BUILDING SILENTLY.** 3 commits (relay test, WebSocket roundtrip, propagation sweep). 1122 tests, 302 suites. No APS#5 comment yet on entity module.
+- **Status:** STEP 7 — ENTITY FORMATION POC. Relay proven, DID proven, entity API live. aeoess building code, not talking.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 22: First reply — validated thesis, asked to connect with APS
@@ -62,10 +71,16 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 27: PR MERGED + DID INTEROP SHIPPED — 10/10 checks, 82 tests
 - Wave 28: WORKING GROUP PROPOSED on A2A #1672. We endorsed with code-first principles.
 - **Wave 29: CONFIRMED ENTITY API + BUILDING INTEGRATION.** Building `verify_agent_full(did)` — full DID → certificate → entity chain. Endorsed WG structure.
-- **Status:** BUILDING ENTITY INTEGRATION — WG proposer, PR merged, DID shipped, entity API confirmed
+- **Wave 30: ENTITY INTEGRATION DONE.** Shipped `verify_agent_full()` against staging API. Bridge to qntm `verify_sender_entity()` confirmed. Promised specs PRs. Reviewed specs directory as "clean and accurate."
+- **Status:** ENTITY INTEGRATION PROVEN — WG proposer, PR merged, DID shipped, entity verified, specs PRs incoming
+
+## The-Nexus-Guard Engagement Timeline (WG Candidate #1)
+- Wave 19: First external contact — reviewed qntm code on A2A #1667, gave detailed architectural feedback on subscribe auth
+- Wave 30: WG INVITATION OPENED (aip#5). Strongest candidate: Ed25519 identity, PyPI (aip-identity), 10 stars, live DID resolution service, cross-protocol bridge with APS already built.
+- **Status:** INVITED — awaiting response on aip#5
 
 ## Metrics
-- Tests: 240 pass, 0 failures ✅ (up from 232)
+- Tests: 248 total (234 pass + 14 MCP skip), 0 failures ✅ (up from 240)
 - Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
 - Echo bot: CF WORKER LIVE ✅
 - TTFM: 1.2 seconds ✅
@@ -73,7 +88,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 22** — 3 REPLIES + WG + entity integration active
+- **External engagements: 24** — 3 REPLIES + WG + entity integration + AIP WG invitation
 - **Direct integration proposals: 6** — 2 active with DID-level interop + WG + entity
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: 26/day, 862/week, 1,625/month
@@ -82,7 +97,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
 - **Total waves:** 29
 - **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
-- **Entity verification: SHIPPED** (entity.py, 8 tests, Corpo staging API live)
+- **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
 - **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
 
@@ -95,6 +110,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 27: **DID CONVERGENCE.** First external PR merged. DID interop emerged organically.
 - Wave 28: **WORKING GROUP FORMATION.** WG proposed, endorsed, Campaign 5 closed (3/5).
 - Wave 29: **THE WG GETS A HOME.** Specs directory published (QSP-1, DID resolution, entity verification). Entity module shipped (8 tests, 240 total). Corpo staging API live. haroldmalikfrimpong-ops building entity integration. Campaign 6 launched (standard-track). 22 total engagements.
+- Wave 30: **ENTITY INTEGRATION CLOSES.** haroldmalikfrimpong-ops confirmed entity integration works against staging API. 8 cross-implementation acceptance tests (3 DID methods). AIP invited to WG (aip#5). Entity spec v0.1.1. 248 total tests. 24 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2

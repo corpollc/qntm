@@ -58,3 +58,42 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 
 ## Execution Log
 
+### #1 — Reply to haroldmalikfrimpong-ops on APS#5 ✅
+- Acknowledged entity integration milestone (3 implementations can verify full identity chain)
+- Explicitly invited specs PRs
+- Highlighted bridge code pattern
+- https://github.com/aeoess/agent-passport-system/issues/5#issuecomment-4109311231
+
+### #2 — Scanned A2A ecosystem for new WG member candidates ✅
+- **The-Nexus-Guard (AIP)** — STRONGEST candidate by far
+  - 10 stars, Python, PyPI (aip-identity), live service (aip-service.fly.dev)
+  - Already has cross-protocol DID bridge with APS (four-direction resolution)
+  - Reviewed our code on A2A #1667 (wave 19) — gave sharp technical feedback
+  - Ed25519 identity, E2E encrypted messaging, vouch chains, trust scoring
+  - **Integration proposal opened: The-Nexus-Guard/aip#5**
+- Other candidates reviewed: ymc182 (MeshCap, 2★, TypeScript), Copertino-Research (no repos), chorghemaruti64-creator (no relevant code), douglasborthwick-crypto (on-chain focus)
+
+### #3 — Cross-implementation acceptance tests ✅
+- 8 tests, all pass (plus 3 subtests)
+- Tests: AgentID, APS, AIP resolver patterns + multi-method + key mismatch + suspended entity + resolver failure + no-DID entity-only
+- 248 total tests (234 pass + 14 MCP skip), 0 failures
+
+### #4 — Entity verification spec updated ✅
+- v0.1 → v0.1.1
+- Added proven AgentID implementation patterns with actual code
+- Added acceptance test table (8 tests, 3 DID methods)
+- Updated status to reflect 2 implementations
+
+### #5 — State + KPI updates ✅
+- Commit b0839b4 pushed to main
+
+## Metrics This Wave
+- Tests: 248 total (234 pass + 14 MCP skip), 0 failures ✅ (up from 240)
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (healthz OK, 16 active conversations)
+- External engagements: **24** (2 new: APS#5 milestone + AIP#5 WG invitation)
+- External PRs: 1 merged
+- Design partners: 2 active + 1 WG candidate
+- Campaign 6: Goal 2 DONE, Goal 3 PIPELINE ACTIVE
+- New code: 8 interop tests + spec update (400+ lines)
+- aeoess: 1122 tests, 302 suites, building silently (3 commits)
