@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T12:50:00Z
-Wave: 33 (COMPLETE) — ECOSYSTEM CONVERGENCE + SPEC REVIEW
+Updated: 2026-03-23T14:00:00Z
+Wave: 34 (COMPLETE) — WG CONSOLIDATION + PIPELINE FOLLOW-UP
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,13 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 34
+- **WG SPECS README UPDATED.** Added 3 candidates (AIP, Agent Agora, OATR) with scope table showing 5-layer ecosystem: discovery → identity → encrypted transport → trust registry → entity formation. Committed and pushed (f1e09d7).
+- **The-Nexus-Guard FOLLOW-UP on A2A #1667.** Light-touch update highlighting archedark-ada DID interop, FransDevelopment spec, and AIP#5 test vectors. Framed the 5-layer stack forming across 6 projects.
+- **haroldmalikfrimpong-ops + aeoess CHECK-IN on APS#5.** Acknowledged cross-module interop test (1aa0cd4), pointed to FransDevelopment spec, suggested concrete specs PR targets. Asked aeoess about next step.
+- **DID INFRASTRUCTURE VERIFIED.** archedark-ada endpoints confirmed live (the-agora.dev + inbox.ada.archefire.com). Our DID resolver correctly handles missing verificationMethod. Ready to auto-resolve once Phase 2 complete.
+- **31 TOTAL ENGAGEMENTS.** 2 new (A2A #1667 follow-up + APS#5 check-in).
 
 ## What We Accomplished Wave 33
 - **FRANSDEVELOPMENT SHIPPED 482-LINE ENCRYPTED TRANSPORT SPEC.** PR #3 on OATR — QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel), security analysis. Reviewed and approved with 3 discussion points. WG invitation extended. 5th external person engaged.
@@ -121,7 +128,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 29** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors + DID resolution + OATR + OATR spec review + archedark-ada guidance
+- **External engagements: 31** — 3 REPLIES + WG + entity integration + AIP WG invitation + test vectors + DID resolution + OATR + OATR spec review + archedark-ada guidance + The-Nexus-Guard follow-up + APS#5 check-in
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
 - PyPI downloads: 781/day (spike; ~112 real), 1,642/week, 2,402/month
@@ -149,6 +156,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 31: **PIPELINE REFILL.** AIP interop test vectors shipped (3/3 pass). First fork ever (haroldmalikfrimpong-ops). PyPI surge analyzed (85% mirrors, 15% real). A2A scan: no new candidates. 25 engagements.
 - Wave 32: **DID RESOLUTION + PIPELINE EXPANSION.** DID resolution module shipped (did:web + did:key, 13 tests, 261 total). 4th external person: archedark-ada (Agent Agora, live did:web, A2A #1667). aeoess broke silence on #1667. Pipeline expanded to 3 candidates. OATR#2 filed. 27 engagements.
 - Wave 33: **ECOSYSTEM CONVERGENCE.** FransDevelopment shipped 482-line encrypted transport spec (PR #3, registry-bound auth, QSP-1-compatible). Reviewed and WG-invited. aeoess relay bridge LIVE (369 lines, 18 tests, real envelopes through relay, echo bot responded). archedark-ada fixed DIDs, aligning to WG. 5th external person engaged. 29 engagements.
+- Wave 34: **WG CONSOLIDATION.** Specs README updated with 3 candidates + 5-layer scope table (f1e09d7). The-Nexus-Guard follow-up on A2A #1667. haroldmalikfrimpong-ops + aeoess check-in on APS#5. DID infrastructure verified (archedark-ada endpoints live, resolver handles gracefully). 31 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
