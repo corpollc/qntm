@@ -2,6 +2,20 @@
 
 __version__ = "0.4.20"
 
+from .did import (
+    DIDDocument,
+    DIDResolutionError,
+    resolve_did,
+    resolve_did_key,
+    resolve_did_to_ed25519,
+    resolve_did_web,
+)
+from .entity import (
+    EntityVerification,
+    EntityVerificationError,
+    verify_entity,
+    verify_sender_entity,
+)
 from .constants import (
     DEFAULT_SUITE,
     DEFAULT_TTL_SECONDS,
