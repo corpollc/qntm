@@ -115,6 +115,7 @@ def resolve_did_web(did_uri: str, *, timeout: float = 10.0) -> DIDDocument:
     try:
         req = urllib.request.Request(url, method="GET")
         req.add_header("Accept", "application/did+json, application/json")
+        req.add_header("User-Agent", "qntm-did-resolver/1.0")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:

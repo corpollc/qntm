@@ -61,6 +61,7 @@ type SendPayload = {
 	envelope_b64: string;
 	msg_id?: string;
 	announce_sig?: string; // hex Ed25519 sig over SHA-256(envelope_b64), required for announce channels
+	expiry_ts?: number; // unix seconds (UTC) — relay rejects if expired, per OATR spec 10 §6.2
 };
 
 // --- Announce channel types ---
@@ -684,6 +685,44 @@ export default {
 		const url = new URL(request.url);
 		const path = url.pathname;
 
+			// DID Document — serves did:web:inbox.qntm.corpo.llc
+			// The relay Worker runs on inbox.qntm.corpo.llc, so the DID identifier
+			// matches the hosting domain per did:web spec compliance.
+			if (request.method === "GET" && (path === "/.well-known/did.json" || path === "/did.json")) {
+				const didDocument = {
+					"@context": [
+						"https://www.w3.org/ns/did/v1",
+						"https://w3id.org/security/suites/ed25519-2020/v1"
+					],
+					"id": "did:web:inbox.qntm.corpo.llc",
+					"verificationMethod": [{
+						"id": "did:web:inbox.qntm.corpo.llc#relay-key",
+						"type": "Ed25519VerificationKey2020",
+						"controller": "did:web:inbox.qntm.corpo.llc",
+						"publicKeyMultibase": "z6MkoneqzREQvS9HyVsocPhG1cs7fX3ov8zPPeiUtgonWKT6"
+					}],
+					"authentication": ["did:web:inbox.qntm.corpo.llc#relay-key"],
+					"assertionMethod": ["did:web:inbox.qntm.corpo.llc#relay-key"],
+					"service": [{
+						"id": "did:web:inbox.qntm.corpo.llc#relay",
+						"type": "QSP1Relay",
+						"serviceEndpoint": "https://inbox.qntm.corpo.llc"
+					}, {
+						"id": "did:web:inbox.qntm.corpo.llc#relay-ws",
+						"type": "QSP1RelayWebSocket",
+						"serviceEndpoint": "wss://inbox.qntm.corpo.llc/v1/subscribe"
+					}]
+				};
+				return new Response(JSON.stringify(didDocument, null, 2), {
+					status: 200,
+					headers: {
+						"Content-Type": "application/did+ld+json",
+						"Cache-Control": "public, max-age=3600",
+						...corsHeaders()
+					}
+				});
+			}
+
 			// Health check — no auth, no rate limit, no DO access
 			if (request.method === "GET" && path === "/healthz") {
 				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
@@ -726,6 +765,16 @@ export default {
 				}
 				if (envelopeBytes.byteLength > maxSize) {
 					return errorResponse("envelope too large", 413);
+				}
+
+				// expiry_ts enforcement (OATR spec 10 §6.2, graceful degradation)
+				// If the sender includes expiry_ts, enforce it. If absent, allow through
+				// (backwards compatible with existing QSP-1 traffic).
+				if (typeof payload.expiry_ts === "number") {
+					const nowSec = Math.floor(Date.now() / 1000);
+					if (payload.expiry_ts <= nowSec) {
+						return errorResponse("envelope expired (expiry_ts in the past)", 400);
+					}
 				}
 
 				// Announce channel write gate: if this conv_id is an announce
