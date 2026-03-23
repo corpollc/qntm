@@ -1,5 +1,5 @@
 # Truth Register — qntm
-Last updated: 2026-03-23 (Wave 23)
+Last updated: 2026-03-23 (Wave 25)
 
 ## TRUE (we have evidence)
 - TTFM is 1.2 seconds (measured wave 1) — crushes <10s target
@@ -125,3 +125,9 @@ Last updated: 2026-03-23 (Wave 23)
 - **NEW (W24): haroldmalikfrimpong-ops committed to spec AgentID→subscribe-auth.** 2nd reply on A2A #1672 — endorsed pluggable identity verification. Will review APS#5 and come back with concrete proposal. Three-way alignment forming: APS + AgentID + qntm.
 - **NEW (W24): Relay API fully documented for first external builder.** WebSocket subscribe, HTTP send, CBOR envelope format, authenticated subscribe flow, TypeScript example — all shared on APS#5. No gaps remaining for aeoess to build.
 - **NEW (W24): Tests up to 230 (from 216).** 0 failures. All green.
+- **NEW (W25): FIRST EXTERNAL CODE INTEGRATING WITH QNTM.** haroldmalikfrimpong-ops shipped 809-line working demo: AgentID → Ed25519 → X25519 → X3DH → Double Ratchet → encrypted relay messages. All 5 interop vectors verified. Published at getagentid/examples/qntm-encrypted-chat. Uses nacl.signing, nacl.public, nacl.secret — real crypto, not stubs.
+- **NEW (W25): haroldmalikfrimpong-ops went from "I'll review" to shipped code in ONE wave.** This is the fastest external contribution cycle in the project's history. He didn't just validate the architecture — he built it.
+- **NEW (W25): aeoess posted complete integration plan for qntm-bridge.ts.** Will take SignedExecutionEnvelope → encrypt via XChaCha20-Poly1305 → wrap in qntm CBOR → POST to relay → subscribe/decrypt/verify. APS SDK at v1.19.4, 1104 tests, 72 MCP tools.
+- **NEW (W25): QSP-1 key derivation spec published externally for first time.** Exact HKDF info strings (`qntm/qsp/v1/root`, `qntm/qsp/v1/aead`, `qntm/qsp/v1/nonce`), known-answer test vectors, and full key derivation flow shared on GitHub. Enables any developer to implement a qntm-compatible client.
+- **NEW (W25): Live test conversation with echo bot responding.** `dca83b70ccd763a89b5953b2cd2ee678` — echo bot verified on 2 conversations (CF Worker v3b772402). Invite token shared publicly. Ready for external connection.
+- **NEW (W25): Symmetric key model (invite token + HKDF) is simpler for integration than X3DH.** aeoess's question about prekey bundles revealed that the invite-secret model is actually easier for external builders — no prekey infrastructure needed, just HKDF from shared secret. This is a product strength for the integration use case.
