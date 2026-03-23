@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-23T16:50:00Z
-Wave: 37 (COMPLETE) — THE WG IS REAL + FIRST EXTERNAL SPEC PR
+Updated: 2026-03-23T17:50:00Z
+Wave: 38 (COMPLETE) — INTEGRATION PROVEN + GOVERNANCE ALIGNED
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,14 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 38
+- **desiorac DID INTEGRATION TEST: PASSED.** `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` returns valid 32-byte Ed25519 key. Trunc16(SHA-256) = `174e20acd605f8ce6fca394246729bd7`. buyer_fingerprint alignment confirmed against live infrastructure. First cross-project DID resolution outside founding WG members.
+- **aeoess ENDORSED CODE-FIRST GOVERNANCE.** Agreed multibase z-prefix canonical, hex alias. Will update createDID() to emit multibase. "The code-first approach is working."
+- **QSP-1 SPEC UPDATED TO v0.1.1.** Multibase encoding convention, sender ID derivation cross-project alignment, FransDevelopment reference.
+- **PROPOSED FULL-STACK ENTITY FORMATION POC.** 6-layer test: APS identity → DID resolution → qntm transport → Corpo entity → OATR registry → ArkForge execution. 4/6 layers have proven interop.
+- **The-Nexus-Guard ENGAGED ON SUBSCRIBE AUTH.** Shared relay details, proposed 5-step test scenario. did:agip resolution rules PR invited.
+- **41 TOTAL ENGAGEMENTS.** 3 new (OATR#2 DID results + A2A#1672 POC proposal + AIP#5 subscribe auth).
 
 ## What We Accomplished Wave 37
 - **aeoess FORMALLY COMMITTED TO WG.** Full deliverables declared on A2A #1672: self-sovereign identity, delegation chains, 32 constitutional modules, 1122 tests, 72 MCP tools, qntm bridge live, shared test vectors. Proposed multibase encoding standardization.
@@ -120,7 +128,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 30: BUILDING SILENTLY.** 3 commits (relay test, WebSocket roundtrip, propagation sweep). 1122 tests, 302 suites. No APS#5 comment yet on entity module.
 - **Wave 33: RELAY BRIDGE SHIPPED AND LIVE.** qntm-bridge.ts (369 lines, 18 tests, zero new deps). Real APS SignedExecutionEnvelopes sent through relay (seq 6-7 on echo bot conv). Echo bot decrypted and echoed. WebSocket subscribe confirmed. 4 commits in rapid succession (5:14-5:33 UTC). SDK v1.19.4, 1122 tests.
 - **Wave 37: FORMALLY COMMITTED TO WG.** Full deliverables declared on A2A #1672. Proposed multibase encoding standardization (hex vs z-base58btc). Acknowledged by haroldmalikfrimpong-ops ("WG is real").
-- **Status:** WG MEMBER — formally committed, bridge live, 1122 tests, 72 MCP tools. Next: multibase encoding decision, entity formation POC.
+- **Wave 38: GOVERNANCE ENDORSED.** Multibase z-prefix canonical agreed. Code-first philosophy confirmed. Full-stack entity formation POC proposed.
+- **Status:** WG MEMBER — formally committed, bridge live, 1122 tests, 72 MCP tools, governance aligned. Next: entity formation POC, createDID() multibase update.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 22: First reply — validated thesis, asked to connect with APS
@@ -136,7 +145,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 19: First external contact — reviewed qntm code on A2A #1667, gave detailed architectural feedback on subscribe auth
 - Wave 30: WG INVITATION OPENED (aip#5). Strongest candidate: Ed25519 identity, PyPI (aip-identity), 10 stars, live DID resolution service, cross-protocol bridge with APS already built.
 - **Wave 37: BROKE 5-WAVE SILENCE.** Independently resolved archedark-ada's DIDs. Offered subscribe auth test vectors. Flagged `did:aip` → `did:agip` rename (W3C Aries collision). Acknowledged aip#5. Gold-standard DID Document format. Connecting directly with archedark-ada on Phase 2 alignment.
-- **Status:** RE-ENGAGED — resolving DIDs, offering test vectors, considering WG participation. Name change pending (`did:aip` → `did:agip`).
+- **Wave 38: SUBSCRIBE AUTH TEST ACCEPTED.** We shared relay WebSocket endpoint, echo bot conv ID, 5-step test scenario. Invited did:agip resolution rules PR to specs directory.
+- **Status:** RE-ENGAGED — subscribe auth test vectors pending, relay details shared. Name change pending (`did:aip` → `did:agip`).
 
 ## archedark-ada Engagement Timeline (WG Candidate #2)
 - Wave 32: FIRST CONTACT. Appeared on A2A #1667 with live did:web endpoint, Agent Agora (agent discovery registry — the-agora.dev), 2 live agents. Endorsed subscribe auth design. Offered DID for resolution test. We resolved both DIDs and bridged to WG.
@@ -153,7 +163,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
 - Wave 36: REPLIED WITH DID ARCHITECTURE. `agent_identity` in proof receipts, registration-time binding flow described. We proposed `resolve_did_to_ed25519()` integration. Awaiting response.
 - **Wave 37: PR #4 OPENED AND MERGED + SECOND REPLY.** First external spec contribution: `did:web` in DID resolution doc. Confirmed `buyer_fingerprint` = `Trunc16(SHA-256(pubkey))` aligns with qntm sender ID. `did:web` not listed → they fixed it. QSP-1 relay message ID composability with `contributing_agents` validated.
-- **Status:** PR MERGED + INTEGRATION TEST PROPOSED — first external spec contributor. `did:web:trust.arkforge.tech` DID resolution test proposed as next step.
+- **Wave 38: DID INTEGRATION TEST PASSED.** `resolve_did_to_ed25519("did:web:trust.arkforge.tech")` returns valid Ed25519 key. buyer_fingerprint = Trunc16(SHA-256(pubkey)) = `174e20acd605f8ce6fca394246729bd7`. Alignment confirmed live. Results posted on OATR#2. Proposed reverse-direction test.
+- **Status:** INTEGRATION PROVEN — DID resolution works, sender ID derivation aligns, PR merged. Awaiting reverse-direction test.
 
 ## Metrics
 - Tests: 261 total (247 pass + 15 skip), 0 failures ✅
@@ -164,7 +175,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 38** — A2A #1672 WG roster + OATR#2 integration test + A2A #1667 welcome back + all prior
+- **External engagements: 41** — OATR#2 DID test results + A2A#1672 full-stack POC + AIP#5 subscribe auth + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -173,8 +184,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 6** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 37
-- **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
+- **Total waves:** 38
+- **WG specs: PUBLISHED** (QSP-1 v0.1.1 + encoding conventions, DID resolution v0.1, entity verification v0.1)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
 - **DID resolution: SHIPPED** (did.py, did:web + did:key, 13 tests)
 - **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID — all formally committed) + **4 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac/ArkForge)
@@ -198,6 +209,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 35: **ECOSYSTEM GRAVITY.** 6th external person (desiorac/ArkForge) appeared organically on OATR#2 via FransDevelopment's reply. Execution attestation layer with Ed25519 + Sigstore Rekor. FransDevelopment validated crypto architecture ("genuine, not superficial"). HN referral (chairman-sourced). Clone traffic 3.3x (516 uniques). 33 engagements.
 - Wave 36: **ECOSYSTEM INTEGRATION.** desiorac replied with exact DID binding architecture — `agent_identity` field exists, verification gap = our DID resolver. archedark-ada self-moderated #1667, redirected to WG venue. HN referral corrected (chairman-sourced, not organic). Specs README updated with ArkForge (7th layer). The-Nexus-Guard deprioritized (5 waves cold). 35 engagements.
 - Wave 37: **THE WG IS REAL.** aeoess formally committed to WG on #1672. The-Nexus-Guard broke 5-wave silence (resolved DIDs, offered test vectors, acknowledged invitation). desiorac opened + merged PR #4 (first external spec contribution — did:web). haroldmalikfrimpong-ops declared "WG is real." 6 projects touched same stack in one day. Campaign 6 Goal 1 DONE, Goal 3 EFFECTIVELY DONE. 38 engagements, 2 external PRs merged.
+- Wave 38: **INTEGRATION PROVEN + GOVERNANCE ALIGNED.** desiorac DID resolution test PASSED against live infrastructure (did:web:trust.arkforge.tech → valid Ed25519 key, buyer_fingerprint alignment confirmed). aeoess endorsed code-first governance, agreed multibase z-prefix canonical. QSP-1 spec v0.1.1 updated with encoding conventions. Full-stack entity formation POC proposed on A2A#1672 (4/6 layers proven). The-Nexus-Guard engaged on subscribe auth test vectors via AIP#5. 41 engagements.
 
 ## Resolved Blockers
 - ~~CF token invalid~~ — RESOLVED Wave 2
