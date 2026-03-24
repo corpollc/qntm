@@ -1,5 +1,7 @@
 # Agent Identity Working Group — Shared Specs
 
+**QSP-1 v1.0 RATIFIED** (2026-03-24) — 3/4 founding members signed off. First ratified spec.
+
 Four founding projects, five OATR-registered members. One interop surface. Code-first.
 
 ## Members
@@ -39,7 +41,7 @@ Four founding projects, five OATR-registered members. One interop surface. Code-
 | Encrypted transport spec | OATR | [Spec 10](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/10-encrypted-transport.md) — registry-bound channel auth (merged) |
 | Proof of key ownership | OATR | [Spec 11](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/11-proof-of-key-ownership.md) — permissionless issuer registration verification |
 | Key derivation (HKDF) | Shared | 3 implementations verified |
-| Envelope format (QSP-1) | qntm (with WG input) | Spec v1.0-rc1 (pending ratification) |
+| Envelope format (QSP-1) | qntm (with WG input) | **v1.0 RATIFIED** (3/4 founding members, 2026-03-24) |
 | Trust registry | OATR | Ed25519 attestation CA, threshold governance, proof-of-key CI |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
 | Execution attestation | [ArkForge](https://trust.arkforge.tech) (OATR registered) | Live service, Ed25519 + Sigstore/Rekor, [DID binding shipped](https://github.com/ark-forge/trust-layer/pull/18) |
