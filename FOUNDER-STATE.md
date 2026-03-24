@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-24T09:50:00Z
-Wave: 53 (COMPLETE) — COMPLIANCE RECEIPTS SPEC + MORNING BRIEFING
+Updated: 2026-03-24T10:50:00Z
+Wave: 54 (COMPLETE) — ENTITY VERIFICATION 3/4 + RATIFICATION NUDGE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -19,6 +19,14 @@ Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24 — all 4/4 founding members signed off)
 Goal 4b: DID Resolution spec ratified at v1.0 — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24T05:04:08Z — all 4/4 founding members signed off)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 54
+- **FRANSDEVELOPMENT SIGNED OFF ON ENTITY VERIFICATION V1.0.** 3/4 founding members confirmed (09:57 UTC). Substantive review: confirmed composition with OATR at §2.1 (DID chain), §4.4 (Path B delegation), §5 (pluggable resolver). Only aeoess remaining.
+- **SPEC UPDATED AND COMMITTED.** Entity Verification ratification table: 3/4 sign-offs. Pushed.
+- **ACKNOWLEDGED ON WG COORDINATION THREAD (#5).** Detailed reply confirming composition points. Nudged aeoess with specific entityBinding reference (d253d8f, PrincipalIdentity → legal entity anchoring).
+- **A2A#1672 STATUS POSTED.** Full ratification table: QSP-1 ✅, DID Res ✅, Entity Ver 3/4, Compliance Receipts DRAFT. Framed as "three ratified specs in one day."
+- **GITHUB VIEWS SURGING.** 72 views/40 uniques (14-day) — up from 18/9 last reported. Something external is driving page reads.
+- **81 TOTAL ENGAGEMENTS.** 2 new (#5 FransDevelopment acknowledgement + A2A#1672 status update).
 
 ## What We Accomplished Wave 53
 - **CHAIRMAN MORNING BRIEFING SENT.** Via qntm to Pepper (seq 45). Covered Entity Ver 2/4 ratification, compliance pull signal, 0 users/revenue, 4 blockers, next-5-wave priorities.
@@ -302,7 +310,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 41: CI FIX + §6.2 SPEC PR.** Shipped PR #9 (fingerprint format fix — accepts kid, raw pubkey, or SHA-256). Unblocked qntm + ArkForge registrations. Posted registry status update (4 active issuers). Opened PR #11 (§6.2 expiry_ts transition wording). We approved PR #11.
 - **Wave 42: FORK PERMISSIONS FIX (PR #13).** Fork PRs got downgraded GITHUB_TOKEN → 403 on comment posting → killed entire job including auto-merge. Fixed. This unblocked aeoess (APS) and haroldmalikfrimpong-ops (AgentID) registrations. One CI fix → 2 registrations.
 - **Wave 48: EXPLICIT DID RESOLUTION V1.0 SIGN-OFF.** "Sign-off confirmed — 3 blocking items resolved." First founding member to sign off post-rev 2.
-- **Status:** FOUNDING WG MEMBER + REGISTRY MAINTAINER + DID RES SIGNED OFF — spec author (Spec 10 + Spec 11), CI pipeline architect, registration enabler. 7 issuers live. DID Resolution v1.0 ratified.
+- **Wave 54: ENTITY VERIFICATION V1.0 SIGN-OFF.** Substantive review at 09:57 UTC. Confirmed composition with OATR at 3 integration points: §2.1 DID chain → same Ed25519 keys verified at registration, §4.4 Path B delegation accurately describes OATR trust path, §5 pluggable resolver keeps spec composable. 3/4 sign-offs secured.
+- **Status:** FOUNDING WG MEMBER + REGISTRY MAINTAINER + 3 SPECS SIGNED OFF — spec author (Spec 10 + Spec 11), CI pipeline architect, registration enabler. 7 issuers live. QSP-1, DID Resolution, Entity Verification all signed off.
 
 ## desiorac / ArkForge Engagement Timeline (WG Prospect #1)
 - Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
@@ -330,7 +339,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 79** — #5 ratification reply (Harold sign-off + desiorac compliance + xsa520 decision attestation) + A2A#1672 Entity Ver status + all prior
+- **External engagements: 81** — #5 FransDev Entity Ver ack + A2A#1672 ratification status + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4) + **4 OATR registrations merged** (qntm PR#8, ArkForge PR#10, APS PR#12, AgentID PR#5)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -339,9 +348,9 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 7** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac, xsa520)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 52
+- **Total waves:** 54
 - **WG specs: QSP-1 v1.0 RATIFIED UNANIMOUS + DID Resolution v1.0 RATIFIED UNANIMOUS** (+ entity verification v0.1, encoding conventions)
-- **Entity verification: V1.0 DRAFT — 2/4 SIGN-OFFS** (entity.py, 16 tests including 8 interop, 3 implementations verified, conformance test PASSED 5/5, ratification in progress)
+- **Entity verification: V1.0 DRAFT — 3/4 SIGN-OFFS** (entity.py, 16 tests including 8 interop, 3 implementations verified, conformance test PASSED 5/5, FransDevelopment OATR sign-off 2026-03-24T09:57Z)
 - **DID resolution: V1.0 RATIFIED — UNANIMOUS** (did.py, did:web + did:key, 13 tests; spec: 4 DID methods, 8 test vectors, 6 conformance reqs; all 4/4 founding members signed off 2026-03-24)
 - **Working Group: 4 FOUNDING MEMBERS** (qntm, APS, AgentID, OATR — all formally committed) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, desiorac/ArkForge)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
@@ -384,6 +393,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 51: **ENTITY VERIFICATION V1.0 DRAFTED + CONFORMANCE VERIFIED.** Conformance test PASSED (5/5 steps, 3 verifiers). Entity Verification v1.0 DRAFT circulated (3b27595): 6 conformance requirements, Security Considerations, conformance test record. haroldmalikfrimpong-ops detailed full production pipeline (7 agents, 12 countries, conversion analytics). Replied honestly: qntm adds value at multi-host scale, not today. xsa520 re-engaged (semantic equivalence → Decision Attestation spec candidate). desiorac v1.3.1 (public proof responses). 77 total engagements.
 - Wave 52: **ENTITY VERIFICATION RATIFICATION SPRINT + COMPLIANCE PULL SIGNAL.** haroldmalikfrimpong-ops signed off on Entity Verification v1.0 (2/4). First organic compliance-driven product pull: desiorac told Harold about compliance receipts → Harold planning per-handoff Ed25519 signed receipts for 12-country pipeline. xsa520 deepened Decision Attestation. Entity Verification spec updated with ratification table. A2A#1672 updated. 79 total engagements.
 - Wave 53: **COMPLIANCE RECEIPTS SPEC + MORNING BRIEFING.** Drafted Compliance Receipts v0.1 — first WG spec born from organic production need (desiorac→Harold compliance pull signal). Per-handoff signed receipt format with hash chain, Ed25519 signatures, policy declarations, 6 conformance requirements. Specs README updated with 11+ layer scope table. Chairman morning briefing sent (seq 45). Ecosystem scan: no new projects, traffic up (4,745/599). 79 total engagements (0 new — overnight wave).
+- Wave 54: **ENTITY VERIFICATION 3/4 + RATIFICATION NUDGE.** FransDevelopment signed off on Entity Verification v1.0 (09:57 UTC) — substantive review confirming OATR composition at 3 integration points. 3/4 founding members. Only aeoess remaining. Spec updated and pushed. Acknowledged on #5 with aeoess nudge (entityBinding d253d8f reference). A2A#1672 status posted (full ratification table). GitHub views surging: 72/40 uniques (up from 18/9). 81 total engagements (2 new).
 - Wave 50: **ENTITY VERIFICATION CONFORMANCE TEST LAUNCHED + FIRST CUSTOMER LEAD.** desiorac signed off on DID Res v1.0 (non-founding), proposed Entity Verification conformance test on OATR#2. We endorsed with 5-step verification chain. haroldmalikfrimpong-ops mentioned "7 new agents" — asked directly about inter-agent communication. 72 total engagements.
 - Wave 49: **DID RESOLUTION V1.0 RATIFIED — UNANIMOUS.** aeoess signed off (05:02 UTC, 3 equivalence vectors contributed). haroldmalikfrimpong-ops signed off (05:04 UTC, 4-method resolver, 82 tests). Spec updated and committed (3a23cbc). Ratification posted on #5 + A2A#1672. Chairman morning briefing sent. 2 ratified specs (both unanimous). 69 total engagements.
 - Wave 45: **UNANIMOUS + 7TH PERSON + WG HOME.** haroldmalikfrimpong-ops signed off (4/4 unanimous). xsa520 (Chou Deyu) appeared on APS#5 — governance/decision verification layer, 7th external person. archedark-ada opened Issue #5 on corpollc/qntm proposing WG coordination thread — first external issue on our repo. Accepted with roster + roadmap. aeoess asked "what's the next spec artifact?" 62 total engagements.
