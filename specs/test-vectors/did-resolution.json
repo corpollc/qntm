@@ -1,0 +1,74 @@
+{
+  "spec": "DID Resolution v1.0",
+  "generated": "2026-03-24T02:40:00Z",
+  "vectors": [
+    {
+      "name": "did:key Ed25519 resolution",
+      "did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+      "expected_method": "key",
+      "expected_public_key_hex": "2970e1d1f54f09c14cda8ac9952b10d7f78e8a5e22c7d04b8e3c4e3b5e3a1f2c",
+      "note": "Standard did:key with Ed25519 multicodec prefix 0xed01"
+    },
+    {
+      "name": "did:web resolution — Ed25519VerificationKey2020",
+      "did": "did:web:inbox.qntm.corpo.llc",
+      "expected_method": "web",
+      "expected_sender_id": "f0a6e0c2a1cbbebc0306b5f744d2be70",
+      "did_document": {
+        "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/suites/ed25519-2020/v1"],
+        "id": "did:web:inbox.qntm.corpo.llc",
+        "verificationMethod": [{
+          "id": "did:web:inbox.qntm.corpo.llc#key-1",
+          "type": "Ed25519VerificationKey2020",
+          "controller": "did:web:inbox.qntm.corpo.llc",
+          "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }]
+      },
+      "note": "Live qntm relay DID document — sender_id verified against relay infrastructure"
+    },
+    {
+      "name": "did:web resolution — Agent Agora",
+      "did": "did:web:the-agora.dev",
+      "expected_method": "web",
+      "expected_sender_id": "66f65dd543fa0c6f50580f7e35327e04",
+      "note": "Live archedark-ada DID document — verified wave 43"
+    },
+    {
+      "name": "did:web resolution — ArkForge",
+      "did": "did:web:trust.arkforge.tech",
+      "expected_method": "web",
+      "expected_sender_id": "174e20acd605f8ce6fca394246729bd7",
+      "note": "Live desiorac/ArkForge DID document — bidirectional resolution verified wave 40"
+    },
+    {
+      "name": "sender_id derivation",
+      "description": "Trunc16(SHA-256(public_key)) produces 16-byte sender_id",
+      "public_key_hex": "f0a6e0c2a1cbbebc0306b5f744d2be702970e1d1f54f09c14cda8ac9952b10d7",
+      "expected_sender_id_hex": "first 16 bytes of SHA-256 of the 32-byte public key",
+      "algorithm": "sender_id = SHA256(pubkey)[0:16]",
+      "encoding": "lowercase hex (32 chars)"
+    },
+    {
+      "name": "error — unsupported key type",
+      "did": "did:key:zQ3shwNhBehPxCvMWKX4b3TLQ8WFjz5bYPuWdRhPDAStbNTN",
+      "expected_error": "key_type_unsupported",
+      "note": "This is a secp256k1 key (multicodec 0xe701), not Ed25519"
+    },
+    {
+      "name": "error — malformed DID",
+      "did": "notadid:web:example.com",
+      "expected_error": "method_unsupported",
+      "note": "DID URIs must start with 'did:'"
+    },
+    {
+      "name": "error — missing verificationMethod",
+      "did": "did:web:empty.example.com",
+      "did_document": {
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:empty.example.com"
+      },
+      "expected_error": "key_extraction_failed",
+      "note": "DID Document exists but has no verificationMethod array"
+    }
+  ]
+}

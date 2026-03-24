@@ -1,8 +1,10 @@
 # Agent Identity Working Group — Shared Specs
 
-**QSP-1 v1.0 RATIFIED** (2026-03-24) — 3/4 founding members signed off. First ratified spec.
+**QSP-1 v1.0 RATIFIED — UNANIMOUS** (2026-03-24) — 4/4 founding members signed off. First ratified spec.
 
-Four founding projects, five OATR-registered members. One interop surface. Code-first.
+Four founding projects, seven OATR-registered issuers. One interop surface. Code-first.
+
+**WG Coordination:** [corpollc/qntm#5](https://github.com/corpollc/qntm/issues/5)
 
 ## Members
 
@@ -41,16 +43,32 @@ Four founding projects, five OATR-registered members. One interop surface. Code-
 | Encrypted transport spec | OATR | [Spec 10](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/10-encrypted-transport.md) — registry-bound channel auth (merged) |
 | Proof of key ownership | OATR | [Spec 11](https://github.com/FransDevelopment/open-agent-trust-registry/blob/main/spec/11-proof-of-key-ownership.md) — permissionless issuer registration verification |
 | Key derivation (HKDF) | Shared | 3 implementations verified |
-| Envelope format (QSP-1) | qntm (with WG input) | **v1.0 RATIFIED** (3/4 founding members, 2026-03-24) |
+| Envelope format (QSP-1) | qntm (with WG input) | **v1.0 RATIFIED — UNANIMOUS** (4/4 founding members, 2026-03-24) |
 | Trust registry | OATR | Ed25519 attestation CA, threshold governance, proof-of-key CI |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
 | Execution attestation | [ArkForge](https://trust.arkforge.tech) (OATR registered) | Live service, Ed25519 + Sigstore/Rekor, [DID binding shipped](https://github.com/ark-forge/trust-layer/pull/18) |
+| Capability discovery | [agent.json](https://github.com/FransDevelopment/agent-json) (external) | v1.3 spec, JSON Schema, CLI validator, 13 examples. `/.well-known/agent.json` manifest |
+| Economics | [agent.json](https://github.com/FransDevelopment/agent-json) (external) | Per-call pricing, x402/Lightning/Stripe payment rails, bounties + incentives |
+| Governance/verification | [Guardian](https://github.com/xsa520/guardian) (prospect) | Decision verification, policy enforcement, verifiable execution ledgers |
+
+## Well-Known Files Convention
+
+WG members SHOULD publish three well-known files on their domain:
+
+| Path | Purpose | Spec |
+|------|---------|------|
+| `/.well-known/did.json` | DID Document (Ed25519VerificationKey2020) | W3C DID Core |
+| `/.well-known/agent-trust.json` | OATR domain verification | OATR Spec 11 |
+| `/.well-known/agent.json` | Capability manifest + economics | [agent.json v1.3](https://github.com/FransDevelopment/agent-json/blob/main/SPECIFICATION.md) |
 
 ## Specs
 
-- [`qsp1-envelope.md`](./working-group/qsp1-envelope.md) — QSP-1 envelope format (CBOR wire format, crypto ops, transport)
-- [`did-resolution.md`](./working-group/did-resolution.md) — DID method resolution interface
+- [`qsp1-envelope.md`](./working-group/qsp1-envelope.md) — **QSP-1 v1.0** envelope format (CBOR wire format, crypto ops, transport) — **RATIFIED UNANIMOUS**
+- [`did-resolution.md`](./working-group/did-resolution.md) — DID method resolution interface — **v1.0 IN PROGRESS** (DRI: qntm + @haroldmalikfrimpong-ops)
 - [`entity-verification.md`](./working-group/entity-verification.md) — Legal entity verification via Corpo API
+
+### External Reference Specs
+- [agent.json SPECIFICATION.md](https://github.com/FransDevelopment/agent-json/blob/main/SPECIFICATION.md) — Capability discovery + economics (v1.3, @FransDevelopment)
 
 ## Test Vectors
 
