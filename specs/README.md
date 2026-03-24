@@ -52,6 +52,7 @@ Four founding projects, seven OATR-registered issuers. One interop surface. Code
 | Execution attestation | [ArkForge](https://trust.arkforge.tech) (OATR registered) | Live service, Ed25519 + Sigstore/Rekor, [DID binding shipped](https://github.com/ark-forge/trust-layer/pull/18) |
 | Capability discovery | [agent.json](https://github.com/FransDevelopment/agent-json) (external) | v1.3 spec, JSON Schema, CLI validator, 13 examples. `/.well-known/agent.json` manifest |
 | Economics | [agent.json](https://github.com/FransDevelopment/agent-json) (external) | Per-call pricing, x402/Lightning/Stripe payment rails, bounties + incentives |
+| Compliance receipts | qntm + AgentID + ArkForge | **v0.1 DRAFT** — per-handoff signed receipts for multi-agent pipelines (born from desiorac + Harold WG discussion) |
 | Governance/verification | [Guardian](https://github.com/xsa520/guardian) (prospect) | Decision verification, policy enforcement, verifiable execution ledgers |
 
 ## Well-Known Files Convention
@@ -69,6 +70,7 @@ WG members SHOULD publish three well-known files on their domain:
 - [`qsp1-envelope.md`](./working-group/qsp1-envelope.md) — **QSP-1 v1.0** envelope format (CBOR wire format, crypto ops, transport) — **RATIFIED UNANIMOUS**
 - [`did-resolution.md`](./working-group/did-resolution.md) — DID method resolution interface — **RATIFIED UNANIMOUS**
 - [`entity-verification.md`](./working-group/entity-verification.md) — Entity verification via Corpo API — **v1.0 DRAFT** (conformance test passed, 3 implementations)
+- [`compliance-receipts.md`](./working-group/compliance-receipts.md) — Per-handoff signed receipts for multi-agent pipelines — **v0.1 DRAFT** (born from WG discussion)
 
 ### External Reference Specs
 - [agent.json SPECIFICATION.md](https://github.com/FransDevelopment/agent-json/blob/main/SPECIFICATION.md) — Capability discovery + economics (v1.3, @FransDevelopment)
