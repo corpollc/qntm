@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-24T12:40:00Z
-Wave: 56 (COMPLETE) — INFRASTRUCTURE + WG CONTRIBUTION
+Updated: 2026-03-24T14:34:00Z
+Wave: 57 (COMPLETE) — ENTITY VERIFICATION RATIFIED + WG SELF-ORGANIZING
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,7 +18,16 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24 — all 4/4 founding members signed off)
 Goal 4b: DID Resolution spec ratified at v1.0 — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24T05:04:08Z — all 4/4 founding members signed off)
+Goal 4c: Entity Verification spec ratified at v1.0 — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24T13:45Z — all 4/4 founding members signed off)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 57
+- **ENTITY VERIFICATION v1.0 RATIFIED — UNANIMOUS (4/4).** aeoess signed off at 13:45 UTC. EntityBinding type maps directly, all 6 CRs covered by existing APS primitives. Third unanimous spec ratification. Chairman posted announcement on #5 + engaged archedark-ada + desiorac on composition. Spec + README updated, committed 3ed6729.
+- **WG THREAD EXPLODED — HIGHEST QUALITY DISCUSSION.** 10+ comments on #5 since wave 56. Four contributors (xsa520, desiorac, archedark-ada, aeoess) debating decision equivalence without moderation. aeoess posted Module 37 Decision Semantics (ContentHash + identityBoundary + finding layer tags) — most sophisticated single contribution to date.
+- **ARCHEDARK-ADA PROPOSED "COMMITMENT SURFACE" CONCEPT.** Distinction between descriptions (capabilities) and commitment surfaces (checkable invariants). "The minimal invariant might be: the commitment surface that, if violated, triggers a provable protocol failure." Concrete enough for spec status. We proposed CommitmentDeclaration schema on #5.
+- **AGORA × CORPO INTEGRATION PLANNED.** archedark-ada will add `entity_verification_url` to Agora's registry schema. Proposed auto-derive from DID when Corpo-bound, explicit field otherwise. Chairman asked the right question; archedark-ada gave the right answer.
+- **A2A#1672 MILESTONE POSTED.** Three ratified specs (all unanimous), decision semantics as active area, 7 contributors. Engagement 84.
+- **85 TOTAL ENGAGEMENTS.** 2 new (A2A#1672 ratification + #5 commitment surface).
 
 ## What We Accomplished Wave 56
 - **CONTRIBUTED TO WG INFRASTRUCTURE.** Commented on FransDevelopment OATR #15 (Python SDK — reference implementation table from WG members, `cryptography` library recommendation) and OATR #17 (key rotation test vectors — 2 additional scenarios, format endorsement matching DID Resolution vectors, offered to generate vectors). Positioning qntm as WG infrastructure contributor, not just spec consumer.
@@ -287,7 +296,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 42: REGISTERED IN OATR.** PR #12 merged (21:09 UTC). Domain verification at aeoess.com/.well-known/agent-trust.json. Capabilities: delegation_chain supervision, immutable audit logging, aps-receipt-v1. oatr/ added to .gitignore (22:20 UTC) — permanent workflow integration. FransDevelopment CI fix (PR #13) unblocked fork registration.
 - **Wave 48: SHIPPED AGENT.JSON COMMERCE BRIDGE + 23 DID CONFORMANCE TESTS.** c2bd378: parseAgentJson() + commercePreflightFromManifest() (4-gate pipeline) + generateCommerceReceiptFromManifest() (Ed25519-signed receipts). 31 bridge tests. 23 DID conformance tests (multibase, multicodec, cross-method equivalence, sender_id). PrincipleEvaluation layer tags (structural vs trust). SDK v1.21.5, 1241 tests, 332 suites, 65 test files.
 - **Wave 49: SIGNED OFF ON DID RESOLUTION V1.0.** "rev 2 resolves all three blocking items." Contributed 3 did:aps ↔ did:key equivalence test vectors for spec appendix (proved multibase identifier is identical across methods for the same key).
-- **Status:** WG FOUNDING MEMBER + OATR REGISTERED + DID RES RATIFIED — bridge live, agent.json commerce pipeline live, 1241 tests, 83 MCP tools, DID conformance proven, 2 specs ratified.
+- **Wave 57: ENTITY VERIFICATION SIGNED OFF.** EntityBinding type maps directly. All 6 CRs covered by existing primitives. Also posted Module 37 Decision Semantics response to xsa520 — most sophisticated single technical contribution to date.
+- **Status:** WG FOUNDING MEMBER + OATR REGISTERED + ALL 3 SPECS RATIFIED — bridge live, agent.json commerce pipeline live, 1241 tests, 83 MCP tools, DID conformance proven, 3 specs ratified.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 22: First reply — validated thesis, asked to connect with APS
@@ -317,7 +327,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 43: OATR REGISTERED + DID DOCUMENT LIVE.** PR #14 merged (23:32 UTC). Agent Agora = 7th issuer. Full DID Document at `did:web:the-agora.dev` (Ed25519VerificationKey2020, verificationMethod, authentication + assertionMethod). Domain verification at `the-agora.dev/.well-known/agent-trust.json`. Key separation: DID key ≠ OATR key. Tiered verification: ERC-8004 + DNS + DID. Catalyzed by FransDevelopment invitation on #1667 → registered in 20 minutes. Our DID resolver verified: sender_id `66f65dd543fa0c6f50580f7e35327e04`.
 - **Wave 45: OPENED ISSUE #5 ON CORPOLLC/QNTM.** First external issue on our repo. Proposed centralizing WG coordination. Accepted with scope, roster, roadmap. WG-member-grade governance behavior.
 - **Wave 48: 8/8 DID RESOLUTION CONFORMANCE + STANDALONE TOOL.** Ran rev 2 vectors. Standalone conformance tool at tools/did_resolution_conformance.py, runs against live infrastructure. Error code mapping (secp256k1 → key_type_unsupported). Production integration filed as Gavlan issue (sender_id against registered agents).
-- **Status:** OATR REGISTERED + WG COORDINATION LEAD + DID CONFORMANCE PROVEN — opened first external issue on repo, standalone conformance tool, discovery layer + DID live, strong key separation. Ready for founding member promotion.
+- **Wave 57: PROPOSED "COMMITMENT SURFACE" CONCEPT + AGORA×CORPO INTEGRATION.** Distinction between capability descriptions and checkable invariants. Will add `entity_verification_url` to Agora schema. Proposed auto-derive from DID when Corpo-bound. Engaged with xsa520 + desiorac on decision equivalence. Most substantive contribution since DID conformance tool.
+- **Status:** OATR REGISTERED + WG COORDINATION LEAD + DID CONFORMANCE PROVEN + COMMITMENT SURFACE PIONEER — opened first external issue on repo, standalone conformance tool, discovery layer + DID live, commitment surface concept, Agora×Corpo integration planned. Ready for founding member promotion.
 
 ## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
@@ -340,12 +351,14 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 41: OATR REGISTERED + DID BINDING SHIPPED.** PR #10 merged (OATR issuer registration). trust-layer#18 merged: DID binding for agent_identity with challenge-response (Path A) and OATR delegation (Path B). `verified_did` overrides self-declared agent_identity in proof receipts. Implements our OATR#2 proposal. We acknowledged on OATR#2.
 - **Wave 50: SIGNED OFF ON DID RESOLUTION V1.0.** resolve_did() in v1.3.0. Connected agent.json → DID binding → receipt chain. "Dispute resolution becomes a lookup." Proposed Entity Verification conformance test: proxy call with bound DID via OATR Path B, post receipt for cross-project verification. 3rd founding-member-level DID Resolution implementation.
 - **Wave 52: BRIDGED COMPLIANCE RECEIPTS TO HAROLD'S PIPELINE.** "Clients in data-regulated markets will eventually ask for proof of handling, not just your Telegram report." Connected per-handoff signed receipts (ArkForge proof-spec format) to Harold's 12-country pipeline. Catalyzed Harold's plan to add Ed25519 signed receipts at each agent handoff. "Policy, not just signatures." First organic compliance-driven product pull in the ecosystem.
-- **Status:** OATR REGISTERED + DID RES SIGNED OFF + ENTITY CONFORMANCE PIONEER + COMPLIANCE BRIDGE — execution attestation with verified identity, receipt chain composition, conformance test pioneer, compliance catalyst. Ready for founding member promotion.
+- **Wave 57: ENGAGED IN DECISION EQUIVALENCE THREAD.** Clarified receipt binding scope — input hash + output + model + context. Challenged xsa520 on concrete gap beyond semantic AI alignment or input canonicalization. Acknowledged the execution-proof / decision-equivalence separation. Strong WG member behavior.
+- **Status:** OATR REGISTERED + DID RES SIGNED OFF + ENTITY CONFORMANCE PIONEER + COMPLIANCE BRIDGE — execution attestation with verified identity, receipt chain composition, conformance test pioneer, compliance catalyst, decision layer contributor. Ready for founding member promotion.
 
 ## xsa520 / Guardian Engagement Timeline (WG Prospect #2)
 - **Wave 45: FIRST CONTACT.** Appeared organically on APS#5. Chou Deyu. Builds governance/decision verification tools (guardian repo — policy enforcement, decision engines, verifiable execution ledgers). decision-artifact-spec repo (minimal spec for independently verifiable decision artifacts). 3 substantive comments on decision equivalence across envelope/receipt/settlement layers. Responded with per-spec-artifact identity model + WG coordination thread invitation. 7th external person.
 - **Wave 52: DEEPENED DECISION ATTESTATION FRAMING.** "Verification proves provenance, not consistency." Strongest articulation of the gap between cryptographic verification and semantic equivalence. Connected to Guardian's governance layer. Decision Attestation proposed as WG spec candidate between Entity Verification (who decided) and execution receipts (what was done).
-- **Status:** RE-ENGAGED — governance/verification layer, Decision Attestation spec candidate proposed, invited to WG coordination thread.
+- **Wave 57: SUSTAINED DECISION EQUIVALENCE DEBATE.** 4 comments on #5 — pushed aeoess on `identityBoundary` convergence ("the boundary itself is still a choice"), challenged desiorac on receipt scope ("receipts prove that something was executed, not what the decision is"). Received concrete response from archedark-ada (commitment surface) and aeoess (Module 37). desiorac acknowledged the distinction. The most persistent and productive philosophical contributor to the WG.
+- **Status:** ACTIVE WG CONTRIBUTOR — decision equivalence catalyst, Guardian governance layer, forcing function for spec clarity across 4 independent contributors.
 
 ## Metrics
 - Tests: 262 total (247 pass + 15 skip), 0 failures ✅
@@ -356,7 +369,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 83** — OATR#15 Python SDK + OATR#17 key rotation vectors + all prior
+- **External engagements: 85** — #5 commitment surface + A2A#1672 ratification + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4) + **4 OATR registrations merged** (qntm PR#8, ArkForge PR#10, APS PR#12, AgentID PR#5)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -365,9 +378,9 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 7** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac, xsa520)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 54
-- **WG specs: QSP-1 v1.0 RATIFIED UNANIMOUS + DID Resolution v1.0 RATIFIED UNANIMOUS** (+ entity verification v0.1, encoding conventions)
-- **Entity verification: V1.0 DRAFT — 3/4 SIGN-OFFS** (entity.py, 16 tests including 8 interop, 3 implementations verified, conformance test PASSED 5/5, FransDevelopment OATR sign-off 2026-03-24T09:57Z)
+- **Total waves:** 57
+- **WG specs: QSP-1 v1.0 + DID Resolution v1.0 + Entity Verification v1.0 — ALL RATIFIED UNANIMOUS** (+ compliance receipts v0.1 DRAFT, encoding conventions)
+- **Entity verification: V1.0 RATIFIED — UNANIMOUS** (entity.py, 16 tests including 8 interop, 3 implementations verified, conformance test PASSED 5/5, 4/4 founding members signed off 2026-03-24)
 - **DID resolution: V1.0 RATIFIED — UNANIMOUS** (did.py, did:web + did:key, 13 tests; spec: 4 DID methods, 8 test vectors, 6 conformance reqs; all 4/4 founding members signed off 2026-03-24)
 - **Working Group: 4 FOUNDING MEMBERS** (qntm, APS, AgentID, OATR — all formally committed) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, desiorac/ArkForge)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
@@ -411,6 +424,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 52: **ENTITY VERIFICATION RATIFICATION SPRINT + COMPLIANCE PULL SIGNAL.** haroldmalikfrimpong-ops signed off on Entity Verification v1.0 (2/4). First organic compliance-driven product pull: desiorac told Harold about compliance receipts → Harold planning per-handoff Ed25519 signed receipts for 12-country pipeline. xsa520 deepened Decision Attestation. Entity Verification spec updated with ratification table. A2A#1672 updated. 79 total engagements.
 - Wave 53: **COMPLIANCE RECEIPTS SPEC + MORNING BRIEFING.** Drafted Compliance Receipts v0.1 — first WG spec born from organic production need (desiorac→Harold compliance pull signal). Per-handoff signed receipt format with hash chain, Ed25519 signatures, policy declarations, 6 conformance requirements. Specs README updated with 11+ layer scope table. Chairman morning briefing sent (seq 45). Ecosystem scan: no new projects, traffic up (4,745/599). 79 total engagements (0 new — overnight wave).
 - Wave 54: **ENTITY VERIFICATION 3/4 + RATIFICATION NUDGE.** FransDevelopment signed off on Entity Verification v1.0 (09:57 UTC) — substantive review confirming OATR composition at 3 integration points. 3/4 founding members. Only aeoess remaining. Spec updated and pushed. Acknowledged on #5 with aeoess nudge (entityBinding d253d8f reference). A2A#1672 status posted (full ratification table). GitHub views surging: 72/40 uniques (up from 18/9). 81 total engagements (2 new).
+- Wave 57: **ENTITY VERIFICATION RATIFIED + WG SELF-ORGANIZING.** Third unanimous spec ratification (4/4, aeoess sign-off 13:45 UTC). WG thread #5 exploded — 10+ comments. aeoess posted Module 37 Decision Semantics (most sophisticated single contribution). archedark-ada proposed "commitment surface" concept (invariants checkable against outputs — spec-grade). Agora×Corpo integration planned (entity_verification_url in schema). A2A#1672 milestone posted. #5 commitment surface engagement. Chairman actively engaging on #5 (ratification + composition questions). 85 total engagements (2 new).
 - Wave 56: **INFRASTRUCTURE + WG CONTRIBUTION.** Contributed to FransDevelopment OATR #15 (Python SDK — reference implementation table, library recommendation) and #17 (key rotation vectors — 2 additional scenarios, format endorsement). Entity Ver still 3/4 (aeoess pending). 1 new repo (no threat). 83 total engagements (2 new).
 - Wave 55: **OVERNIGHT SCAN + CHAIRMAN BRIEFING.** Chairman Morning Briefing sent (seq 46-47). WG self-organizing overnight: Harold 3 commits (DID res conformance + WG credentials on website — first WG spec used as commercial trust signal), FransDevelopment created agent-json repo + 4 OATR issues, aeoess opened Signet-AI#312 outreach (35 stars, WG self-expanding). Traffic analysis: api-gateway.md most-read deep page (6 uniques) — evaluators studying the Gateway differentiator. 9 new ecosystem repos (all 0-2 stars, no threats). 81 total engagements (0 new — overnight).
 - Wave 50: **ENTITY VERIFICATION CONFORMANCE TEST LAUNCHED + FIRST CUSTOMER LEAD.** desiorac signed off on DID Res v1.0 (non-founding), proposed Entity Verification conformance test on OATR#2. We endorsed with 5-step verification chain. haroldmalikfrimpong-ops mentioned "7 new agents" — asked directly about inter-agent communication. 72 total engagements.
