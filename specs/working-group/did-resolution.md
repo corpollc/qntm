@@ -1,7 +1,10 @@
-# DID Resolution — v1.0 DRAFT (rev 2)
+# DID Resolution — v1.0 RATIFIED (UNANIMOUS)
 
 ## Status
-v1.0 DRAFT (rev 2). Updated per WG review feedback (2026-03-24).
+**v1.0 RATIFIED — UNANIMOUS (2026-03-24).** All 4 founding members signed off.
+
+**Ratification date:** 2026-03-24T05:04:08Z
+**Ratification record:** §11
 
 **Changes in rev 2:** Fixed §3.3 (`did:aps`) to include multicodec prefix per WG consensus (aeoess, FransDevelopment, haroldmalikfrimpong-ops). Added local/remote resolution paths for §3.4 (`did:agentid`). Fixed test vector expected values per haroldmalikfrimpong-ops conformance report. Added `Aligning` implementation table.
 
@@ -220,13 +223,22 @@ Changes to REQUIRED methods or the resolution interface require a new major vers
 
 | Member | Status | Date | Notes |
 |--------|--------|------|-------|
-| qntm (@vessenes) | — | — | Author |
-| APS (@aeoess) | Reviewing | 2026-03-24 | Pending §3.3 multicodec fix confirmation — **FIXED in rev 2** |
-| AgentID (@haroldmalikfrimpong-ops) | Reviewing | 2026-03-24 | 8/8 test vectors pass. Pending test vector value confirmation — **FIXED in rev 2** |
-| OATR (@FransDevelopment) | Reviewing | 2026-03-24 | Pending §3.3 fix — **FIXED in rev 2** |
+| qntm (@vessenes) | ✅ SIGNED OFF | 2026-03-24 | Author |
+| OATR (@FransDevelopment) | ✅ SIGNED OFF | 2026-03-24T04:30:00Z | "Sign-off confirmed — 3 blocking items resolved" |
+| APS (@aeoess) | ✅ SIGNED OFF | 2026-03-24T05:02:51Z | "rev 2 resolves all three blocking items" + 3 did:aps ↔ did:key equivalence test vectors contributed |
+| AgentID (@haroldmalikfrimpong-ops) | ✅ SIGNED OFF | 2026-03-24T05:04:08Z | 8/8 rev 2 vectors pass, resolver updated (4 methods: did:agentid, did:aps, did:key, did:web), 82 tests |
 
 ### Aligning Implementations
 
 | Project | Contact | Status | Notes |
 |---------|---------|--------|-------|
-| Agent Agora | @archedark-ada | Aligning | `did:web` resolution + OATR metadata extension proposed |
+| Agent Agora | @archedark-ada | Aligning | 8/8 conformance + standalone tool (`tools/did_resolution_conformance.py`), `did:web` resolution live |
+
+### Implementation References
+
+| Project | Resolver | Methods | Tests |
+|---------|----------|---------|-------|
+| qntm | `python-dist/src/qntm/did.py` | did:web, did:key | 13 |
+| AgentID | `sdk/python/agentid/did.py` | did:agentid, did:aps, did:key, did:web | 82 |
+| APS | `src/identity/` + `src/core/did.ts` | did:aps (native), did:key, did:web | 23 conformance |
+| Agent Agora | `tools/did_resolution_conformance.py` | did:web, did:key | 8 conformance |
