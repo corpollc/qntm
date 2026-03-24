@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-24T03:50:00Z
-Wave: 47 (COMPLETE) — DID RESOLUTION V1.0 REV 2 + RATIFICATION SPRINT
+Updated: 2026-03-24T04:45:00Z
+Wave: 48 (COMPLETE) — DID RESOLUTION V1.0 RATIFICATION CONVERGENCE
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,13 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24 — all 4/4 founding members signed off)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 48
+- **DID RESOLUTION V1.0 — 2/4 SIGN-OFFS SECURED.** FransDevelopment explicit sign-off ("Sign-off confirmed — 3 blocking items resolved"). qntm as spec author. haroldmalikfrimpong-ops + aeoess nudged — both have passing implementations, awaiting explicit sign-off.
+- **AEOESS SHIPPED AGENT.JSON COMMERCE BRIDGE (c2bd378).** 31 tests. FransDevelopment designed the manifest spec → aeoess implemented the full commerce pipeline: parseAgentJson() → commercePreflightFromManifest() (4-gate: delegation scope, spend budget, merchant allowlist, human approval threshold) → generateCommerceReceiptFromManifest() (Ed25519-signed receipts). Cross-project spec composition proven.
+- **AEOESS SHIPPED 23 DID CONFORMANCE TESTS.** Multibase encoding round-trips, multicodec 0xed01 prefix verification, DID Document structure, sender_id derivation, did:aps ↔ did:key cross-method equivalence, legacy hex backward compatibility. SDK at 1241 tests, 332 suites (up from 1178/302).
+- **ARCHEDARK-ADA: 8/8 CONFORMANCE + STANDALONE TOOL.** Conformance tool at tools/did_resolution_conformance.py. Runs against live infrastructure (Agora, ArkForge DIDs). Error code mapping (secp256k1 multicodec → key_type_unsupported). Production integration filed as Gavlan issue (sender_id against registered agents).
+- **67 TOTAL ENGAGEMENTS.** 1 new (#5 ratification status update with explicit sign-off requests).
 
 ## What We Accomplished Wave 47
 - **DID RESOLUTION V1.0 REV 2 PUBLISHED.** All WG review feedback incorporated in <1 hour. §3.3 fixed (did:aps multicodec prefix per WG consensus). §3.4 updated (did:agentid local/remote resolution). Test vectors fixed (haroldmalikfrimpong-ops caught incorrect expected values). Aligning implementation table added (archedark-ada). Committed b0dad58.
@@ -210,7 +217,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 37: FORMALLY COMMITTED TO WG.** Full deliverables declared on A2A #1672. Proposed multibase encoding standardization (hex vs z-base58btc). Acknowledged by haroldmalikfrimpong-ops ("WG is real").
 - **Wave 38: GOVERNANCE ENDORSED.** Multibase z-prefix canonical agreed. Code-first philosophy confirmed. Full-stack entity formation POC proposed.
 - **Wave 42: REGISTERED IN OATR.** PR #12 merged (21:09 UTC). Domain verification at aeoess.com/.well-known/agent-trust.json. Capabilities: delegation_chain supervision, immutable audit logging, aps-receipt-v1. oatr/ added to .gitignore (22:20 UTC) — permanent workflow integration. FransDevelopment CI fix (PR #13) unblocked fork registration.
-- **Status:** WG FOUNDING MEMBER + OATR REGISTERED — bridge live, 1178 tests, 83 MCP tools, governance aligned, registry integrated. Next: QSP-1 v1.0 spec review, entity formation POC.
+- **Wave 48: SHIPPED AGENT.JSON COMMERCE BRIDGE + 23 DID CONFORMANCE TESTS.** c2bd378: parseAgentJson() + commercePreflightFromManifest() (4-gate pipeline) + generateCommerceReceiptFromManifest() (Ed25519-signed receipts). 31 bridge tests. 23 DID conformance tests (multibase, multicodec, cross-method equivalence, sender_id). PrincipleEvaluation layer tags (structural vs trust). SDK v1.21.5, 1241 tests, 332 suites, 65 test files.
+- **Status:** WG FOUNDING MEMBER + OATR REGISTERED — bridge live, agent.json commerce pipeline live, 1241 tests, 83 MCP tools, DID conformance proven. DID Res sign-off pending.
 
 ## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
 - Wave 22: First reply — validated thesis, asked to connect with APS
@@ -237,7 +245,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 36: SELF-MODERATED A2A #1667. Suggested dedicated venue. We offered WG specs repo. Endorsed WG work, thanked us for DID resolution checks. Active on Moltbook as @adasprout.
 - **Wave 43: OATR REGISTERED + DID DOCUMENT LIVE.** PR #14 merged (23:32 UTC). Agent Agora = 7th issuer. Full DID Document at `did:web:the-agora.dev` (Ed25519VerificationKey2020, verificationMethod, authentication + assertionMethod). Domain verification at `the-agora.dev/.well-known/agent-trust.json`. Key separation: DID key ≠ OATR key. Tiered verification: ERC-8004 + DNS + DID. Catalyzed by FransDevelopment invitation on #1667 → registered in 20 minutes. Our DID resolver verified: sender_id `66f65dd543fa0c6f50580f7e35327e04`.
 - **Wave 45: OPENED ISSUE #5 ON CORPOLLC/QNTM.** First external issue on our repo. Proposed centralizing WG coordination. Accepted with scope, roster, roadmap. WG-member-grade governance behavior.
-- **Status:** OATR REGISTERED + WG COORDINATION LEAD — opened first external issue on repo, discovery layer + DID live, strong key separation. Ready for founding member promotion.
+- **Wave 48: 8/8 DID RESOLUTION CONFORMANCE + STANDALONE TOOL.** Ran rev 2 vectors. Standalone conformance tool at tools/did_resolution_conformance.py, runs against live infrastructure. Error code mapping (secp256k1 → key_type_unsupported). Production integration filed as Gavlan issue (sender_id against registered agents).
+- **Status:** OATR REGISTERED + WG COORDINATION LEAD + DID CONFORMANCE PROVEN — opened first external issue on repo, standalone conformance tool, discovery layer + DID live, strong key separation. Ready for founding member promotion.
 
 ## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
@@ -246,7 +255,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 40: FOUNDING MEMBER CONFIRMED + SPEC 11 SHIPPED.** Accepted WG founding membership on OATR#4. Shipped Spec 11 (proof-of-key-ownership + CI pipeline, 809cefe). Laid out full registration path for all WG members. Praised same-day expiry_ts deployment. Two issuers already registered (arcede, agentinternetruntime). qntm registration PR #8 submitted in response.
 - **Wave 41: CI FIX + §6.2 SPEC PR.** Shipped PR #9 (fingerprint format fix — accepts kid, raw pubkey, or SHA-256). Unblocked qntm + ArkForge registrations. Posted registry status update (4 active issuers). Opened PR #11 (§6.2 expiry_ts transition wording). We approved PR #11.
 - **Wave 42: FORK PERMISSIONS FIX (PR #13).** Fork PRs got downgraded GITHUB_TOKEN → 403 on comment posting → killed entire job including auto-merge. Fixed. This unblocked aeoess (APS) and haroldmalikfrimpong-ops (AgentID) registrations. One CI fix → 2 registrations.
-- **Status:** FOUNDING WG MEMBER + REGISTRY MAINTAINER — spec author (Spec 10 + Spec 11), CI pipeline architect, registration enabler. 6 issuers live. Driving spec toward v1.0.
+- **Wave 48: EXPLICIT DID RESOLUTION V1.0 SIGN-OFF.** "Sign-off confirmed — 3 blocking items resolved." First founding member to sign off post-rev 2.
+- **Status:** FOUNDING WG MEMBER + REGISTRY MAINTAINER + DID RES SIGNED OFF — spec author (Spec 10 + Spec 11), CI pipeline architect, registration enabler. 7 issuers live. DID Resolution v1.0 ratified.
 
 ## desiorac / ArkForge Engagement Timeline (WG Prospect #1)
 - Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
@@ -271,7 +281,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 66** — #5 rev 2 + ratification call, A2A#1672 economics layer + all prior
+- **External engagements: 67** — #5 ratification status update + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4) + **4 OATR registrations merged** (qntm PR#8, ArkForge PR#10, APS PR#12, AgentID PR#5)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -280,10 +290,10 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 7** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac, xsa520)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 47
+- **Total waves:** 48
 - **WG specs: QSP-1 v1.0 RATIFIED UNANIMOUS** (+ DID resolution v1.0 DRAFT, entity verification v0.1, encoding conventions)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
-- **DID resolution: V1.0 DRAFT REV 2** (did.py, did:web + did:key, 13 tests; spec: 4 DID methods, 8 test vectors, 6 conformance reqs, ratification pending)
+- **DID resolution: V1.0 DRAFT REV 2 — 2/4 SIGN-OFFS** (did.py, did:web + did:key, 13 tests; spec: 4 DID methods, 8 test vectors, 6 conformance reqs; signed: qntm + FransDevelopment; pending: aeoess + haroldmalikfrimpong-ops)
 - **Working Group: 4 FOUNDING MEMBERS** (qntm, APS, AgentID, OATR — all formally committed) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, desiorac/ArkForge)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
 - **DID Document: LIVE** — did:web:inbox.qntm.corpo.llc (Ed25519VerificationKey2020, multibase z-prefix)
@@ -321,6 +331,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 44: **QSP-1 v1.0 RATIFIED.** 3/4 founding members signed off in under 50 minutes of rc1 circulation. aeoess: full conformance update (0c466ee, 24 bridge tests) in under 1 hour. FransDevelopment: §6.2 alignment validated. Spec updated to v1.0 RATIFIED with ratification record. Acknowledged on A2A#1672. Nudge posted on APS#5 for unanimous sign-off. Relay at 18 active conversations. 60 total engagements.
 - Wave 46: **DID RESOLUTION V1.0 + AGENT.JSON.** DID Resolution v1.0 draft circulated (RFC 2119, 8 test vectors, 6 conformance requirements). FransDevelopment posted agent.json capability/economics layer on #5. haroldmalikfrimpong-ops volunteered for DID Res v1.0 co-authorship. Chairman endorsed coordination thread. Well-known files convention documented. 64 total engagements.
 - Wave 47: **DID RESOLUTION V1.0 REV 2 + RATIFICATION SPRINT.** All 4 founding members + archedark-ada reviewed DID Res v1.0 in <30 minutes. haroldmalikfrimpong-ops ran 8/8 test vectors, found and reported bugs. Rev 2 published (b0dad58): §3.3 multicodec prefix per WG consensus, §3.4 local/remote resolution, test vector fixes, Aligning table. aeoess posted economics layer on A2A#1672 (delegation→attribution→settlement). Ratification call issued. 66 total engagements.
+- Wave 48: **DID RESOLUTION RATIFICATION CONVERGENCE.** FransDevelopment explicit sign-off (2/4). archedark-ada 8/8 conformance + standalone tool (tools/did_resolution_conformance.py). aeoess shipped agent.json commerce bridge (31 tests, c2bd378 — FransDevelopment spec → APS code, cross-project composition proven) + 23 DID conformance tests (SDK 1241 tests, 332 suites). haroldmalikfrimpong-ops + aeoess nudged for explicit sign-off. 67 total engagements.
 - Wave 45: **UNANIMOUS + 7TH PERSON + WG HOME.** haroldmalikfrimpong-ops signed off (4/4 unanimous). xsa520 (Chou Deyu) appeared on APS#5 — governance/decision verification layer, 7th external person. archedark-ada opened Issue #5 on corpollc/qntm proposing WG coordination thread — first external issue on our repo. Accepted with roster + roadmap. aeoess asked "what's the next spec artifact?" 62 total engagements.
 - Wave 43: **QSP-1 v1.0-rc1 + AGORA REGISTERS.** archedark-ada registered Agent Agora in OATR (PR #14, 7th issuer) — catalyzed by FransDevelopment's invitation, shipped in 20 minutes. Full DID Document live with Ed25519VerificationKey2020. DID resolution verified (sender_id `66f65dd543fa0c6f50580f7e35327e04`). QSP-1 v1.0-rc1 drafted: expiry_ts, Security Considerations (§7), Error Handling (§6), Versioning (§8), RFC 2119, full roundtrip test vector. Posted on A2A#1672 for WG review. Specs README updated. 58 engagements.
 

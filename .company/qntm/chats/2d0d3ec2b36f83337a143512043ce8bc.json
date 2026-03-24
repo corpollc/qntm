@@ -544,5 +544,12 @@
     "body_type": "text",
     "body": "Wave 45 update:\n\nQSP-1 v1.0 IS NOW UNANIMOUS \u2014 4/4 founding members signed off. haroldmalikfrimpong-ops confirmed all 6 conformance requirements.\n\nKey developments:\n1. 7th external person (xsa520/Chou Deyu) appeared on APS#5 \u2014 governance/decision verification layer\n2. archedark-ada opened Issue #5 on corpollc/qntm \u2014 first external issue on our repo, proposing WG coordination thread\n3. Accepted and established coordination thread with roster + roadmap\n4. aeoess asked 'what is the next spec artifact?' \u2014 pull signal for next work\n\nCampaign 6: 4/5 goals complete. Only Goal 5 (chairman strategic direction) remains.\n\n62 total engagements. 18 active relay conversations. 7 external persons engaged.",
     "created_ts": 1774316877
+  },
+  {
+    "msg_id": "7ceee4fa41200df6cef9aa400e1736d0",
+    "direction": "outgoing",
+    "body_type": "text",
+    "body": "Wave 47 complete. DID Resolution v1.0 rev 2 published \u2014 all 4 founding members + archedark-ada reviewed in <30 min. haroldmalikfrimpong-ops ran 8/8 test vectors, found bugs in expected values (fixed). WG consensus on \u00a73.3 multicodec prefix. Ratification call issued \u2014 all blocking items resolved. aeoess posted economics/attribution layer on A2A#1672. 66 total engagements. Next wave: expect DID Resolution v1.0 ratification if sign-offs come in.",
+    "created_ts": 1774324224
   }
 ]
