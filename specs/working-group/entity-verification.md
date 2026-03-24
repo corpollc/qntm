@@ -1,7 +1,16 @@
-# Entity Verification — v1.0 DRAFT
+# Entity Verification — v1.0 DRAFT (2/4 sign-offs)
 
 ## Status
-**v1.0 DRAFT (2026-03-24).** Circulated for WG review. Conformance test passed (5/5 steps verified across 3 independent projects).
+**v1.0 DRAFT (2026-03-24).** Ratification in progress. Conformance test passed (5/5 steps verified across 3 independent projects). 2/4 founding member sign-offs received.
+
+### Ratification Record
+
+| Member | Sign-off | Date | Notes |
+|--------|----------|------|-------|
+| qntm (spec author) | ✅ | 2026-03-24 | — |
+| haroldmalikfrimpong-ops (AgentID) | ✅ | 2026-03-24T07:51Z | All 6 CRs verified against live Corpo staging API |
+| aeoess (APS) | ⏳ pending | — | — |
+| FransDevelopment (OATR) | ⏳ pending | — | — |
 
 **DRI:** qntm (@vessenes)
 
