@@ -1,0 +1,4 @@
+# Runtime state — never commit private keys or conversation material
+.state/
+.state-receiver/
+__pycache__/
