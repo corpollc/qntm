@@ -47,6 +47,7 @@ Four founding projects, seven OATR-registered issuers. One interop surface. Code
 | Envelope format (QSP-1) | qntm (with WG input) | **v1.0 RATIFIED — UNANIMOUS** (4/4 founding members, 2026-03-24) |
 | DID Resolution | qntm + AgentID | **v1.0 RATIFIED — UNANIMOUS** (4/4 founding members, 2026-03-24) |
 | Trust registry | OATR | Ed25519 attestation CA, threshold governance, proof-of-key CI |
+| Entity verification | qntm + AgentID + ArkForge | **v1.0 DRAFT** (conformance test passed 2026-03-24, 3 independent verifiers) |
 | Entity formation | [Corpo](https://corpo.llc) | Staging API live |
 | Execution attestation | [ArkForge](https://trust.arkforge.tech) (OATR registered) | Live service, Ed25519 + Sigstore/Rekor, [DID binding shipped](https://github.com/ark-forge/trust-layer/pull/18) |
 | Capability discovery | [agent.json](https://github.com/FransDevelopment/agent-json) (external) | v1.3 spec, JSON Schema, CLI validator, 13 examples. `/.well-known/agent.json` manifest |
@@ -66,8 +67,8 @@ WG members SHOULD publish three well-known files on their domain:
 ## Specs
 
 - [`qsp1-envelope.md`](./working-group/qsp1-envelope.md) — **QSP-1 v1.0** envelope format (CBOR wire format, crypto ops, transport) — **RATIFIED UNANIMOUS**
-- [`did-resolution.md`](./working-group/did-resolution.md) — DID method resolution interface — **v1.0 IN PROGRESS** (DRI: qntm + @haroldmalikfrimpong-ops)
-- [`entity-verification.md`](./working-group/entity-verification.md) — Legal entity verification via Corpo API
+- [`did-resolution.md`](./working-group/did-resolution.md) — DID method resolution interface — **RATIFIED UNANIMOUS**
+- [`entity-verification.md`](./working-group/entity-verification.md) — Entity verification via Corpo API — **v1.0 DRAFT** (conformance test passed, 3 implementations)
 
 ### External Reference Specs
 - [agent.json SPECIFICATION.md](https://github.com/FransDevelopment/agent-json/blob/main/SPECIFICATION.md) — Capability discovery + economics (v1.3, @FransDevelopment)
