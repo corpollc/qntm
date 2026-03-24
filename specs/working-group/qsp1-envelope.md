@@ -1,7 +1,7 @@
 # QSP-1 Envelope Specification — v1.0 RATIFIED
 
 ## Status
-**RATIFIED.** Approved by 3 of 4 founding Working Group members on 2026-03-24.
+**RATIFIED — UNANIMOUS.** Approved by all 4 founding Working Group members on 2026-03-24.
 
 ### Ratification Record
 | Member | Project | Sign-off | Date (UTC) | Implementation |
@@ -9,7 +9,7 @@
 | qntm | qntm (Python) | ✅ Author | 2026-03-23 | `python-dist/` — reference implementation |
 | aeoess | Agent Passport System (TypeScript) | ✅ Signed off | 2026-03-24 00:21 | `0c466ee` — full conformance: Ed25519 signing, canonical fields, 24 bridge tests |
 | FransDevelopment | Open Agent Trust Registry | ✅ Signed off | 2026-03-24 00:31 | OATR Spec 10 §6.2 — confirmed exact alignment |
-| haroldmalikfrimpong-ops | AgentID (Python) | ⏳ Pending | — | Working demo (809 lines), relay-proven |
+| haroldmalikfrimpong-ops | AgentID (Python) | ✅ Signed off | 2026-03-24 01:04 | All 6 conformance requirements verified, relay script conformant |
 
 Three implementations exist (Python/qntm, TypeScript/APS, Python/AgentID). FransDevelopment's encrypted transport spec (OATR Spec 10) references QSP-1 for conformance. All four founding WG members (qntm, APS, AgentID, OATR) and three additional issuers (ArkForge, Agora, arcede) have registered in the Open Agent Trust Registry. This spec formalizes what's been proven in production across 7 registered issuers.
 
