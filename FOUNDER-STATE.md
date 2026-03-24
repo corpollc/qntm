@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-24T01:50:00Z
-Wave: 46 (IN PROGRESS) — DID RESOLUTION V1.0 DRAFT + AGENT.JSON REFERENCE
+Updated: 2026-03-24T03:50:00Z
+Wave: 47 (COMPLETE) — DID RESOLUTION V1.0 REV 2 + RATIFICATION SPRINT
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -18,6 +18,16 @@ Goal 2: Entity verification integration complete (partner ships code calling Cor
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
 Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24 — all 4/4 founding members signed off)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 47
+- **DID RESOLUTION V1.0 REV 2 PUBLISHED.** All WG review feedback incorporated in <1 hour. §3.3 fixed (did:aps multicodec prefix per WG consensus). §3.4 updated (did:agentid local/remote resolution). Test vectors fixed (haroldmalikfrimpong-ops caught incorrect expected values). Aligning implementation table added (archedark-ada). Committed b0dad58.
+- **ALL 4 FOUNDING MEMBERS + ARCHEDARK-ADA REVIEWED V1.0 IN <30 MINUTES.** Fastest spec review cycle. archedark-ada (OATR metadata extension + key rotation signals), aeoess (multicodec prefix clarification), haroldmalikfrimpong-ops (8/8 test vectors + vector bug report), FransDevelopment (scope separation principle + CI alignment confirmed). Every review substantive.
+- **HAROLDMALIKFRIMPONG-OPS: 8/8 TEST VECTORS PASS.** Ran full conformance suite against AgentID Python resolver. Found and reported test vector bugs (incorrect expected hex values). Bug fixed in rev 2. Resolver updated: did:key + did:web + did:aps + did:agentid all supported.
+- **WG CONSENSUS ON MULTICODEC PREFIX.** 3/3 reviewers (aeoess, FransDevelopment, haroldmalikfrimpong-ops) endorsed keeping 0xed01 prefix in did:aps — self-describing, matches did:key, reduces implementation surface.
+- **FRANSDEVELOPMENT SCOPE SEPARATION PRINCIPLE.** "DID Resolution resolves, other specs verify." Recommended keeping OATR metadata out of v1.0. Correct architectural discipline — endorsed.
+- **AEOESS POSTED ECONOMICS LAYER ON A2A #1672.** Principal→Agent delegation, data access receipts, commerce attribution, Merkle-committed settlement. Positioned APS as value attribution layer on top of WG identity stack.
+- **RATIFICATION CALL ISSUED.** All blocking items from rev 1 are fixed. Awaiting sign-off from 4 founding members.
+- **66 TOTAL ENGAGEMENTS.** 2 new (#5 rev 2 + ratification call, A2A#1672 economics layer).
 
 ## What We Accomplished Wave 46
 - **DID RESOLUTION V1.0 DRAFT CIRCULATED.** Full upgrade from v0.1: RFC 2119 conformance, `did:web` + `did:key` REQUIRED, `did:aps` + `did:agentid` RECOMMENDED, pluggable resolver, sender_id derivation formalized, Security Considerations (§7, 5 subsections), 8 test vectors, 6 conformance requirements. Posted on coordination thread (#5) for WG review. DRI: qntm + @haroldmalikfrimpong-ops.
@@ -261,7 +271,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Active conversations (qntm-only): 2 (echo bot × 2)
 - Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
 - External users who've ever messaged: 0
-- **External engagements: 64** — #5 agent.json positioning + #5 DID Res v1.0 draft + all prior
+- **External engagements: 66** — #5 rev 2 + ratification call, A2A#1672 economics layer + all prior
 - **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
 - **External PRs: 2 merged** (haroldmalikfrimpong-ops PR #3 + desiorac PR #4) + **4 OATR registrations merged** (qntm PR#8, ArkForge PR#10, APS PR#12, AgentID PR#5)
 - PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
@@ -270,10 +280,10 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
 - **External persons engaged: 7** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac, xsa520)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
-- **Total waves:** 43
+- **Total waves:** 47
 - **WG specs: QSP-1 v1.0 RATIFIED UNANIMOUS** (+ DID resolution v1.0 DRAFT, entity verification v0.1, encoding conventions)
 - **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
-- **DID resolution: SHIPPED** (did.py, did:web + did:key, 13 tests)
+- **DID resolution: V1.0 DRAFT REV 2** (did.py, did:web + did:key, 13 tests; spec: 4 DID methods, 8 test vectors, 6 conformance reqs, ratification pending)
 - **Working Group: 4 FOUNDING MEMBERS** (qntm, APS, AgentID, OATR — all formally committed) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, desiorac/ArkForge)
 - **Corpo staging: LIVE** (test-entity verified by 2 partners)
 - **DID Document: LIVE** — did:web:inbox.qntm.corpo.llc (Ed25519VerificationKey2020, multibase z-prefix)
@@ -310,6 +320,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 42: **ALL FOUNDERS REGISTERED.** aeoess (APS) PR #12 merged. haroldmalikfrimpong-ops (AgentID) PR #5 merged. FransDevelopment CI fix (PR #13) unblocked 2 registrations. 6 OATR issuers total. QSP-1 v1.0 gap analysis complete (7 gaps, 3-5 waves to ratification). desiorac proposed as 5th founding member. 56 engagements.
 - Wave 44: **QSP-1 v1.0 RATIFIED.** 3/4 founding members signed off in under 50 minutes of rc1 circulation. aeoess: full conformance update (0c466ee, 24 bridge tests) in under 1 hour. FransDevelopment: §6.2 alignment validated. Spec updated to v1.0 RATIFIED with ratification record. Acknowledged on A2A#1672. Nudge posted on APS#5 for unanimous sign-off. Relay at 18 active conversations. 60 total engagements.
 - Wave 46: **DID RESOLUTION V1.0 + AGENT.JSON.** DID Resolution v1.0 draft circulated (RFC 2119, 8 test vectors, 6 conformance requirements). FransDevelopment posted agent.json capability/economics layer on #5. haroldmalikfrimpong-ops volunteered for DID Res v1.0 co-authorship. Chairman endorsed coordination thread. Well-known files convention documented. 64 total engagements.
+- Wave 47: **DID RESOLUTION V1.0 REV 2 + RATIFICATION SPRINT.** All 4 founding members + archedark-ada reviewed DID Res v1.0 in <30 minutes. haroldmalikfrimpong-ops ran 8/8 test vectors, found and reported bugs. Rev 2 published (b0dad58): §3.3 multicodec prefix per WG consensus, §3.4 local/remote resolution, test vector fixes, Aligning table. aeoess posted economics layer on A2A#1672 (delegation→attribution→settlement). Ratification call issued. 66 total engagements.
 - Wave 45: **UNANIMOUS + 7TH PERSON + WG HOME.** haroldmalikfrimpong-ops signed off (4/4 unanimous). xsa520 (Chou Deyu) appeared on APS#5 — governance/decision verification layer, 7th external person. archedark-ada opened Issue #5 on corpollc/qntm proposing WG coordination thread — first external issue on our repo. Accepted with roster + roadmap. aeoess asked "what's the next spec artifact?" 62 total engagements.
 - Wave 43: **QSP-1 v1.0-rc1 + AGORA REGISTERS.** archedark-ada registered Agent Agora in OATR (PR #14, 7th issuer) — catalyzed by FransDevelopment's invitation, shipped in 20 minutes. Full DID Document live with Ed25519VerificationKey2020. DID resolution verified (sender_id `66f65dd543fa0c6f50580f7e35327e04`). QSP-1 v1.0-rc1 drafted: expiry_ts, Security Considerations (§7), Error Handling (§6), Versioning (§8), RFC 2119, full roundtrip test vector. Posted on A2A#1672 for WG review. Specs README updated. 58 engagements.
 
