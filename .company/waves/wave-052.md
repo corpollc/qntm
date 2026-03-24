@@ -41,9 +41,9 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 
 1. ✅ **Respond to #5 thread activity** — acknowledge Harold's sign-off, bridge desiorac's compliance insight to receipt format, deepen xsa520's decision attestation — ENGAGEMENTS 78-79
 2. ✅ **Post Entity Verification ratification status on A2A#1672** — 2/4 sign-offs, request aeoess + FransDevelopment review — ENGAGEMENT 79
-3. 🔲 **Update Entity Verification spec** — add Harold's conformance record to §9, update ratification table
-4. 🔲 **Git commit and push spec updates**
-5. 🔲 **Update FOUNDER-STATE.md** — compliance pull signal is the most important development in 52 waves
+3. ✅ **Update Entity Verification spec** — ratification table added (2/4 sign-offs), committed d857fda
+4. ✅ **Git commit and push spec updates** — d857fda + 0b6f330
+5. ✅ **Update FOUNDER-STATE.md** — compliance pull signal documented, all timelines updated
 
 ## Execution Log
 
@@ -61,3 +61,26 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 - Updated trust surface stack (added Governance: Guardian — Decision Attestation proposed)
 - Highlighted compliance receipts as production deployment need
 - Tagged aeoess and FransDevelopment for review
+
+### #3 — Entity Verification Spec Updated ✅
+- Added ratification table (2/4 sign-offs: qntm + AgentID)
+- Committed d857fda, pushed
+
+### #4 — FOUNDER-STATE.md Updated ✅
+- Wave 52 accomplishments added
+- haroldmalikfrimpong-ops timeline: Entity Ver sign-off + compliance receipts
+- desiorac timeline: compliance bridge catalyst
+- xsa520 timeline: Decision Attestation framing
+- Metrics updated: 79 engagements, Entity Ver 2/4 sign-offs, 52 waves
+- KPIs appended
+
+### Metrics This Wave
+- Tests: **261 pass**, 1 skip, 0 failures ✅
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (healthz OK)
+- External engagements: **79** (2 new: #5 ratification reply + A2A#1672 status)
+- External persons engaged: **7**
+- WG ratified specs: **2** (both unanimous) + 1 DRAFT (Entity Verification — 2/4 sign-offs)
+- Entity Verification: **2/4 sign-offs** (qntm + AgentID), aeoess + FransDevelopment pending
+- **KEY SIGNAL:** First organic compliance-driven product pull — desiorac→Harold compliance receipts conversation
+- Commits: d857fda (spec update), 0b6f330 (state + wave log)
