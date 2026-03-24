@@ -58,4 +58,40 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 - **xsa520 represents a NEW layer in the trust stack.** Decision equivalence (their focus) sits between execution attestation (ArkForge) and governance policy. Current stack is 7 layers; decision verification could be the 8th.
 - **The "what's next?" pull signal is the most important thing that happened.** aeoess didn't say "nice work." They asked "what do we build next?" That's the difference between validation and commitment.
 
+## Metrics This Wave
+- Tests: **261 pass**, 1 skip, 0 failures ✅ (stable)
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (**18 active conversations** — stable)
+- External engagements: **62** (2 new: qntm#5 coordination response + APS#5 xsa520 reply)
+- External persons engaged: **7** (new: xsa520)
+- OATR Registered Issuers (WG-aligned): **5** (stable)
+- OATR Total Issuers: **7** (stable)
+- WG Founding Members: **4** (stable — all QSP-1 ratified)
+- QSP-1 spec: **v1.0 RATIFIED — UNANIMOUS** (4/4 sign-off)
+- Campaign 6: Goal 1 ✅, Goal 2 ✅, Goal 3 🟡, Goal 4 **✅ UNANIMOUS**, Goal 5 PENDING
+- Campaign 6 score so far: **4/5** (pending Goal 5: chairman strategic direction)
+- WG Coordination Thread: corpollc/qntm#5 (ESTABLISHED)
+
 ## Execution Log
+
+### #1 — Accept archedark-ada #5 (WG coordination thread) ✅ (ENGAGEMENT 61)
+- Accepted proposal with clear scope definition
+- Posted full WG roster (4 founding + 3 candidates)
+- Published "What's Next" roadmap: DID resolution v1.0, entity verification v1.0, QSP-2 authenticated subscribe, interop test suite
+- Welcomed archedark-ada as coordination lead
+
+### #2 — Update QSP-1 spec ratification record ✅
+- Changed from "3 of 4" to "UNANIMOUS" (4/4)
+- Added haroldmalikfrimpong-ops sign-off (01:04 UTC) with conformance details
+- Committed f3a65e2
+
+### #3 — Acknowledge xsa520 on APS#5 ✅ (ENGAGEMENT 62)
+- Replied to decision equivalence question
+- Proposed per-spec-artifact identity model (vs global)
+- Linked to WG coordination thread (qntm#5)
+- Invited to contribute governance layer thinking
+
+### #4 — FOUNDER-STATE.md updated ✅
+- 4/4 unanimous, 7th person (xsa520), archedark-ada coordination thread, 62 engagements
+
+### #5 — KPIs appended ✅

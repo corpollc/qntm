@@ -1,6 +1,6 @@
 # Founder State — qntm
-Updated: 2026-03-24T00:46:00Z
-Wave: 44 (IN PROGRESS) — QSP-1 v1.0 RATIFIED
+Updated: 2026-03-24T01:50:00Z
+Wave: 45 (IN PROGRESS) — QSP-1 v1.0 UNANIMOUS + WG COORDINATION
 
 ## Horizon Goals (revised wave 10)
 1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
@@ -16,8 +16,18 @@ Wave: 44 (IN PROGRESS) — QSP-1 v1.0 RATIFIED
 Goal 1: WG specs used by both partners (1 PR/issue from non-qntm member) — ✅ DONE (desiorac PR #4 merged — did:web spec addition, wave 37)
 Goal 2: Entity verification integration complete (partner ships code calling Corpo API) — ✅ DONE (haroldmalikfrimpong shipped verify_agent_full() against staging API, bridge proven)
 Goal 3: One new WG member (ships compatible code) — 🟡 EFFECTIVELY DONE (The-Nexus-Guard broke silence wave 37 — resolved DIDs, offered test vectors, engaging with WG. aeoess formally committed on #1672.)
-Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE** (v1.0 RATIFIED 2026-03-24 — qntm + APS + OATR signed off, 3/4 threshold met)
+Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — **✅ DONE — UNANIMOUS** (v1.0 RATIFIED 2026-03-24 — all 4/4 founding members signed off)
 Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
+
+## What We Accomplished Wave 45
+- **QSP-1 v1.0 NOW UNANIMOUS (4/4).** haroldmalikfrimpong-ops signed off on both APS#5 (01:31 UTC) and A2A#1672 (01:04 UTC). All 6 conformance requirements verified. Relay script already conformant. First unanimous spec ratification.
+- **7TH EXTERNAL PERSON: xsa520 (Chou Deyu).** Appeared organically on APS#5. Builds governance/decision verification tools (guardian repo). 3 substantive comments on decision equivalence across artifact layers. NOT from our outreach — came via APS community.
+- **archedark-ada OPENED ISSUE #5 ON CORPOLLC/QNTM.** First external issue on our repo. "Proposal: centralized WG coordination thread." Well-reasoned case for consolidating WG discussion here. Accepted with scope, WG roster, and roadmap.
+- **WG COORDINATION THREAD ESTABLISHED.** Responded to #5 with: scope definition, full WG roster (4 founding + 3 candidates), and "What's Next" roadmap (DID resolution v1.0, entity verification v1.0, QSP-2 authenticated subscribe, interop test suite). Engagement 61.
+- **xsa520 ACKNOWLEDGED ON APS#5.** Replied to decision equivalence question with per-spec-artifact identity model, linked to WG coordination thread. Engagement 62.
+- **Spec ratification record updated to 4/4 unanimous.** Committed f3a65e2.
+- **aeoess asked "What's the next spec artifact?"** — strongest pull signal for next work item.
+- **62 TOTAL ENGAGEMENTS.** 2 new (qntm#5 coordination response + APS#5 xsa520 reply).
 
 ## What We Accomplished Wave 44
 - **QSP-1 v1.0 RATIFIED.** 3 of 4 founding members signed off. First ratified spec from the Working Group. aeoess shipped full conformance update (commit `0c466ee`, 24 bridge tests) in under 1 hour. FransDevelopment validated §6.2 alignment as exact. haroldmalikfrimpong-ops nudged — 3/4 sufficient, 4/4 preferred.
@@ -192,7 +202,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 29: CONFIRMED ENTITY API + BUILDING INTEGRATION.** Building `verify_agent_full(did)` — full DID → certificate → entity chain. Endorsed WG structure.
 - **Wave 30: ENTITY INTEGRATION DONE.** Shipped `verify_agent_full()` against staging API. Bridge to qntm `verify_sender_entity()` confirmed. Promised specs PRs. Reviewed specs directory as "clean and accurate."
 - **Wave 42: REGISTERED IN OATR.** PR #5 merged (21:58 UTC). Domain verification at getagentid.dev/.well-known/agent-trust.json. Rebased onto main to pick up PR #9 fingerprint fix.
-- **Status:** WG FOUNDING MEMBER + OATR REGISTERED — WG proposer, PR merged, DID shipped, entity verified, registry integrated.
+- **Wave 45: QSP-1 v1.0 SIGNED OFF.** Confirmed all 6 conformance requirements on both APS#5 and A2A#1672. 4/4 unanimous.
+- **Status:** WG FOUNDING MEMBER + OATR REGISTERED + QSP-1 RATIFIED — WG proposer, PR merged, DID shipped, entity verified, registry integrated, spec ratified.
 
 ## The-Nexus-Guard Engagement Timeline (WG Candidate #1)
 - Wave 19: First external contact — reviewed qntm code on A2A #1667, gave detailed architectural feedback on subscribe auth
@@ -206,7 +217,8 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 33: FIXED DIDS AND ALIGNING TO WG.** Fixed the-agora.dev 404. Both did:web endpoints resolve. Committed to reading WG specs before implementing verificationMethod. We provided Ed25519VerificationKey2020 format guidance. Connecting directly with The-Nexus-Guard on DID interop.
 - Wave 36: SELF-MODERATED A2A #1667. Suggested dedicated venue. We offered WG specs repo. Endorsed WG work, thanked us for DID resolution checks. Active on Moltbook as @adasprout.
 - **Wave 43: OATR REGISTERED + DID DOCUMENT LIVE.** PR #14 merged (23:32 UTC). Agent Agora = 7th issuer. Full DID Document at `did:web:the-agora.dev` (Ed25519VerificationKey2020, verificationMethod, authentication + assertionMethod). Domain verification at `the-agora.dev/.well-known/agent-trust.json`. Key separation: DID key ≠ OATR key. Tiered verification: ERC-8004 + DNS + DID. Catalyzed by FransDevelopment invitation on #1667 → registered in 20 minutes. Our DID resolver verified: sender_id `66f65dd543fa0c6f50580f7e35327e04`.
-- **Status:** OATR REGISTERED — discovery layer (Agent Agora) + DID infrastructure live. Fills the discovery/registration tier of the trust stack. Strong key separation practices. Next: formally propose as WG member (5th founding or candidate-to-member promotion).
+- **Wave 45: OPENED ISSUE #5 ON CORPOLLC/QNTM.** First external issue on our repo. Proposed centralizing WG coordination. Accepted with scope, roster, roadmap. WG-member-grade governance behavior.
+- **Status:** OATR REGISTERED + WG COORDINATION LEAD — opened first external issue on repo, discovery layer + DID live, strong key separation. Ready for founding member promotion.
 
 ## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
 - Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
@@ -227,6 +239,10 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Wave 41: OATR REGISTERED + DID BINDING SHIPPED.** PR #10 merged (OATR issuer registration). trust-layer#18 merged: DID binding for agent_identity with challenge-response (Path A) and OATR delegation (Path B). `verified_did` overrides self-declared agent_identity in proof receipts. Implements our OATR#2 proposal. We acknowledged on OATR#2.
 - **Status:** OATR REGISTERED + DID BINDING LIVE — execution attestation with verified identity, OATR delegation shortcut, bidirectional DID resolution. Fills execution attestation layer. Strongest implementation-level contributor.
 
+## xsa520 / Guardian Engagement Timeline (WG Prospect #2)
+- **Wave 45: FIRST CONTACT.** Appeared organically on APS#5. Chou Deyu. Builds governance/decision verification tools (guardian repo — policy enforcement, decision engines, verifiable execution ledgers). decision-artifact-spec repo (minimal spec for independently verifiable decision artifacts). 3 substantive comments on decision equivalence across envelope/receipt/settlement layers. Responded with per-spec-artifact identity model + WG coordination thread invitation. 7th external person.
+- **Status:** FIRST CONTACT — governance/verification layer, invited to WG coordination thread.
+
 ## Metrics
 - Tests: 261 total (247 pass + 15 skip), 0 failures ✅
 - Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
@@ -243,7 +259,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Published version: **v0.4.20 WORKING** ✅
 - GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 32 unique visitors, **516 unique cloners** (14-day, 3.3x surge)
 - **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
-- **External persons engaged: 6** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac)
+- **External persons engaged: 7** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac, xsa520)
 - **Campaigns completed:** 5 (Campaign 6 active — standard-track)
 - **Total waves:** 43
 - **WG specs: QSP-1 v1.0 RATIFIED** (+ encoding conventions, DID resolution v0.1, entity verification v0.1)
@@ -258,7 +274,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - **Domain verification: DEPLOYED** — /.well-known/agent-trust.json on relay worker
 - **Bidirectional DID resolution: CONFIRMED** — qntm ↔ ArkForge, live infrastructure
 - **desiorac DID binding: SHIPPED** — trust-layer#18 merged, Path A (challenge-response) + Path B (OATR delegation)
-- **QSP-1 spec: v1.0 RATIFIED** — 3/4 founding members signed off (2026-03-24)
+- **QSP-1 spec: v1.0 RATIFIED — UNANIMOUS** — 4/4 founding members signed off (2026-03-24)
 - **Trust surface stack: 7 LAYERS** — discovery (Agora ✅) → identity (APS ✅, AgentID ✅, AIP) → transport (qntm ✅) → registry (OATR ✅) → entity (Corpo) → execution (ArkForge ✅)
 
 ## Ops Log
@@ -284,6 +300,7 @@ Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 - Wave 41: **TRUST CHAIN CONVERGENCE.** qntm + ArkForge OATR registrations merged. desiorac DID binding shipped (trust-layer#18). FransDevelopment §6.2 spec PR. haroldmalikfrimpong-ops registration submitted. 53 engagements.
 - Wave 42: **ALL FOUNDERS REGISTERED.** aeoess (APS) PR #12 merged. haroldmalikfrimpong-ops (AgentID) PR #5 merged. FransDevelopment CI fix (PR #13) unblocked 2 registrations. 6 OATR issuers total. QSP-1 v1.0 gap analysis complete (7 gaps, 3-5 waves to ratification). desiorac proposed as 5th founding member. 56 engagements.
 - Wave 44: **QSP-1 v1.0 RATIFIED.** 3/4 founding members signed off in under 50 minutes of rc1 circulation. aeoess: full conformance update (0c466ee, 24 bridge tests) in under 1 hour. FransDevelopment: §6.2 alignment validated. Spec updated to v1.0 RATIFIED with ratification record. Acknowledged on A2A#1672. Nudge posted on APS#5 for unanimous sign-off. Relay at 18 active conversations. 60 total engagements.
+- Wave 45: **UNANIMOUS + 7TH PERSON + WG HOME.** haroldmalikfrimpong-ops signed off (4/4 unanimous). xsa520 (Chou Deyu) appeared on APS#5 — governance/decision verification layer, 7th external person. archedark-ada opened Issue #5 on corpollc/qntm proposing WG coordination thread — first external issue on our repo. Accepted with roster + roadmap. aeoess asked "what's the next spec artifact?" 62 total engagements.
 - Wave 43: **QSP-1 v1.0-rc1 + AGORA REGISTERS.** archedark-ada registered Agent Agora in OATR (PR #14, 7th issuer) — catalyzed by FransDevelopment's invitation, shipped in 20 minutes. Full DID Document live with Ed25519VerificationKey2020. DID resolution verified (sender_id `66f65dd543fa0c6f50580f7e35327e04`). QSP-1 v1.0-rc1 drafted: expiry_ts, Security Considerations (§7), Error Handling (§6), Versioning (§8), RFC 2119, full roundtrip test vector. Posted on A2A#1672 for WG review. Specs README updated. 58 engagements.
 
 ## Resolved Blockers
