@@ -15,7 +15,7 @@ import sys
 import time
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".qntm")
-CONVO_ID = "48055654db4bb0f64ec63089b70e1bf4"
+CONVO_ID = "43949472072a829bc12c19db0d8f5525"
 POLL_INTERVAL = 5  # seconds
 
 
