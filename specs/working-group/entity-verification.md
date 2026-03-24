@@ -1,7 +1,7 @@
-# Entity Verification — v1.0 DRAFT (3/4 sign-offs)
+# Entity Verification — v1.0 RATIFIED (4/4 unanimous)
 
 ## Status
-**v1.0 DRAFT (2026-03-24).** Ratification in progress. Conformance test passed (5/5 steps verified across 3 independent projects). 3/4 founding member sign-offs received. One remaining (aeoess/APS).
+**v1.0 RATIFIED (2026-03-24).** All four founding WG members signed off. Third unanimous spec ratification. Conformance test passed (5/5 steps verified across 3 independent projects).
 
 ### Ratification Record
 
@@ -9,7 +9,7 @@
 |--------|----------|------|-------|
 | qntm (spec author) | ✅ | 2026-03-24 | — |
 | haroldmalikfrimpong-ops (AgentID) | ✅ | 2026-03-24T07:51Z | All 6 CRs verified against live Corpo staging API |
-| aeoess (APS) | ⏳ pending | — | — |
+| aeoess (APS) | ✅ | 2026-03-24T13:45Z | EntityBinding type maps directly; all 6 CRs covered by existing primitives |
 | FransDevelopment (OATR) | ✅ | 2026-03-24T09:57Z | Confirmed composition with OATR registry: §2.1 DID chain, §4.4 Path B delegation, §5 pluggable resolver |
 
 **DRI:** qntm (@vessenes)
