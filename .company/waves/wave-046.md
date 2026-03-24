@@ -52,4 +52,52 @@ Campaign: 6 (Waves 29+) — Standard or Product?
 4. **Update FOUNDER-STATE.md** — new wave, agent.json layer, DID Resolution v1.0 kickoff.
 5. **Append KPIs**
 
+## Metrics This Wave
+- Tests: **261 pass**, 1 skip, 0 failures ✅ (stable)
+- Echo bot: OPERATIONAL ✅
+- Relay: OPERATIONAL ✅ (**18 active conversations** — stable)
+- External engagements: **64** (2 new: #5 agent.json response + #5 DID Resolution v1.0 draft)
+- External persons engaged: **7** (stable)
+- OATR Registered Issuers: **5** (stable)
+- WG Founding Members: **4** (stable)
+- QSP-1 spec: **v1.0 RATIFIED — UNANIMOUS**
+- DID Resolution spec: **v1.0 DRAFT** (circulated for WG review)
+- Campaign 6: Goal 1 ✅, Goal 2 ✅, Goal 3 🟡, Goal 4 ✅, Goal 5 PENDING
+- Well-known files convention: DOCUMENTED
+- Stack layers: **10+** (added capability, economics, governance)
+
 ## Execution Log
+
+### #1 — Respond on #5: agent.json positioning + DID Resolution v1.0 kickoff ✅ (ENGAGEMENT 63)
+- Acknowledged agent.json as capability + economics layers
+- Documented 7-step end-to-end flow from discovery → payment
+- Proposed well-known files convention as WG recommendation
+- Confirmed DID Resolution v1.0 as next spec artifact
+- Accepted haroldmalikfrimpong-ops as co-contributor
+- Posted proposed scope (MUST: did:web + did:key, SHOULD: did:aps + did:agentid)
+- Invited input from all WG members + candidates
+
+### #2 — Update specs/README.md ✅
+- QSP-1 unanimous (4/4) throughout
+- agent.json + Guardian as external references
+- Well-known files convention table
+- DID Resolution v1.0 IN PROGRESS with DRI
+- Scope table expanded to 10+ layers
+- Committed e250f03
+
+### #3 — DID Resolution v1.0 draft written + posted ✅ (ENGAGEMENT 64)
+- Full spec at specs/working-group/did-resolution.md
+- RFC 2119 conformance language
+- 4 DID methods documented (2 REQUIRED, 2 RECOMMENDED)
+- Pluggable resolver interface
+- Sender ID derivation formalized (§4)
+- Security Considerations (§7, 5 subsections)
+- 8 conformance test vectors (specs/test-vectors/did-resolution.json)
+- 6 conformance requirements (§8)
+- Ratification table ready for sign-off
+- Posted on #5 for WG review
+
+### #4 — FOUNDER-STATE.md updated ✅
+- Wave 46 accomplishments, 64 engagements, DID Resolution v1.0 DRAFT
+
+### #5 — KPIs appended ✅
