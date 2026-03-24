@@ -174,6 +174,10 @@ interface Env {
   CONV2_NONCE_KEY?: string;
   CONV2_ROOT_KEY?: string;
   CONV2_ID_HEX?: string;
+  CONV3_AEAD_KEY?: string;
+  CONV3_NONCE_KEY?: string;
+  CONV3_ROOT_KEY?: string;
+  CONV3_ID_HEX?: string;
 }
 
 const CURSOR_KEY = 'echo-bot-cursor';
@@ -249,23 +253,32 @@ function loadConversations(env: Env, identity: Identity): Conversation[] {
   // Primary conversation
   conversations.push(loadConversation(env, identity));
 
-  // Additional conversations (if configured)
-  if (env.CONV2_ID_HEX && env.CONV2_AEAD_KEY && env.CONV2_NONCE_KEY && env.CONV2_ROOT_KEY) {
-    const convId = hexToBytes(env.CONV2_ID_HEX);
-    const keys: ConversationKeys = {
-      root: base64ToBytes(env.CONV2_ROOT_KEY),
-      aeadKey: base64ToBytes(env.CONV2_AEAD_KEY),
-      nonceKey: base64ToBytes(env.CONV2_NONCE_KEY),
-    };
-    conversations.push({
-      id: convId,
-      name: 'qntm Echo Bot (Test)',
-      type: 'direct',
-      keys,
-      participants: [identity.keyID],
-      createdAt: new Date(),
-      currentEpoch: 0,
-    });
+  // Additional conversations (if configured) — supports CONV2, CONV3, etc.
+  const convPrefixes = ['CONV2', 'CONV3'] as const;
+  const convNames = ['qntm Echo Bot (Test)', 'APS-Corpo Live Test'];
+  for (let i = 0; i < convPrefixes.length; i++) {
+    const prefix = convPrefixes[i];
+    const idKey = `${prefix}_ID_HEX` as keyof Env;
+    const aeadKey = `${prefix}_AEAD_KEY` as keyof Env;
+    const nonceKey = `${prefix}_NONCE_KEY` as keyof Env;
+    const rootKey = `${prefix}_ROOT_KEY` as keyof Env;
+    if (env[idKey] && env[aeadKey] && env[nonceKey] && env[rootKey]) {
+      const convId = hexToBytes(env[idKey] as string);
+      const keys: ConversationKeys = {
+        root: base64ToBytes(env[rootKey] as string),
+        aeadKey: base64ToBytes(env[aeadKey] as string),
+        nonceKey: base64ToBytes(env[nonceKey] as string),
+      };
+      conversations.push({
+        id: convId,
+        name: convNames[i] || `Echo Bot (Conv ${i + 2})`,
+        type: 'direct',
+        keys,
+        participants: [identity.keyID],
+        createdAt: new Date(),
+        currentEpoch: 0,
+      });
+    }
   }
 
   return conversations;

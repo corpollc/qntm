@@ -65,5 +65,22 @@
     "created_at": "2026-03-23T04:45:12Z",
     "current_epoch": 0,
     "invite_token": "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUNyoO3DM12Oom1lTss0u5nhraW52aXRlX3NhbHRYIJnHTkpBRQwpSj_7ZHMUHvPKnpf3r7yY_8gPRXk5RN2AbWludml0ZV9zZWNyZXRYIKbYnBf7banlbzaMK1YpeMzUNJAKg1Bi0P37WzHwvaqibWludml0ZXJfaWtfcGtYIIqw_2wL77fyrkF2igHm0SQXKd0hRcnA29phGsQQhAvJ"
+  },
+  {
+    "id": "43949472072a829bc12c19db0d8f5525",
+    "name": "Chat 43949472",
+    "type": "direct",
+    "keys": {
+      "root": "34f7efc2196e55f563a00605132f2e3b1aae325a1fa653ed7abda4da05b81d20",
+      "aead_key": "0892f86bdae167221564a88bdf59636d7edca9be3768ebf0babc2daa374d93af",
+      "nonce_key": "b0ec79dab04b8bdc993d7de53f9e19dfd10b61478c6b0c81140c9925f50a5d3e"
+    },
+    "participants": [
+      "4a91742b4ba4bd3147bcb2211cc8e5f9",
+      "f0a6e0c2a1cbbebc0306b5f744d2be70",
+      "77a377688fee4fc041809274457499e0"
+    ],
+    "created_at": "2026-03-24T19:39:56Z",
+    "current_epoch": 0
   }
 ]
