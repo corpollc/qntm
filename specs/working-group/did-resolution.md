@@ -1,7 +1,9 @@
-# DID Resolution — v1.0 DRAFT
+# DID Resolution — v1.0 DRAFT (rev 2)
 
 ## Status
-v1.0 DRAFT. Circulated for WG review (2026-03-24).
+v1.0 DRAFT (rev 2). Updated per WG review feedback (2026-03-24).
+
+**Changes in rev 2:** Fixed §3.3 (`did:aps`) to include multicodec prefix per WG consensus (aeoess, FransDevelopment, haroldmalikfrimpong-ops). Added local/remote resolution paths for §3.4 (`did:agentid`). Fixed test vector expected values per haroldmalikfrimpong-ops conformance report. Added `Aligning` implementation table.
 
 **DRI:** qntm (@vessenes), with Python reference implementation contributions from @haroldmalikfrimpong-ops.
 
@@ -89,9 +91,14 @@ Conformant implementations MUST support `did:key`.
 ### 3.3 `did:aps` (RECOMMENDED)
 
 **Resolution algorithm:**
-1. Parse the DID: `did:aps:<multibase-encoded-ed25519-public-key>`
+1. Parse the DID: `did:aps:<multibase-encoded-key>`
 2. Decode multibase (z-prefix = base58btc)
-3. The resulting 32 bytes are the Ed25519 public key directly (no multicodec prefix)
+3. Check multicodec prefix: `0xed01` for Ed25519 (same byte layout as `did:key`)
+4. Strip the 2-byte prefix. The remaining 32 bytes are the public key.
+
+The multicodec prefix makes the encoding self-describing — resolvers can verify "this is an Ed25519 key" from the bytes alone, and implementations that already handle `did:key` get `did:aps` with minimal adaptation.
+
+**Legacy alias:** `did:aps:<raw_hex>` (64-character hex, no multibase, no multicodec) is accepted by existing resolvers for backward compatibility. Implementations SHOULD support both formats during the transition period.
 
 **Metadata:** Implementations SHOULD populate `metadata` with delegation chain information when available.
 
@@ -101,9 +108,12 @@ Conformant implementations MUST support `did:key`.
 
 **Resolution algorithm:**
 1. Parse the DID: `did:agentid:<agent-identifier>`
-2. Query the AgentID CA at `https://getagentid.dev/api/v1/agents/<identifier>/certificate`
-3. Extract the Ed25519 public key from the certificate
-4. Validate certificate chain (if verification is enabled)
+2. Resolve via one of two paths:
+   - **Local resolution:** The agent has the key binding cached from registration (mapping `agent_id` → Ed25519 key). This is the fast path for agents in the same trust domain.
+   - **Remote resolution:** Query the AgentID API at `https://getagentid.dev/api/v1/agents/<identifier>/certificate`. Extract the Ed25519 public key from the certificate response.
+3. Validate certificate chain (if verification is enabled)
+
+Implementations SHOULD prefer local resolution when available and fall back to remote resolution.
 
 **Metadata:** Implementations SHOULD populate `metadata` with trust score and certificate expiry.
 
@@ -206,9 +216,17 @@ Changes to REQUIRED methods or the resolution interface require a new major vers
 
 ## 11. Ratification
 
+### Founding Members
+
 | Member | Status | Date | Notes |
 |--------|--------|------|-------|
 | qntm (@vessenes) | — | — | Author |
-| APS (@aeoess) | — | — | — |
-| AgentID (@haroldmalikfrimpong-ops) | — | — | Contributing Python reference |
-| OATR (@FransDevelopment) | — | — | — |
+| APS (@aeoess) | Reviewing | 2026-03-24 | Pending §3.3 multicodec fix confirmation — **FIXED in rev 2** |
+| AgentID (@haroldmalikfrimpong-ops) | Reviewing | 2026-03-24 | 8/8 test vectors pass. Pending test vector value confirmation — **FIXED in rev 2** |
+| OATR (@FransDevelopment) | Reviewing | 2026-03-24 | Pending §3.3 fix — **FIXED in rev 2** |
+
+### Aligning Implementations
+
+| Project | Contact | Status | Notes |
+|---------|---------|--------|-------|
+| Agent Agora | @archedark-ada | Aligning | `did:web` resolution + OATR metadata extension proposed |

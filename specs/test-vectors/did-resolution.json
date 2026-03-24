@@ -1,27 +1,30 @@
 {
   "spec": "DID Resolution v1.0",
-  "generated": "2026-03-24T02:40:00Z",
+  "generated": "2026-03-24T03:40:00Z",
+  "revision": "Fixed test vector values per haroldmalikfrimpong-ops conformance report; updated §3.3 multicodec prefix per WG consensus",
   "vectors": [
     {
       "name": "did:key Ed25519 resolution",
       "did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
       "expected_method": "key",
-      "expected_public_key_hex": "2970e1d1f54f09c14cda8ac9952b10d7f78e8a5e22c7d04b8e3c4e3b5e3a1f2c",
-      "note": "Standard did:key with Ed25519 multicodec prefix 0xed01"
+      "expected_public_key_hex": "2e6fcce36701dc791488e0d0b1745cc1e33a4c1c9fcc41c63bd343dbbe0970e6",
+      "expected_sender_id": "c446d9bcf84d5e3ee966bac5c1f634c1",
+      "note": "Standard did:key with Ed25519 multicodec prefix 0xed01. Strip prefix to get 32-byte public key."
     },
     {
-      "name": "did:web resolution — Ed25519VerificationKey2020",
+      "name": "did:web resolution — qntm relay (Ed25519VerificationKey2020)",
       "did": "did:web:inbox.qntm.corpo.llc",
       "expected_method": "web",
+      "expected_public_key_hex": "8ab0ff6c0befb7f2ae41768a01e6d1241729dd2145c9c0dbda611ac410840bc9",
       "expected_sender_id": "f0a6e0c2a1cbbebc0306b5f744d2be70",
       "did_document": {
         "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/suites/ed25519-2020/v1"],
         "id": "did:web:inbox.qntm.corpo.llc",
         "verificationMethod": [{
-          "id": "did:web:inbox.qntm.corpo.llc#key-1",
+          "id": "did:web:inbox.qntm.corpo.llc#relay-key",
           "type": "Ed25519VerificationKey2020",
           "controller": "did:web:inbox.qntm.corpo.llc",
-          "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          "publicKeyMultibase": "z6MkoneqzREQvS9HyVsocPhG1cs7fX3ov8zPPeiUtgonWKT6"
         }]
       },
       "note": "Live qntm relay DID document — sender_id verified against relay infrastructure"
@@ -43,10 +46,11 @@
     {
       "name": "sender_id derivation",
       "description": "Trunc16(SHA-256(public_key)) produces 16-byte sender_id",
-      "public_key_hex": "f0a6e0c2a1cbbebc0306b5f744d2be702970e1d1f54f09c14cda8ac9952b10d7",
-      "expected_sender_id_hex": "first 16 bytes of SHA-256 of the 32-byte public key",
+      "public_key_hex": "2e6fcce36701dc791488e0d0b1745cc1e33a4c1c9fcc41c63bd343dbbe0970e6",
+      "expected_sender_id_hex": "c446d9bcf84d5e3ee966bac5c1f634c1",
       "algorithm": "sender_id = SHA256(pubkey)[0:16]",
-      "encoding": "lowercase hex (32 chars)"
+      "encoding": "lowercase hex (32 chars)",
+      "note": "Same public key as vector 1 — verifies derivation consistency"
     },
     {
       "name": "error — unsupported key type",
