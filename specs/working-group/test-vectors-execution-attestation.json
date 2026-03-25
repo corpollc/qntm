@@ -1,0 +1,201 @@
+{
+  "spec": "execution-attestation",
+  "version": "0.1",
+  "generated": "2026-03-25",
+  "issuer_pubkey_test": "ed25519:_1dXXcevi_xNCDfMHOIBe2hqiBRdxVealY40Yv6akI4",
+  "vectors": [
+    {
+      "id": "EA-01",
+      "description": "Minimal proof \u2014 required fields only",
+      "valid": true,
+      "inputs": {
+        "credential": "test_api_key_001",
+        "request": {
+          "model": "gpt-4",
+          "prompt": "Hello"
+        },
+        "response": {
+          "choices": [
+            {
+              "text": "Hi there"
+            }
+          ]
+        },
+        "target": "api.example.com",
+        "timestamp": "2026-03-25T14:00:00Z"
+      },
+      "intermediate": {
+        "agent_fingerprint": "f6011631073c2827e74e53e3a657e4a342eccdbd0ee58242c394eada098875a9",
+        "request_hash": "sha256:713e9a24a39d8b426236f6d3bce2b582577c575146bafd49a004f559e770a127",
+        "response_hash": "sha256:c79dcfdc6c4f7debdd7b4476ca57eb44e0ec70f7e0529bf880578ae456282606",
+        "canonical_chain_input": "{\"agent_fingerprint\":\"f6011631073c2827e74e53e3a657e4a342eccdbd0ee58242c394eada098875a9\",\"request_hash\":\"713e9a24a39d8b426236f6d3bce2b582577c575146bafd49a004f559e770a127\",\"response_hash\":\"c79dcfdc6c4f7debdd7b4476ca57eb44e0ec70f7e0529bf880578ae456282606\",\"target\":\"api.example.com\",\"timestamp\":\"2026-03-25T14:00:00Z\"}"
+      },
+      "proof": {
+        "proof_id": "prf_20260325_140000_ea0001",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T14:00:00Z",
+        "hashes": {
+          "request": "sha256:713e9a24a39d8b426236f6d3bce2b582577c575146bafd49a004f559e770a127",
+          "response": "sha256:c79dcfdc6c4f7debdd7b4476ca57eb44e0ec70f7e0529bf880578ae456282606",
+          "chain": "sha256:e3e5c080d04ea10e664c723fb228ec636012b65f6c8ddf4ea9a33a331a0c2e5f"
+        },
+        "parties": {
+          "agent_fingerprint": "f6011631073c2827e74e53e3a657e4a342eccdbd0ee58242c394eada098875a9",
+          "target": "api.example.com"
+        }
+      },
+      "expected": "VERIFIED"
+    },
+    {
+      "id": "EA-02",
+      "description": "Full proof with upstream_timestamp and Ed25519 signature",
+      "valid": true,
+      "inputs": {
+        "credential": "test_api_key_002",
+        "request": {
+          "action": "summarize",
+          "text": "A2A protocol spec"
+        },
+        "response": {
+          "summary": "A protocol for agent-to-agent communication"
+        },
+        "target": "llm.provider.com",
+        "timestamp": "2026-03-25T15:30:00Z",
+        "upstream_timestamp": "Tue, 25 Mar 2026 15:30:01 GMT"
+      },
+      "intermediate": {
+        "agent_fingerprint": "51e4b64b8d0830690505b89faa622c9d33b66edf63944c71e44f16784fe1d6bd",
+        "request_hash": "sha256:a4e8a250ed2adeb2b9fb0e7c5ca6c35b656b86c6aee582245164c72e3d5e0518",
+        "response_hash": "sha256:5fbc88f28885070b5c7464e1ac69676bc0c4301b224b7b9fda004904bd400a10",
+        "canonical_chain_input": "{\"agent_fingerprint\":\"51e4b64b8d0830690505b89faa622c9d33b66edf63944c71e44f16784fe1d6bd\",\"request_hash\":\"a4e8a250ed2adeb2b9fb0e7c5ca6c35b656b86c6aee582245164c72e3d5e0518\",\"response_hash\":\"5fbc88f28885070b5c7464e1ac69676bc0c4301b224b7b9fda004904bd400a10\",\"target\":\"llm.provider.com\",\"timestamp\":\"2026-03-25T15:30:00Z\",\"upstream_timestamp\":\"Tue, 25 Mar 2026 15:30:01 GMT\"}"
+      },
+      "proof": {
+        "proof_id": "prf_20260325_153000_ea0002",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T15:30:00Z",
+        "upstream_timestamp": "Tue, 25 Mar 2026 15:30:01 GMT",
+        "hashes": {
+          "request": "sha256:a4e8a250ed2adeb2b9fb0e7c5ca6c35b656b86c6aee582245164c72e3d5e0518",
+          "response": "sha256:5fbc88f28885070b5c7464e1ac69676bc0c4301b224b7b9fda004904bd400a10",
+          "chain": "sha256:2a79dedc6e8d9bc219dc6df582d6fcfe80be00866f20914654b8c52ca0778789"
+        },
+        "parties": {
+          "agent_fingerprint": "51e4b64b8d0830690505b89faa622c9d33b66edf63944c71e44f16784fe1d6bd",
+          "target": "llm.provider.com",
+          "agent_identity": "did:web:agent.example.com",
+          "agent_identity_verified": true,
+          "did_resolution_status": "bound"
+        },
+        "issuer_signature": "ed25519:WhnjxH2Tr_4tqC_aV_BGJNS0usrFaDcRA77irfUTdYrjEPMmcmSAKwPno4hO3Pj6ZpzUMqz0gnWUK6fGLb0kCA",
+        "issuer_pubkey": "ed25519:_1dXXcevi_xNCDfMHOIBe2hqiBRdxVealY40Yv6akI4"
+      },
+      "expected": "VERIFIED"
+    },
+    {
+      "id": "EA-03",
+      "description": "Proof with Ed25519 signature \u2014 signature verification",
+      "valid": true,
+      "inputs": {
+        "credential": "test_api_key_003",
+        "request": {
+          "query": "agent identity verification"
+        },
+        "response": {
+          "result": "verified",
+          "did": "did:web:agent.example.com"
+        },
+        "target": "trust.arkforge.tech",
+        "timestamp": "2026-03-25T16:00:00Z"
+      },
+      "intermediate": {
+        "agent_fingerprint": "033966e9c1f50bd8937d1170f5b2830fe43db024381e4f578a5233c4f77e6fbd",
+        "request_hash": "sha256:598e932440797ef47ffce70be366a0bdd41d896cc0f4ced7bebbc4b05a73b37e",
+        "response_hash": "sha256:0bb5155e6f04991a4927e2f9af63013f74545d24c19fb5e908fa9e3f2d4d3593",
+        "canonical_chain_input": "{\"agent_fingerprint\":\"033966e9c1f50bd8937d1170f5b2830fe43db024381e4f578a5233c4f77e6fbd\",\"request_hash\":\"598e932440797ef47ffce70be366a0bdd41d896cc0f4ced7bebbc4b05a73b37e\",\"response_hash\":\"0bb5155e6f04991a4927e2f9af63013f74545d24c19fb5e908fa9e3f2d4d3593\",\"target\":\"trust.arkforge.tech\",\"timestamp\":\"2026-03-25T16:00:00Z\"}",
+        "signed_message": "744881060d32e7dd2877a3dd622fbd75a1e5ae946534dcad544cceffb7394860"
+      },
+      "proof": {
+        "proof_id": "prf_20260325_160000_ea0003",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T16:00:00Z",
+        "hashes": {
+          "request": "sha256:598e932440797ef47ffce70be366a0bdd41d896cc0f4ced7bebbc4b05a73b37e",
+          "response": "sha256:0bb5155e6f04991a4927e2f9af63013f74545d24c19fb5e908fa9e3f2d4d3593",
+          "chain": "sha256:744881060d32e7dd2877a3dd622fbd75a1e5ae946534dcad544cceffb7394860"
+        },
+        "parties": {
+          "agent_fingerprint": "033966e9c1f50bd8937d1170f5b2830fe43db024381e4f578a5233c4f77e6fbd",
+          "target": "trust.arkforge.tech"
+        },
+        "issuer_signature": "ed25519:JtMExV7lf8Dfa44SYB3KUe_qlQKUaYaOicglQLxzL0ev72yNz8Vn0pWFvIZQYjT9oQnoJqbzryEB1JRXwWxLBQ",
+        "issuer_pubkey": "ed25519:_1dXXcevi_xNCDfMHOIBe2hqiBRdxVealY40Yv6akI4"
+      },
+      "expected": "VERIFIED"
+    },
+    {
+      "id": "EA-04",
+      "description": "Adversarial: tampered hashes.chain \u2014 must FAIL",
+      "valid": false,
+      "proof": {
+        "proof_id": "prf_20260325_140000_ea0001",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T14:00:00Z",
+        "hashes": {
+          "request": "sha256:713e9a24a39d8b426236f6d3bce2b582577c575146bafd49a004f559e770a127",
+          "response": "sha256:c79dcfdc6c4f7debdd7b4476ca57eb44e0ec70f7e0529bf880578ae456282606",
+          "chain": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "parties": {
+          "agent_fingerprint": "f6011631073c2827e74e53e3a657e4a342eccdbd0ee58242c394eada098875a9",
+          "target": "api.example.com"
+        }
+      },
+      "expected": "TAMPERED",
+      "failure_reason": "hashes.chain does not match recomputed chain hash"
+    },
+    {
+      "id": "EA-05",
+      "description": "Adversarial: tampered parties.agent_fingerprint \u2014 must FAIL",
+      "valid": false,
+      "proof": {
+        "proof_id": "prf_20260325_140000_ea0001",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T14:00:00Z",
+        "hashes": {
+          "request": "sha256:713e9a24a39d8b426236f6d3bce2b582577c575146bafd49a004f559e770a127",
+          "response": "sha256:c79dcfdc6c4f7debdd7b4476ca57eb44e0ec70f7e0529bf880578ae456282606",
+          "chain": "sha256:e3e5c080d04ea10e664c723fb228ec636012b65f6c8ddf4ea9a33a331a0c2e5f"
+        },
+        "parties": {
+          "agent_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "target": "api.example.com"
+        }
+      },
+      "expected": "TAMPERED",
+      "failure_reason": "agent_fingerprint was modified after chain hash computation"
+    },
+    {
+      "id": "EA-06",
+      "description": "Adversarial: wrong Ed25519 signature \u2014 must FAIL",
+      "valid": false,
+      "proof": {
+        "proof_id": "prf_20260325_160000_ea0003",
+        "spec_version": "1.0",
+        "timestamp": "2026-03-25T16:00:00Z",
+        "hashes": {
+          "request": "sha256:598e932440797ef47ffce70be366a0bdd41d896cc0f4ced7bebbc4b05a73b37e",
+          "response": "sha256:0bb5155e6f04991a4927e2f9af63013f74545d24c19fb5e908fa9e3f2d4d3593",
+          "chain": "sha256:744881060d32e7dd2877a3dd622fbd75a1e5ae946534dcad544cceffb7394860"
+        },
+        "parties": {
+          "agent_fingerprint": "033966e9c1f50bd8937d1170f5b2830fe43db024381e4f578a5233c4f77e6fbd",
+          "target": "trust.arkforge.tech"
+        },
+        "issuer_signature": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "issuer_pubkey": "ed25519:_1dXXcevi_xNCDfMHOIBe2hqiBRdxVealY40Yv6akI4"
+      },
+      "expected": "INVALID_SIGNATURE",
+      "failure_reason": "Ed25519 signature does not match chain hash"
+    }
+  ]
+}
