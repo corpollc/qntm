@@ -1,5 +1,5 @@
 {
-  "spec": "execution-attestation",
+  "spec": "a2a-interaction-receipt",
   "version": "0.1",
   "generated": "2026-03-25",
   "issuer_pubkey_test": "ed25519:_1dXXcevi_xNCDfMHOIBe2hqiBRdxVealY40Yv6akI4",

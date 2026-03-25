@@ -1,4 +1,4 @@
-# Execution Attestation Interface — v0.1 DRAFT
+# A2A Interaction Receipt — v0.1 DRAFT
 
 **Status:** DRAFT — open for review
 **DRI:** desiorac (ArkForge)
@@ -13,16 +13,18 @@
 
 ## §1 Purpose
 
-This spec defines a **proof-of-execution** format for agent-to-agent interactions. It answers a distinct question from the other WG specs:
+This spec defines a **verifiable receipt format** for agent-to-agent HTTP calls. It answers a distinct question from the other WG specs:
 
 | Spec | Question answered |
 |------|------------------|
 | DID Resolution | Who is this agent? |
 | Entity Verification | Is this agent authorized? |
 | QSP-1 | Is this message confidential and authentic? |
-| **Execution Attestation** | **Did this agent actually execute this action?** |
+| **A2A Interaction Receipt** | **Was this request actually sent to this target, and what did it respond?** |
 
-An Execution Attestation is a cryptographically sealed record that a specific agent processed a specific request and produced a specific response at a specific time. It is verifiable by any third party — auditor, regulator, counterparty — without requiring access to the issuer's infrastructure.
+An A2A Interaction Receipt is a cryptographically sealed record produced by a certifying proxy. It binds the request hash, response hash, caller identity, target, and timestamp — without inspecting the semantic content of the call. It proves the I/O pair of an agent-to-agent HTTP transaction, not the meaning of the action itself.
+
+Any third party — auditor, regulator, counterparty — can independently verify a receipt without access to the issuer's infrastructure.
 
 This spec is composable with DID Resolution v1.0, Entity Verification v1.0, and QSP-1 v1.0. It does not replace any of them.
 
@@ -30,9 +32,9 @@ Key words: MUST, MUST NOT, SHOULD, MAY as defined in RFC 2119.
 
 ---
 
-## §2 Execution Proof Structure
+## §2 Receipt Structure
 
-An execution proof is a JSON object. It MUST contain the following fields:
+A receipt is a JSON object. It MUST contain the following fields:
 
 ### §2.1 Required Fields
 
@@ -200,7 +202,7 @@ Verifiers MUST NOT include mutable metadata fields in chain hash recomputation.
 
 ## §4 Independent Witnesses
 
-An execution proof SHOULD be corroborated by one or more independent witnesses. Witnesses are additive — each layer independently verifiable without the others.
+A receipt SHOULD be corroborated by one or more independent witnesses. Witnesses are additive — each layer independently verifiable without the others.
 
 | Witness | What it proves | Verification method |
 |---------|---------------|---------------------|
@@ -208,7 +210,7 @@ An execution proof SHOULD be corroborated by one or more independent witnesses. 
 | **RFC 3161 Timestamp** | Proof existed at the claimed time | `openssl ts -verify` on the `.tsr` file |
 | **Sigstore Rekor** | Chain hash registered in public append-only log | Fetch `transparency_log.log_url` or visit `verify_url` |
 
-A proof with zero witnesses is valid (chain hash integrity only). Each witness adds an independent trust layer. Attestors SHOULD provide at least one external witness.
+A receipt with zero witnesses is valid (chain hash integrity only). Each witness adds an independent trust layer. Attestors SHOULD provide at least one external witness.
 
 ### §4.1 RFC 3161 Timestamp Authority
 
@@ -276,13 +278,13 @@ The attesting party MUST NOT set `agent_identity_verified: true` for self-declar
 
 ### §5.3 Composition with Entity Verification v1.0
 
-An execution proof with a verified DID (`agent_identity_verified: true`) satisfies the "Sender Key Verification" step (§2.2) of Entity Verification v1.0. Attestors implementing both specs SHOULD cross-reference the proof in the entity verification response.
+A receipt with a verified DID (`agent_identity_verified: true`) satisfies the "Sender Key Verification" step (§2.2) of Entity Verification v1.0. Attestors implementing both specs SHOULD cross-reference the proof in the entity verification response.
 
 ---
 
 ## §6 Independent Verification Procedure
 
-Any party can verify a proof without the attesting party's infrastructure:
+Any party can verify a receipt without the attesting party's infrastructure:
 
 ```python
 import json, hashlib
@@ -382,7 +384,7 @@ The attesting party's DID MUST be resolvable via DID Resolution v1.0 (§3 — su
 
 ### §9.1 Threat Model
 
-An execution proof protects against post-hoc tampering with the request, response, agent identity, or timestamp. It does not protect against a malicious attestor fabricating a proof for an execution that never occurred.
+A receipt protects against post-hoc tampering with the request, response, agent identity, or timestamp. It does not protect against a malicious attestor fabricating a receipt for a call that never occurred.
 
 Mitigations: independent witnesses (RFC 3161, Rekor) bind the chain hash to an external timeline; DID binding (§5) links the agent fingerprint to a verifiable identity; OATR registry provides revocation.
 
