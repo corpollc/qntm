@@ -1,13 +1,15 @@
 # A2A Interaction Receipt — v0.1 DRAFT
 
-**Status:** DRAFT — open for review
+**Status:** RATIFIED — v0.1
 **DRI:** desiorac (ArkForge)
 **Reference implementation:** [trust.arkforge.tech](https://trust.arkforge.tech) · [proof-spec v2.1.3](https://github.com/ark-forge/proof-spec)
 
 | Member | Project | Sign-off | Date |
 |--------|---------|----------|------|
 | desiorac | ArkForge Trust Layer | ✓ | 2026-03-25 |
-| — | — | pending | — |
+| aeoess | Agent Passport System | ✓ | 2026-03-25 |
+| haroldmalikfrimpong-ops | AgentID | ✓ | 2026-03-25 |
+| FransDevelopment | OATR | ✓ | 2026-03-25 |
 
 ---
 
