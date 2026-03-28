@@ -131,6 +131,8 @@ The chain hash seals all components of an execution into a single verifiable val
 
 ### §3.1 Algorithm
 
+> **Producer scope (see §1):** The chain hash is computed and signed by a certifying proxy — not by the executing agent itself. Self-attestation by the agent is explicitly out of scope.
+
 ```
 chain_data = {
   "agent_fingerprint": <hex>,
