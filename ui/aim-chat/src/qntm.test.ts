@@ -64,6 +64,14 @@ class FakeDropboxRelay {
   private conversations = new Map<string, Array<{ seq: number; envelope_b64: string }>>()
   readonly receipts: Array<Record<string, unknown>> = []
 
+  replay(convId: string, fromSeq: number): Array<{ seq: number; envelope_b64: string }> {
+    return (this.conversations.get(convId) || []).filter((message) => message.seq > fromSeq)
+  }
+
+  headSeq(convId: string, fromSeq: number): number {
+    return this.conversations.get(convId)?.at(-1)?.seq || fromSeq
+  }
+
   async handleFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = typeof input === 'string'
       ? input
@@ -80,25 +88,6 @@ class FakeDropboxRelay {
       return new Response(JSON.stringify({ seq }), { status: 200 })
     }
 
-    if (url.endsWith('/v1/poll')) {
-      const body = JSON.parse(String(init?.body || '{}')) as {
-        conversations: Array<{ conv_id: string; from_seq: number }>
-        max_messages?: number
-      }
-      const request = body.conversations[0]
-      const messages = this.conversations.get(request.conv_id) || []
-      const visible = messages
-        .filter((message) => message.seq > request.from_seq)
-        .slice(0, body.max_messages || messages.length)
-      return new Response(JSON.stringify({
-        conversations: [{
-          conv_id: request.conv_id,
-          up_to_seq: messages.at(-1)?.seq || request.from_seq,
-          messages: visible,
-        }],
-      }), { status: 200 })
-    }
-
     if (url.endsWith('/v1/receipt')) {
       const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
       this.receipts.push(body)
@@ -112,6 +101,45 @@ class FakeDropboxRelay {
 
     throw new Error(`Unexpected fetch URL: ${url}`)
   }
+}
+
+function createFakeWebSocket(relay: FakeDropboxRelay): typeof WebSocket {
+  return class FakeWebSocket {
+    private readonly listeners = new Map<string, Array<(event?: any) => void>>()
+    readonly url: string
+
+    constructor(url: string) {
+      this.url = url
+      queueMicrotask(() => {
+        this.emit('open')
+        const parsed = new URL(url)
+        const convId = parsed.searchParams.get('conv_id') || ''
+        const fromSeq = Number(parsed.searchParams.get('from_seq') || '0')
+        for (const message of relay.replay(convId, fromSeq)) {
+          this.emit('message', { data: JSON.stringify({ type: 'message', ...message }) })
+        }
+        this.emit('message', {
+          data: JSON.stringify({ type: 'ready', head_seq: relay.headSeq(convId, fromSeq) }),
+        })
+      })
+    }
+
+    addEventListener(type: string, handler: (event?: any) => void): void {
+      const handlers = this.listeners.get(type) || []
+      handlers.push(handler)
+      this.listeners.set(type, handlers)
+    }
+
+    close(code = 1000, reason = ''): void {
+      this.emit('close', { code, reason, wasClean: true })
+    }
+
+    private emit(type: string, event?: any): void {
+      for (const handler of this.listeners.get(type) || []) {
+        handler(event)
+      }
+    }
+  } as unknown as typeof WebSocket
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -152,6 +180,7 @@ describe('browser qntm adapter', () => {
     relay = new FakeDropboxRelay()
     vi.stubGlobal('localStorage', new MemoryStorage())
     vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => relay.handleFetch(input, init)))
+    vi.stubGlobal('WebSocket', createFakeWebSocket(relay))
   })
 
   afterEach(() => {

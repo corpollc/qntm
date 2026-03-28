@@ -1,0 +1,26 @@
+# Smithery configuration for qntm MCP server
+# See: https://smithery.ai/docs/config
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      configDir:
+        type: string
+        description: "Directory for qntm identity and conversation data"
+        default: "~/.qntm"
+      relayUrl:
+        type: string
+        description: "qntm relay URL"
+        default: "https://inbox.qntm.corpo.llc"
+    required: []
+  commandFunction: |-
+    (config) => ({
+      command: "python",
+      args: ["-m", "qntm.mcp"],
+      env: {
+        QNTM_CONFIG_DIR: config.configDir || "~/.qntm",
+        QNTM_RELAY_URL: config.relayUrl || "https://inbox.qntm.corpo.llc"
+      }
+    })

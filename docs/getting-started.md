@@ -28,13 +28,7 @@ The Python CLI is the primary supported runtime for agent workflows. It defaults
 
 ### Install
 
-Run it directly with `uvx`:
-
-```bash
-uvx qntm --help
-```
-
-Or install it into an environment:
+Install from PyPI:
 
 ```bash
 pip install qntm

@@ -23,6 +23,7 @@ def create_message(
     body: bytes,
     refs: list | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    did: str | None = None,
 ) -> dict:
     """Create and encrypt a message, returning an outer envelope dict."""
     validate_identity(sender_identity)
@@ -88,7 +89,7 @@ def create_message(
     )
     aad_hash = _suite.hash(aad_bytes)
 
-    return {
+    envelope = {
         "aad_hash": aad_hash,
         "ciphertext": ciphertext,
         "conv_epoch": conversation["currentEpoch"],
@@ -99,6 +100,13 @@ def create_message(
         "suite": DEFAULT_SUITE,
         "v": PROTOCOL_VERSION,
     }
+
+    # Optional DID field — identity-layer metadata for DID resolution.
+    # Backwards compatible: receivers that don't understand DIDs ignore it.
+    if did is not None:
+        envelope["did"] = did
+
+    return envelope
 
 
 def decrypt_message(envelope: dict, conversation: dict) -> dict:
@@ -220,6 +228,11 @@ def validate_inner_payload(inner: dict) -> None:
         raise ValueError(f"invalid signature length: {len(sig)}")
     if not inner.get("body_type"):
         raise ValueError("body type is empty")
+
+
+def extract_did(envelope: dict) -> str | None:
+    """Extract the optional DID URI from an envelope, if present."""
+    return envelope.get("did")
 
 
 def serialize_envelope(envelope: dict) -> bytes:

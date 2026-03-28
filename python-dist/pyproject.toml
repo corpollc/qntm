@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qntm"
-version = "0.4.2"
+version = "0.4.20"
 description = "qntm secure messaging protocol client library and CLI"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -15,11 +15,12 @@ dependencies = [
     "cbor2>=5.6",
     "certifi>=2024.0",
     "httpx>=0.27",
+    "websockets>=12.0",
 ]
 authors = [
     { name = "Corpo LLC", email = "hello@corpo.llc" },
 ]
-keywords = ["messaging", "encryption", "security", "cli"]
+keywords = ["messaging", "encryption", "security", "cli", "mcp", "ai-agents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -35,8 +36,12 @@ classifiers = [
 Homepage = "https://qntm.corpo.llc"
 Repository = "https://github.com/corpollc/qntm"
 
+[project.optional-dependencies]
+mcp = ["mcp[cli]>=1.0.0"]
+
 [project.scripts]
 qntm = "qntm.cli:main"
+qntm-mcp = "qntm.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qntm"]

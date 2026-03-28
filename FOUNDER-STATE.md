@@ -1,83 +1,204 @@
 # Founder State — qntm
-Updated: 2026-03-22T00:45:00Z
-Wave: 7
+Updated: 2026-03-23T16:10:00Z
+Wave: 36 (COMPLETE) — ECOSYSTEM INTEGRATION + HN TRUTH CORRECTION
 
-## Phase: OPERATING
+## Horizon Goals (revised wave 10)
+1. 1 external reply/conversation — ✅ ACHIEVED WAVE 19 (aeoess on #5, The-Nexus-Guard on A2A #1667)
+2. 1 design partner in discussion — ✅ EFFECTIVELY ACHIEVED (aeoess: 6+ comments across 4 threads, vector exchange accepted, Peter engaged directly)
+3. PyPI fixed and published — ✅ DONE (v0.4.20 live, P0 resolved wave 17)
+4. Direct outreach to 3+ complementary projects — ✅ DONE → EXPANDED to 6/6 (3 new in wave 18)
+5. Show HN approval sought — BLOCKED (draft v2 ready, posting DENIED)
+6. MCP distribution channel — ✅ MCP server shipped (dd8c3df), marketplace listing BLOCKED (AUTONOMY ruling needed)
 
-## BLOCKERS — NEED PETER ACTION
-1. **Cloudflare API token missing KV write permissions** — Both the local token (`~/.env` CLOUDFLARE_API_KEY) and the GitHub Actions secret (`CLOUDFLARE_API_TOKEN`) lack KV write perms. Wrangler deploy of `qntm-dropbox` worker fails with error 10023: "kv bindings require kv write perms". Peter needs to regenerate or update the CF API token to include Workers KV Storage:Edit permission, then update both `~/.env` and the GitHub secret. The gateway worker deploys fine (no KV).
+## Campaign 6 Status (Waves 29+) — ACTIVE
+**Theme: "Standard or Product?" — Lean into the standard path**
 
-## Relay Status
-- URL: `inbox.qntm.corpo.llc` (NOT dropbox.corpo.llc — that DNS doesn't exist)
-- /healthz → ✅ 200
-- /v1/send → ✅ 201 (DO publish works, seq numbers assigned)
-- /v1/poll → ❌ 1101 (unhandled exception — KV list/read fails at runtime)
-- Root cause: Likely the same CF permissions issue affecting KV at runtime, or stale deploy. Cannot redeploy fix due to token permissions.
-- Added top-level error handler (commit e1cc2a5) to surface actual errors — but can't deploy it.
+Goal 1: WG specs used by both partners (1 PR/issue from non-qntm member) — 🟡 IMMINENT (haroldmalikfrimpong promised PRs, specs reviewed)
+Goal 2: Entity verification integration complete (partner ships code calling Corpo API) — ✅ DONE (haroldmalikfrimpong shipped verify_agent_full() against staging API, bridge proven)
+Goal 3: One new WG member (ships compatible code) — 🟡 IN PROGRESS (The-Nexus-Guard/aip#5 opened — WG invitation to AIP, strongest candidate)
+Goal 4: QSP-1 spec ratified at v1.0 (3 implementations agree) — IN PROGRESS (v0.1.1 published, 2/3 implementations converging)
+Goal 5: Chairman strategic direction confirmed (standard vs product) — PENDING
 
-## Gateway Status
-- ✅ HEALTHY — gateway.corpo.llc/health returns 200
-- CI deploys work fine (no KV binding)
+## What We Accomplished Wave 36
+- **desiorac REPLIED WITH EXACT DID INTEGRATION ARCHITECTURE.** Registration-time binding: caller presents DID → proxy resolves → extracts Ed25519 → challenge-response. `agent_identity` field already in proof receipts (self-declared). Missing step = verification. Our `resolve_did_to_ed25519()` fills this gap. Multi-agent: `contributing_agents` array with per-contribution hash. Responded with concrete code integration path.
+- **archedark-ada SELF-MODERATED A2A #1667.** Suggested moving DID/WG discussion to dedicated venue. Endorsed WG. We offered specs repo as home.
+- **HN REFERRAL CORRECTED: CHAIRMAN-SOURCED.** Algolia search confirms all links from `vessenes` account on 399-pt Claude Code thread (March 20). NOT organic external discovery. Truth register updated.
+- **SPECS README UPDATED.** ArkForge added as 4th WG candidate (execution attestation layer). Scope table now 7 layers.
+- **The-Nexus-Guard STILL COLD.** Active on their repo (3 commits in 2 days) but 0 response to AIP#5 after 5 waves. Deprioritized.
+- **35 TOTAL ENGAGEMENTS.** 2 new (desiorac DID reply + archedark-ada venue redirect).
 
-## Wave 7 — Current
-### Top 5 (force ranked)
-1. **Fix relay deploy** → BLOCKED on Peter (CF token perms)
-2. **Gemini recipe smoke test** → gateway is live, can test
-3. **`qntm quickstart` command** → code work, no deploy needed
-4. **Echo bot build** → BLOCKED until relay poll works
-5. **README/docs polish** → can do anytime
+## What We Accomplished Wave 35
+- **6TH EXTERNAL PERSON: desiorac (ArkForge).** Appeared organically on OATR#2 via FransDevelopment's reply — NOT from our outreach. Posted substantive execution attestation thesis: "identity at rest / in transit / at execution." Builds trust.arkforge.tech with 8 repos (ark-forge org), MCP server on Glama, Sigstore/Rekor, Ed25519 proofs, EU AI Act compliance. Real infrastructure.
+- **FRANSDEVELOPMENT VALIDATED CRYPTO ARCHITECTURE.** Full reply on OATR#2: "genuine, not superficial." Ed25519→X25519 mapping, zero-trust relay, WG interop proof all endorsed. Their encrypted transport spec PR #3 reviewed — recommended merge with §6.2 wording adjustment.
+- **desiorac REPLIED TO on OATR#2.** Engaged technically: validated three trust surfaces framework, asked about DID-bound agent_identity in proof-spec, Sigstore/Rekor for EU AI Act, multi-agent session proof chains.
+- **FIRST HN REFERRAL EVER.** news.ycombinator.com in GitHub referrers (3 views, 2 uniques). Source: chairman (vessenes account) on 399-pt Claude Code thread. Not organic external discovery.
+- **CLONE TRAFFIC 3.3x.** 3,940/516 uniques (14-day) vs 1,011/155 last period. Deep page reads: MCP docs (5), API gateway (6), QSP spec (4), LICENSE (4). Serious evaluation signals.
+- **33 TOTAL ENGAGEMENTS.** 2 new (desiorac + FransDevelopment spec review on OATR#2).
 
-### Actions Taken This Wave
-- Verified relay at correct URL (inbox.qntm.corpo.llc)
-- Discovered healthz works but poll returns 1101 (KV runtime failure)
-- Confirmed send (DO path) works — returns seq:1 on test message
-- Diagnosed root cause: CF API token lacks KV write perms
-- Confirmed both local and CI tokens have same issue (error 10023)
-- Added try/catch error handler to worker (commit e1cc2a5, pushed to main)
-- CI deploy failed same way — confirming token is the blocker
-- All tests passing: 288 total (193 client + 52 gateway + 43 AIM)
-- Merged main into feat/wave6-echo-bot-prep branch
+## What We Accomplished Wave 34
+- **WG SPECS README UPDATED.** Added 3 candidates (AIP, Agent Agora, OATR) with scope table showing 5-layer ecosystem: discovery → identity → encrypted transport → trust registry → entity formation. Committed and pushed (f1e09d7).
+- **The-Nexus-Guard FOLLOW-UP on A2A #1667.** Light-touch update highlighting archedark-ada DID interop, FransDevelopment spec, and AIP#5 test vectors. Framed the 5-layer stack forming across 6 projects.
+- **haroldmalikfrimpong-ops + aeoess CHECK-IN on APS#5.** Acknowledged cross-module interop test (1aa0cd4), pointed to FransDevelopment spec, suggested concrete specs PR targets. Asked aeoess about next step.
+- **DID INFRASTRUCTURE VERIFIED.** archedark-ada endpoints confirmed live (the-agora.dev + inbox.ada.archefire.com). Our DID resolver correctly handles missing verificationMethod. Ready to auto-resolve once Phase 2 complete.
+- **31 TOTAL ENGAGEMENTS.** 2 new (A2A #1667 follow-up + APS#5 check-in).
 
-## Branch: feat/wave6-echo-bot-prep
-- `76eaa68` — feat: add Gemini, OpenAI, Anthropic, GitHub API recipes
-- `c851e06` — polish README: multi-sig positioning, recipe catalog
+## What We Accomplished Wave 33
+- **FRANSDEVELOPMENT SHIPPED 482-LINE ENCRYPTED TRANSPORT SPEC.** PR #3 on OATR — QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel), security analysis. Reviewed and approved with 3 discussion points. WG invitation extended. 5th external person engaged.
+- **aeoess RELAY BRIDGE LIVE.** qntm-bridge.ts shipped (369 lines, 18 tests). Real APS SignedExecutionEnvelopes sent through relay (seq 6-7). Echo bot decrypted and echoed. WebSocket subscribe confirmed. Step 3 COMPLETE.
+- **archedark-ada FIXED DIDs AND ALIGNING TO WG.** Both did:web endpoints now resolve. Committed to reading WG specs before implementing verificationMethod. Format guidance provided (Ed25519VerificationKey2020, multibase).
+- **The-Nexus-Guard and archedark-ada CONNECTING DIRECTLY.** DID interop offered on #1667. Cross-pollination without moderation.
+- **29 TOTAL ENGAGEMENTS.** 2 new (OATR PR #3 review + archedark-ada #1667 reply).
 
-## Branch: main
-- `e1cc2a5` — fix: add top-level error handler to relay worker for 1101 diagnostics
-- `b5c29f8` — Add echo bot spec, CPO and CMO wave 5 reports
+## What We Accomplished Wave 32
+- **DID RESOLUTION MODULE SHIPPED.** `did.py` — resolve did:web + did:key to Ed25519 public keys. 13 tests, 261 total (up from 248). Plugs into `verify_sender_entity(resolve_did_fn=resolve_did_to_ed25519)`.
+- **4TH EXTERNAL PERSON ENGAGED.** archedark-ada appeared on A2A #1667 with live DID infrastructure (did:web:inbox.ada.archefire.com) and production agent registry (Agent Agora — the-agora.dev). Endorsed subscribe auth design. 2 live agents.
+- **aeoess BROKE SILENCE ON #1667.** Validated subscribe auth, described signed key announcement pattern. First engagement outside APS#5.
+- **PIPELINE EXPANDED TO 3 CANDIDATES.** The-Nexus-Guard (invited), archedark-ada (engaged), FransDevelopment/open-agent-trust-registry (issue filed #2). Up from 1.
+- **OATR INTEGRATION PROPOSAL FILED.** FransDevelopment/open-agent-trust-registry#2 — Ed25519 attestation CA, 6 stars, threshold governance, pushed 30 min before discovery. Strongest new candidate.
+- **27 TOTAL ENGAGEMENTS.** 2 new (A2A #1667 reply + OATR#2).
 
-## Key Specs & Reports
-- ECHO-BOT-SPEC.md — CTO's technical design for the echo bot
-- CPO-REPORT-WAVE5.md — TTFM audit + 4 gateway next-step specs
-- CMO-REPORT-WAVE5.md — 5 target profiles, 20 channels, top 3, competitive landscape
+## What We Accomplished Wave 31
+- **AIP INTEROP TEST VECTORS SHIPPED.** 3/3 known-answer vectors prove AIP Ed25519 → X25519 derivation is byte-for-byte compatible with qntm. Runnable script + JSON. Posted on AIP#5 as follow-up.
+- **FIRST FORK EVER.** haroldmalikfrimpong-ops forked corpollc/qntm at 05:37 UTC. Precursor to specs PRs. Campaign 6 Goal 1 imminent.
+- **PYPI SURGE ANALYZED.** 781/day on March 22 — but ~85% is mirrors/bots (`null` platform). Real downloads ~112/day during spikes. 4x baseline. Source unknown.
+- **A2A ECOSYSTEM SCAN.** No new WG candidates beyond The-Nexus-Guard. Pipeline thin. AIP#5 still 0 replies (1 hour old).
+- **25 TOTAL ENGAGEMENTS.** 1 new (AIP#5 follow-up with test vectors).
 
-## Horizon Goals (10 waves)
-1. TTFM <10 seconds on all clients — echo bot live, quickstart command works
-2. Gateway demo: store key → call Gemini → response → all encrypted, m-of-n approved
-3. Distribution Week 1 executed: HN + Reddit + Dev.to, measure results
-4. Relay stable + monitored + auto-deploying
-5. Document signing MVP working end-to-end
+## What We Accomplished Wave 30
+- **ENTITY INTEGRATION PROVEN.** haroldmalikfrimpong-ops confirmed `verify_agent_full()` works against Corpo staging API. Bridge to qntm's `verify_sender_entity()` is one function call. Campaign 6 Goal 2: DONE.
+- **8 CROSS-IMPLEMENTATION ACCEPTANCE TESTS.** Prove AgentID/APS/AIP resolve_did → qntm entity verification chain works for all 3 DID methods. Multi-method resolver pattern tested. 248 total tests (234 + 14 MCP skip).
+- **AIP WG INVITATION OPENED.** The-Nexus-Guard/aip#5 — strongest WG candidate. Ed25519 identity, PyPI (aip-identity), 10 stars, live service, already reviewed our code (wave 19), cross-protocol bridge with APS already built.
+- **ENTITY VERIFICATION SPEC UPDATED TO v0.1.1.** Incorporates AgentID's proven implementation patterns, acceptance test table.
+- **aeoess BUILDING SILENTLY.** 3 commits in 4 hours: live relay test, WebSocket roundtrip, propagation sweep. 1122 tests, 302 suites.
+- **24 TOTAL ENGAGEMENTS.** 2 new (APS#5 entity milestone reply + AIP#5 WG invitation).
 
-## Campaign Goals (waves 6-10)
-1. Build + deploy echo bot — MEASURABLE: chat.corpo.llc TTFM <10s — BLOCKED on relay
-2. Gemini recipe + e2e smoke test — MEASURABLE: script exits 0 with real Gemini response
-3. `qntm quickstart` + TTY-default human output — MEASURABLE: <15s to first message
-4. HN + Reddit + Dev.to launch — MEASURABLE: >50 GH stars from launch week
-5. Gateway sample server setups — MEASURABLE: `bash scripts/gateway-local-dev.sh` works
+## What We Accomplished Wave 29
+- **WG SPECS DIRECTORY PUBLISHED.** `specs/` at repo root with README (members, principles, scope), QSP-1 envelope spec, DID resolution interface, entity verification interface, and test vectors. Posted links on A2A #1672. The WG has a home.
+- **ENTITY VERIFICATION MODULE SHIPPED.** `entity.py` with `verify_entity()` and `verify_sender_entity()` — full chain from DID → key → sender → Corpo entity. 8 tests with mock HTTP server. 240 total pass (up from 232).
+- **CORPO STAGING API CONFIRMED LIVE.** Chairman unblocked between waves — `api.corpo.llc/api/v1/entities/test-entity/verify` returns active entity. Both partners can now build entity integration.
+- **haroldmalikfrimpong-ops BUILDING ENTITY INTEGRATION.** Confirmed API working, building `verify_agent_full(did)` chain into AgentID. Endorsed WG structure with full commitments.
+- **22 TOTAL ENGAGEMENTS.** 2 new (WG specs + entity module on APS#5).
+- **240 TESTS PASS** — python-dist, 0 failures (8 new entity tests)
 
-## Ops Log (last 5 waves)
-- Wave 7: Relay healthz ✅ but poll 1101. Root cause: CF token lacks KV perms. Deploy blocked. 288 tests passing.
-- Wave 6: Gateway deployed + healthy. Echo bot spec done. API recipes added. README polished.
-- Wave 5 STRATEGY: CPO + CMO reports. Echo bot #1. "Multi-sig for AI agent API calls" positioning.
-- Wave 4: Gateway DO fix. Deploy-worker CI. 300 tests passing.
-- Wave 3: TUI test fix (pty buffer drain). 12/12 TUI tests.
+## What We Accomplished Wave 28
+- **WORKING GROUP ENDORSED.** haroldmalikfrimpong-ops proposed formalizing AgentID + APS + qntm as an Agent Identity Working Group on A2A #1672. We replied with code-first principles, scope table, and commitments. 20 total engagements.
+- **DID FIELD SHIPPED.** Optional `did` parameter in `create_message()`, `extract_did()` helper, QSP-1 spec v0.1.1. Backwards compatible. 2 new tests, 232 total pass.
+- **aeoess CONFIRMED E2E ROUNDTRIP.** Full crypto chain closed: APS encrypt → relay → echo bot decrypt → re-encrypt → relay → APS decrypt. Three identity systems in one conversation.
+- **GITHUB TRAFFIC AT ALL-TIME HIGH.** 29 views/22 uniques + 1,011 clones/155 uniques on March 22.
+- **CAMPAIGN 5 CLOSED.** Score: 3/5. Strong on integration + interop, weak on product adoption.
+
+## ⚠️ BLOCKERS — NEEDS CHAIRMAN
+1. **🟢 P0 RESOLVED: PyPI publishing works!** v0.4.20 live.
+2. **🟡 P1: MCP marketplace listing.** Materials ready. RULING NEEDED: Does submitting to Smithery.ai / LobeHub count as "any-public-post"? **14th wave asking.**
+3. **🟡 P1: Public posting DENIED** — Show HN draft v2 ready. HN would 10x reach.
+4. **🟡 P1: Protocol vs Product strategic decision.** Campaign 6 assumes standard-track based on chairman's actions. Explicit confirmation requested.
+5. **🟢 P1 RESOLVED: Corpo staging entity_id.** Chairman posted test entity API (Wave 28→29 gap). Both partners have access.
+6. **🟡 P0: CF KV daily write limits.** Need $5/mo upgrade or DO storage migration.
+
+## aeoess Engagement Timeline (Design Partner #1)
+- Wave 10: Integration proposal posted (APS#5)
+- Wave 19: First reply — detailed 5-layer integration stack proposed
+- Wave 19-20: Vector exchange accepted, 3-step plan
+- Wave 23: VECTOR EXCHANGE COMPLETE — 5/5 vectors, 8 tests, 1081 suite green
+- Wave 24: RELAY TEST GREENLIT — asked for relay details, we provided everything
+- Wave 25: FULL SPEC SHARED — integration plan posted (qntm-bridge.ts)
+- Wave 26: RELAY ROUNDTRIP PROVEN — qntm-bridge.ts shipped (369 lines, 18/18 tests)
+- Wave 27: DID INTEROP PROPOSED — 5-step cross-verification test sequence
+- Wave 28: E2E ROUNDTRIP CONFIRMED. Asked for Corpo staging entity_id.
+- **Wave 29: ENTITY API AVAILABLE.** Module shipped, integration path clear. Awaiting response.
+- **Wave 30: BUILDING SILENTLY.** 3 commits (relay test, WebSocket roundtrip, propagation sweep). 1122 tests, 302 suites. No APS#5 comment yet on entity module.
+- **Wave 33: RELAY BRIDGE SHIPPED AND LIVE.** qntm-bridge.ts (369 lines, 18 tests, zero new deps). Real APS SignedExecutionEnvelopes sent through relay (seq 6-7 on echo bot conv). Echo bot decrypted and echoed. WebSocket subscribe confirmed. 4 commits in rapid succession (5:14-5:33 UTC). SDK v1.19.4, 1122 tests.
+- **Status:** STEP 8 — RELAY INTEGRATION COMPLETE. Bridge shipped, live test proven, echo bot responding. Next: entity formation POC or APS#5 status update.
+
+## haroldmalikfrimpong-ops Engagement Timeline (Design Partner #2)
+- Wave 22: First reply — validated thesis, asked to connect with APS
+- Wave 25: SHIPPED 809-LINE WORKING DEMO — first external code
+- Wave 26: RELAY ROUNDTRIP PROVEN — connected to live relay
+- Wave 27: PR MERGED + DID INTEROP SHIPPED — 10/10 checks, 82 tests
+- Wave 28: WORKING GROUP PROPOSED on A2A #1672. We endorsed with code-first principles.
+- **Wave 29: CONFIRMED ENTITY API + BUILDING INTEGRATION.** Building `verify_agent_full(did)` — full DID → certificate → entity chain. Endorsed WG structure.
+- **Wave 30: ENTITY INTEGRATION DONE.** Shipped `verify_agent_full()` against staging API. Bridge to qntm `verify_sender_entity()` confirmed. Promised specs PRs. Reviewed specs directory as "clean and accurate."
+- **Status:** ENTITY INTEGRATION PROVEN — WG proposer, PR merged, DID shipped, entity verified, specs PRs incoming
+
+## The-Nexus-Guard Engagement Timeline (WG Candidate #1)
+- Wave 19: First external contact — reviewed qntm code on A2A #1667, gave detailed architectural feedback on subscribe auth
+- Wave 30: WG INVITATION OPENED (aip#5). Strongest candidate: Ed25519 identity, PyPI (aip-identity), 10 stars, live DID resolution service, cross-protocol bridge with APS already built.
+- **Status:** INVITED — awaiting response on aip#5
+
+## archedark-ada Engagement Timeline (WG Candidate #2)
+- Wave 32: FIRST CONTACT. Appeared on A2A #1667 with live did:web endpoint, Agent Agora (agent discovery registry — the-agora.dev), 2 live agents. Endorsed subscribe auth design. Offered DID for resolution test. We resolved both DIDs and bridged to WG.
+- **Wave 33: FIXED DIDS AND ALIGNING TO WG.** Fixed the-agora.dev 404. Both did:web endpoints resolve. Committed to reading WG specs before implementing verificationMethod. We provided Ed25519VerificationKey2020 format guidance. Connecting directly with The-Nexus-Guard on DID interop.
+- Wave 36: SELF-MODERATED A2A #1667. Suggested dedicated venue. We offered WG specs repo. Endorsed WG work, thanked us for DID resolution checks. Active on Moltbook as @adasprout.
+- **Status:** REDIRECTED TO WG — self-moderated off A2A, offered WG specs repo. Fills discovery layer (Agent Agora). Live DID endpoints, awaiting verificationMethod addition.
+
+## FransDevelopment Engagement Timeline (WG Candidate #3 → INVITED)
+- Wave 32: Integration proposal filed (open-agent-trust-registry#2). Ed25519 attestation CA, 6 stars, threshold governance (3-of-5), OpenClaw user (clawhub), pushed 30 min before discovery.
+- **Wave 33: REPLIED WITH FULL SPEC PR.** 482-line `spec/10-encrypted-transport.md` (PR #3). QSP-1-compatible, WG test vectors, registry-bound channel authentication (novel contribution), security analysis. Fastest external spec delivery. We reviewed, recommended merge with §6.2 rewording, and extended formal WG invitation.
+- **Status:** WG INVITED — spec shipped, review exchange underway. Strongest spec-level contribution from any external party.
+
+## desiorac / ArkForge Engagement Timeline (WG Prospect #1)
+- Wave 35: FIRST CONTACT. Appeared organically on OATR#2 via FransDevelopment reply. Posted "identity at execution" thesis — receipt-per-invocation attestation. Ed25519 + SHA-256 proof chain + Sigstore Rekor. 8 repos under ark-forge org (trust-layer, proof-spec, arkforge-mcp, agent-client, mcp-eu-ai-act, eu-ai-act-scanner, trust-proof-action, n8n-nodes-arkforge). MCP server on Glama marketplace. dev.to content marketing (3 posts in 3 weeks). GitHub since 2016, 13 public repos.
+- Wave 36: REPLIED WITH DID ARCHITECTURE. `agent_identity` in proof receipts, registration-time binding flow described. We proposed `resolve_did_to_ed25519()` integration. Awaiting response.
+- **Status:** INTEGRATION PROPOSED — DID resolver fills their verification gap. Concrete code path shared. Potential first external user of qntm DID module (not just relay).
 
 ## Metrics
-- Tests: Client 193/193 ✅, AIM 43/43 ✅, Gateway 52/52 ✅ (288 total)
-- Relay: healthz ✅, send ✅, poll ❌ (1101)
-- Gateway: ✅ healthy
-- Waves completed: 7
-- CI deploys: gateway ✅, relay ❌ (token perms)
+- Tests: 261 total (247 pass + 15 skip), 0 failures ✅
+- Relay: OPERATIONAL ✅ (WebSocket-only, version d69d6763)
+- Echo bot: CF WORKER LIVE ✅
+- TTFM: 1.2 seconds ✅
+- Active conversations (7-day relay): **16** (stable)
+- Active conversations (qntm-only): 2 (echo bot × 2)
+- Design partners: **2 ACTIVE** (aeoess: E2E proven + entity pending, haroldmalikfrimpong-ops: PR merged + entity building)
+- External users who've ever messaged: 0
+- **External engagements: 35** — desiorac DID reply + archedark-ada venue redirect + all prior
+- **Direct integration proposals: 8** — 2 active with DID-level interop + WG + entity + OATR#2
+- **External PRs: 1 merged** (haroldmalikfrimpong-ops, PR #3)
+- PyPI downloads: ~780/day baseline, 1,642/week, 2,402/month
+- Published version: **v0.4.20 WORKING** ✅
+- GitHub: 1 star, **1 fork** (haroldmalikfrimpong-ops), 0 external issues — 32 unique visitors, **516 unique cloners** (14-day, 3.3x surge)
+- **GitHub referrers: news.ycombinator.com** (chairman-sourced, 3 views, 2 uniques — NOT organic external)
+- **External persons engaged: 6** (aeoess, haroldmalikfrimpong-ops, The-Nexus-Guard, archedark-ada, FransDevelopment, desiorac)
+- **Campaigns completed:** 5 (Campaign 6 active — standard-track)
+- **Total waves:** 35
+- **WG specs: PUBLISHED** (QSP-1 v0.1.1, DID resolution v0.1, entity verification v0.1)
+- **Entity verification: PROVEN** (entity.py, 16 tests including 8 interop, 2 implementations verified)
+- **DID resolution: SHIPPED** (did.py, did:web + did:key, 13 tests)
+- **Working Group: 3 FOUNDING MEMBERS** (qntm, APS, AgentID) + **3 WG CANDIDATES** (The-Nexus-Guard, archedark-ada, FransDevelopment) + **1 PROSPECT** (desiorac/ArkForge)
+- **Corpo staging: LIVE** (test-entity verified by 2 partners)
+- **Trust surface stack: 6 LAYERS** — discovery (Agora) → identity (APS, AgentID, AIP) → transport (qntm) → registry (OATR) → entity (Corpo) → execution (ArkForge)
 
-## NOTE: Accidental commit to main
-Wave 5 specs (echo bot, CPO, CMO reports) were committed to main instead of feature branch. Docs-only, not code. Noted for future prevention — always verify branch before commit.
+## Ops Log
+- Wave 1-22: [see wave logs for full history]
+- Wave 23: **VECTOR EXCHANGE COMPLETE.** CAMPAIGN 5 WAVE 1.
+- Wave 24: **THE CONVERSION REPLY.** aeoess asked for relay endpoint.
+- Wave 25: **THE THREE-WAY CONVERGENCE.** First external code (809-line demo).
+- Wave 26: **THE BRIDGE WORKS.** First cross-project E2E encrypted message exchange proven.
+- Wave 27: **DID CONVERGENCE.** First external PR merged. DID interop emerged organically.
+- Wave 28: **WORKING GROUP FORMATION.** WG proposed, endorsed, Campaign 5 closed (3/5).
+- Wave 29: **THE WG GETS A HOME.** Specs directory published (QSP-1, DID resolution, entity verification). Entity module shipped (8 tests, 240 total). Corpo staging API live. haroldmalikfrimpong-ops building entity integration. Campaign 6 launched (standard-track). 22 total engagements.
+- Wave 30: **ENTITY INTEGRATION CLOSES.** haroldmalikfrimpong-ops confirmed entity integration works against staging API. 8 cross-implementation acceptance tests (3 DID methods). AIP invited to WG (aip#5). Entity spec v0.1.1. 248 total tests. 24 engagements.
+- Wave 31: **PIPELINE REFILL.** AIP interop test vectors shipped (3/3 pass). First fork ever (haroldmalikfrimpong-ops). PyPI surge analyzed (85% mirrors, 15% real). A2A scan: no new candidates. 25 engagements.
+- Wave 32: **DID RESOLUTION + PIPELINE EXPANSION.** DID resolution module shipped (did:web + did:key, 13 tests, 261 total). 4th external person: archedark-ada (Agent Agora, live did:web, A2A #1667). aeoess broke silence on #1667. Pipeline expanded to 3 candidates. OATR#2 filed. 27 engagements.
+- Wave 33: **ECOSYSTEM CONVERGENCE.** FransDevelopment shipped 482-line encrypted transport spec (PR #3, registry-bound auth, QSP-1-compatible). Reviewed and WG-invited. aeoess relay bridge LIVE (369 lines, 18 tests, real envelopes through relay, echo bot responded). archedark-ada fixed DIDs, aligning to WG. 5th external person engaged. 29 engagements.
+- Wave 34: **WG CONSOLIDATION.** Specs README updated with 3 candidates + 5-layer scope table (f1e09d7). The-Nexus-Guard follow-up on A2A #1667. haroldmalikfrimpong-ops + aeoess check-in on APS#5. DID infrastructure verified (archedark-ada endpoints live, resolver handles gracefully). 31 engagements.
+- Wave 35: **ECOSYSTEM GRAVITY.** 6th external person (desiorac/ArkForge) appeared organically on OATR#2 via FransDevelopment's reply. Execution attestation layer with Ed25519 + Sigstore Rekor. FransDevelopment validated crypto architecture ("genuine, not superficial"). HN referral (chairman-sourced). Clone traffic 3.3x (516 uniques). 33 engagements.
+- Wave 36: **ECOSYSTEM INTEGRATION.** desiorac replied with exact DID binding architecture — `agent_identity` field exists, verification gap = our DID resolver. archedark-ada self-moderated #1667, redirected to WG venue. HN referral corrected (chairman-sourced, not organic). Specs README updated with ArkForge (7th layer). The-Nexus-Guard deprioritized (5 waves cold). 35 engagements.
+
+## Resolved Blockers
+- ~~CF token invalid~~ — RESOLVED Wave 2
+- ~~Relay poll broken (500/1101)~~ — RESOLVED Wave 2
+- ~~TUI vi.hoisted test~~ — RESOLVED Wave 2
+- ~~No activation path for new users~~ — RESOLVED Wave 3 (echo bot)
+- ~~Echo bot dies on reboot~~ — RESOLVED Wave 4 (launchd plist)
+- ~~Echo bot depends on Peter's Mac~~ — RESOLVED Wave 5 (CF Worker)
+- ~~Echo bot broken by relay migration~~ — RESOLVED Wave 6 (rebuilt with WebSocket)
+- ~~Test regression from relay migration~~ — RESOLVED Wave 7 (TestRelayServer missing `ready` frame)
+- ~~Dead URLs in integration proposals~~ — RESOLVED Wave 13 (nichochar → corpollc)
+- ~~Broken install in README~~ — RESOLVED Wave 13 (uvx → pip from git)
+- ~~Broken install in docs pages~~ — RESOLVED Wave 14 (getting-started, tutorial, PyPI README)
+- ~~conversations.json v0.3 format incompatibility~~ — RESOLVED Wave 15 (auto-migration function)
+- ~~No MCP distribution channel~~ — RESOLVED Wave 16 (MCP server built and shipped)
+- ~~PyPI CLI broken (v0.3, 11-wave escalation)~~ — RESOLVED Wave 17 (v0.4.20 published by chairman)
+- ~~Subscribe has no identity verification~~ — RESOLVED Wave 19 (Ed25519 challenge-response, optional)
+- ~~No DID metadata in envelopes~~ — RESOLVED Wave 28 (optional `did` field shipped, QSP-1 v0.1.1)
+- ~~Corpo staging entity_id needed~~ — RESOLVED Wave 29 (chairman posted test entity API)

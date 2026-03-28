@@ -5,6 +5,8 @@ Published artifacts:
 - npm: `@corpollc/qntm` from `client/`
 - PyPI: `qntm` from `python-dist/`
 
+For the full hosted deploy sequence across workers, UI, npm, and PyPI, use [Deployment Checklist](deployment-checklist.md). This file only covers package release mechanics.
+
 ## Prerequisites
 
 - GitHub Actions must be configured as a trusted publisher for the npm package `@corpollc/qntm`.
@@ -14,7 +16,7 @@ Published artifacts:
 ## Local preflight
 
 ```bash
-python3 scripts/set_release_version.py 0.4.2
+python3 scripts/set_release_version.py 0.4.20
 cd client && npm test && npm run build && npm pack --dry-run
 cd python-dist && uv run python -m pytest && uv build
 cd ui/aim-chat && npm test && npm run build

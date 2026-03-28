@@ -1,0 +1,36 @@
+{
+  "name": "qntm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw qntm channel plugin",
+  "type": "module",
+  "dependencies": {
+    "@corpollc/qntm": "file:../client",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "qntm",
+      "label": "qntm",
+      "selectionLabel": "qntm (Relay WebSocket)",
+      "detailLabel": "qntm",
+      "docsPath": "/channels/qntm",
+      "docsLabel": "qntm",
+      "blurb": "encrypted qntm conversations over the relay websocket with multi-conversation routing.",
+      "systemImage": "lock.message"
+    }
+  }
+}

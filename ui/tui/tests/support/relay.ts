@@ -152,6 +152,14 @@ export class TestRelayServer {
             envelope_b64: message.envelopeB64,
           }));
         }
+
+        // Signal that the backlog has been delivered so the client's
+        // receiveMessages() promise can resolve.
+        const headSeq = conv.nextSeq > 1 ? conv.nextSeq - 1 : 0;
+        webSocket.send(JSON.stringify({
+          type: 'ready',
+          head_seq: headSeq,
+        }));
       });
     });
   }

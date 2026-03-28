@@ -46,10 +46,8 @@ export interface ConversationState {
   conv_nonce_key: string;
   /** Current epoch */
   conv_epoch: number;
-  /** Dropbox polling sequence cursor */
+  /** Relay subscription sequence cursor */
   poll_cursor: number;
-  /** Whether this conversation is actively polling */
-  polling: boolean;
   /** ISO timestamp of promotion */
   promoted_at: string;
   /** Whether gate.promote has been received from conversation */

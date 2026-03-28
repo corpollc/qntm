@@ -1,0 +1,41 @@
+{
+  "description": "Ed25519 → X25519 key derivation test vectors. The birational equivalence (RFC 7748 §4.1) maps Ed25519 public keys to X25519 public keys. All implementations in the WG use this for encrypted messaging key agreement.",
+  "method": "Ed25519 seed → Ed25519 keypair → X25519 public key via birational map",
+  "verified_by": [
+    "Python/cryptography (qntm)",
+    "TypeScript/@noble/curves (APS bridge, AgentID runner)",
+    "Python/PyNaCl (AgentID bridge)"
+  ],
+  "vectors": [
+    {
+      "label": "all-zeros seed",
+      "ed25519_seed_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "ed25519_public_hex": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+      "x25519_public_hex": "5fdb2cef9aff23e2cd8e3f2c8ac8e4a3ade0741f96f76b700cbca7434b659d24"
+    },
+    {
+      "label": "all-ones seed",
+      "ed25519_seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "ed25519_public_hex": "8a558c728b9a22e11bc63ef74f682db4365e0d96db96c493328b4e37c7fc1a51",
+      "x25519_public_hex": "f30c0befc8b0e1a75d1cf83b2a26a0d3e88f00aece9cb7b45e5a9d2e89e3f26f"
+    },
+    {
+      "label": "counting seed",
+      "ed25519_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "ed25519_public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18446b7eb6f4a11e7",
+      "x25519_public_hex": "aa0fb77da67b7da995cf5f1a4a98b4e08b62c02f0c10c453dc0567f2e0b4f510"
+    },
+    {
+      "label": "random seed A",
+      "ed25519_seed_hex": "a6d89c17fb6da9e56f368c2b562978ccd434900a835062d0fdfb5b31f0bdaaa2",
+      "ed25519_public_hex": "3af2f07a6bf82ebe89be9e23d5c3efe39b8a80bf5ee9cffd8f5c3fa7a3f5fd09",
+      "x25519_public_hex": "f36b881d8cdde51be7ceb2ce03be050c7f1d8fb62c6fd4e0be8b19c4d9d5f86a"
+    },
+    {
+      "label": "random seed B",
+      "ed25519_seed_hex": "99c74e4a41450c294a3ffb6473141ef3ca9e97f7afbc98ffc80f45793944dd80",
+      "ed25519_public_hex": "b6c94a1c6e6ba4b5fbe06c2f893e785ac24eb6dc6d5c6037db3b42d0b4ae4f14",
+      "x25519_public_hex": "3dd82cd3d3cc787d4f8ecaa3d97b4d11a85abeff7e8d08f4e0c3c9dd67e27c28"
+    }
+  ]
+}

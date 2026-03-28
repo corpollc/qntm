@@ -12,6 +12,7 @@ import time
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from . import __version__
 from .constants import PROTOCOL_VERSION, SPEC_VERSION
@@ -256,8 +257,58 @@ def _save_identity(config_dir, identity):
     })
 
 
+def _migrate_v03_conversations(conversations):
+    """Auto-detect and convert v0.3 format (byte-array IDs, base64 keys) to v0.4.2 format (hex strings)."""
+    import base64 as _b64
+
+    migrated = False
+    for c in conversations:
+        # Convert byte-array IDs to hex strings
+        if isinstance(c.get("id"), list):
+            c["id"] = bytes(c["id"]).hex()
+            migrated = True
+
+        # Convert base64 keys to hex strings
+        if "keys" in c and isinstance(c["keys"], dict):
+            for key_name in ("root", "aead_key", "nonce_key"):
+                val = c["keys"].get(key_name, "")
+                if isinstance(val, str) and val and not all(
+                    ch in "0123456789abcdef" for ch in val.lower()
+                ):
+                    try:
+                        c["keys"][key_name] = _b64.b64decode(val).hex()
+                        migrated = True
+                    except Exception:
+                        pass
+
+        # Convert base64url participant IDs to hex strings
+        if "participants" in c and isinstance(c["participants"], list):
+            new_parts = []
+            for p in c["participants"]:
+                if isinstance(p, str) and (
+                    "-" in p or "_" in p or "=" in p
+                ):
+                    try:
+                        decoded = _b64.urlsafe_b64decode(p + "==")
+                        new_parts.append(decoded.hex())
+                        migrated = True
+                    except Exception:
+                        new_parts.append(p)
+                elif isinstance(p, list):
+                    new_parts.append(bytes(p).hex())
+                    migrated = True
+                else:
+                    new_parts.append(p)
+            c["participants"] = new_parts
+
+    return migrated
+
+
 def _load_conversations(config_dir):
-    return _load_json(_conversations_path(config_dir), [])
+    conversations = _load_json(_conversations_path(config_dir), [])
+    if conversations and _migrate_v03_conversations(conversations):
+        _save_json(_conversations_path(config_dir), conversations)
+    return conversations
 
 
 def _save_conversations(config_dir, conversations):
@@ -621,10 +672,15 @@ except ImportError:
 def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
     """Send envelope to remote dropbox via POST /v1/send."""
     envelope_b64 = base64.b64encode(envelope_bytes).decode()
-    payload = json.dumps({
+    payload_obj = {
         "conv_id": conv_id_hex,
         "envelope_b64": envelope_b64,
-    }).encode()
+    }
+    try:
+        payload_obj["msg_id"] = bytes(deserialize_envelope(envelope_bytes)["msg_id"]).hex()
+    except Exception:
+        pass
+    payload = json.dumps(payload_obj).encode()
 
     req = urllib.request.Request(
         f"{dropbox_url}/v1/send",
@@ -639,27 +695,50 @@ def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
         return json.loads(resp.read())
 
 
+def _subscribe_url(dropbox_url, conv_id_hex, from_seq):
+    parsed = urlsplit(dropbox_url)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    query = urlencode({"conv_id": conv_id_hex, "from_seq": from_seq})
+    return urlunsplit((scheme, parsed.netloc, "/v1/subscribe", query, ""))
+
+
+def _recv_once(dropbox_url, conv_id_hex, from_seq):
+    """Receive messages once via websocket replay on /v1/subscribe."""
+    from websockets.sync.client import connect
+
+    raw_messages = []
+    up_to_seq = from_seq
+    head_seq = None
+    ws_url = _subscribe_url(dropbox_url, conv_id_hex, from_seq)
+    connect_kwargs = {
+        "open_timeout": 30,
+        "close_timeout": 5,
+        "additional_headers": {"User-Agent": f"qntm-python/{__version__}"},
+        "max_size": None,
+    }
+    if ws_url.startswith("wss://"):
+        connect_kwargs["ssl"] = _ssl_context
+
+    with connect(
+        ws_url,
+        **connect_kwargs,
+    ) as websocket:
+        while True:
+            frame = json.loads(websocket.recv(timeout=30))
+            if frame.get("type") == "message":
+                raw_messages.append(frame)
+                up_to_seq = max(up_to_seq, int(frame.get("seq", from_seq)))
+            elif frame.get("type") == "ready":
+                head_seq = max(from_seq, int(frame.get("head_seq", from_seq)))
+                break
+
+    return raw_messages, (head_seq if head_seq is not None else up_to_seq)
+
+
 def _http_poll(dropbox_url, conv_id_hex, from_seq, limit=200):
-    """Poll remote dropbox via POST /v1/poll."""
-    payload = json.dumps({
-        "conversations": [{"conv_id": conv_id_hex, "from_seq": from_seq}],
-        "max_messages": limit,
-    }).encode()
-
-    req = urllib.request.Request(
-        f"{dropbox_url}/v1/poll",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": f"qntm-python/{__version__}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
-        result = json.loads(resp.read())
-
-    conv_result = result.get("conversations", [{}])[0]
-    return conv_result.get("messages", []), conv_result.get("up_to_seq", from_seq)
+    """Compatibility wrapper for one-shot receive semantics."""
+    del limit
+    return _recv_once(dropbox_url, conv_id_hex, from_seq)
 
 
 # --- Output ---
@@ -707,6 +786,7 @@ def cmd_identity_generate(args):
         "public_key": base64url_encode(identity["publicKey"]),
         "identity": _identity_path(config_dir),
         "spec_version": "QSP-v1.1",
+        "next_step": "Try the echo bot: qntm convo join <token> — see https://github.com/corpo-dev/qntm#try-it-now--echo-bot-",
     })
 
 

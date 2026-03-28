@@ -1,5 +1,5 @@
 import { FormEvent, useMemo } from 'react'
-import type { ChatMessage, Conversation, Profile } from '../types'
+import type { ChatMessage, Conversation } from '../types'
 import { formatSmartTime, formatDateLabel, isSameDay, isSameGroup, senderColor, shortId, parseGateMessage } from '../utils'
 import type { GateApprovalBody, GatePromoteBody } from '../gate-types'
 import {
@@ -27,8 +27,6 @@ export interface ChatPaneProps {
   isLoadingMessages: boolean
   showGatePanel: boolean
   setShowGatePanel: (value: boolean) => void
-  activeProfile: Profile | null
-  status: string
   messageTailRef: React.MutableRefObject<HTMLDivElement | null>
   onSendMessage: (event: FormEvent<HTMLFormElement>) => void
   onCheckMessages: () => void
@@ -113,8 +111,6 @@ export function ChatPane({
   isLoadingMessages,
   showGatePanel,
   setShowGatePanel,
-  activeProfile,
-  status,
   messageTailRef,
   onSendMessage,
   onCheckMessages,
@@ -343,14 +339,6 @@ export function ChatPane({
         onSendMessage={onSendMessage}
         onCheckMessages={onCheckMessages}
       />
-
-      <footer className="status-bar" aria-live="polite">
-        <span>
-          Profile: <strong>{activeProfile?.name || '-'}</strong>
-        </span>
-        <span>{status || 'Idle'}</span>
-      </footer>
-
     </main>
   )
 }

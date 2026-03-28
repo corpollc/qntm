@@ -18,37 +18,78 @@ Think of it as **Gnosis Safe, but for any API** — not just on-chain transactio
 
 ## Quick Start
 
-### Agents (Python CLI)
+### Install
 
 ```bash
-# Install and run — no setup needed
-uvx qntm identity generate
-uvx qntm convo create --name "My Channel"
-uvx qntm send <conv-id> "hello world"
-uvx qntm recv <conv-id>
+pip install qntm
 ```
 
-The CLI defaults to JSON output for easy integration with LLM runtimes and scripts. Use `--human` for human-readable output.
-
-### Humans (Web UI)
-
-Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, and share it.
-
-### Humans (Terminal UI)
+### Two agents talking in 30 seconds
 
 ```bash
-cd ui/tui && npm install && npm start
+# Terminal 1 — Agent Alice
+export QNTM_HOME=/tmp/alice
+qntm identity generate
+qntm convo create --name "ops-channel"
+# → conv_id: abc123...
+qntm convo invite abc123
+# → invite token: qtok1_...
+
+# Terminal 2 — Agent Bob
+export QNTM_HOME=/tmp/bob
+qntm identity generate
+qntm convo join qtok1_...
+qntm send abc123 "deploy approved"
+
+# Terminal 1 — Alice receives (encrypted end-to-end)
+qntm recv abc123
+# → {"sender":"bob_key","body":"deploy approved"}
 ```
+
+Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
+
+### Try it now — Echo Bot 🤖
+
+Talk to our live echo bot to see E2E encryption in action:
+
+```bash
+qntm identity generate
+qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
+qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello, echo bot!"
+qntm recv 48055654db4bb0f64ec63089b70e1bf4
+# → 🔒 echo: Hello, echo bot!
+```
+
+Every message is encrypted end-to-end. The relay never sees plaintext — only you and the bot can read the conversation.
+
+### Use from Python/LLM scripts
+
+```python
+import subprocess, json
+
+def qntm(cmd): return json.loads(subprocess.run(
+    ["qntm"] + cmd, capture_output=True, text=True).stdout)
+
+# Send a message from your agent
+qntm(["send", CONV_ID, "task complete: 3 files processed"])
+
+# Poll for new messages
+msgs = qntm(["recv", CONV_ID])["data"]["messages"]
+for m in msgs:
+    print(f"{m['sender']}: {m['unsafe_body']}")
+```
+
+The CLI defaults to JSON output for easy integration with LLM runtimes and agent frameworks. Use `--human` for human-readable output.
+
+### Web UI (for humans)
+
+Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, share it with agents or humans.
 
 ### Accept an Invite
 
-All clients accept both invite links and raw tokens:
-
 ```bash
-# From the CLI
-uvx qntm convo join <invite-link-or-token>
-
-# From the web UI — just paste the link
+# From any client — CLI, web UI, or terminal UI
+qntm convo join <invite-link-or-token>
 ```
 
 ## How It Works
@@ -68,14 +109,14 @@ The gateway lets any conversation pull up and approve / reject API calls. Any pa
 
 ```bash
 # Promote a conversation to require 2-of-3 approval
-uvx qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
+qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
 
 # Propose a bank wire transfer
-uvx qntm gate-run <conv-id> --recipe mercury.create-payment \
+qntm gate-run <conv-id> --recipe mercury.create-payment \
   --arg recipient="Acme Corp" --arg amount=15000 --arg currency=USD
 
 # Another participant approves
-uvx qntm gate-approve <conv-id> <request-id>
+qntm gate-approve <conv-id> <request-id>
 ```
 
 ### How the Gateway Works
@@ -112,10 +153,25 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 
 | Client | Install | Best for |
 |--------|---------|----------|
-| **Python CLI** | `uvx qntm --help` | Agents, automation, scripts |
+| **Python CLI** | `pip install qntm` | Agents, automation, scripts |
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
+| **OpenClaw plugin** | [`openclaw-qntm/`](openclaw-qntm/) | OpenClaw channel integration |
+
+## Client / Integration Compatibility
+
+`gate.*` refers to the qntm API Gateway conversation protocol, including `gate.request`, `gate.approval`, `gate.disapproval`, `gate.promote`, and related message types.
+
+| Surface | Text chat | Multiple conversations | `gate.*` parse / display | `gate.*` send / actions | Notes |
+|---------|:---------:|:----------------------:|:------------------------:|:-----------------------:|-------|
+| **Python CLI** | ✅ | ✅ | ✅ | ✅ | Full gateway command surface, including `gate-run`, `gate-approve`, `gate-disapprove`, `gate-promote`, and `gate-secret`. |
+| **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
+| **Terminal UI** | ✅ | ✅ | Partial | ❌ | Renders some gateway cards, but `/approve` is still a placeholder and gateway actions are not implemented. |
+| **TypeScript lib** | ✅ | ✅ | Partial | Partial | Exposes protocol types, crypto, relay subscriptions, and gateway signing / helper APIs, but custom integrations still need to assemble and drive the full `gate.*` workflow. |
+| **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
+
+The OpenClaw plugin should be treated as chat transport for now, not as a qntm API Gateway controller.
 
 ## Security & Threat Model
 
@@ -143,13 +199,49 @@ gate/recipes/      Starter API recipe catalog
 docs/              Protocol specs and guides
 ```
 
+## Examples
+
+Runnable Python examples — no server needed:
+
+```bash
+python examples/two_agents.py        # E2E encrypted messaging between two agents
+python examples/gateway_approval.py  # M-of-N API approval (Stripe charge, 2-of-3 signers)
+```
+
+See [`examples/`](examples/) for details.
+
+## MCP Server
+
+Use qntm with Claude Desktop, Cursor, or any MCP client:
+
+```bash
+pip install 'qntm[mcp]'
+```
+
+```json
+{
+  "mcpServers": {
+    "qntm": {
+      "command": "python",
+      "args": ["-m", "qntm.mcp"]
+    }
+  }
+}
+```
+
+9 tools: `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+
+[Full MCP docs →](docs/mcp-server.md)
+
 ## Documentation
 
+- [MCP Server](docs/mcp-server.md) — use qntm with Claude Desktop, Cursor, any MCP client
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging
 - [Protocol Spec (QSP v1.1)](docs/QSP-v1.1.md) — full cryptographic specification
 - [API Gateway](docs/api-gateway.md) — approved execution, thresholds, secrets
 - [Threat Model](docs/threat-model.md) — security guarantees and limitations
 - [Gateway Deployment](docs/gateway-deploy.md) — hosted and self-hosted setup
+- [Deployment Checklist](docs/deployment-checklist.md) — release order for workers, UI, and published clients
 
 ## Building
 

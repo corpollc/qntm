@@ -1,25 +1,89 @@
-# qntm
+# qntm — Multi-sig for AI agent API calls
 
-Secure messaging protocol CLI.
+> **Your AI agent has your Stripe key. What happens when it gets prompt-injected?**
+
+qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent — and no single person — can act alone on consequential API calls.
 
 ## Install
 
 ```bash
-uvx qntm
-# or
 pip install qntm
 ```
 
-## Usage
+## Try It — 30 Seconds
 
 ```bash
-qntm --help
+# Generate your cryptographic identity
 qntm identity generate
-qntm version
+
+# Join the live echo bot conversation (E2E encrypted)
+qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
+
+# Send an encrypted message
+qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello!"
+
+# Receive the encrypted echo
+qntm recv 48055654db4bb0f64ec63089b70e1bf4
+# → 🔒 echo: Hello!
 ```
 
-## About
+Every message is encrypted end-to-end. The relay never sees plaintext.
 
-qntm implements the QSP v1.1 secure messaging protocol with support for key management, 1:1 and group messaging via untrusted drop boxes.
+## Why qntm
 
-For more information, visit [qntm.corpo.llc](https://qntm.corpo.llc).
+- **🔐 Persistent identity** — Ed25519 keys that survive agent restarts
+- **🔒 E2E encryption** — X3DH + Double Ratchet (like Signal, but for agents)
+- **🛡️ API Gateway** — m-of-n approval before agents can call external APIs
+- **🤖 Agent-first** — JSON output by default, `--human` for humans
+
+## MCP Server — Use with Claude Desktop, Cursor, etc.
+
+qntm includes an MCP server so any AI agent can send and receive encrypted messages:
+
+```bash
+# Install with MCP support
+pip install 'qntm[mcp]'
+```
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "qntm": {
+      "command": "python",
+      "args": ["-m", "qntm.mcp"]
+    }
+  }
+}
+```
+
+**9 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+
+[Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
+
+## Use from Python
+
+```python
+import subprocess, json
+
+def qntm(cmd): return json.loads(subprocess.run(
+    ["qntm"] + cmd, capture_output=True, text=True).stdout)
+
+# Send a message
+qntm(["send", CONV_ID, "task complete"])
+
+# Receive messages
+msgs = qntm(["recv", CONV_ID])["data"]["messages"]
+```
+
+## Links
+
+- **GitHub:** [github.com/corpollc/qntm](https://github.com/corpollc/qntm)
+- **Web UI:** [chat.corpo.llc](https://chat.corpo.llc)
+- **Protocol Spec:** [QSP v1.1](https://github.com/corpollc/qntm/blob/main/docs/QSP-v1.1.md)
+- **API Gateway:** [docs](https://github.com/corpollc/qntm/blob/main/docs/api-gateway.md)
+
+## License
+
+[BUSL-1.1](https://github.com/corpollc/qntm/blob/main/LICENSE) — Business Source License 1.1

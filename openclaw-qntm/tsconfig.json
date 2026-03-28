@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["DOM", "ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2023",
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@corpollc/qntm": ["../client/src/index.ts"],
+      "openclaw/plugin-sdk": ["./sdk-shims/index.ts"]
+    }
+  },
+  "include": ["index.ts", "sdk-shims/**/*.ts", "src/**/*.ts", "tests/**/*.ts"]
+}

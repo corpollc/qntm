@@ -1,12 +1,13 @@
 /**
  * DropboxClient — HTTP transport for the qntm dropbox relay.
  *
- * Mirrors the Go HTTPStorageProvider's sequenced send/poll API:
+ * Uses sequenced send plus websocket-based replay/subscribe:
  *   POST /v1/send  — append an envelope to a conversation
- *   POST /v1/poll  — fetch envelopes from a sequence cursor
+ *   GET /v1/subscribe  — replay from a sequence cursor, then stream live messages
  */
 
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { deserializeEnvelope } from '../message/index.js';
 import type { Identity } from '../types.js';
 
 const DEFAULT_BASE_URL = 'https://inbox.qntm.corpo.llc';
@@ -17,6 +18,7 @@ const _suite = new QSP1Suite();
 interface SendEnvelopeRequest {
   conv_id: string;
   envelope_b64: string;
+  msg_id?: string;
   announce_sig?: string;
 }
 
@@ -59,7 +61,12 @@ interface SubscribeFramePong {
   type: 'pong';
 }
 
-type SubscribeFrame = SubscribeFrameMessage | SubscribeFramePong;
+interface SubscribeFrameReady {
+  type: 'ready';
+  head_seq: number;
+}
+
+type SubscribeFrame = SubscribeFrameMessage | SubscribeFrameReady | SubscribeFramePong;
 
 // ---------- receipt types ----------
 
@@ -236,6 +243,11 @@ export class DropboxClient {
       conv_id: toHex(conversationId),
       envelope_b64: uint8ToBase64(envelope),
     };
+    try {
+      body.msg_id = toHex(deserializeEnvelope(envelope).msg_id);
+    } catch {
+      // Older callers may post opaque bytes without a decodable qntm envelope.
+    }
     if (announceSig) {
       body.announce_sig = announceSig;
     }
@@ -264,54 +276,83 @@ export class DropboxClient {
   async receiveMessages(
     conversationId: Uint8Array,
     fromSequence: number = 0,
-    maxMessages?: number,
+    _maxMessages?: number,
   ): Promise<ReceiveResult> {
-    const reqBody: PollRequest = {
-      conversations: [
-        {
-          conv_id: toHex(conversationId),
-          from_seq: fromSequence,
-        },
-      ],
-    };
-    if (maxMessages !== undefined && maxMessages > 0) {
-      reqBody.max_messages = maxMessages;
+    if (typeof WebSocket === 'undefined') {
+      throw new Error('WebSocket is not available in this runtime');
     }
 
-    const resp = await fetch(`${this.baseUrl}/v1/poll`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(reqBody),
+    const conversationIdHex = toHex(conversationId);
+    return new Promise<ReceiveResult>((resolve, reject) => {
+      const messages: Uint8Array[] = [];
+      let settled = false;
+      let currentSequence = fromSequence;
+      let headSequence: number | null = null;
+      const socket = new WebSocket(toWebSocketUrl(this.baseUrl, conversationIdHex, fromSequence));
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          messages,
+          sequence: headSequence === null ? currentSequence : Math.max(currentSequence, headSequence),
+        });
+        try {
+          socket.close(1000, 'receive complete');
+        } catch {
+          // Ignore best-effort close failures.
+        }
+      };
+
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error)));
+        try {
+          socket.close(1011, 'receive failed');
+        } catch {
+          // Ignore best-effort close failures.
+        }
+      };
+
+      socket.addEventListener('message', (event) => {
+        void (async () => {
+          try {
+            const payload = await webSocketDataToText(event.data);
+            const frame = JSON.parse(payload) as SubscribeFrame;
+            if (frame.type === 'message') {
+              messages.push(base64ToUint8(frame.envelope_b64));
+              currentSequence = Math.max(currentSequence, frame.seq);
+              return;
+            }
+            if (frame.type === 'ready') {
+              headSequence = Math.max(fromSequence, frame.head_seq);
+              finish();
+            }
+          } catch (error) {
+            fail(error);
+          }
+        })();
+      });
+
+      socket.addEventListener('error', () => {
+        fail(new Error(`dropbox receive failed for conversation ${conversationIdHex}`));
+      });
+
+      socket.addEventListener('close', (event) => {
+        if (settled) {
+          return;
+        }
+        if (headSequence !== null) {
+          finish();
+          return;
+        }
+        fail(new Error(
+          `dropbox receive closed before reaching relay head for conversation ${conversationIdHex}: ` +
+          `${event.code}${event.reason ? ` ${event.reason}` : ''}`,
+        ));
+      });
     });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(
-        `dropbox poll failed: HTTP ${resp.status}${text ? ': ' + text : ''}`,
-      );
-    }
-
-    const result = (await resp.json()) as PollResponse;
-
-    if (!result.conversations || result.conversations.length === 0) {
-      return { messages: [], sequence: fromSequence };
-    }
-
-    const conv = result.conversations[0];
-    const messages: Uint8Array[] = [];
-    for (const msg of conv.messages) {
-      try {
-        messages.push(base64ToUint8(msg.envelope_b64));
-      } catch {
-        // Skip messages with invalid base64 encoding
-        continue;
-      }
-    }
-
-    return {
-      messages,
-      sequence: conv.up_to_seq,
-    };
   }
 
   subscribeMessages(

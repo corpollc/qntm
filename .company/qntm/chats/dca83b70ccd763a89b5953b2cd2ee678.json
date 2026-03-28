@@ -1,0 +1,88 @@
+[
+  {
+    "msg_id": "15b1775db7a37e06de1b978321c0fc47",
+    "direction": "outgoing",
+    "body_type": "text",
+    "body": "relay test initialized \u2014 this conversation is live for APS integration testing",
+    "created_ts": 1774241215
+  },
+  {
+    "msg_id": "74d4373f96bd65155ead5a9f3ee8d1ac",
+    "direction": "outgoing",
+    "body_type": "text",
+    "body": "hello from the relay test conversation \u2014 echo bot should respond within 60 seconds",
+    "created_ts": 1774241419
+  },
+  {
+    "msg_id": "15b1775db7a37e06de1b978321c0fc47",
+    "direction": "incoming",
+    "sender_kid": "f0a6e0c2a1cbbebc0306b5f744d2be70",
+    "body_type": "text",
+    "created_ts": 1774241215,
+    "unsafe_body": "relay test initialized \u2014 this conversation is live for APS integration testing"
+  },
+  {
+    "msg_id": "74d4373f96bd65155ead5a9f3ee8d1ac",
+    "direction": "incoming",
+    "sender_kid": "f0a6e0c2a1cbbebc0306b5f744d2be70",
+    "body_type": "text",
+    "created_ts": 1774241419,
+    "unsafe_body": "hello from the relay test conversation \u2014 echo bot should respond within 60 seconds"
+  },
+  {
+    "msg_id": "eb135550a26c0d9573df4af532dcdd82",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774241420,
+    "unsafe_body": "\ud83d\udd12 echo: relay test initialized \u2014 this conversation is live for APS integration testing"
+  },
+  {
+    "msg_id": "b0c6c85c4680aa3a47dc6f656ab62f21",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774241420,
+    "unsafe_body": "\ud83d\udd12 echo: hello from the relay test conversation \u2014 echo bot should respond within 60 seconds"
+  },
+  {
+    "msg_id": "ae0220a8d8c63c3de954a84c08b1b2db",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774241474,
+    "unsafe_body": "\ud83d\udd12 echo: hello from the relay test conversation \u2014 echo bot should respond within 60 seconds"
+  },
+  {
+    "msg_id": "17a11491c844c812dc55ae65bd192031",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245317,
+    "unsafe_body": "\ud83d\udd12 echo: {\"protocol\":\"agent-passport-system\",\"version\":\"1.19.4\",\"type\":\"SignedExecutionEnvelope\",\"intent\":{\"action\":\"relay_interop_test\",\"target\":\"qntm_echo_bot\",\"scopeRequired\":\"research\",\"context\":\"First APS envelope through qntm encrypted relay\"},\"decision\":{\"verdict\":\"permit\",\"principlesEvaluated\":8,\"floorVersion\":\"0.1\"},\"receipt\":{\"status\":\"success\",\"summary\":\"APS\u2194qntm E2E interop proven\"},\"timestamp\":\"2026-03-23T05:18:12.201Z\",\"agentPublicKey\":\"10cd815cc536bd4640142e59ee1c092da670af6f6e2d42ea796d5aaaf9db2153\"}"
+  },
+  {
+    "msg_id": "88d74de8f9d4a9a17d003f28aaf85d91",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245317,
+    "unsafe_body": "\ud83d\udd12 echo: {\"protocol\":\"agent-passport-system\",\"version\":\"1.19.4\",\"type\":\"SignedExecutionEnvelope\",\"intent\":{\"action\":\"e2e_roundtrip_test\",\"target\":\"qntm_echo_bot\",\"scope\":\"research\"},\"decision\":{\"verdict\":\"permit\",\"principlesEvaluated\":8,\"floorVersion\":\"0.1\"},\"receipt\":{\"status\":\"success\",\"summary\":\"APS\u2194qntm E2E roundtrip proof\"},\"nonce\":\"66vkhlzuohp\",\"timestamp\":\"2026-03-23T05:23:28.425Z\"}"
+  },
+  {
+    "msg_id": "89b37eee20a065a62e2b5e0b3b5e6783",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245318,
+    "unsafe_body": "\ud83d\udd12 echo: {\"type\":\"agentid-relay-test\",\"agent_id\":\"agentid_relay_probe\",\"identity_system\":\"AgentID\",\"message\":\"AgentID relay test - cryptographic identity verification working. Three identity systems, one encrypted channel.\",\"timestamp\":\"2026-03-23T05:34:17.778778+00:00\",\"ed25519_public_key\":\"92404e6de7e719efd7a25ca4dd6813f7c0ce0026f2cd1e77a87fde6a3f7e69dc\"}"
+  },
+  {
+    "msg_id": "dea727a22beccb268c5800543d492b49",
+    "direction": "incoming",
+    "sender_kid": "77a377688fee4fc041809274457499e0",
+    "body_type": "text/plain",
+    "created_ts": 1774245318,
+    "unsafe_body": "\ud83d\udd12 echo: {\"type\":\"agentid-relay-test\",\"agent_id\":\"agentid_relay_probe\",\"identity_system\":\"AgentID\",\"message\":\"AgentID relay test - cryptographic identity verification working. Three identity systems, one encrypted channel.\",\"timestamp\":\"2026-03-23T05:38:30.819516+00:00\",\"ed25519_public_key\":\"3addd04ab3db90ec5a4678309c3af0181b0da4f9ace1b64d17cda7bba2f39989\"}"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "description": "Entity verification API response format. Used to verify legal entity binding for agent identities.",
+  "endpoint": "GET https://api.corpo.llc/api/v1/entities/{entity_id}/verify",
+  "vectors": [
+    {
+      "label": "test entity (staging)",
+      "entity_id": "test-entity",
+      "expected_response": {
+        "entity_id": "test-entity",
+        "name": "Test Verification DAO LLC",
+        "status": "active",
+        "entity_type": "wyoming_dao_llc",
+        "authority_ceiling": ["hold_assets"],
+        "verified_at": "2026-03-23T08:26:05Z"
+      },
+      "verification_chain": {
+        "step_1": "DID → resolve Ed25519 public key",
+        "step_2": "Trunc16(SHA-256(public_key)) → match envelope sender",
+        "step_3": "GET /api/v1/entities/{entity_id}/verify → status == 'active'",
+        "result": "Agent has provable cryptographic + legal identity"
+      }
+    }
+  ]
+}

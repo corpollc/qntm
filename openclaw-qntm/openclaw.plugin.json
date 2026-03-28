@@ -1,0 +1,9 @@
+{
+  "id": "qntm",
+  "channels": ["qntm"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

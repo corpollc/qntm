@@ -12,6 +12,7 @@ from qntm import (
     deserialize_envelope,
     default_ttl,
 )
+from qntm.message import extract_did
 
 
 def _make_conversation():
@@ -109,3 +110,50 @@ def test_two_party_messaging():
     env2 = create_message(bob, conv, "text", b"Hi Alice!", None, default_ttl())
     msg2 = decrypt_message(env2, conv)
     assert bytes(msg2["inner"]["body"]) == b"Hi Alice!"
+
+
+def test_did_field_optional():
+    """DID field is optional — absent by default, present when provided."""
+    identity, conv = _make_conversation()
+
+    # Without DID
+    env_no_did = create_message(identity, conv, "text", b"No DID", None, default_ttl())
+    assert "did" not in env_no_did
+    assert extract_did(env_no_did) is None
+
+    # With DID
+    test_did = "did:aps:z3Bmy2y8WtbRXNBYayR64kYqXN1XRi6Hqch6FwKFxmSWH"
+    env_with_did = create_message(
+        identity, conv, "text", b"With DID", None, default_ttl(), did=test_did
+    )
+    assert env_with_did["did"] == test_did
+    assert extract_did(env_with_did) == test_did
+
+    # DID field survives serialize/deserialize round-trip
+    data = serialize_envelope(env_with_did)
+    restored = deserialize_envelope(data)
+    assert extract_did(restored) == test_did
+
+    # Message still decrypts correctly with DID field present
+    msg = decrypt_message(env_with_did, conv)
+    assert msg["verified"]
+    assert bytes(msg["inner"]["body"]) == b"With DID"
+
+
+def test_did_field_multiple_methods():
+    """Different DID methods all work as optional metadata."""
+    identity, conv = _make_conversation()
+
+    dids = [
+        "did:aps:z3Bmy2y8WtbRXNBYayR64kYqXN1XRi6Hqch6FwKFxmSWH",
+        "did:agentid:agent_tv-agent-001",
+        "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    ]
+
+    for did_uri in dids:
+        env = create_message(
+            identity, conv, "text", b"DID test", None, default_ttl(), did=did_uri
+        )
+        assert extract_did(env) == did_uri
+        msg = decrypt_message(env, conv)
+        assert msg["verified"]

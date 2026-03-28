@@ -7,7 +7,7 @@ from pathlib import Path
 def test_python_package_exports_spec_version():
     from qntm import PROTOCOL_VERSION, SPEC_VERSION, __version__
 
-    assert __version__ == "0.4.2"
+    assert __version__ == "0.4.20"
     assert SPEC_VERSION == "QSP-v1.1"
     assert PROTOCOL_VERSION == 1
 
@@ -37,7 +37,7 @@ def test_cli_version_reports_spec_metadata(monkeypatch):
     assert captured == {
         "kind": "version",
         "data": {
-            "version": "0.4.2",
+            "version": "0.4.20",
             "spec_version": SPEC_VERSION,
             "protocol_version": PROTOCOL_VERSION,
             "runtime": "python",
