@@ -1,0 +1,236 @@
+{
+  "description": "AAE Delegation Narrowing — Test vectors for verifying that delegated Agent Authorization Envelopes correctly narrow (never widen) parent permissions. Covers scope, constraints, validity, self-issuance, and expiry.",
+  "protocol": "MolTrust AAE v1.0",
+  "canonicalization": "JCS RFC 8785",
+  "signature_scheme": "Ed25519",
+  "contributor": "MolTrust / CryptoKRI GmbH (did:web:api.moltrust.ch)",
+  "spec_reference": "https://moltrust.ch/MolTrust_Protocol_Whitepaper_v0.4.pdf",
+  "rsac_gaps_addressed": ["delegation_verification", "ghost_agents", "self_modification"],
+
+  "facet_mapping": {
+    "mandate.scope": "scope — permitted actions (read, write, delegate)",
+    "constraints.spend_limit_usdc": "spend — maximum monetary commitment per transaction",
+    "validity.not_after": "time — temporal boundary of authorization",
+    "constraints.reputation_minimum": "reputation — minimum trust score required",
+    "constraints.reversibility": "reversibility — whether actions must be undoable"
+  },
+
+  "vectors": [
+    {
+      "vector_id": "moltrust-tv-001",
+      "description": "Valid delegation with narrowed scope — child receives strict subset of parent permissions",
+      "expected_result": "VALID",
+      "rationale": "Child scope is strict subset of parent scope. Spend reduced to 0. Validity window narrowed from 30 days to 7 days. All constraints preserved or tightened.",
+
+      "parent_aae": {
+        "subject": "did:moltrust:agent-a",
+        "issuer": "did:moltrust:issuer-root",
+        "mandate": {
+          "scope": ["read", "write", "delegate"],
+          "domains": ["github", "email", "web"]
+        },
+        "constraints": {
+          "spend_limit_usdc": 1000,
+          "reversibility": "required",
+          "reputation_minimum": 70
+        },
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-30T23:59:59Z"
+        }
+      },
+      "parent_jcs_digest": "sha256:1ee6a3d43a4d86e432361bd60cb3c6f17c4b2ca12378f2bc768088dfe925e900",
+
+      "child_aae": {
+        "subject": "did:moltrust:agent-b",
+        "issuer": "did:moltrust:agent-a",
+        "parent_digest": "sha256:1ee6a3d43a4d86e432361bd60cb3c6f17c4b2ca12378f2bc768088dfe925e900",
+        "mandate": {
+          "scope": ["read"],
+          "domains": ["github"]
+        },
+        "constraints": {
+          "spend_limit_usdc": 0,
+          "reversibility": "required",
+          "reputation_minimum": 70
+        },
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-07T23:59:59Z"
+        }
+      },
+      "child_jcs_digest": "sha256:2fd8d72ca1410169591e8631870d38732ec25169230f502b648cf206db72630b",
+
+      "narrowing_checks": {
+        "scope_subset": true,
+        "domains_subset": true,
+        "spend_limit_lte": true,
+        "validity_window_lte": true,
+        "reversibility_preserved": true,
+        "reputation_minimum_gte": true
+      }
+    },
+
+    {
+      "vector_id": "moltrust-tv-002",
+      "description": "Invalid delegation — scope escalation. Agent B attempts to delegate write access it was never granted.",
+      "expected_result": "INVALID",
+      "failure_reason": "SCOPE_ESCALATION",
+      "rationale": "Child requests 'write' scope not present in parent mandate. Delegation chain verification must reject. An agent cannot grant permissions it does not possess.",
+
+      "parent_aae": {
+        "subject": "did:moltrust:agent-b",
+        "issuer": "did:moltrust:agent-a",
+        "mandate": {
+          "scope": ["read"],
+          "domains": ["github"]
+        },
+        "constraints": {
+          "spend_limit_usdc": 0,
+          "reversibility": "required"
+        },
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-07T23:59:59Z"
+        }
+      },
+      "parent_jcs_digest": "sha256:4c9fc2f090bd4902f2eaacf274ce96682adff99713e4b2bf70d0d2e306ccb5d8",
+
+      "child_aae": {
+        "subject": "did:moltrust:agent-c",
+        "issuer": "did:moltrust:agent-b",
+        "parent_digest": "sha256:4c9fc2f090bd4902f2eaacf274ce96682adff99713e4b2bf70d0d2e306ccb5d8",
+        "mandate": {
+          "scope": ["read", "write"],
+          "domains": ["github"]
+        },
+        "constraints": {
+          "spend_limit_usdc": 0,
+          "reversibility": "required"
+        },
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-03T23:59:59Z"
+        }
+      },
+
+      "narrowing_checks": {
+        "scope_subset": false,
+        "escalated_permissions": ["write"]
+      }
+    },
+
+    {
+      "vector_id": "moltrust-tv-003",
+      "description": "Invalid delegation — validity escalation. Child AAE extends beyond parent's temporal boundary.",
+      "expected_result": "INVALID",
+      "failure_reason": "VALIDITY_ESCALATION",
+      "rationale": "Child validity window extends beyond parent not_after. An agent cannot grant more time than it has been granted. Verifiers must compare not_after timestamps.",
+
+      "parent_aae": {
+        "subject": "did:moltrust:agent-b",
+        "issuer": "did:moltrust:agent-a",
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-07T23:59:59Z"
+        }
+      },
+
+      "child_aae": {
+        "subject": "did:moltrust:agent-c",
+        "issuer": "did:moltrust:agent-b",
+        "validity": {
+          "not_before": "2026-04-01T00:00:00Z",
+          "not_after": "2026-04-30T23:59:59Z"
+        }
+      },
+
+      "narrowing_checks": {
+        "validity_window_lte": false,
+        "parent_not_after": "2026-04-07T23:59:59Z",
+        "child_not_after": "2026-04-30T23:59:59Z",
+        "overrun_days": 23
+      }
+    },
+
+    {
+      "vector_id": "moltrust-tv-004",
+      "description": "Invalid delegation — self-issuance. Agent attempts to re-issue its own AAE with relaxed constraints.",
+      "expected_result": "INVALID",
+      "failure_reason": "SELF_ISSUANCE",
+      "rationale": "An agent cannot be its own issuer. Any AAE where subject == issuer must be rejected. This closes the RSAC 2026 Gap 1 (policy self-modification). Spend limit escalated from 100 to 10000, reversibility relaxed from required to optional.",
+
+      "original_aae": {
+        "subject": "did:moltrust:agent-a",
+        "issuer": "did:moltrust:issuer-root",
+        "constraints": {
+          "spend_limit_usdc": 100,
+          "reversibility": "required"
+        }
+      },
+      "original_jcs_digest": "sha256:a02ee3aef34fd3182242d8a047415024823ddff218f6aaf250279d49035055c3",
+
+      "modified_aae": {
+        "subject": "did:moltrust:agent-a",
+        "issuer": "did:moltrust:agent-a",
+        "constraints": {
+          "spend_limit_usdc": 10000,
+          "reversibility": "optional"
+        }
+      },
+
+      "narrowing_checks": {
+        "self_issued": true,
+        "spend_limit_escalated": true,
+        "reversibility_relaxed": true
+      }
+    },
+
+    {
+      "vector_id": "moltrust-tv-005",
+      "description": "Invalid — expired AAE. Cryptographically valid but temporally expired credential presented by ghost agent.",
+      "expected_result": "INVALID",
+      "failure_reason": "EXPIRED",
+      "rationale": "AAE is cryptographically valid but evaluation time (2026-04-01) is past not_after (2026-03-01). This closes RSAC 2026 Gap 3 (ghost agents with stale credentials). Verifiers must check temporal validity regardless of signature validity.",
+
+      "aae": {
+        "subject": "did:moltrust:agent-ghost",
+        "issuer": "did:moltrust:issuer-root",
+        "mandate": {
+          "scope": ["read", "write"]
+        },
+        "validity": {
+          "not_before": "2026-01-01T00:00:00Z",
+          "not_after": "2026-03-01T23:59:59Z"
+        }
+      },
+      "aae_jcs_digest": "sha256:9eff22ab882d1cd8f021185a4ca84f9f888a820822a338bb725b612634b237ef",
+
+      "evaluation_time": "2026-04-01T10:00:00Z",
+
+      "narrowing_checks": {
+        "signature_valid": true,
+        "temporally_valid": false,
+        "days_expired": 31
+      }
+    }
+  ],
+
+  "verification_algorithm": {
+    "description": "Pseudocode for delegation narrowing verification",
+    "steps": [
+      "1. Canonicalize parent AAE using JCS RFC 8785",
+      "2. Compute SHA-256 digest of canonical form",
+      "3. Verify child.parent_digest matches computed digest",
+      "4. Verify child.issuer == parent.subject (chain linkage)",
+      "5. Verify child.subject != child.issuer (no self-issuance)",
+      "6. Verify child.mandate.scope is subset of parent.mandate.scope",
+      "7. Verify child.mandate.domains is subset of parent.mandate.domains",
+      "8. Verify child.constraints.spend_limit_usdc <= parent.constraints.spend_limit_usdc",
+      "9. Verify child.validity.not_after <= parent.validity.not_after",
+      "10. Verify child.constraints.reversibility is not relaxed vs parent",
+      "11. Verify child.constraints.reputation_minimum >= parent.constraints.reputation_minimum",
+      "12. Verify Ed25519 signature over canonical child AAE using issuer's public key"
+    ]
+  }
+}
