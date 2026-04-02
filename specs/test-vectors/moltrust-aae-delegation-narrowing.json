@@ -5,11 +5,36 @@
   "signature_scheme": "Ed25519",
   "submitted_by": "did:moltrust:moltycell",
   "reference": "https://moltrust.ch/MolTrust_Protocol_TechSpec_v0.6.pdf",
+  "v2_receipt_mapping": {
+    "note": "AAE fields map to haroldmalikfrimpong-ops v2 receipt structure via action_ref binding",
+    "action_ref": "shared correlation ID — links AAE to receipt across systems",
+    "compound_digest": "SHA-256 over JCS RFC 8785 canonicalized AAE envelope",
+    "compound_digest_ed25519_signature": "Ed25519 signature over compound_digest — publicly verifiable via DID document",
+    "policy_hash": "SHA-256 over MANDATE+CONSTRAINTS blocks — captures constraint state at execution time",
+    "context_epoch": "behavioral continuity marker — detects drift between sessions"
+  },
+  "dimension_mapping": {
+    "note": "AAE fields mapped to qntm ConstraintEvaluation facets (5/5)",
+    "mandate.scope": "scope",
+    "constraints.spend_limit_usdc": "spend",
+    "validity.not_after": "time",
+    "constraints.reputation_minimum": "reputation",
+    "constraints.reversibility": "reversibility"
+  },
+  "spec_notes": {
+    "evaluation_time": "evaluation_time is always fixed in the vector, never computed at runtime (no datetime.now()). Any value that could change between test runs must be pinned in the vector to ensure deterministic conformance testing.",
+    "expected_outcome": "Field name aligned with sv-sig-01 format. Values: VALID or INVALID.",
+    "self_issuance": "subject == issuer is always INVALID regardless of other fields.",
+    "scope_narrowing_invariant": "Child scope must be a strict subset of parent scope. Any child scope element not present in parent scope is SCOPE_ESCALATION.",
+    "validity_narrowing_invariant": "Child not_after must be <= parent not_after. Child not_before must be >= parent not_before."
+  },
   "vectors": [
     {
       "id": "moltrust-tv-001",
       "description": "Valid delegation with narrowed scope — baseline",
-      "expected": "VALID",
+      "expected_outcome": "VALID",
+      "action_ref": "test-action-001",
+      "policy_hash": "sha256-of-mandate-constraints-blocks",
       "parent": {
         "subject": "did:moltrust:agent-a",
         "issuer": "did:moltrust:issuer-root",
@@ -29,8 +54,9 @@
     {
       "id": "moltrust-tv-002",
       "description": "Scope escalation — child requests write access not in parent mandate",
-      "expected": "INVALID",
+      "expected_outcome": "INVALID",
       "failure_reason": "SCOPE_ESCALATION",
+      "action_ref": "test-action-002",
       "parent": {
         "subject": "did:moltrust:agent-b",
         "issuer": "did:moltrust:agent-a",
@@ -45,20 +71,26 @@
         "constraints": { "spend_limit_usdc": 0, "reversibility": "required" },
         "validity": { "not_before": "2026-04-01T00:00:00Z", "not_after": "2026-04-03T23:59:59Z" }
       },
-      "rationale": "Child requests 'write' not present in parent mandate. Delegation chain verification must reject."
+      "rationale": "Child requests write not present in parent mandate. Delegation chain verification must reject."
     },
     {
       "id": "moltrust-tv-003",
       "description": "Validity window extension — child validity extends beyond parent",
-      "expected": "INVALID",
+      "expected_outcome": "INVALID",
       "failure_reason": "VALIDITY_ESCALATION",
+      "action_ref": "test-action-003",
       "parent": {
         "subject": "did:moltrust:agent-b",
+        "issuer": "did:moltrust:agent-a",
+        "mandate": { "scope": ["read"] },
+        "constraints": { "spend_limit_usdc": 0 },
         "validity": { "not_before": "2026-04-01T00:00:00Z", "not_after": "2026-04-07T23:59:59Z" }
       },
       "child": {
         "subject": "did:moltrust:agent-c",
         "issuer": "did:moltrust:agent-b",
+        "mandate": { "scope": ["read"] },
+        "constraints": { "spend_limit_usdc": 0 },
         "validity": { "not_before": "2026-04-01T00:00:00Z", "not_after": "2026-04-30T23:59:59Z" }
       },
       "rationale": "An agent cannot grant more time than it has been granted. Child not_after exceeds parent not_after."
@@ -66,41 +98,33 @@
     {
       "id": "moltrust-tv-004",
       "description": "Self-issuance — agent attempts to re-issue its own AAE with relaxed constraints",
-      "expected": "INVALID",
+      "expected_outcome": "INVALID",
       "failure_reason": "SELF_ISSUANCE",
-      "original": {
-        "subject": "did:moltrust:agent-a",
-        "issuer": "did:moltrust:issuer-root",
-        "constraints": { "spend_limit_usdc": 100, "reversibility": "required" }
-      },
-      "modified": {
+      "action_ref": "test-action-004",
+      "aae": {
         "subject": "did:moltrust:agent-a",
         "issuer": "did:moltrust:agent-a",
-        "constraints": { "spend_limit_usdc": 10000, "reversibility": "optional" }
+        "mandate": { "scope": ["read", "write"] },
+        "constraints": { "spend_limit_usdc": 10000, "reversibility": "optional" },
+        "validity": { "not_before": "2026-04-01T00:00:00Z", "not_after": "2026-04-30T23:59:59Z" }
       },
-      "rationale": "subject == issuer is always invalid. Closes RSAC Gap 1 (self-modification of security policy)."
+      "rationale": "subject == issuer is always INVALID. An agent cannot be its own issuer. Closes RSAC Gap 1 (self-modification)."
     },
     {
       "id": "moltrust-tv-005",
       "description": "Expired credentials — ghost agent presents valid but temporally expired AAE",
-      "expected": "INVALID",
+      "expected_outcome": "INVALID",
       "failure_reason": "EXPIRED",
+      "action_ref": "test-action-005",
+      "evaluation_time": "2026-04-01T10:00:00Z",
       "aae": {
         "subject": "did:moltrust:agent-ghost",
         "issuer": "did:moltrust:issuer-root",
         "mandate": { "scope": ["read", "write"] },
+        "constraints": { "spend_limit_usdc": 500 },
         "validity": { "not_before": "2026-01-01T00:00:00Z", "not_after": "2026-03-01T23:59:59Z" }
       },
-      "evaluation_time": "2026-04-01T10:00:00Z",
-      "rationale": "AAE is cryptographically valid but expired. Closes RSAC Gap 3 (ghost agents with live credentials)."
+      "rationale": "AAE is cryptographically valid but evaluation_time is past not_after. Closes RSAC Gap 3 (ghost agents with live credentials)."
     }
-  ],
-  "dimension_mapping": {
-    "note": "AAE fields mapped to qntm ConstraintEvaluation facets",
-    "mandate.scope": "scope",
-    "constraints.spend_limit_usdc": "spend",
-    "validity.not_after": "time",
-    "constraints.reputation_minimum": "reputation",
-    "constraints.reversibility": "reversibility"
-  }
+  ]
 }
