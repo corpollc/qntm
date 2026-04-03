@@ -73,9 +73,36 @@ or
 }
 ```
 
+## Canonical Body
+
+The signed payload is the UTF-8 encoded aps.txt body **excluding** the Signature line itself, with:
+- Trailing whitespace stripped per line
+- Unix line endings (`\n`)
+- No trailing newline
+
+## Verification Flow
+
+1. Fetch `aps.txt` from `/.well-known/aps.txt`
+2. Extract `Verification-Key` URL + `Key-ID`
+3. Fetch JWKS, select key matching `Key-ID`
+4. Reconstruct canonical body (strip Signature line)
+5. Verify Ed25519 signature over SHA-256(canonical body)
+6. Check `Expires-At` freshness
+
+## Strict Mode Behavior
+
+| Condition | Default Mode | Strict Mode |
+|---|---|---|
+| Valid signature | proceed | proceed |
+| No signature | warn, proceed | reject (`UNSIGNED`) |
+| Invalid signature | reject | reject |
+| Expired | reject | reject |
+
+Strict mode is opt-in. Recommended for production verifiers.
+
 ## Backward Compatibility
 
-- Unsigned aps.txt files remain valid. Agents SHOULD warn but MUST NOT reject.
+- Unsigned aps.txt files remain valid in default mode. Agents SHOULD warn but MUST NOT reject unless strict mode is enabled.
 - Signed aps.txt files with unknown `# Signed-By` DID methods: agents SHOULD attempt resolution, MAY reject if unresolvable.
 - The `# Signature:` field is a comment line — parsers that ignore comments will not break.
 
@@ -88,58 +115,41 @@ or
 | `did:key` | Inline public key | Supported |
 | `did:ion` | ION resolver | Planned |
 
+## Reference Implementation
+
+`agent-passport-system@1.31.0` — `verifyApsTxt({ strict: true })`
+JWKS endpoint: `gateway.aeoess.com/.well-known/jwks.json`
+
+## MolTrust AV-2 Test Vector
+
+```json
+{
+  "vector": "AV-2",
+  "description": "Unsigned aps.txt in strict mode",
+  "input": { "signed": false, "strict": true },
+  "expected": "UNSIGNED error, evaluation halted"
+}
+```
+
 ## Security Considerations
 
 - **DNS hijacking:** Signature prevents content modification but not availability attacks. An attacker controlling DNS can serve a 404 or empty file. Agents SHOULD cache the last known valid signed aps.txt.
 - **Key rotation:** If the signer's key is rotated, previously signed aps.txt files become unverifiable against the new key. Publishers SHOULD re-sign within 24h of key rotation.
-- **Replay:** The `# Expires:` field prevents indefinite replay. The 30-day `# Signed-At:` staleness check provides a secondary bound.
-- **Clock skew:** Verifiers SHOULD allow ±5 minutes of clock skew on `# Signed-At:` and `# Expires:`.
+- **Replay:** The `Expires-At` field prevents indefinite replay.
+- **Clock skew:** Verifiers SHOULD allow ±5 minutes of clock skew on timestamps.
 
-## Reference Implementation
+## Open Questions
 
-```python
-import base64
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-def canonicalize(aps_txt: str) -> bytes:
-    lines = aps_txt.split("\n")
-    filtered = [
-        line.rstrip()
-        for line in lines
-        if not line.startswith("# Signature:")
-        and not line.startswith("# Signed-At:")
-        and not line.startswith("# Expires:")
-    ]
-    # Remove trailing empty lines
-    while filtered and filtered[-1] == "":
-        filtered.pop()
-    return "\n".join(filtered).encode("utf-8")
-
-def sign_aps_txt(aps_txt: str, private_key: Ed25519PrivateKey) -> str:
-    payload = canonicalize(aps_txt)
-    signature = private_key.sign(payload)
-    return base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
-
-def verify_aps_txt(aps_txt: str, public_key: Ed25519PublicKey, signature_b64: str) -> bool:
-    payload = canonicalize(aps_txt)
-    # Re-pad base64url
-    padding = 4 - len(signature_b64) % 4
-    if padding != 4:
-        signature_b64 += "=" * padding
-    signature = base64.urlsafe_b64decode(signature_b64)
-    try:
-        public_key.verify(signature, payload)
-        return True
-    except Exception:
-        return False
-```
+- Should `Disallow: /` from an unsigned source be a hard block or warn-only?
+- Key rotation: how long should old keys remain valid after rotation?
+- Should WG define a canonical JWKS path (e.g. `/.well-known/aps-jwks.json`)?
 
 ## Relationship to Existing Work
 
 - **robots.txt:** aps.txt extends the robots.txt convention for agent governance. This spec adds signing without changing the directive format.
 - **RFC 8785 (JCS):** Not used here — aps.txt is line-oriented, not JSON. Canonicalization is line-based.
 - **W3C DID Core:** Signer identity is expressed as a DID. Verification requires DID resolution.
+- **JWKS (RFC 7517):** Key distribution via standard JWKS endpoints for interoperability with APS ecosystem.
 - **Signed HTTP Exchanges (SXG):** SXG signs entire HTTP responses. This spec signs only the aps.txt content, which is simpler and does not require CDN cooperation.
 
 ---
