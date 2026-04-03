@@ -1,0 +1,22 @@
+name: AAE Delegation Narrowing Conformance
+
+on:
+  pull_request:
+    paths:
+      - 'conformance/moltrust-aae-delegation-narrowing.json'
+      - 'conformance/run_aae_delegation.py'
+  push:
+    branches: [main]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run delegation narrowing conformance suite
+        run: |
+          python3 conformance/run_aae_delegation.py \
+            conformance/moltrust-aae-delegation-narrowing.json
