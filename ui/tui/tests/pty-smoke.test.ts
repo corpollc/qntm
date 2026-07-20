@@ -142,7 +142,7 @@ describe('TUI PTY smoke', () => {
       set timeout 20
       lassign $argv node entry configDir relayUrl inviteToken
       set stty_init "rows 40 columns 120"
-      spawn env TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
+      spawn env CI=false TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
       expect {
         "Keypair loaded:" { }
         timeout { error "TUI did not finish identity initialization" }
