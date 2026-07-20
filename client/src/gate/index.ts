@@ -99,7 +99,7 @@ export class GateClient {
   }> {
     const resp = await fetch(`${this.baseURL}/v1/promote`, {
       method: 'POST',
-      headers: this.headers(),
+      headers: this.headers(true),
       body: JSON.stringify({
         conv_id: convId,
         conv_aead_key: convAeadKey,

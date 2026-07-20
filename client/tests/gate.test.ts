@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   GateMessagePromote,
   GateMessageConfig,
   GateMessageSecret,
   GateMessageResult,
+  GateClient,
   resolveRecipe,
 } from '../src/gate/index.js';
 import type {
@@ -15,6 +16,29 @@ import type {
   SecretPayload,
   GateConversationMessage,
 } from '../src/types.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('GateClient promotion authentication', () => {
+  it('sends the configured admin token when bootstrapping a conversation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      conv_id: 'a'.repeat(32),
+      gateway_public_key: 'gateway-public-key',
+      gateway_kid: 'gateway-kid',
+      created: true,
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new GateClient('https://gateway.example', 'promotion-token');
+
+    await client.promote('a'.repeat(32), 'aead-key', 'nonce-key', 0);
+
+    const request = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(request.headers).toMatchObject({ Authorization: 'Bearer promotion-token' });
+  });
+});
 
 // === 1. Gate Message Type Constants ===
 describe('Gate Message Type Constants', () => {

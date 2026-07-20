@@ -17,6 +17,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const RETRY_INTERVAL_MS = 250;
 const RATE_LIMIT_RETRY_MS = 500;
 const GATEWAY_POLL_INTERVAL_MS = 250;
+const GATEWAY_PROMOTION_TOKEN = 'qntm-local-integration-promotion-token';
 
 export interface JsonResult {
   ok: boolean;
@@ -773,6 +774,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--var', `DROPBOX_URL:${relayUrl}`,
         '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
+        '--var', `GATEWAY_PROMOTION_TOKEN:${GATEWAY_PROMOTION_TOKEN}`,
         '--var', 'ENABLE_DEBUG_ROUTES:1',
       ],
       join(repoRoot, 'gateway-worker'),
@@ -839,7 +841,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     async bootstrapGateway(convId: string, agent: CliAgent) {
       const conversation = agent.readConversation(convId);
       const keys = conversation.keys as Record<string, string>;
-      const gate = new GateClient(gatewayUrl);
+      const gate = new GateClient(gatewayUrl, GATEWAY_PROMOTION_TOKEN);
       return await gate.promote(
         convId,
         hexToBase64Url(keys.aead_key),

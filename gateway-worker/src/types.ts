@@ -5,6 +5,8 @@ export interface Env {
   DROPBOX_URL: string;
   POLL_INTERVAL_MS: string;
   ENABLE_DEBUG_ROUTES?: string;
+  /** Bearer token required for the bootstrap-only promotion endpoint. */
+  GATEWAY_PROMOTION_TOKEN: string;
 }
 
 /** Request body for POST /v1/promote */
@@ -160,7 +162,7 @@ export interface StoredGateMessage {
    *  This is the ONLY trusted signer identity — not from JSON body fields. */
   signer_kid?: string;
   signature?: string;
-  /** Full message body for gate.request (needed for signature verification) */
+  /** Full message body for requests and participant votes. */
   body?: string;
 }
 
