@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { countRecentConversations, recordReceipt } from "./security-policy.js";
 
 export interface Env {
 	QNTM_KV: KVNamespace;
@@ -474,54 +475,32 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 	}
 
 	private async handleRecordReceipt(request: Request): Promise<Response> {
-		let payload: { msg_id?: string; reader_kid?: string; required_acks?: number };
+		let payload: { msg_id?: string; reader_kid?: string };
 		try {
-			payload = (await request.json()) as { msg_id?: string; reader_kid?: string; required_acks?: number };
+			payload = (await request.json()) as { msg_id?: string; reader_kid?: string };
 		} catch {
 			return Response.json({ error: "invalid receipt payload" }, { status: 400 });
 		}
 
 		const msgID = (payload.msg_id || "").toLowerCase();
 		const readerKID = (payload.reader_kid || "").toLowerCase();
-		const requiredAcks = payload.required_acks ?? 0;
 		if (!isHexID(msgID, 32) || !isHexID(readerKID, 32)) {
 			return Response.json({ error: "invalid receipt identifiers" }, { status: 400 });
 		}
-		if (!Number.isInteger(requiredAcks) || requiredAcks < 1 || requiredAcks > 256) {
-			return Response.json({ error: "invalid required_acks" }, { status: 400 });
-		}
 
 		const readers = ((await this.ctx.storage.get<string[]>(receiptReadersKey(msgID))) ?? []) as string[];
-		if (!readers.includes(readerKID)) {
-			readers.push(readerKID);
-			await this.ctx.storage.put(receiptReadersKey(msgID), readers);
+		const result = recordReceipt(readers, readerKID);
+		if (result.readers.length !== readers.length) {
+			await this.ctx.storage.put(receiptReadersKey(msgID), result.readers);
 		}
 
 		return Response.json(
 			{
-				receipts: readers.length,
-				should_delete: readers.length >= requiredAcks,
+				receipts: result.receipts,
+				should_delete: result.shouldDelete,
 			},
 			{ status: 200 },
 		);
-	}
-
-	private async handleClearMessage(request: Request): Promise<Response> {
-		let payload: { msg_id?: string };
-		try {
-			payload = (await request.json()) as { msg_id?: string };
-		} catch {
-			return Response.json({ error: "invalid clear payload" }, { status: 400 });
-		}
-
-		const msgID = (payload.msg_id || "").toLowerCase();
-		if (!isHexID(msgID, 32)) {
-			return Response.json({ error: "invalid msg_id" }, { status: 400 });
-		}
-
-		await this.ctx.storage.delete(messageSequenceIndexKey(msgID));
-		await this.ctx.storage.delete(receiptReadersKey(msgID));
-		return Response.json({ cleared: true }, { status: 200 });
 	}
 
 	private async handleReset(): Promise<Response> {
@@ -545,10 +524,6 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		if (request.method === "POST" && url.pathname === "/record-receipt") {
 			return this.handleRecordReceipt(request);
-		}
-
-		if (request.method === "POST" && url.pathname === "/clear-message") {
-			return this.handleClearMessage(request);
 		}
 
 		if (request.method === "POST" && url.pathname === "/reset") {
@@ -1079,8 +1054,8 @@ export default {
 					throw new Error(`receipt lookup failed: HTTP ${lookupResponse.status}`);
 				}
 				const lookupPayload = (await lookupResponse.json()) as { seq?: number | null };
-				const messageSeq = Number.isInteger(lookupPayload.seq) && lookupPayload.seq! > 0 ? lookupPayload.seq! : null;
-				if (messageSeq === null) {
+				const messageExists = Number.isInteger(lookupPayload.seq) && lookupPayload.seq! > 0;
+				if (!messageExists) {
 					return errorResponse("message not found", 404);
 				}
 
@@ -1090,29 +1065,18 @@ export default {
 					body: JSON.stringify({
 						msg_id: payload.msg_id,
 						reader_kid: payload.reader_kid,
-						required_acks: payload.required_acks,
 					}),
 				});
 				if (!recordResponse.ok) {
 					throw new Error(`receipt recording failed: HTTP ${recordResponse.status}`);
 				}
-				const recordPayload = (await recordResponse.json()) as { receipts?: number; should_delete?: boolean };
+				const recordPayload = (await recordResponse.json()) as { receipts?: number };
 				const receiptCount = Number.isInteger(recordPayload.receipts) ? recordPayload.receipts! : 0;
-				const shouldDelete = recordPayload.should_delete === true;
-
-				if (shouldDelete) {
-					await env.QNTM_KV.delete(conversationMessageKey(payload.conv_id, messageSeq));
-					await receiptStub.fetch("https://convo-seq/clear-message", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ msg_id: payload.msg_id }),
-					});
-				}
 
 				return jsonResponse(
 					{
 						recorded: true,
-						deleted: shouldDelete,
+						deleted: false,
 						receipts: receiptCount,
 						required_acks: payload.required_acks,
 					},
@@ -1132,16 +1096,8 @@ export default {
 				const statsRaw = await env.QNTM_KV.get(STATS_KEY, "text");
 				const stats: Record<string, number> = statsRaw ? JSON.parse(statsRaw) : {};
 
-				const conversations: Array<{ conv_id: string; last_message_ts: number }> = [];
-				for (const [convId, ts] of Object.entries(stats)) {
-					if (ts >= cutoff) {
-						conversations.push({ conv_id: convId, last_message_ts: ts });
-					}
-				}
-
 				return jsonResponse({
-					active_conversations_7d: conversations.length,
-					conversations,
+					active_conversations_7d: countRecentConversations(stats, cutoff),
 					measured_at: new Date(now).toISOString(),
 				}, 200);
 			}

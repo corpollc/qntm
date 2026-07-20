@@ -77,6 +77,7 @@ export interface ReadReceiptPayload {
   reader_kid: string;
   reader_ik_pk: string;
   read_ts: number;
+  /** Signed legacy hint retained for wire compatibility; relay TTL controls retention. */
   required_acks: number;
   sig: string;
 }
@@ -194,7 +195,7 @@ async function webSocketDataToText(data: unknown): Promise<string> {
  * @param identity   The reader's identity (private key used to sign)
  * @param convId     Conversation ID (16 bytes)
  * @param msgId      Message ID (16 bytes)
- * @param requiredAcks  Number of unique readers needed before deletion
+ * @param requiredAcks  Signed legacy hint retained for wire compatibility
  */
 export function buildSignedReceipt(
   identity: Identity,
@@ -497,7 +498,7 @@ export class DropboxClient {
 
   /**
    * Submit a signed read receipt to the relay.
-   * When enough unique readers have receipted a message, the relay deletes it.
+   * Receipts are telemetry only; relay retention is controlled by server TTL.
    */
   async submitReceipt(payload: ReadReceiptPayload): Promise<ReceiptResponse> {
     const resp = await fetch(`${this.baseUrl}/v1/receipt`, {
