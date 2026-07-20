@@ -15,6 +15,12 @@
 echo-bot/.qntm/
 echo-bot/bot.log
 
+# Local qntm operator state (identity, conversation keys, and transcripts)
+.company/qntm/
+
+# Beads runtime credential (machine-local)
+.beads/.beads-credential-key
+
 # Dolt database files (added by bd init)
 .dolt/
 *.db
