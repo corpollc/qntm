@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DropboxClient } from '@corpollc/qntm';
-import { sendMessage } from '../src/lib/poller.js';
+import { pollConversation, sendMessage } from '../src/lib/poller.js';
 import { Store } from '../src/lib/store.js';
 import { TestRelayServer } from './support/relay.js';
 import { waitFor } from './support/wait.js';
@@ -33,6 +33,16 @@ async function runExpectSession(expectBody: string, args: string[]): Promise<{ s
         FORCE_COLOR: '0',
       },
     });
+  } catch (error) {
+    const failure = error as { stdout?: string; stderr?: string };
+    const artifactDir = process.env.QNTM_ACCEPTANCE_ARTIFACT_DIR
+      || join(TUI_DIR, 'test-results');
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactPrefix = join(artifactDir, `pty-${Date.now()}`);
+    writeFileSync(`${artifactPrefix}.expect`, expectBody, 'utf8');
+    writeFileSync(`${artifactPrefix}.stdout.log`, failure.stdout || '', 'utf8');
+    writeFileSync(`${artifactPrefix}.stderr.log`, failure.stderr || String(error), 'utf8');
+    throw error;
   } finally {
     unlinkSync(scriptPath);
     rmSync(scratchDir, { recursive: true, force: true });
@@ -110,6 +120,90 @@ describe('TUI PTY smoke', () => {
 
     expect(identity).not.toBeNull();
     expect(identity!.keyID).toHaveLength(16);
+  });
+
+  it('submits join, message, and quit through the real interactive composer', { timeout: 60000 }, async () => {
+    const inviterDir = makeTempDir('qntm-tui-pty-inviter-');
+    const joinerDir = makeTempDir('qntm-tui-pty-joiner-');
+    dirs.push(inviterDir, joinerDir);
+
+    const inviterStore = new Store(inviterDir, relay.url);
+    const inviterIdentity = inviterStore.generateIdentity();
+    const { token, convId } = inviterStore.createInvite(inviterIdentity, 'PTY Interactive');
+    await sendMessage(
+      inviterStore,
+      new DropboxClient(relay.url),
+      inviterIdentity,
+      convId,
+      'hello from inviter',
+    );
+
+    const interactiveScript = `
+      set timeout 10
+      lassign $argv node entry configDir relayUrl inviteToken
+      set stty_init "raw -echo rows 40 columns 120"
+      spawn env TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
+      expect {
+        "Type /help for available commands." { }
+        timeout { error "TUI did not finish booting" }
+      }
+      send -- "/join $inviteToken"
+      expect {
+        "/join " { }
+        timeout { error "TUI did not render /join in the composer" }
+      }
+      send -- "\\r"
+      expect {
+        "hello from inviter" { }
+        timeout { error "TUI did not replay the inviter message" }
+      }
+      expect {
+        "Joined conversation" { }
+        timeout { error "TUI did not submit /join" }
+      }
+      send -- "hello from PTY"
+      expect {
+        "hello from PTY" { }
+        timeout { error "TUI did not render the chat message in the composer" }
+      }
+      send -- "\\r"
+      expect {
+        "You" { }
+        timeout { error "TUI did not submit the chat message" }
+      }
+      send -- "/quit"
+      expect {
+        "/quit" { }
+        timeout { error "TUI did not render /quit in the composer" }
+      }
+      send -- "\\r"
+      expect {
+        eof { }
+        timeout { error "TUI did not submit /quit" }
+      }
+    `;
+
+    await runExpectSession(interactiveScript, [
+      process.execPath,
+      BUILT_ENTRY,
+      joinerDir,
+      relay.url,
+      token,
+    ]);
+
+    const joinerStore = new Store(joinerDir, relay.url);
+    expect(joinerStore.loadHistory(convId).map((message) => message.text)).toEqual([
+      'hello from inviter',
+      'hello from PTY',
+    ]);
+
+    await pollConversation(
+      inviterStore,
+      new DropboxClient(relay.url),
+      inviterIdentity,
+      convId,
+    );
+    expect(inviterStore.loadHistory(convId).map((message) => message.text)).toContain('hello from PTY');
   });
 
   it('polls an incoming message on startup and stores it in history', { timeout: 15000 }, async () => {

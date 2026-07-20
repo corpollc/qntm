@@ -6,6 +6,7 @@
 /ui/aim-chat/*.tsbuildinfo
 /ui/aim-chat/vite.config.js
 /ui/aim-chat/vite.config.d.ts
+/ui/aim-chat/proofshot-artifacts/
 /ui/tui/dist
 /openclaw-qntm/node_modules
 /openclaw-qntm/dist
@@ -26,5 +27,7 @@ echo-bot/bot.log
 .beads/proxieddb/
 *.db
 ui/tui/node_modules/
+ui/tui/test-results/
 integration/node_modules/
+integration/test-results/
 channel/node_modules/

@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LongHarness } from './src/runtime.js';
 import { assertNoCliHistory, createLongHarness } from './src/runtime.js';
@@ -66,8 +65,6 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
       );
 
       await harness.charlie.run(['gov', 'approve', keepFloorProposalId, '-c', convId]);
-      await harness.pumpGateway(convId);
-
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -102,7 +99,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
     }
   }, LONG_TIMEOUT);
 
-  it('phase 6: restarts the gateway around an approved request and executes it once', async () => {
+  it('phase 6: restarts the gateway before approval and executes the request once afterward', async () => {
     const ui = requireUi(harness);
 
     try {
@@ -117,18 +114,17 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         'charlie counter.bump request',
         30_000,
       );
+      await harness.restartGateway(convId, harness.alice);
+      expect(harness.getCounterExecutions()).toBe(0);
+
       await harness.charlie.run(['gate-approve', restartRequestId, '-c', convId]);
       await waitForCliHistory(
         harness.alice,
         convId,
         historyMatchesRequest('gate.approval', restartRequestId),
-        'counter approval before restart',
+        'counter approval after restart',
         30_000,
       );
-
-      await harness.restartGateway();
-      await harness.pumpGateway(convId);
-
       const resultEntry = await waitForCliHistory(
         harness.alice,
         convId,
@@ -171,10 +167,6 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         '--ttl',
         '1',
       ]);
-      await harness.pumpGateway(convId);
-      await delay(2_000);
-      await harness.pumpGateway(convId);
-
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -194,8 +186,6 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         30_000,
       );
       await harness.charlie.run(['gate-approve', expiredRequestId, '-c', convId]);
-      await harness.pumpGateway(convId);
-
       await assertNoCliHistory(
         harness.alice,
         convId,
@@ -218,8 +208,6 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         '--header-template',
         '{value}',
       ]);
-      await harness.pumpGateway(convId);
-
       const recovered = await waitForCliHistory(
         harness.alice,
         convId,

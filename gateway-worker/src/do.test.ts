@@ -28,6 +28,7 @@ import type { ConversationState, StoredGateMessage } from './types.js';
 
 class MockStorage {
   private data = new Map<string, unknown>();
+  alarmTimes: number[] = [];
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.data.get(key) as T | undefined;
@@ -51,7 +52,9 @@ class MockStorage {
     return result;
   }
 
-  async setAlarm(): Promise<void> {}
+  async setAlarm(scheduledTime: number): Promise<void> {
+    this.alarmTimes.push(scheduledTime);
+  }
 
   /** Test helper: raw access to backing map */
   _raw(): Map<string, unknown> { return this.data; }
@@ -128,6 +131,33 @@ function makeDO(): { doInstance: GatewayConversationDO; storage: MockStorage; pr
   const doInstance = new GatewayConversationDO(mockState as unknown as DurableObjectState, dummyEnv);
   return { doInstance, storage: mockState.storage, process: makeProcessFn(doInstance) };
 }
+
+describe('idempotent bootstrap recovery', () => {
+  it('re-arms maintenance for an existing conversation after a worker restart', async () => {
+    const { doInstance, storage } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    vi.spyOn(
+      doInstance as unknown as { ensureRelaySubscription: (value: ConversationState) => void },
+      'ensureRelaySubscription',
+    ).mockImplementation(() => undefined);
+
+    const response = await doInstance.fetch(new Request('http://do/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conv_id: state.conv_id,
+        conv_aead_key: state.conv_aead_key,
+        conv_nonce_key: state.conv_nonce_key,
+        conv_epoch: state.conv_epoch,
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(storage.alarmTimes).toHaveLength(1);
+    expect(storage.alarmTimes[0]).toBeGreaterThan(Date.now());
+  });
+});
 
 function buildSignedRequest(signer: { privateKey: Uint8Array; publicKey: Uint8Array }, overrides?: Record<string, unknown>) {
   const signerKid = base64UrlEncode(keyIDFromPublicKey(signer.publicKey));

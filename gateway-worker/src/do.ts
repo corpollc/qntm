@@ -165,6 +165,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
         );
       }
       this.ensureRelaySubscription(existing);
+      // A local worker restart can preserve DO storage while losing the
+      // scheduled alarm. Re-arm maintenance whenever the public idempotent
+      // bootstrap wakes an existing conversation.
+      await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
       return Response.json({
         conv_id: existing.conv_id,
         gateway_public_key: existing.public_key,
