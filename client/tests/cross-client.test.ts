@@ -4,7 +4,7 @@
  * Regenerate vectors after any wire-format or crypto spec change:
  *   (cd attic/go && go run ./crosstest/generate_vectors.go > ../../client/tests/vectors.json)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -232,7 +232,17 @@ describe('Cross-Client: E2E Message', () => {
       currentEpoch: 0,
     };
 
-    const message = decryptMessage(envelope, conv);
+    // The fixture is a signed, immutable interop artifact. Evaluate it at its
+    // creation time so this test validates Go/TypeScript compatibility instead
+    // of expiring thirty days after the vector was generated. Production expiry
+    // enforcement remains covered by the explicit negative tests in spec.test.ts.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(vectors.e2e_vector.created_ts * 1000);
+    let message: ReturnType<typeof decryptMessage>;
+    try {
+      message = decryptMessage(envelope, conv);
+    } finally {
+      now.mockRestore();
+    }
     expect(message.verified).toBe(true);
     expect(message.inner.body_type).toBe(vectors.e2e_vector.body_type);
     expect(bytesToHex(new Uint8Array(message.inner.body))).toBe(vectors.e2e_vector.body);
