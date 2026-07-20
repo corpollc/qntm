@@ -52,6 +52,8 @@
 # Git remote to use for Dolt bootstrap/push/pull. Fresh clones can run `bd init`
 # and bootstrap the Beads database from this repo's shared `refs/dolt/data`.
 sync.git-remote: "git+https://github.com/corpollc/qntm.git"
+sync:
+    remote: "git+ssh://git@github.com/corpollc/qntm.git"
 
 # Multi-repo configuration (experimental - bd-307)
 # Allows hydrating from multiple repositories and routing writes to the correct JSONL
