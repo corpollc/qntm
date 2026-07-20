@@ -125,6 +125,14 @@ jobs:
       - name: Build TUI
         run: npm run build
 
+      - name: Upload TUI failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tui-pty-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: ui/tui/test-results/
+
   test-python:
     runs-on: ubuntu-latest
     steps:

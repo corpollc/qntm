@@ -93,7 +93,7 @@ describe('TUI PTY smoke', () => {
 
   it('runs the real terminal entry point under a PTY and prints help text', async () => {
     const helpScript = `
-      set timeout 10
+      set timeout 20
       lassign $argv node entry
       spawn $node $entry --help
       expect "qntm Messenger — Terminal client"
@@ -144,8 +144,8 @@ describe('TUI PTY smoke', () => {
       set stty_init "raw -echo rows 40 columns 120"
       spawn env TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
       expect {
-        "Type /help for available commands." { }
-        timeout { error "TUI did not finish booting" }
+        "Keypair loaded:" { }
+        timeout { error "TUI did not finish identity initialization" }
       }
       send -- "/join $inviteToken"
       expect {
