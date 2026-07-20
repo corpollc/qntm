@@ -571,6 +571,25 @@ describe('governance member-change flow', () => {
       process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
     ).rejects.toThrow('missing from eligible_signer_kids');
   });
+
+  it('rejects an author-selected quorum below the trusted participant majority', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 1,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 1,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('below trusted governance quorum 2');
+  });
 });
 
 describe('qntm-3gde: signature verification', () => {

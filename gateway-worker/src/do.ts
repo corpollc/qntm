@@ -21,6 +21,11 @@ import { executeRequest } from './execute.js';
 
 const groupSuite = new QSP1Suite();
 
+function trustedGovernanceQuorum(convState: ConversationState): number {
+  const participantCount = Object.keys(convState.participants).length;
+  return Math.max(1, Math.floor(participantCount / 2) + 1);
+}
+
 function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
   return {
     conv_id: msg.conv_id,
@@ -705,6 +710,16 @@ export class GatewayConversationDO extends DurableObject<Env> {
       }
     }
 
+    // Governance has a server-derived quorum. The proposal may require more
+    // approvals, but its author cannot lower the threshold below a strict
+    // majority of the current participant set.
+    const trustedQuorum = trustedGovernanceQuorum(convState);
+    if (msg.required_approvals < trustedQuorum) {
+      throw new Error(
+        `gov.propose rejected: required_approvals ${msg.required_approvals} below trusted governance quorum ${trustedQuorum}`,
+      );
+    }
+
     // Store the proposal
     await this.storeGovProposal({
       seq: ++this.messageSeq,
@@ -827,7 +842,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const alreadyApplied = proposals.some(p => p.type === 'gov.applied' && p.proposal_id === proposalId);
     if (alreadyApplied) return;
 
-    if (approvalCount < proposalMsg.required_approvals) return;
+    // Defense in depth for proposals stored before this validation existed:
+    // never apply below the quorum derived from current trusted state.
+    const requiredApprovals = Math.max(proposalMsg.required_approvals, trustedGovernanceQuorum(convState));
+    if (approvalCount < requiredApprovals) return;
 
     // Apply the proposal
     const preApplyState: ConversationState = {

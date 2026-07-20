@@ -363,6 +363,21 @@ class TestGovernanceCommands:
         assert captured["payload"]["proposal_type"] == "member_remove"
         assert captured["payload"]["required_approvals"] == 2
 
+    def test_gov_propose_remove_does_not_allow_unilateral_two_party_removal(self):
+        from qntm.cli import _default_governance_required_approvals
+
+        alice = generate_identity()
+        bob = generate_identity()
+        conv_record = {
+            "participants": [alice["keyID"].hex(), bob["keyID"].hex()],
+        }
+
+        assert _default_governance_required_approvals(
+            conv_record,
+            proposal_type="member_remove",
+            removed_member_kids=[bob["keyID"].hex()],
+        ) == 2
+
     def test_gov_approve_uses_history_proposal_hash(self, monkeypatch):
         from qntm.cli import cmd_gov_approve
         from qntm.governance import create_proposal_body

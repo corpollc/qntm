@@ -532,8 +532,10 @@ def _current_governance_floor(history_entries) -> int:
 def _default_governance_required_approvals(conv_record, proposal_type=None, removed_member_kids=None) -> int:
     participant_count = len(_participant_kids_from_conversation(conv_record))
     if proposal_type == "member_remove":
-        removed_count = len(removed_member_kids or [])
-        return max(1, participant_count - removed_count)
+        # Removal targets remain part of the trusted current roster when the
+        # proposal is evaluated. Never let the proposer lower the default to a
+        # one-person takeover by naming other participants for removal.
+        return max(1, participant_count // 2 + 1)
     return max(1, participant_count)
 
 
