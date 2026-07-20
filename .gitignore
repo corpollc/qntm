@@ -23,6 +23,7 @@ echo-bot/bot.log
 
 # Dolt database files (added by bd init)
 .dolt/
+.beads/proxieddb/
 *.db
 ui/tui/node_modules/
 integration/node_modules/
