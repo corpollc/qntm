@@ -127,9 +127,15 @@ export const api = {
     profileName: string,
     conversationId: string,
     gateServerUrl: string,
+    promotionToken: string,
     threshold: number,
   ): Promise<{ message: ChatMessage; warning?: string }> {
-    const bootstrap = await qntm.bootstrapGatewayForConversation(profileId, conversationId, gateServerUrl)
+    const bootstrap = await qntm.bootstrapGatewayForConversation(
+      profileId,
+      conversationId,
+      gateServerUrl,
+      promotionToken,
+    )
     const message = await qntm.gatePromoteRequest(
       profileId,
       profileName,

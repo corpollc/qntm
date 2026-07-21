@@ -619,7 +619,7 @@ describe('browser qntm adapter', () => {
     const aliceIdentity = identityFor(alice.id)
     const bobIdentity = identityFor(bob.id)
 
-    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string'
         ? input
         : input instanceof URL
@@ -636,9 +636,15 @@ describe('browser qntm adapter', () => {
       }
 
       return relay.handleFetch(input, init)
-    }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
 
-    const bootstrap = await bootstrapGatewayForConversation(alice.id, conversationId, 'http://gateway.test')
+    const bootstrap = await bootstrapGatewayForConversation(
+      alice.id,
+      conversationId,
+      'http://gateway.test',
+      'promotion-token',
+    )
     expect(bootstrap).toEqual({
       gatewayPublicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
       gatewayKid: publicKeyToString(hexToBytes(bobIdentity.keyId)),
@@ -647,6 +653,12 @@ describe('browser qntm adapter', () => {
       publicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
       keyId: publicKeyToString(hexToBytes(bobIdentity.keyId)),
     })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://gateway.test/v1/promote',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer promotion-token' }),
+      }),
+    )
 
     const secretMessage = await gateSecretRequest(
       alice.id,

@@ -13,6 +13,8 @@ export interface GatePanelProps {
   activeRecipe: GateRecipe | null
   gateServerUrl: string
   setGateServerUrl: (value: string) => void
+  gatePromotionToken: string
+  setGatePromotionToken: (value: string) => void
   gateArgs: Record<string, string>
   gatePromoteThreshold: number
   setGatePromoteThreshold: (value: number) => void
@@ -44,6 +46,8 @@ export function GatePanel({
   activeRecipe,
   gateServerUrl,
   setGateServerUrl,
+  gatePromotionToken,
+  setGatePromotionToken,
   gateArgs,
   gatePromoteThreshold,
   setGatePromoteThreshold,
@@ -144,6 +148,17 @@ export function GatePanel({
             value={gateServerUrl}
             onChange={(event) => setGateServerUrl(event.target.value)}
           />
+          <label className="label" htmlFor="gate-promotion-token">Promotion token <Tooltip text="Provided by the gateway operator. Used only for this bootstrap request and never stored." /></label>
+          <input
+            id="gate-promotion-token"
+            className="input"
+            type="password"
+            autoComplete="off"
+            required
+            placeholder="Gateway operator token"
+            value={gatePromotionToken}
+            onChange={(event) => setGatePromotionToken(event.target.value)}
+          />
           <label className="label" htmlFor="gate-promote-threshold">Required approvals <Tooltip text="The number of participants who must approve before an API call executes." /></label>
           <input
             id="gate-promote-threshold"
@@ -156,7 +171,7 @@ export function GatePanel({
           <button
             className="button full"
             type="button"
-            disabled={isWorking}
+            disabled={isWorking || !gatePromotionToken.trim()}
             onClick={() => void onGatePromote()}
           >
             {isWorking ? <Spinner /> : 'Enable API Gateway'}

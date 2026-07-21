@@ -51,6 +51,7 @@ export default function App() {
   const [gateRecipes, setGateRecipes] = useState<GateRecipe[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState('')
   const [gateServerUrl, setGateServerUrl] = useState('http://localhost:8080')
+  const [gatePromotionToken, setGatePromotionToken] = useState('')
   const [gateArgs, setGateArgs] = useState<Record<string, string>>({})
   const [gatePromoteThreshold, setGatePromoteThreshold] = useState(2)
 
@@ -796,6 +797,11 @@ export default function App() {
     if (!activeProfileId || !selectedConversationId) {
       return
     }
+    if (!gatePromotionToken.trim()) {
+      setError('Enter the gateway promotion token')
+      addToast('Enter the gateway promotion token', 'error')
+      return
+    }
 
     setIsWorking(true)
     try {
@@ -804,11 +810,13 @@ export default function App() {
         activeProfile?.name || '',
         selectedConversationId,
         gateServerUrl.trim(),
+        gatePromotionToken,
         gatePromoteThreshold,
       )
       await refreshHistory(activeProfileId, selectedConversationId)
       setStatus(`API Gateway enabled: ${gatePromoteThreshold} approvals required`)
       addToast(`API Gateway enabled: ${gatePromoteThreshold} approvals required`, 'success')
+      setGatePromotionToken('')
       setError('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to enable API Gateway'
@@ -1160,6 +1168,8 @@ export default function App() {
               activeRecipe={activeRecipe}
               gateServerUrl={gateServerUrl}
               setGateServerUrl={setGateServerUrl}
+              gatePromotionToken={gatePromotionToken}
+              setGatePromotionToken={setGatePromotionToken}
               gateArgs={gateArgs}
               gatePromoteThreshold={gatePromoteThreshold}
               setGatePromoteThreshold={setGatePromoteThreshold}

@@ -992,6 +992,7 @@ export async function bootstrapGatewayForConversation(
   profileId: string,
   conversationId: string,
   gateServerUrl: string,
+  promotionToken: string,
 ): Promise<GatewayBootstrap> {
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
@@ -1000,10 +1001,17 @@ export async function bootstrapGatewayForConversation(
   if (!baseUrl) {
     throw new Error('Gateway server URL is required')
   }
+  const token = promotionToken.trim()
+  if (!token) {
+    throw new Error('Gateway promotion token is required')
+  }
 
   const response = await fetch(`${baseUrl}/v1/promote`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify({
       conv_id: conversationId,
       conv_aead_key: base64UrlEncode(convCrypto.keys.aeadKey),
