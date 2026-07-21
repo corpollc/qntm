@@ -311,9 +311,10 @@ export class AimUiAgent {
     await panel.waitFor({ state: 'visible', timeout: 10_000 });
   }
 
-  async enableGateway(gatewayUrl: string, threshold: number): Promise<void> {
+  async enableGateway(gatewayUrl: string, threshold: number, promotionToken: string): Promise<void> {
     await this.openGatewayPanel();
     await this.page.locator('#gate-promote-url').fill(gatewayUrl);
+    await this.page.locator('#gate-promotion-token').fill(promotionToken);
     await this.page.locator('#gate-promote-threshold').fill(String(threshold));
     await this.page.getByRole('button', { name: 'Enable API Gateway' }).click();
     await this.page.getByText('API Gateway Active').waitFor({ timeout: 15_000 });
@@ -580,6 +581,7 @@ export interface LongHarness {
   rootDir: string;
   relayUrl: string;
   gatewayUrl: string;
+  gatewayPromotionToken: string;
   uiUrl: string;
   recipeCatalogPath: string;
   gatewayBootstrap: { gateway_public_key: string; gateway_kid: string };
@@ -825,6 +827,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     rootDir,
     relayUrl,
     gatewayUrl,
+    gatewayPromotionToken: GATEWAY_PROMOTION_TOKEN,
     uiUrl,
     recipeCatalogPath,
     gatewayBootstrap: { gateway_public_key: '', gateway_kid: '' },

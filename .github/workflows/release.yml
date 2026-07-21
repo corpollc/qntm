@@ -9,6 +9,9 @@ permissions:
   id-token: write  # Required for PyPI trusted publisher
 
 jobs:
+  acceptance:
+    uses: ./.github/workflows/ui-acceptance.yml
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +28,7 @@ jobs:
         run: python -m pytest python-dist/tests/ -v
 
   release:
-    needs: test
+    needs: [acceptance, test]
     runs-on: ubuntu-latest
     environment: release
     steps:

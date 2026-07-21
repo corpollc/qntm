@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildSignedReceipt, generateIdentity } from '@corpollc/qntm';
 import { ManagedProcess, waitForHttp } from './src/runtime.js';
 
 interface RelayFrame {
@@ -104,13 +105,14 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     if (stateDir) rmSync(stateDir, { recursive: true, force: true });
   });
 
-  async function publish(label: string): Promise<number> {
+  async function publish(label: string, msgId?: string): Promise<number> {
     const response = await fetch(`${relayUrl}/v1/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         conv_id: CONV_ID,
         envelope_b64: Buffer.from(label).toString('base64'),
+        ...(msgId ? { msg_id: msgId } : {}),
       }),
     });
     expect(response.status).toBe(201);
@@ -145,5 +147,38 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(resumed.frames.filter((frame) => frame.type === 'message').map((frame) => frame.seq)).toEqual([4]);
     expect(resumed.frames.find((frame) => frame.type === 'ready')?.head_seq).toBe(4);
     await closeSocket(resumed.socket);
+  }, 30_000);
+
+  it('keeps a message after an arbitrary signer submits a one-ack receipt', async () => {
+    const msgId = 'ab'.repeat(16);
+    const sequence = await publish('receipt-retained', msgId);
+    const receipt = buildSignedReceipt(
+      generateIdentity(),
+      Buffer.from(CONV_ID, 'hex'),
+      Buffer.from(msgId, 'hex'),
+      1,
+    );
+
+    const receiptResponse = await fetch(`${relayUrl}/v1/receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(receipt),
+    });
+    expect(receiptResponse.status).toBe(200);
+    expect(await receiptResponse.json()).toMatchObject({
+      recorded: true,
+      deleted: false,
+      receipts: 1,
+      required_acks: 1,
+    });
+
+    const retained = await openSubscription(relayUrl, sequence - 1);
+    const frame = await waitForFrame(
+      retained.frames,
+      (candidate) => candidate.type === 'message' && candidate.seq === sequence,
+      'receipt-retained message replay',
+    );
+    expect(Buffer.from(String(frame.envelope_b64), 'base64').toString()).toBe('receipt-retained');
+    await closeSocket(retained.socket);
   }, 30_000);
 });

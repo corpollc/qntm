@@ -24,6 +24,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   let invalidatedFloorProposalId = '';
   let restartRequestId = '';
   let expiredRequestId = '';
+  const otherConvId = 'f'.repeat(32);
 
   beforeAll(async () => {
     harness = await createLongHarness({ withUi: true });
@@ -93,6 +94,82 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
         historyMatchesProposal('gov.applied', invalidatedFloorProposalId),
         6_000,
       );
+    } catch (error) {
+      await printDiagnostics(harness, convId);
+      throw error;
+    }
+  }, LONG_TIMEOUT);
+
+  it('rejects below-quorum governance and cross-conversation traffic without poisoning valid work', async () => {
+    try {
+      harness.resetCounterExecutions();
+
+      const unilateral = await harness.alice.run([
+        'gov', 'propose-floor', '-c', convId, '--floor', '1', '--required-approvals', '1',
+      ]);
+      const unilateralProposalId = String(unilateral.data?.proposal_id);
+      await waitForCliHistory(
+        harness.charlie,
+        convId,
+        historyMatchesProposal('gov.propose', unilateralProposalId),
+        'malicious below-quorum proposal',
+        30_000,
+      );
+      await assertNoCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesProposal('gov.applied', unilateralProposalId),
+        4_000,
+      );
+
+      const crossRequestId = await harness.charlie.sendGateRequestClaimingConversation(
+        convId,
+        otherConvId,
+        `${harness.fixture.baseUrl}/counter`,
+      );
+      await waitForCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesRequest('gate.request', crossRequestId),
+        'cross-conversation gate request in relay transcript',
+        30_000,
+      );
+      await assertNoCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesRequest('gate.result', crossRequestId),
+        4_000,
+      );
+      expect(harness.getCounterExecutions()).toBe(0);
+
+      const valid = await harness.alice.run(['gate-run', 'counter.bump', '-c', convId]);
+      const validRequestId = String(valid.data?.request_id);
+      await waitForCliHistory(
+        harness.charlie,
+        convId,
+        historyMatchesRequest('gate.request', validRequestId),
+        'valid request following rejected cross-conversation request',
+        30_000,
+      );
+      await harness.charlie.sendGateApprovalClaimingConversation(validRequestId, convId, otherConvId);
+      await assertNoCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesRequest('gate.result', validRequestId),
+        4_000,
+      );
+      expect(harness.getCounterExecutions()).toBe(0);
+
+      await harness.charlie.run(['gate-approve', validRequestId, '-c', convId]);
+      const result = await waitForCliHistory(
+        harness.alice,
+        convId,
+        historyMatchesRequest('gate.result', validRequestId),
+        'valid result after rejected cross-conversation approval',
+        30_000,
+      );
+      assertCounterResultPayload(parseUnsafeBody(result), 1);
+      expect(harness.getCounterExecutions()).toBe(1);
     } catch (error) {
       await printDiagnostics(harness, convId);
       throw error;

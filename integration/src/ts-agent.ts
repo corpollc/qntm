@@ -24,6 +24,7 @@ import {
   processGroupMessage,
   serializeEnvelope,
   signApproval,
+  signRequest,
   signGovApproval,
   GroupState,
 } from '@corpollc/qntm';
@@ -198,6 +199,82 @@ export class TslibAgent {
 
   readHistory(convId: string): Array<Record<string, unknown>> {
     return this.getConversation(convId).history.map((entry) => ({ ...entry }));
+  }
+
+  async sendGateRequestClaimingConversation(
+    transportConvId: string,
+    claimedConvId: string,
+    targetUrl: string,
+  ): Promise<string> {
+    const identity = this.requireIdentity();
+    const state = this.getConversation(transportConvId);
+    const requestId = randomUUID();
+    const expiresAtUnix = Math.floor(Date.now() / 1000) + 3600;
+    const eligibleSignerKids = state.participantKids.map((kid) => base64UrlEncode(hexToBytes(kid))).sort();
+    const signable = {
+      conv_id: claimedConvId,
+      request_id: requestId,
+      verb: 'POST',
+      target_endpoint: '/counter',
+      target_service: 'fun',
+      target_url: targetUrl,
+      expires_at_unix: expiresAtUnix,
+      payload_hash: computePayloadHash(null),
+      eligible_signer_kids: eligibleSignerKids,
+      required_approvals: Math.min(2, eligibleSignerKids.length),
+    };
+    const body = {
+      type: 'gate.request',
+      conv_id: claimedConvId,
+      request_id: requestId,
+      requester_kid: base64UrlEncode(identity.keyID),
+      verb: signable.verb,
+      target_endpoint: signable.target_endpoint,
+      target_service: signable.target_service,
+      target_url: signable.target_url,
+      expires_at: new Date(expiresAtUnix * 1000).toISOString(),
+      eligible_signer_kids: eligibleSignerKids,
+      required_approvals: signable.required_approvals,
+      signature: base64UrlEncode(signRequest(identity.privateKey, signable)),
+    };
+    await this.sendRaw(transportConvId, 'gate.request', JSON.stringify(body));
+    return requestId;
+  }
+
+  async sendGateApprovalClaimingConversation(
+    requestId: string,
+    transportConvId: string,
+    claimedConvId: string,
+  ): Promise<void> {
+    const identity = this.requireIdentity();
+    const state = this.getConversation(transportConvId);
+    const request = this.findGateRequest(state, requestId);
+    const requestSignable = {
+      conv_id: String(request.conv_id),
+      request_id: requestId,
+      verb: String(request.verb),
+      target_endpoint: String(request.target_endpoint),
+      target_service: String(request.target_service),
+      target_url: String(request.target_url),
+      expires_at_unix: Math.floor(new Date(String(request.expires_at)).getTime() / 1000),
+      payload_hash: computePayloadHash((request.payload as unknown) ?? null),
+      eligible_signer_kids: Array.isArray(request.eligible_signer_kids)
+        ? request.eligible_signer_kids as string[]
+        : [],
+      required_approvals: Number(request.required_approvals ?? 1),
+    };
+    const body = {
+      type: 'gate.approval',
+      conv_id: claimedConvId,
+      request_id: requestId,
+      signer_kid: base64UrlEncode(identity.keyID),
+      signature: base64UrlEncode(signApproval(identity.privateKey, {
+        conv_id: claimedConvId,
+        request_id: requestId,
+        request_hash: hashRequest(requestSignable),
+      })),
+    };
+    await this.sendRaw(transportConvId, 'gate.approval', JSON.stringify(body));
   }
 
   private requireIdentity(): Identity {

@@ -24,6 +24,10 @@ import {
 
 const UI_LABEL = 'Long Run';
 
+function hexToBase64Url(hex: string): string {
+  return Buffer.from(hex, 'hex').toString('base64url');
+}
+
 describe.sequential('real long-running gateway integration UI flow', () => {
   let harness: LongHarness;
   let convId = '';
@@ -54,7 +58,34 @@ describe.sequential('real long-running gateway integration UI flow', () => {
     const ui = requireUi(harness);
 
     try {
-      await ui.enableGateway(harness.gatewayUrl, 2);
+      const conversation = harness.alice.readConversation(convId);
+      const keys = conversation.keys as Record<string, string>;
+      const bootstrapBody = {
+        conv_id: convId,
+        conv_aead_key: hexToBase64Url(keys.aead_key),
+        conv_nonce_key: hexToBase64Url(keys.nonce_key),
+        conv_epoch: Number(conversation.current_epoch || 0),
+      };
+      const unauthenticated = await fetch(`${harness.gatewayUrl}/v1/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bootstrapBody),
+      });
+      expect(unauthenticated.status).toBe(401);
+      const wrongToken = await fetch(`${harness.gatewayUrl}/v1/promote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer definitely-not-the-token',
+        },
+        body: JSON.stringify(bootstrapBody),
+      });
+      expect(wrongToken.status).toBe(401);
+
+      await ui.enableGateway(harness.gatewayUrl, 2, harness.gatewayPromotionToken);
+      expect(await ui.page.evaluate((token) => {
+        return Object.values(window.localStorage).some((value) => value.includes(token));
+      }, harness.gatewayPromotionToken)).toBe(false);
       const promoteEntry = await waitForCliHistory(
         harness.alice,
         convId,
