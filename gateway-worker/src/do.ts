@@ -21,6 +21,11 @@ import { executeRequest } from './execute.js';
 
 const groupSuite = new QSP1Suite();
 
+function trustedGovernanceQuorum(convState: ConversationState): number {
+  const participantCount = Object.keys(convState.participants).length;
+  return Math.max(1, Math.floor(participantCount / 2) + 1);
+}
+
 function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
   return {
     conv_id: msg.conv_id,
@@ -34,6 +39,22 @@ function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
     required_approvals: msg.required_approvals,
     expires_at_unix: Math.floor(new Date(msg.expires_at).getTime() / 1000),
   };
+}
+
+function assertConversationID(messageType: string, messageConvID: string, convState: ConversationState): void {
+  if (messageConvID !== convState.conv_id) {
+    throw new Error(`${messageType} rejected: conv_id does not match gateway conversation`);
+  }
+}
+
+function storedVoteMatchesConversation(body: string | undefined, expectedConvID: string): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { conv_id?: unknown };
+    return parsed.conv_id === expectedConvID;
+  } catch {
+    return false;
+  }
 }
 
 const GATEWAY_BODY_TYPES = new Set([
@@ -133,7 +154,21 @@ export class GatewayConversationDO extends DurableObject<Env> {
           { status: 409 },
         );
       }
+      if (
+        existing.conv_aead_key !== body.conv_aead_key ||
+        existing.conv_nonce_key !== body.conv_nonce_key ||
+        existing.conv_epoch !== body.conv_epoch
+      ) {
+        return Response.json(
+          { error: 'promotion material mismatch: existing conversation state cannot be overwritten' },
+          { status: 409 },
+        );
+      }
       this.ensureRelaySubscription(existing);
+      // A local worker restart can preserve DO storage while losing the
+      // scheduled alarm. Re-arm maintenance whenever the public idempotent
+      // bootstrap wakes an existing conversation.
+      await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
       return Response.json({
         conv_id: existing.conv_id,
         gateway_public_key: existing.public_key,
@@ -354,6 +389,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // Validate sender is a participant
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.request: no bootstrapped state');
+    assertConversationID('gate.request', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.request rejected: sender is not a participant');
     }
@@ -423,6 +459,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // Validate sender is a participant
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.approval: no bootstrapped state');
+    assertConversationID('gate.approval', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.approval rejected: sender is not a participant');
     }
@@ -434,6 +471,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       throw new Error('gate.approval rejected: referenced request not found');
     }
     const reqMsg = JSON.parse(reqStored.body) as GateRequestMessage;
+    assertConversationID('gate.approval referenced request', reqMsg.conv_id, convState);
     const reqSignable = {
       conv_id: reqMsg.conv_id,
       request_id: reqMsg.request_id,
@@ -468,6 +506,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       request_id: msg.request_id,
       signer_kid: authenticatedKid,
       signature: msg.signature,
+      body: bodyStr,
     });
   }
 
@@ -482,6 +521,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // Validate sender is a participant
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gate.disapproval: no bootstrapped state');
+    assertConversationID('gate.disapproval', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gate.disapproval rejected: sender is not a participant');
     }
@@ -491,6 +531,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       type: 'gate.disapproval',
       request_id: msg.request_id,
       signer_kid: authenticatedKid,
+      body: bodyStr,
     });
   }
 
@@ -584,7 +625,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
    */
   private async checkAndExecute(convState: ConversationState): Promise<void> {
     const messages = await this.loadGateMessages();
-    const executable = findExecutableRequests(messages, convState.kid, convState.rules);
+    const executable = findExecutableRequests(messages, convState.kid, convState.rules, convState.conv_id);
 
     for (const scan of executable) {
       if (!scan.request) continue;
@@ -673,6 +714,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // Validate sender is a participant
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.propose: no bootstrapped state');
+    assertConversationID('gov.propose', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.propose rejected: sender is not a participant');
     }
@@ -705,6 +747,16 @@ export class GatewayConversationDO extends DurableObject<Env> {
       }
     }
 
+    // Governance has a server-derived quorum. The proposal may require more
+    // approvals, but its author cannot lower the threshold below a strict
+    // majority of the current participant set.
+    const trustedQuorum = trustedGovernanceQuorum(convState);
+    if (msg.required_approvals < trustedQuorum) {
+      throw new Error(
+        `gov.propose rejected: required_approvals ${msg.required_approvals} below trusted governance quorum ${trustedQuorum}`,
+      );
+    }
+
     // Store the proposal
     await this.storeGovProposal({
       seq: ++this.messageSeq,
@@ -725,6 +777,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.approve: no bootstrapped state');
+    assertConversationID('gov.approve', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.approve rejected: sender is not a participant');
     }
@@ -739,6 +792,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       throw new Error('gov.approve rejected: referenced proposal has been invalidated');
     }
     const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
+    assertConversationID('gov.approve referenced proposal', proposalMsg.conv_id, convState);
 
     // Verify the approval signature against the proposal hash
     const proposalSignable = buildGovProposalSignable(proposalMsg);
@@ -765,6 +819,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       proposal_id: msg.proposal_id,
       signer_kid: authenticatedKid,
       signature: msg.signature,
+      body: bodyStr,
     });
 
     // Check if threshold is met and apply
@@ -780,6 +835,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     const convState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!convState) throw new Error('gov.disapprove: no bootstrapped state');
+    assertConversationID('gov.disapprove', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new Error('gov.disapprove rejected: sender is not a participant');
     }
@@ -789,6 +845,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       type: 'gov.disapprove',
       proposal_id: msg.proposal_id,
       signer_kid: authenticatedKid,
+      body: bodyStr,
     });
   }
 
@@ -816,8 +873,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
     for (const p of proposals) {
       if (p.proposal_id !== proposalId || !p.signer_kid) continue;
       if (p.type === 'gov.approve') {
+        if (!storedVoteMatchesConversation(p.body, convState.conv_id)) continue;
         votes[p.signer_kid] = 'approve';
       } else if (p.type === 'gov.disapprove') {
+        if (!storedVoteMatchesConversation(p.body, convState.conv_id)) continue;
         votes[p.signer_kid] = 'disapprove';
       }
     }
@@ -827,7 +886,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const alreadyApplied = proposals.some(p => p.type === 'gov.applied' && p.proposal_id === proposalId);
     if (alreadyApplied) return;
 
-    if (approvalCount < proposalMsg.required_approvals) return;
+    // Defense in depth for proposals stored before this validation existed:
+    // never apply below the quorum derived from current trusted state.
+    const requiredApprovals = Math.max(proposalMsg.required_approvals, trustedGovernanceQuorum(convState));
+    if (approvalCount < requiredApprovals) return;
 
     // Apply the proposal
     const preApplyState: ConversationState = {
@@ -957,7 +1019,14 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     for (const requestId of requestIds) {
       if (seenInvalidations.has(requestId)) continue;
-      const scan = scanRequestApprovals(messages, requestId, convState.kid, convState.rules);
+      const scan = scanRequestApprovals(
+        messages,
+        requestId,
+        convState.kid,
+        convState.rules,
+        Date.now(),
+        convState.conv_id,
+      );
       if (!scan) continue;
       if (scan.status === 'pending' || scan.status === 'approved') {
         const invalidated = {

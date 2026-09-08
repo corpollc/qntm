@@ -98,6 +98,7 @@ from .identity import (
     key_id_from_public_key,
 )
 from .naming import NamingStore
+from .storage import load_json as _private_load_json, save_json as _private_save_json, private_directory
 
 AGENT_RULES = {
     "engagement_policy_scope": "local_only",
@@ -194,7 +195,7 @@ def _get_config_dir(args):
 
 
 def _ensure_config_dir(config_dir):
-    os.makedirs(config_dir, exist_ok=True)
+    private_directory(config_dir)
 
 
 def _identity_path(config_dir):
@@ -215,7 +216,8 @@ def _seen_path(config_dir):
 
 def _history_path(config_dir, conv_id_hex):
     chats_dir = os.path.join(config_dir, "chats")
-    os.makedirs(chats_dir, exist_ok=True)
+    _ensure_config_dir(config_dir)
+    private_directory(chats_dir)
     return os.path.join(chats_dir, f"{conv_id_hex}.json")
 
 
@@ -223,24 +225,18 @@ def _history_path(config_dir, conv_id_hex):
 
 
 def _load_json(path, default=None):
-    if not os.path.isfile(path):
-        return default
-    with open(path) as f:
-        return json.load(f)
+    return _private_load_json(path, default)
 
 
 def _save_json(path, data):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
+    _private_save_json(path, data)
 
 
 def _load_identity(config_dir):
     path = _identity_path(config_dir)
-    if not os.path.isfile(path):
-        return None
     raw = _load_json(path)
+    if raw is None:
+        return None
     return {
         "privateKey": bytes.fromhex(raw["private_key"]),
         "publicKey": bytes.fromhex(raw["public_key"]),
@@ -341,7 +337,8 @@ def _save_history(config_dir, conv_id_hex, entries):
 
 def _group_state_path(config_dir, conv_id_hex):
     groups_dir = os.path.join(config_dir, "groups")
-    os.makedirs(groups_dir, exist_ok=True)
+    _ensure_config_dir(config_dir)
+    private_directory(groups_dir)
     return os.path.join(groups_dir, f"{conv_id_hex}.json")
 
 
@@ -392,8 +389,7 @@ def _merge_participant_public_key(config_dir, conv_id_hex, public_key: bytes):
     """Record a participant's public key so gate commands can build the full roster."""
     pk_path = os.path.join(config_dir, "participant_keys.json")
     try:
-        with open(pk_path) as f:
-            pk_store = json.load(f)
+        pk_store = _load_json(pk_path, {})
     except (FileNotFoundError, json.JSONDecodeError):
         pk_store = {}
     conv_keys = pk_store.setdefault(conv_id_hex.lower(), {})
@@ -401,8 +397,7 @@ def _merge_participant_public_key(config_dir, conv_id_hex, public_key: bytes):
     pk_hex = public_key.hex()
     if conv_keys.get(kid_hex) != pk_hex:
         conv_keys[kid_hex] = pk_hex
-        with open(pk_path, "w") as f:
-            json.dump(pk_store, f)
+        _save_json(pk_path, pk_store)
 
 
 def _merge_conversation_participant(conv_record, sender_kid_hex: str) -> bool:
@@ -440,8 +435,7 @@ def _load_participant_public_keys(config_dir, conv_id_hex) -> dict[str, bytes]:
     """Load learned participant public keys for a conversation. Returns {kid_hex: pk_bytes}."""
     pk_path = os.path.join(config_dir, "participant_keys.json")
     try:
-        with open(pk_path) as f:
-            pk_store = json.load(f)
+        pk_store = _load_json(pk_path, {})
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     conv_keys = pk_store.get(conv_id_hex.lower(), {})
@@ -532,8 +526,10 @@ def _current_governance_floor(history_entries) -> int:
 def _default_governance_required_approvals(conv_record, proposal_type=None, removed_member_kids=None) -> int:
     participant_count = len(_participant_kids_from_conversation(conv_record))
     if proposal_type == "member_remove":
-        removed_count = len(removed_member_kids or [])
-        return max(1, participant_count - removed_count)
+        # Removal targets remain part of the trusted current roster when the
+        # proposal is evaluated. Never let the proposer lower the default to a
+        # one-person takeover by naming other participants for removal.
+        return max(1, participant_count // 2 + 1)
     return max(1, participant_count)
 
 
@@ -554,10 +550,10 @@ def _find_gov_proposal_in_history(history_entries, proposal_id):
     )
 
 
-def _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity):
+def _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity, *, persist=True):
     """Apply group membership/epoch state changes from a received group event.
 
-    Mutates conv_record in-place and saves conversations to disk.
+    Mutates conv_record in-place; the shared receiver batches persistence.
     """
     if body_type not in _GROUP_BODY_TYPES:
         return
@@ -574,7 +570,8 @@ def _apply_group_event(config_dir, conv_record, conversations, body_type, body_b
                 existing_pks.add(pk_hex)
             conv_record["participants"] = list(existing)
             conv_record["participant_public_keys"] = list(existing_pks)
-            _save_conversations(config_dir, conversations)
+            if persist:
+                _save_conversations(config_dir, conversations)
 
         elif body_type == "group_add":
             parsed = parse_group_add_body(body_bytes)
@@ -587,7 +584,8 @@ def _apply_group_event(config_dir, conv_record, conversations, body_type, body_b
                 existing_pks.add(pk_hex)
             conv_record["participants"] = list(existing)
             conv_record["participant_public_keys"] = list(existing_pks)
-            _save_conversations(config_dir, conversations)
+            if persist:
+                _save_conversations(config_dir, conversations)
 
         elif body_type == "group_remove":
             parsed = parse_group_remove_body(body_bytes)
@@ -604,12 +602,16 @@ def _apply_group_event(config_dir, conv_record, conversations, body_type, body_b
                 pk for pk in conv_record.get("participant_public_keys", [])
                 if _kid_from_pk(bytes.fromhex(pk)).hex().lower() not in removed_kids
             ]
-            _save_conversations(config_dir, conversations)
+            if persist:
+                _save_conversations(config_dir, conversations)
 
         elif body_type == "group_rekey":
             if not identity:
                 return
             parsed = parse_group_rekey_body(body_bytes)
+            new_epoch = parsed["new_conv_epoch"]
+            if not isinstance(new_epoch, int) or new_epoch <= conv_record.get("current_epoch", 0):
+                return
             local_kid = identity["keyID"]
             local_kid_b64 = base64url_encode(local_kid)
             wrapped = parsed.get("wrapped_keys", {}).get(local_kid_b64)
@@ -630,9 +632,10 @@ def _apply_group_event(config_dir, conv_record, conversations, body_type, body_b
             conv_record["keys"]["root"] = new_group_key.hex()
             conv_record["keys"]["aead_key"] = aead_key.hex()
             conv_record["keys"]["nonce_key"] = nonce_key.hex()
-            _save_conversations(config_dir, conversations)
-    except Exception:
-        pass  # Silently ignore malformed group events
+            if persist:
+                _save_conversations(config_dir, conversations)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass  # Ignore malformed events; storage errors must propagate to the caller.
 
 
 def _conv_to_crypto(conv_record):
@@ -997,21 +1000,8 @@ def cmd_send(args):
     })
 
 
-def cmd_recv(args):
-    config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
-    identity = _load_identity(config_dir)
-    if not identity:
-        _error("no identity found; run 'qntm identity generate' first")
-
-    conv_id_input = args.conversation
-    conversations = _load_conversations(config_dir)
-
-    conv_record = _resolve_conversation(conversations, conv_id_input)
-    if not conv_record:
-        _error(f"conversation {conv_id_input} not found")
-
+def _process_received_messages(config_dir, identity, conversations, conv_record, raw_messages, up_to_seq):
+    """Decrypt and persist a batch for both CLI and MCP, applying rekeys in order."""
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
 
@@ -1021,11 +1011,8 @@ def cmd_recv(args):
     seen = _load_seen(config_dir)
     conv_seen = seen.setdefault(conv_id_hex, {})
 
-    raw_messages, up_to_seq = _http_poll(dropbox_url, conv_id_hex, from_seq)
-
     history = _load_history(config_dir, conv_id_hex)
     output_messages = []
-    conversations_dirty = False
 
     for raw_msg in raw_messages:
         try:
@@ -1053,14 +1040,13 @@ def cmd_recv(args):
 
         # Apply group membership/epoch state changes before learning senders so
         # governed membership updates can adjust the roster deterministically.
-        _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity)
+        _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity, persist=False)
         if body_type == "group_rekey":
             conv_crypto = _conv_to_crypto(conv_record)
 
         if _should_track_sender_as_participant(conv_record, body_type, sender_kid_hex):
             _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
-            if _merge_conversation_participant(conv_record, sender_kid_hex):
-                conversations_dirty = True
+            _merge_conversation_participant(conv_record, sender_kid_hex)
 
         entry = {
             "conversation_id": conv_id_hex,
@@ -1069,6 +1055,7 @@ def cmd_recv(args):
             "sender_kid": sender_kid_hex,
             "sender": sender_kid_hex[:3],
             "body_type": body_type,
+            "verified": msg.get("verified", False),
         }
 
         # Determine body encoding — decode group CBOR events to JSON
@@ -1102,16 +1089,43 @@ def cmd_recv(args):
                 hist_entry["unsafe_body"] = body_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 hist_entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
+        # A failed previous commit can leave history ahead of the roster/seen
+        # files. Reprocess events but replace the entry instead of duplicating it.
+        history = [item for item in history if item.get("msg_id") != msg_id_hex]
         history.append(hist_entry)
 
+    # Store plaintext history before rotating persisted keys. A retry after a
+    # failed write can then neither lose a message nor advance past unsaved data.
+    _save_history(config_dir, conv_id_hex, history)
+    _save_conversations(config_dir, conversations)
+    _save_seen(config_dir, seen)
     if up_to_seq > from_seq:
         cursors[conv_id_hex] = up_to_seq
         _save_cursors(config_dir, cursors)
+    return output_messages
 
-    _save_seen(config_dir, seen)
-    _save_history(config_dir, conv_id_hex, history)
-    if conversations_dirty:
-        _save_conversations(config_dir, conversations)
+
+def cmd_recv(args):
+    config_dir = _get_config_dir(args)
+    dropbox_url = _get_dropbox_url(args)
+
+    identity = _load_identity(config_dir)
+    if not identity:
+        _error("no identity found; run 'qntm identity generate' first")
+
+    conv_id_input = args.conversation
+    conversations = _load_conversations(config_dir)
+
+    conv_record = _resolve_conversation(conversations, conv_id_input)
+    if not conv_record:
+        _error(f"conversation {conv_id_input} not found")
+
+    conv_id_hex = conv_record["id"]
+    from_seq = _load_cursors(config_dir).get(conv_id_hex, 0)
+    raw_messages, up_to_seq = _http_poll(dropbox_url, conv_id_hex, from_seq)
+    output_messages = _process_received_messages(
+        config_dir, identity, conversations, conv_record, raw_messages, up_to_seq,
+    )
 
     _output("recv", {
         "received": len(output_messages),

@@ -30,8 +30,6 @@ from . import (
     add_participant,
     create_message,
     serialize_envelope,
-    deserialize_envelope,
-    decrypt_message,
     invite_to_token,
     invite_from_url,
 )
@@ -41,9 +39,6 @@ from .cli import (
     _load_conversations,
     _save_conversations,
     _load_cursors,
-    _save_cursors,
-    _load_seen,
-    _save_seen,
     _load_history,
     _save_history,
     _ensure_config_dir,
@@ -51,6 +46,7 @@ from .cli import (
     _resolve_conversation,
     _http_send,
     _recv_once,
+    _process_received_messages,
     default_ttl,
     AGENT_RULES,
 )
@@ -389,73 +385,21 @@ def receive_messages(conversation: str) -> dict:
         return {"error": f"Conversation '{conversation}' not found."}
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
-
-    cursors = _load_cursors(config_dir)
-    from_seq = cursors.get(conv_id_hex, 0)
-
-    seen = _load_seen(config_dir)
-    conv_seen = seen.setdefault(conv_id_hex, {})
-
+    from_seq = _load_cursors(config_dir).get(conv_id_hex, 0)
     try:
         raw_messages, up_to_seq = _recv_once(relay, conv_id_hex, from_seq)
+        entries = _process_received_messages(
+            config_dir, identity, conversations, conv_record, raw_messages, up_to_seq,
+        )
     except Exception as e:
         return {"error": f"Failed to receive: {e}"}
 
-    history = _load_history(config_dir, conv_id_hex)
     output_messages = []
-
-    for raw_msg in raw_messages:
-        try:
-            envelope_bytes = base64.b64decode(raw_msg["envelope_b64"])
-            envelope = deserialize_envelope(envelope_bytes)
-        except Exception:
-            continue
-
-        msg_id_hex = bytes(envelope["msg_id"]).hex()
-        if conv_seen.get(msg_id_hex):
-            continue
-
-        try:
-            msg = decrypt_message(envelope, conv_crypto)
-        except Exception:
-            continue
-
-        conv_seen[msg_id_hex] = True
-        inner = msg["inner"]
-        body_type = inner.get("body_type", "text")
-        body_text = ""
-        if body_type == "text" and isinstance(inner.get("body"), (bytes, bytearray)):
-            body_text = inner["body"].decode("utf-8", errors="replace")
-        elif body_type == "text" and isinstance(inner.get("body"), str):
-            body_text = inner["body"]
-
-        sender_kid = bytes(inner["sender_kid"]).hex() if "sender_kid" in inner else "unknown"
-
-        record = {
-            "msg_id": msg_id_hex,
-            "sender": sender_kid,
-            "body_type": body_type,
-            "unsafe_body": body_text,
-            "verified": msg.get("verified", False),
-            "created_ts": envelope.get("created_ts", 0),
-        }
+    for entry in entries:
+        record = dict(entry)
+        record["msg_id"] = record.pop("message_id")
+        record["sender"] = record["sender_kid"]
         output_messages.append(record)
-
-        history.append({
-            "msg_id": msg_id_hex,
-            "direction": "incoming",
-            "sender": sender_kid,
-            "body_type": body_type,
-            "unsafe_body": body_text,
-            "created_ts": envelope.get("created_ts", 0),
-        })
-
-    # Save state
-    cursors[conv_id_hex] = up_to_seq
-    _save_cursors(config_dir, cursors)
-    _save_seen(config_dir, seen)
-    _save_history(config_dir, conv_id_hex, history)
 
     return {
         "conversation_id": conv_id_hex,

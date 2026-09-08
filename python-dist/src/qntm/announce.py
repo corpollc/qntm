@@ -127,25 +127,21 @@ def _announce_store_path(config_dir: str) -> str:
 def load_announce_store(config_dir: str) -> dict:
     """Load the announce channel store from disk."""
     path = _announce_store_path(config_dir)
-    if not os.path.isfile(path):
-        return {"channels": {}}
+    from .storage import load_json
     try:
-        with open(path) as f:
-            store = json.load(f)
+        store = load_json(path, {"channels": {}})
         if not isinstance(store.get("channels"), dict):
             store["channels"] = {}
         return store
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError:
         return {"channels": {}}
 
 
 def save_announce_store(config_dir: str, store: dict) -> None:
     """Save the announce channel store to disk."""
-    os.makedirs(config_dir, exist_ok=True)
+    from .storage import save_json
     path = _announce_store_path(config_dir)
-    with open(path, "w") as f:
-        json.dump(store, f, indent=2)
-        f.write("\n")
+    save_json(path, store)
 
 
 def resolve_channel(store: dict, name_or_id: str) -> dict:

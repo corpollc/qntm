@@ -7,8 +7,8 @@ Persists a simple JSON dict at <config_dir>/names.json:
 }
 """
 
-import json
 import os
+from .storage import load_json, save_json
 
 
 class NamingStore:
@@ -19,16 +19,10 @@ class NamingStore:
         self._data = self._load()
 
     def _load(self) -> dict:
-        if os.path.isfile(self._path):
-            with open(self._path) as f:
-                return json.load(f)
-        return {"identities": {}, "conversations": {}}
+        return load_json(self._path, {"identities": {}, "conversations": {}})
 
     def _save(self):
-        os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
-        with open(self._path, "w") as f:
-            json.dump(self._data, f, indent=2)
-            f.write("\n")
+        save_json(self._path, self._data)
 
     # --- Identities ---
 

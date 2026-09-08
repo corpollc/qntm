@@ -3,8 +3,8 @@ import type { LongHarness } from './src/runtime.js';
 import { assertNoCliHistory, createLongHarness } from './src/runtime.js';
 import {
   LONG_TIMEOUT,
-  assertLiveHnItemPayload,
-  assertLiveHnTopStoriesPayload,
+  assertHnItemPayload,
+  assertHnTopStoriesPayload,
   historyContainsText,
   historyMatchesProposal,
   historyMatchesRequest,
@@ -23,6 +23,10 @@ import {
 } from './long-helpers.js';
 
 const UI_LABEL = 'Long Run';
+
+function hexToBase64Url(hex: string): string {
+  return Buffer.from(hex, 'hex').toString('base64url');
+}
 
 describe.sequential('real long-running gateway integration UI flow', () => {
   let harness: LongHarness;
@@ -54,7 +58,34 @@ describe.sequential('real long-running gateway integration UI flow', () => {
     const ui = requireUi(harness);
 
     try {
-      await ui.enableGateway(harness.gatewayUrl, 2);
+      const conversation = harness.alice.readConversation(convId);
+      const keys = conversation.keys as Record<string, string>;
+      const bootstrapBody = {
+        conv_id: convId,
+        conv_aead_key: hexToBase64Url(keys.aead_key),
+        conv_nonce_key: hexToBase64Url(keys.nonce_key),
+        conv_epoch: Number(conversation.current_epoch || 0),
+      };
+      const unauthenticated = await fetch(`${harness.gatewayUrl}/v1/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bootstrapBody),
+      });
+      expect(unauthenticated.status).toBe(401);
+      const wrongToken = await fetch(`${harness.gatewayUrl}/v1/promote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer definitely-not-the-token',
+        },
+        body: JSON.stringify(bootstrapBody),
+      });
+      expect(wrongToken.status).toBe(401);
+
+      await ui.enableGateway(harness.gatewayUrl, 2, harness.gatewayPromotionToken);
+      expect(await ui.page.evaluate((token) => {
+        return Object.values(window.localStorage).some((value) => value.includes(token));
+      }, harness.gatewayPromotionToken)).toBe(false);
       const promoteEntry = await waitForCliHistory(
         harness.alice,
         convId,
@@ -67,7 +98,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       expect(Object.keys((promoteBody.participants as Record<string, string>) || {})).toHaveLength(2);
 
       await ui.addApiKey('hackernews', 'hn-smoke-token', 'X-Test', '{value}');
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -100,7 +130,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         (await ui.readStoredHistory(convId)).filter(uiHistoryMatchesRequest('gate.request', phase1TopStoriesRequestId)),
       ).toHaveLength(1);
       await harness.alice.run(['gate-approve', phase1TopStoriesRequestId, '-c', convId]);
-      await harness.pumpGateway(convId);
 
       const resultEntry = await waitForCliHistory(
         harness.alice,
@@ -110,7 +139,7 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         30_000,
       );
       const resultBody = parseUnsafeBody(resultEntry);
-      const storyIds = assertLiveHnTopStoriesPayload(resultBody);
+      const storyIds = assertHnTopStoriesPayload(resultBody);
       const uiResultEntry = await waitForUiStoredHistory(
         ui,
         convId,
@@ -148,7 +177,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
       phase1TopStoryItemRequestId = String(parseUnsafeBody(itemRequest).request_id);
       await harness.alice.run(['gate-approve', phase1TopStoryItemRequestId, '-c', convId]);
-      await harness.pumpGateway(convId);
 
       const itemResultEntry = await waitForCliHistory(
         harness.alice,
@@ -158,7 +186,7 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         30_000,
       );
       const itemResultBody = parseUnsafeBody(itemResultEntry);
-      const topStoryTitle = assertLiveHnItemPayload(itemResultBody, topStoryId);
+      const topStoryTitle = assertHnItemPayload(itemResultBody, topStoryId);
       const uiItemResultEntry = await waitForUiStoredHistory(
         ui,
         convId,
@@ -219,7 +247,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
       await waitForUiText(ui, 'proposed floor to 3');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -233,7 +260,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       const addProposalId = String(addProposal.data?.proposal_id);
       await waitForUiText(ui, 'adding 1 member');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -257,7 +283,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         20_000,
       );
 
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -301,7 +326,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         30_000,
       );
       await harness.charlie.run(['gate-approve', strictRequestId, '-c', convId]);
-      await harness.pumpGateway(convId);
       const strictResult = await waitForCliHistory(
         harness.alice,
         convId,
@@ -309,7 +333,7 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         'strict gate.result',
         30_000,
       );
-      assertLiveHnTopStoriesPayload(parseUnsafeBody(strictResult));
+      assertHnTopStoriesPayload(parseUnsafeBody(strictResult));
       await waitForUiText(ui, '1 member added');
       await waitForUiText(ui, 'hello from charlie ts');
     } catch (error) {
@@ -328,7 +352,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       const removeProposalId = String(removeProposal.data?.proposal_id);
       await waitForUiText(ui, 'removing 1 member');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -369,7 +392,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       const floorProposalId = String(floorProposal.data?.proposal_id);
       await waitForUiText(ui, 'proposed floor to 2');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -398,7 +420,6 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       );
       leetRequestId = String(parseUnsafeBody(leet).request_id);
       await harness.alice.run(['gate-disapprove', leetRequestId, '-c', convId]);
-      await harness.pumpGateway(convId);
 
       await waitForCliHistory(
         harness.alice,

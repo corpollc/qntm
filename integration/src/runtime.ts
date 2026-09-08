@@ -17,6 +17,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const RETRY_INTERVAL_MS = 250;
 const RATE_LIMIT_RETRY_MS = 500;
 const GATEWAY_POLL_INTERVAL_MS = 250;
+const GATEWAY_PROMOTION_TOKEN = 'qntm-local-integration-promotion-token';
 
 export interface JsonResult {
   ok: boolean;
@@ -141,16 +142,12 @@ export class ManagedProcess {
   }
 }
 
-function bunCommand(): string {
-  return process.platform === 'win32' ? 'bun.exe' : 'bun';
+function npmCommand(): string {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
-function bunxCommand(): string {
-  return process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
-}
-
-function uvCommand(): string {
-  return process.platform === 'win32' ? 'uv.exe' : 'uv';
+function npxCommand(): string {
+  return process.platform === 'win32' ? 'npx.cmd' : 'npx';
 }
 
 export class CliAgent {
@@ -229,7 +226,7 @@ async function ensureChromiumInstalled(integrationDir: string): Promise<void> {
   if (executablePath && existsSync(executablePath)) {
     return;
   }
-  await execFileAsync(bunxCommand(), ['playwright', 'install', 'chromium'], {
+  await execFileAsync(npxCommand(), ['playwright', 'install', 'chromium'], {
     cwd: integrationDir,
     env: { ...process.env },
     maxBuffer: EXEC_MAX_BUFFER,
@@ -270,13 +267,12 @@ export class AimUiAgent {
 
   async generateIdentity(): Promise<void> {
     await this.ensurePanel('Profile');
-    await this.page.getByRole('button', { name: 'Generate keypair', exact: true }).click();
-    await this.page.locator('.toast-message', { hasText: 'Keypair generated' }).waitFor({ timeout: 10_000 });
+    await this.page.locator('.pubkey-value').waitFor({ state: 'visible', timeout: 10_000 });
   }
 
   async joinConversation(token: string, label: string): Promise<void> {
     await this.ensurePanel('Invites');
-    await this.page.getByPlaceholder('Paste an invite token').fill(token);
+    await this.page.getByPlaceholder('Paste an invite link or token').fill(token);
     await this.page.getByPlaceholder('Label for this conversation (optional)').fill(label);
     await this.page.getByRole('button', { name: 'Join' }).click();
     await this.waitForConversation(label);
@@ -315,9 +311,10 @@ export class AimUiAgent {
     await panel.waitFor({ state: 'visible', timeout: 10_000 });
   }
 
-  async enableGateway(gatewayUrl: string, threshold: number): Promise<void> {
+  async enableGateway(gatewayUrl: string, threshold: number, promotionToken: string): Promise<void> {
     await this.openGatewayPanel();
     await this.page.locator('#gate-promote-url').fill(gatewayUrl);
+    await this.page.locator('#gate-promotion-token').fill(promotionToken);
     await this.page.locator('#gate-promote-threshold').fill(String(threshold));
     await this.page.getByRole('button', { name: 'Enable API Gateway' }).click();
     await this.page.getByText('API Gateway Active').waitFor({ timeout: 15_000 });
@@ -373,10 +370,6 @@ export class AimUiAgent {
     await this.page.getByRole('button', { name: 'Send' }).click();
   }
 
-  async checkMessages(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Check for messages' }).click();
-  }
-
   async approveLatestRequest(): Promise<void> {
     const card = this.page.locator('.gate-card.gate-request').last();
     await card.getByRole('button', { name: 'Approve' }).click();
@@ -415,7 +408,6 @@ export async function waitForUiText(ui: AimUiAgent, text: string, timeoutMs = 20
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await ui.hasText(text)) return;
-    await ui.checkMessages();
     await delay(RETRY_INTERVAL_MS);
   }
   throw new Error(`Timed out waiting for UI text: ${text}`);
@@ -430,7 +422,6 @@ export async function waitForUiStoredHistory(
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    await ui.checkMessages();
     const entry = (await ui.readStoredHistory(convId)).find(predicate);
     if (entry) return entry;
     await delay(RETRY_INTERVAL_MS);
@@ -542,7 +533,15 @@ async function handleFixtureRequest(
 
   if (req.method === 'GET' && req.url === '/topstories.json') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify([101, 102, 103, 104]));
+    res.end(JSON.stringify([101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112]));
+    return;
+  }
+
+  const itemMatch = req.method === 'GET' ? req.url?.match(/^\/item\/(\d+)\.json$/) : null;
+  if (itemMatch) {
+    const id = Number(itemMatch[1]);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id, title: `Fixture story ${id}`, type: 'story' }));
     return;
   }
 
@@ -582,6 +581,7 @@ export interface LongHarness {
   rootDir: string;
   relayUrl: string;
   gatewayUrl: string;
+  gatewayPromotionToken: string;
   uiUrl: string;
   recipeCatalogPath: string;
   gatewayBootstrap: { gateway_public_key: string; gateway_kid: string };
@@ -592,10 +592,10 @@ export interface LongHarness {
   charlie: TslibAgent;
   dave: CliAgent;
   processes: ManagedProcess[];
+  artifactDir: string;
   stop(): Promise<void>;
   bootstrapGateway(convId: string, agent: ConversationAgent): Promise<{ gateway_public_key: string; gateway_kid: string }>;
-  pumpGateway(convId: string): Promise<void>;
-  restartGateway(): Promise<void>;
+  restartGateway(convId: string, agent: ConversationAgent): Promise<void>;
   getCounterExecutions(): number;
   resetCounterExecutions(): void;
 }
@@ -609,9 +609,9 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
     profiles: {
       hackernews: {
         service: 'hackernews',
-        description: 'Live Hacker News API',
-        base_url: 'https://hacker-news.firebaseio.com/v0',
-        hosts: ['hacker-news.firebaseio.com'],
+        description: 'Deterministic Hacker News-compatible fixture',
+        base_url: baseUrl,
+        hosts: ['127.0.0.1'],
         auth_required: false,
         endpoints: [
           { path: '/topstories.json', verb: 'GET', description: 'Top stories', risk_tier: 'read' },
@@ -633,33 +633,33 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
     recipes: {
       'hn.top-stories': {
         name: 'hn.top-stories',
-        description: 'Live Hacker News top stories',
+        description: 'Fixture Hacker News top stories',
         service: 'hackernews',
         verb: 'GET',
         endpoint: '/topstories.json',
-        target_url: 'https://hacker-news.firebaseio.com/v0/topstories.json',
+        target_url: `${baseUrl}/topstories.json`,
         risk_tier: 'read',
         threshold: 2,
         content_type: 'application/json',
       },
       'hn.top-stories.strict': {
         name: 'hn.top-stories.strict',
-        description: 'Live Hacker News top stories requiring 3 approvals',
+        description: 'Fixture Hacker News top stories requiring 3 approvals',
         service: 'hackernews',
         verb: 'GET',
         endpoint: '/topstories.json',
-        target_url: 'https://hacker-news.firebaseio.com/v0/topstories.json',
+        target_url: `${baseUrl}/topstories.json`,
         risk_tier: 'read',
         threshold: 3,
         content_type: 'application/json',
       },
       'hn.get-item': {
         name: 'hn.get-item',
-        description: 'Live Hacker News item lookup',
+        description: 'Fixture Hacker News item lookup',
         service: 'hackernews',
         verb: 'GET',
         endpoint: '/item/{id}.json',
-        target_url: 'https://hacker-news.firebaseio.com/v0/item/{id}.json',
+        target_url: `${baseUrl}/item/{id}.json`,
         risk_tier: 'read',
         threshold: 2,
         content_type: 'application/json',
@@ -709,16 +709,18 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
 
 async function createPythonVenv(rootDir: string, repoRoot: string): Promise<string> {
   const venvDir = join(rootDir, 'venv');
-  await execFileAsync(uvCommand(), ['venv', venvDir], {
+  const systemPython = process.platform === 'win32' ? 'python.exe' : 'python3';
+  await execFileAsync(systemPython, ['-m', 'venv', venvDir], {
     cwd: repoRoot,
     maxBuffer: EXEC_MAX_BUFFER,
   });
-  const python = join(venvDir, 'bin', 'python');
-  await execFileAsync(uvCommand(), ['pip', 'install', '--python', python, '-q', '-e', 'python-dist'], {
+  const binDir = join(venvDir, process.platform === 'win32' ? 'Scripts' : 'bin');
+  const python = join(binDir, process.platform === 'win32' ? 'python.exe' : 'python');
+  await execFileAsync(python, ['-m', 'pip', 'install', '-q', '-e', 'python-dist'], {
     cwd: repoRoot,
     maxBuffer: EXEC_MAX_BUFFER,
   });
-  return join(venvDir, 'bin', 'qntm');
+  return join(binDir, process.platform === 'win32' ? 'qntm.exe' : 'qntm');
 }
 
 export async function createLongHarness(options: LongHarnessOptions = {}): Promise<LongHarness> {
@@ -752,7 +754,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const relayProcess = new ManagedProcess(
       'relay',
       [
-        bunxCommand(), 'wrangler', 'dev', '--local',
+        npxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(relayInspectorPort),
@@ -765,7 +767,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const gatewayProcess = new ManagedProcess(
       'gateway',
       [
-        bunxCommand(), 'wrangler', 'dev', '--local',
+        npxCommand(), 'wrangler', 'dev', '--local',
         '--port', String(gatewayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(gatewayInspectorPort),
@@ -773,7 +775,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--var', `DROPBOX_URL:${relayUrl}`,
         '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
-        '--var', 'ENABLE_DEBUG_ROUTES:1',
+        '--var', `GATEWAY_PROMOTION_TOKEN:${GATEWAY_PROMOTION_TOKEN}`,
       ],
       join(repoRoot, 'gateway-worker'),
       { ...process.env },
@@ -781,18 +783,14 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const uiProcess = withUi
     ? new ManagedProcess(
         'aim-ui',
-        [bunCommand(), 'run', 'dev', '--host', '127.0.0.1', '--port', String(uiPort)],
+        [npmCommand(), 'run', 'dev', '--', '--host', '127.0.0.1', '--port', String(uiPort)],
         join(repoRoot, 'ui/aim-chat'),
         { ...process.env },
       )
     : null;
   const processes = [relayProcess, gatewayProcess, uiProcess].filter((process): process is ManagedProcess => process !== null);
 
-  await waitForHttp(`${relayUrl}/v1/poll`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversations: [{ conv_id: '00000000000000000000000000000000', from_seq: 0 }] }),
-  });
+  await waitForHttp(`${relayUrl}/healthz`);
   await waitForHttp(`${gatewayUrl}/health`);
   if (withUi) {
     await waitForHttp(uiUrl);
@@ -808,11 +806,28 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const alice = new CliAgent('alice', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
   const charlie = new TslibAgent('charlie', relayUrl);
   const dave = new CliAgent('dave', qntmBin, relayUrl, recipeCatalogPath, repoRoot, cliBaseDir);
+  const artifactDir = join(integrationDir, 'test-results', `long-${Date.now()}-${process.pid}`);
+
+  const bootstrapGateway = async (
+    convId: string,
+    agent: ConversationAgent,
+  ): Promise<{ gateway_public_key: string; gateway_kid: string }> => {
+    const conversation = agent.readConversation(convId);
+    const keys = conversation.keys as Record<string, string>;
+    const gate = new GateClient(gatewayUrl, GATEWAY_PROMOTION_TOKEN);
+    return await gate.promote(
+      convId,
+      hexToBase64Url(keys.aead_key),
+      hexToBase64Url(keys.nonce_key),
+      Number(conversation.current_epoch || 0),
+    );
+  };
 
   return {
     rootDir,
     relayUrl,
     gatewayUrl,
+    gatewayPromotionToken: GATEWAY_PROMOTION_TOKEN,
     uiUrl,
     recipeCatalogPath,
     gatewayBootstrap: { gateway_public_key: '', gateway_kid: '' },
@@ -823,6 +838,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     charlie,
     dave,
     processes,
+    artifactDir,
     async stop() {
       if (ui) {
         await ui.close();
@@ -836,37 +852,14 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
       }
       rmSync(rootDir, { recursive: true, force: true });
     },
-    async bootstrapGateway(convId: string, agent: CliAgent) {
-      const conversation = agent.readConversation(convId);
-      const keys = conversation.keys as Record<string, string>;
-      const gate = new GateClient(gatewayUrl);
-      return await gate.promote(
-        convId,
-        hexToBase64Url(keys.aead_key),
-        hexToBase64Url(keys.nonce_key),
-        Number(conversation.current_epoch || 0),
-      );
-    },
-    async pumpGateway(convId: string) {
-      let lastCursor = -1;
-
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const response = await fetch(`${gatewayUrl}/v1/debug/poll-once?conv_id=${convId}`, { method: 'POST' });
-        if (!response.ok) {
-          throw new Error(`gateway debug pump failed: HTTP ${response.status} ${await response.text()}`);
-        }
-        const status = await response.json() as { poll_cursor?: unknown };
-        const pollCursor = Number(status.poll_cursor ?? 0);
-        if (pollCursor === lastCursor) {
-          return;
-        }
-        lastCursor = pollCursor;
-      }
-      throw new Error(`gateway debug pump did not converge for ${convId}`);
-    },
-    async restartGateway() {
+    bootstrapGateway,
+    async restartGateway(convId: string, agent: ConversationAgent) {
       await gatewayProcess.restart();
       await waitForHttp(`${gatewayUrl}/health`);
+      // Replaying the idempotent bootstrap is the public recovery contract: it
+      // routes to the persisted Durable Object and re-establishes its relay
+      // subscription after a local worker process restart.
+      await bootstrapGateway(convId, agent);
     },
     getCounterExecutions() {
       return fixture.getCounterExecutions();

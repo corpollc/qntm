@@ -1,5 +1,7 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect } from 'vitest';
-import type { AimUiAgent, LongHarness } from './src/runtime.js';
+import type { AimUiAgent, HistoryAgent, LongHarness } from './src/runtime.js';
 import { waitForCliHistory, waitForUiStoredHistory, waitForUiText } from './src/runtime.js';
 
 export const LONG_TIMEOUT = 300_000;
@@ -145,15 +147,55 @@ export async function printDiagnostics(harness: LongHarness, convId: string): Pr
     // Best-effort only.
   }
 
+  const readHistory = (agent: HistoryAgent): Array<Record<string, unknown>> => {
+    try {
+      return agent.readHistory(convId);
+    } catch {
+      return [];
+    }
+  };
+  const aliceHistory = readHistory(harness.alice);
+  const charlieHistory = readHistory(harness.charlie);
+  const daveHistory = readHistory(harness.dave);
+
   console.error('\n=== Alice History ===');
-  console.error(summarizeHistory(harness.alice.readHistory(convId)));
+  console.error(summarizeHistory(aliceHistory));
+
+  mkdirSync(harness.artifactDir, { recursive: true });
+  writeFileSync(
+    join(harness.artifactDir, 'alice-history.json'),
+    JSON.stringify(aliceHistory, null, 2),
+  );
+  writeFileSync(
+    join(harness.artifactDir, 'charlie-history.json'),
+    JSON.stringify(charlieHistory, null, 2),
+  );
+  writeFileSync(
+    join(harness.artifactDir, 'dave-history.json'),
+    JSON.stringify(daveHistory, null, 2),
+  );
 
   for (const process of harness.processes) {
     console.error(`\n=== Process: ${process.name} stderr ===`);
     console.error(process.stderr.slice(-8000));
     console.error(`\n=== Process: ${process.name} stdout ===`);
     console.error(process.stdout.slice(-8000));
+    writeFileSync(join(harness.artifactDir, `${process.name}.stdout.log`), process.stdout);
+    writeFileSync(join(harness.artifactDir, `${process.name}.stderr.log`), process.stderr);
   }
+
+  if (harness.ui) {
+    try {
+      await harness.ui.page.screenshot({
+        path: join(harness.artifactDir, 'aim-ui-failure.png'),
+        fullPage: true,
+      });
+    } catch (error) {
+      writeFileSync(join(harness.artifactDir, 'screenshot-error.txt'), String(error));
+    }
+  }
+
+  console.error(`\nAcceptance artifacts: ${harness.artifactDir}`);
 }
 
 export function traceGateResultDelivery(
@@ -173,7 +215,7 @@ export function traceGateResultDelivery(
   console.error(`AIM: ${JSON.stringify(uiBody)}`);
 }
 
-export function assertLiveHnTopStoriesPayload(resultBody: Record<string, unknown>): number[] {
+export function assertHnTopStoriesPayload(resultBody: Record<string, unknown>): number[] {
   expect(resultBody.status_code).toBe(200);
   expect(resultBody.content_type).toContain('application/json');
   expect(typeof resultBody.body).toBe('string');
@@ -190,7 +232,7 @@ export function assertLiveHnTopStoriesPayload(resultBody: Record<string, unknown
   return storyIds as number[];
 }
 
-export function assertLiveHnItemPayload(resultBody: Record<string, unknown>, expectedId: number): string {
+export function assertHnItemPayload(resultBody: Record<string, unknown>, expectedId: number): string {
   expect(resultBody.status_code).toBe(200);
   expect(resultBody.content_type).toContain('application/json');
   expect(typeof resultBody.body).toBe('string');
@@ -351,7 +393,6 @@ export async function setupCliGovernedConversation(
     '--header-template',
     '{value}',
   ]);
-  await harness.pumpGateway(convId);
 
   return {
     convId,
@@ -418,7 +459,6 @@ export async function setupTwoPartyGovernedConversation(
     '2',
     `--gateway-kid=${gatewayKid}`,
   ]);
-  await harness.pumpGateway(convId);
 
   return {
     convId,

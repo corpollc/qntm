@@ -71,10 +71,7 @@ export class InMemoryRelay {
     };
   }
 
-  /**
-   * Record a read receipt. Returns whether the message was deleted
-   * (i.e. unique readers >= required_acks).
-   */
+  /** Record advisory telemetry; only server retention can delete messages. */
   submitReceipt(payload: ReadReceiptPayload): { recorded: boolean; deleted: boolean; receipts: number } {
     const convId = payload.conv_id.toLowerCase();
     const msgId = payload.msg_id.toLowerCase();
@@ -90,26 +87,7 @@ export class InMemoryRelay {
     const readers = convReceipts.get(msgId)!;
     readers.add(readerKid);
 
-    const shouldDelete = readers.size >= payload.required_acks;
-    if (shouldDelete) {
-      // Remove the message from the conversation
-      const messages = this.conversations.get(convId);
-      if (messages) {
-        // Find and remove the message by deserializing to match msg_id
-        const idx = messages.findIndex(m => {
-          try {
-            const env = deserializeEnvelope(m.data);
-            return bytesToHex(env.msg_id).toLowerCase() === msgId;
-          } catch { return false; }
-        });
-        if (idx !== -1) {
-          messages.splice(idx, 1);
-        }
-      }
-      convReceipts.delete(msgId);
-    }
-
-    return { recorded: true, deleted: shouldDelete, receipts: readers.size };
+    return { recorded: true, deleted: false, receipts: readers.size };
   }
 
   /** Count messages currently stored for a conversation */

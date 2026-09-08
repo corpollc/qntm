@@ -34,6 +34,7 @@ export function scanRequestApprovals(
   gatewayKid: string,
   rules: ThresholdRuleState[],
   now: number = Date.now(),
+  currentConversationId?: string,
 ): ScanResult | null {
   // Find the original request (stored message + parsed body)
   let requestMsg: GateRequestMessage | undefined;
@@ -47,6 +48,7 @@ export function scanRequestApprovals(
   }
 
   if (!requestMsg) return null;
+  if (currentConversationId && requestMsg.conv_id !== currentConversationId) return null;
 
   // Check for terminal state markers (executed / invalidated)
   // qntm-iv57: Only trust gate.executed markers authored by the gateway itself.
@@ -114,6 +116,13 @@ export function scanRequestApprovals(
     if (!msg.signer_kid || msg.signer_kid === gatewayKid) continue;
     // Skip signers not in the eligible roster (when roster is present)
     if (eligibleSigners !== null && !eligibleSigners.has(msg.signer_kid)) continue;
+    if (
+      currentConversationId &&
+      (msg.type === 'gate.approval' || msg.type === 'gate.disapproval') &&
+      !storedVoteMatchesConversation(msg.body, currentConversationId)
+    ) {
+      continue;
+    }
 
     if (msg.type === 'gate.approval') {
       votes[msg.signer_kid] = 'approve';
@@ -142,6 +151,7 @@ export function findExecutableRequests(
   messages: StoredGateMessage[],
   gatewayKid: string,
   rules: ThresholdRuleState[],
+  currentConversationId?: string,
 ): ScanResult[] {
   // Collect unique request IDs
   const requestIds = new Set<string>();
@@ -153,12 +163,22 @@ export function findExecutableRequests(
 
   const results: ScanResult[] = [];
   for (const reqId of requestIds) {
-    const scan = scanRequestApprovals(messages, reqId, gatewayKid, rules);
+    const scan = scanRequestApprovals(messages, reqId, gatewayKid, rules, Date.now(), currentConversationId);
     if (scan && scan.status === 'approved') {
       results.push(scan);
     }
   }
   return results;
+}
+
+function storedVoteMatchesConversation(body: string | undefined, expectedConvID: string): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { conv_id?: unknown };
+    return parsed.conv_id === expectedConvID;
+  } catch {
+    return false;
+  }
 }
 
 function buildSignable(req: GateRequestMessage): GateSignable {

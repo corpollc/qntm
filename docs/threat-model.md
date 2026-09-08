@@ -17,6 +17,8 @@ The relay cannot decrypt ordinary conversation content without conversation keys
 
 The relay sees conversation IDs, envelope timestamps, sequence numbers, sizes, request timing, and client IP addresses. Signed read receipts also expose a reader key ID and public key linked to a conversation and message. The AIM client submits receipts after receiving messages and after sending its own messages. This lets the relay associate a signing identity with receipt activity. The relay is not an identity-hiding service.
 
+Receipts are advisory telemetry. A supplied reader key does not establish membership, and `required_acks` remains a signed compatibility field with no deletion authority. Receipt responses always report `deleted: false`; server TTL controls retention. Counts are capped at 256 distinct reader keys per message and do not prove delivery to intended members. Public statistics expose an aggregate conversation count, not conversation IDs.
+
 The relay can drop, delay, replay, or withhold envelopes and receipts. Client replay checks and cryptographic validation reduce some effects, but encryption does not guarantee availability or delivery.
 
 | Metadata | Relay | Passive network observer using HTTPS/WSS |
@@ -31,7 +33,9 @@ A TLS terminator sees request URLs and transport payloads. Plain HTTP/WS exposes
 
 ## Gateway trust
 
-The gateway is an endpoint in each promoted conversation. It can decrypt that conversation and the API credentials provisioned to it. An uncompromised gateway enforces configured signature thresholds and excludes its own key from the approval count.
+The gateway is an endpoint in each promoted conversation. It can decrypt that conversation and the API credentials provisioned to it. An uncompromised gateway enforces configured API-call signature thresholds and excludes its own key from the approval count. Governance changes require at least a strict majority of the current participant roster; a proposer cannot lower that minimum. Requests and votes must claim the same conversation as their authenticated transport and stored gateway state.
+
+Gateway bootstrap requires an operator bearer token, canonical 32-byte conversation keys, and a valid epoch. Repeated bootstrap can resume existing state but cannot overwrite its keys. The browser holds the token in memory and clears it after successful setup.
 
 These controls apply to requests routed through that gateway. Thresholds are configurable and can permit a single signer. qntm does not restrict API calls made through another tool or a separately held credential. Cryptographic identities do not distinguish a human from an agent.
 
@@ -41,7 +45,7 @@ A compromised gateway can access its conversation keys and credentials and bypas
 
 The Python CLI defaults to `~/.qntm`, with `--config-dir` selecting another directory. MCP uses `QNTM_CONFIG_DIR`. Both store `identity.json`, `conversations.json`, history under `chats/`, and `guidance_contacts.json` when pins exist. These are unencrypted local files.
 
-The current Python file writer inherits the process umask and writes in place. It does not enforce private file permissions or atomic replacement. The audit tracks remediation in `qntm-lfpp`. Until then, use a private configuration directory, restrictive permissions, and disk encryption. Keep this state out of version control.
+Python CLI and MCP enforce owner-only directories (`0700`) and files (`0600`) on POSIX systems, independent of umask. Reads and writes tighten existing permissions. Writes use a private temporary file, flush it, and atomically replace the destination. Symlink destinations, multiply linked files, non-regular files, and paths owned by another user are rejected. Select a dedicated qntm directory; a home directory, filesystem root, or shared temporary root cannot be used directly. These permissions do not encrypt data or protect against another process running as the same user. Use disk encryption and keep this state out of version control.
 
 The AIM browser stores signing keys, conversation keys, plaintext history, invite tokens, and guidance pins in `localStorage`. Exported JSON backups contain the same sensitive state without encryption. An import replaces local state, including contact destinations and the relay URL. Only import a trusted backup. Import schema validation and a replacement preview are tracked in `qntm-fwds`.
 
@@ -67,7 +71,7 @@ Received messages and guidance replies are untrusted data. The CLI and MCP label
 
 No guidance category triggers automatic reporting or escalation. Advice does not satisfy a gateway approval threshold. Guidance does not guarantee a response, prevent an agent from continuing its work, or prove that a contact is independent of the agent's evaluation environment.
 
-MCP does not yet apply group membership or rekey events (`qntm-fods`). Use dedicated direct conversations for MCP guidance. See [Request guidance](guidance.md) for setup and the [client safety audit](audits/2026-09-07-client-safety.md) for findings.
+CLI and MCP share membership and rekey processing. Receive pending messages before preparing guidance to refresh the locally known audience. See [Request guidance](guidance.md) for setup and the [client safety audit](audits/2026-09-07-client-safety.md) for findings.
 
 ## Remaining limits
 

@@ -22,3 +22,7 @@ echo-bot/bot.log
 ui/tui/node_modules/
 integration/node_modules/
 channel/node_modules/
+
+# Local browser/terminal acceptance failure artifacts
+integration/test-results/
+ui/tui/test-results/

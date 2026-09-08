@@ -76,9 +76,21 @@ describe('api', () => {
       createdAt: new Date().toISOString(),
     })
 
-    const response = await api.gatePromote('profile-1', 'Alice', 'conv-1', 'http://gateway.test', 2)
+    const response = await api.gatePromote(
+      'profile-1',
+      'Alice',
+      'conv-1',
+      'http://gateway.test',
+      'promotion-token',
+      2,
+    )
 
-    expect(bootstrapSpy).toHaveBeenCalledWith('profile-1', 'conv-1', 'http://gateway.test')
+    expect(bootstrapSpy).toHaveBeenCalledWith(
+      'profile-1',
+      'conv-1',
+      'http://gateway.test',
+      'promotion-token',
+    )
     expect(promoteSpy).toHaveBeenCalledWith('profile-1', 'Alice', 'conv-1', 'gateway-kid', 2)
     expect(response.message.bodyType).toBe('gate.promote')
   })

@@ -1,0 +1,83 @@
+name: Cross-surface acceptance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  test-ui-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            worker/package-lock.json
+            gateway-worker/package-lock.json
+            ui/aim-chat/package-lock.json
+            ui/tui/package-lock.json
+            integration/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PTY dependency
+        run: sudo apt-get update && sudo apt-get install -y expect
+
+      - name: Install and build client
+        working-directory: client
+        run: npm ci && npm run build
+
+      - name: Install relay worker
+        working-directory: worker
+        run: npm ci
+
+      - name: Install gateway worker
+        working-directory: gateway-worker
+        run: npm ci
+
+      - name: Check gateway security regressions
+        working-directory: gateway-worker
+        run: npm test && npm run typecheck
+
+      - name: Install AIM UI
+        working-directory: ui/aim-chat
+        run: |
+          npm install
+          npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
+
+      - name: Install TUI
+        working-directory: ui/tui
+        run: npm ci
+
+      - name: Install acceptance harness
+        working-directory: integration
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: integration
+        run: npx playwright install --with-deps chromium
+
+      - name: Exercise the real TUI composer under a PTY
+        working-directory: ui/tui
+        run: npm test -- pty-smoke.test.ts
+
+      - name: Exercise browser, CLI, gateway, and relay journeys
+        working-directory: integration
+        run: npm run test:acceptance
+
+      - name: Upload acceptance failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-acceptance-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            integration/test-results/
+            ui/tui/test-results/

@@ -11,8 +11,15 @@ This worker can decrypt gateway-provisioned API credentials in order to execute 
 - Node.js 22
 - `wrangler` access via `wrangler login` or `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`
 - A 32-byte vault key for at-rest secret encryption
+- A high-entropy bearer token for the bootstrap-only promotion endpoint
 
 Generate a vault key once and keep it stable across deploys:
+
+```bash
+openssl rand -hex 32
+```
+
+Generate a separate promotion token:
 
 ```bash
 openssl rand -hex 32
@@ -37,10 +44,11 @@ npm test
 npm run typecheck
 ```
 
-3. Set the vault secret.
+3. Set the vault and promotion secrets.
 
 ```bash
 printf '%s' "$GATE_VAULT_KEY" | npx wrangler secret put GATE_VAULT_KEY
+printf '%s' "$GATEWAY_PROMOTION_TOKEN" | npx wrangler secret put GATEWAY_PROMOTION_TOKEN
 ```
 
 4. Deploy the worker.
@@ -76,8 +84,9 @@ Configure these repository secrets before enabling the workflow:
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `QNTM_GATE_VAULT_KEY`
+- `QNTM_GATEWAY_PROMOTION_TOKEN`
 
-The workflow builds `client/`, runs gateway tests and typechecking, upserts `GATE_VAULT_KEY`, then deploys the worker.
+The workflow builds `client/`, runs gateway tests and typechecking, upserts both worker secrets, then deploys the worker.
 
 ## Self-Hosting
 
@@ -85,7 +94,7 @@ To run your own gateway:
 
 1. Copy [`gateway-worker/wrangler.toml`](../gateway-worker/wrangler.toml) and replace the custom domain route with your own hostname.
 2. Keep `DROPBOX_URL` pointed at the relay you want to trust.
-3. Set your own `GATE_VAULT_KEY`.
+3. Set your own `GATE_VAULT_KEY` and `GATEWAY_PROMOTION_TOKEN`.
 4. Deploy with `npx wrangler deploy`.
 
 Then point clients at your endpoint:
@@ -97,5 +106,6 @@ Then point clients at your endpoint:
 ## Operational Notes
 
 - Rotating `GATE_VAULT_KEY` without re-encrypting stored secrets will strand previously provisioned credentials.
+- Rotate `GATEWAY_PROMOTION_TOKEN` independently if bootstrap access is exposed.
 - The gateway stores conversation-specific state in Durable Objects. Redeploying code is fine; deleting DO state is not.
 - `GET /health` is the only intended unauthenticated public endpoint. All conversation control flow goes through signed qntm messages.

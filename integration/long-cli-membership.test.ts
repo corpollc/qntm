@@ -54,7 +54,6 @@ describe.sequential('real long-running gateway integration CLI membership flow',
       addCharlieProposalId = String(addProposal.data?.proposal_id);
       await waitForUiText(ui, 'adding 1 member');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,
@@ -74,7 +73,6 @@ describe.sequential('real long-running gateway integration CLI membership flow',
       removeCharlieProposalId = String(removeProposal.data?.proposal_id);
       await waitForUiText(ui, 'removing 1 member');
       await ui.approveLatestProposal();
-      await harness.pumpGateway(convId);
       await waitForCliHistory(
         harness.alice,
         convId,

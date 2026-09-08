@@ -28,6 +28,7 @@ import type { ConversationState, StoredGateMessage } from './types.js';
 
 class MockStorage {
   private data = new Map<string, unknown>();
+  alarmTimes: number[] = [];
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.data.get(key) as T | undefined;
@@ -51,7 +52,9 @@ class MockStorage {
     return result;
   }
 
-  async setAlarm(): Promise<void> {}
+  async setAlarm(scheduledTime: number): Promise<void> {
+    this.alarmTimes.push(scheduledTime);
+  }
 
   /** Test helper: raw access to backing map */
   _raw(): Map<string, unknown> { return this.data; }
@@ -67,6 +70,7 @@ const dummyEnv = {
   GATE_VAULT_KEY: '00'.repeat(32),
   DROPBOX_URL: 'https://localhost:9999',
   POLL_INTERVAL_MS: '60000',
+  GATEWAY_PROMOTION_TOKEN: 'test-promotion-token',
 };
 
 // ---- Test identities ----
@@ -127,6 +131,33 @@ function makeDO(): { doInstance: GatewayConversationDO; storage: MockStorage; pr
   const doInstance = new GatewayConversationDO(mockState as unknown as DurableObjectState, dummyEnv);
   return { doInstance, storage: mockState.storage, process: makeProcessFn(doInstance) };
 }
+
+describe('idempotent bootstrap recovery', () => {
+  it('re-arms maintenance for an existing conversation after a worker restart', async () => {
+    const { doInstance, storage } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    vi.spyOn(
+      doInstance as unknown as { ensureRelaySubscription: (value: ConversationState) => void },
+      'ensureRelaySubscription',
+    ).mockImplementation(() => undefined);
+
+    const response = await doInstance.fetch(new Request('http://do/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conv_id: state.conv_id,
+        conv_aead_key: state.conv_aead_key,
+        conv_nonce_key: state.conv_nonce_key,
+        conv_epoch: state.conv_epoch,
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(storage.alarmTimes).toHaveLength(1);
+    expect(storage.alarmTimes[0]).toBeGreaterThan(Date.now());
+  });
+});
 
 function buildSignedRequest(signer: { privateKey: Uint8Array; publicKey: Uint8Array }, overrides?: Record<string, unknown>) {
   const signerKid = base64UrlEncode(keyIDFromPublicKey(signer.publicKey));
@@ -571,6 +602,134 @@ describe('governance member-change flow', () => {
       process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
     ).rejects.toThrow('missing from eligible_signer_kids');
   });
+
+  it('rejects an author-selected quorum below the trusted participant majority', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 1,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 1,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('below trusted governance quorum 2');
+  });
+});
+
+describe('conversation binding', () => {
+  const otherConvId = 'b'.repeat(32);
+
+  it('rejects a validly signed gate request from another conversation', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState());
+    const { body } = buildSignedRequest(alice, { conv_id: otherConvId });
+
+    await expect(
+      process('gate.request', encode(body), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conv_id does not match gateway conversation');
+  });
+
+  it('rejects a validly signed gate approval from another conversation', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState());
+    const { body: request, signable, requestId } = buildSignedRequest(alice);
+    await process('gate.request', encode(request), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+    const { body: approval } = buildSignedApproval(bob, signable, requestId, otherConvId);
+
+    await expect(
+      process('gate.approval', encode(approval), keyIDFromPublicKey(bob.publicKey), bob.publicKey),
+    ).rejects.toThrow('conv_id does not match gateway conversation');
+  });
+
+  it('rejects a validly signed governance proposal from another conversation', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: otherConvId,
+      proposalType: 'floor_change',
+      proposedFloor: 2,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+
+    await expect(
+      process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
+    ).rejects.toThrow('conv_id does not match gateway conversation');
+  });
+
+  it('rejects a validly signed governance approval from another conversation', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 2,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+    await process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey);
+    const proposalHash = hashProposal({
+      conv_id: proposal.conv_id,
+      proposal_id: proposal.proposal_id,
+      proposal_type: proposal.proposal_type,
+      proposed_floor: proposal.proposed_floor,
+      proposed_rules: proposal.proposed_rules,
+      proposed_members: proposal.proposed_members,
+      removed_member_kids: proposal.removed_member_kids,
+      eligible_signer_kids: proposal.eligible_signer_kids,
+      required_approvals: proposal.required_approvals,
+      expires_at_unix: Math.floor(new Date(proposal.expires_at).getTime() / 1000),
+    });
+    const signature = signGovApproval(bob.privateKey, {
+      conv_id: otherConvId,
+      proposal_id: proposal.proposal_id,
+      proposal_hash: proposalHash,
+    });
+
+    await expect(process('gov.approve', encode({
+      type: 'gov.approve',
+      conv_id: otherConvId,
+      proposal_id: proposal.proposal_id,
+      signer_kid: bobKid,
+      signature: base64UrlEncode(signature),
+    }), keyIDFromPublicKey(bob.publicKey), bob.publicKey)).rejects.toThrow(
+      'conv_id does not match gateway conversation',
+    );
+  });
+
+  it('rejects cross-conversation disapprovals before storing them', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState());
+
+    await expect(process('gate.disapproval', encode({
+      type: 'gate.disapproval',
+      conv_id: otherConvId,
+      request_id: 'req-other',
+      signer_kid: aliceKid,
+    }), keyIDFromPublicKey(alice.publicKey), alice.publicKey)).rejects.toThrow(
+      'conv_id does not match gateway conversation',
+    );
+
+    await expect(process('gov.disapprove', encode({
+      type: 'gov.disapprove',
+      conv_id: otherConvId,
+      proposal_id: 'proposal-other',
+      signer_kid: aliceKid,
+    }), keyIDFromPublicKey(alice.publicKey), alice.publicKey)).rejects.toThrow(
+      'conv_id does not match gateway conversation',
+    );
+  });
 });
 
 describe('qntm-3gde: signature verification', () => {
@@ -698,6 +857,26 @@ describe('qntm-3gde: signature verification', () => {
 });
 
 describe('qntm-qko0: promotion and membership invariants', () => {
+  it('rejects an idempotent bootstrap retry with different conversation key material', async () => {
+    const { doInstance, storage } = makeDO();
+    const state = promotedState({ gate_promoted: false });
+    await storage.put('conv_state', state);
+
+    const response = await doInstance.fetch(new Request('http://do/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conv_id: state.conv_id,
+        conv_aead_key: base64UrlEncode(new Uint8Array(32).fill(1)),
+        conv_nonce_key: state.conv_nonce_key,
+        conv_epoch: state.conv_epoch,
+      }),
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('cannot be overwritten') });
+  });
+
   it('rejects gate.promote with gateway KID in participants', async () => {
     const { storage, process } = makeDO();
     await storage.put('conv_state', promotedState({ gate_promoted: false }));

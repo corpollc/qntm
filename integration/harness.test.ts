@@ -156,7 +156,7 @@ describe('Read receipt flow', () => {
     relay.clear();
   });
 
-  it('sender ack alone does not delete before quorum', () => {
+  it('sender ack does not delete a message', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -168,7 +168,7 @@ describe('Read receipt flow', () => {
     expect(relay.messageCount(convIdHex)).toBe(1);
   });
 
-  it('message deletes when sender and recipient have both receipted', () => {
+  it('message remains when sender and recipient have both receipted', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -182,10 +182,10 @@ describe('Read receipt flow', () => {
     const received = bob.receiveAndReceipt(relay, convIdHex);
     expect(received).toHaveLength(1);
     expect(new TextDecoder().decode(received[0].body)).toBe('secret');
-    expect(relay.messageCount(convIdHex)).toBe(0);
+    expect(relay.messageCount(convIdHex)).toBe(1);
   });
 
-  it('relay deletes only after the second unique receipt for the real message id', () => {
+  it('relay retains the message after the second unique receipt', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -211,9 +211,9 @@ describe('Read receipt flow', () => {
     const receipt2 = buildSignedReceipt(bob.identity, conversation.id, envelope.msg_id, 2);
     const r2 = relay.submitReceipt(receipt2);
     expect(r2.recorded).toBe(true);
-    expect(r2.deleted).toBe(true);
+    expect(r2.deleted).toBe(false);
     expect(r2.receipts).toBe(2);
-    expect(relay.messageCount(convIdHex)).toBe(0);
+    expect(relay.messageCount(convIdHex)).toBe(1);
   });
 
   it('receiveAndReceipt emits receipts and returns messages', () => {
@@ -232,10 +232,10 @@ describe('Read receipt flow', () => {
     expect(received).toHaveLength(2);
     expect(new TextDecoder().decode(received[0].body)).toBe('ping');
     expect(new TextDecoder().decode(received[1].body)).toBe('pong');
-    expect(relay.messageCount(convIdHex)).toBe(0);
+    expect(relay.messageCount(convIdHex)).toBe(2);
   });
 
-  it('keeps sequence monotonic after receipt-driven deletion', () => {
+  it('keeps sequence monotonic after receipt submission', () => {
     const alice = new CLIAgent('alice');
     const bob = new CLIAgent('bob');
     agents.push(alice, bob);
@@ -245,7 +245,7 @@ describe('Read receipt flow', () => {
 
     alice.sendText(relay, convIdHex, 'first');
     expect(bob.receiveAndReceipt(relay, convIdHex)).toHaveLength(1);
-    expect(relay.messageCount(convIdHex)).toBe(0);
+    expect(relay.messageCount(convIdHex)).toBe(1);
 
     const seq2 = alice.sendText(relay, convIdHex, 'second');
     expect(seq2).toBe(2);

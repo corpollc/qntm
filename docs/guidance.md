@@ -78,7 +78,7 @@ Configure `QNTM_CONFIG_DIR` to use the same directory as the CLI. Set `QNTM_RELA
 
 MCP does not expose a tool to pin or replace contacts. Operators use the CLI. If no contact exists, the agent can ask its operator to configure one. The tools do not select a substitute recipient.
 
-For now, the MCP receiver does not apply group membership or rekey events. Use dedicated direct conversations for MCP guidance. Use a client with group-state support for governed groups. The audit tracks this limitation in `qntm-fods`.
+The MCP receiver applies the same membership and rekey events as the CLI. Receive pending messages before preparing group guidance so the review reflects the latest locally received audience and epoch. A received removal of the pinned contact blocks preparation. Dedicated direct conversations keep the intended audience small; offline review cannot discover unknown invite holders or changes that have not yet arrived.
 
 ## Trust, privacy, and delivery
 

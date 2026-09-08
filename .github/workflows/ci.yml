@@ -62,6 +62,9 @@ jobs:
       - name: Install Rollup Linux binary
         run: npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
 
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Run tests
         run: npm test
 
@@ -99,6 +102,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Build TUI
         run: npm run build
 
@@ -116,3 +122,20 @@ jobs:
 
       - name: Run tests
         run: python -m pytest python-dist/tests/ -v
+
+  test-relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: client
+      - run: npm ci && npm run typecheck
+        working-directory: worker
+      - run: npm ci && npm run test:relay
+        working-directory: integration
+
+  cross-surface-acceptance:
+    uses: ./.github/workflows/ui-acceptance.yml

@@ -203,6 +203,42 @@ describe('scanRequestApprovals', () => {
     expect(result!.approvals).toBe(1);
     expect(result!.status).toBe('approved');
   });
+
+  it('fails closed on bodyless and cross-conversation stored approvals', () => {
+    const messages: StoredGateMessage[] = [
+      makeRequest({ eligible_signer_kids: [signerA, signerB], required_approvals: 2 }),
+      makeApproval('req-1', signerB, 2),
+      {
+        ...makeApproval('req-1', signerB, 3),
+        body: JSON.stringify({ type: 'gate.approval', conv_id: 'conv-2', request_id: 'req-1' }),
+      },
+    ];
+
+    const unbound = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules, Date.now(), 'conv-1');
+    expect(unbound?.status).toBe('pending');
+    expect(unbound?.approvals).toBe(1);
+
+    messages.push({
+      ...makeApproval('req-1', signerB, 4),
+      body: JSON.stringify({ type: 'gate.approval', conv_id: 'conv-1', request_id: 'req-1' }),
+    });
+    const bound = scanRequestApprovals(messages, 'req-1', gatewayKid, defaultRules, Date.now(), 'conv-1');
+    expect(bound?.status).toBe('approved');
+    expect(bound?.approvals).toBe(2);
+  });
+
+  it('ignores a stored request from a different conversation', () => {
+    const result = scanRequestApprovals(
+      [makeRequest({})],
+      'req-1',
+      gatewayKid,
+      defaultRules,
+      Date.now(),
+      'conv-2',
+    );
+
+    expect(result).toBeNull();
+  });
 });
 
 describe('findExecutableRequests', () => {

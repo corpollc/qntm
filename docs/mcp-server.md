@@ -134,7 +134,7 @@ Received text and history use `unsafe_body`, including legacy history entries th
 
 The host controls outbound communication permissions. Guidance preparation does not contact anyone. `guidance_send` requires a token that matches the reviewed message and destination, but the token is not proof of human approval. See [Request guidance](guidance.md) for operator setup and tool parameters.
 
-MCP currently supports text messaging and direct-conversation guidance. It does not apply group membership or rekey events. Use the CLI or browser for those workflows until `qntm-fods` is resolved.
+MCP and CLI use the same receiver for group genesis, membership changes, and rekeys. A rekey updates keys before the next message in the batch. Group CBOR bodies are returned as JSON strings in `unsafe_body`; other non-text bodies are preserved as UTF-8 or `unsafe_body_b64`. History and conversation state are saved before the receive cursor advances. Call `receive_messages` before preparing group guidance to refresh the locally known audience; preparation itself remains offline.
 
 The MCP extra uses the 1.x SDK API and constrains the dependency to `<2`. CI installs the extra so MCP tests do not silently skip.
 

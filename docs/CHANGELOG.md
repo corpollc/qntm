@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Relay receipts are bounded advisory telemetry and cannot delete messages. `required_acks` remains signed for compatibility; `deleted` is always false. Public stats no longer enumerate conversation IDs.
+- Python CLI/MCP state uses private POSIX permissions and atomic JSON replacement. Existing permissions are repaired on access; unsafe links and shared root configuration paths are rejected.
+- CLI and MCP now share membership/rekey processing and preserve non-text bodies. Received rekeys apply within the batch, and history/state are stored before advancing the cursor.
+- Restored gateway bootstrap authentication, trusted governance quorum, conversation binding, and restart maintenance from the prior security stack. Deployment now requires `GATEWAY_PROMOTION_TOKEN`; AIM accepts a masked, non-persisted operator token.
+- AIM uses React Router 7.18.3; the TUI lockfile uses ws 8.21.3. CI checks both runtime dependency trees for high/critical advisories.
+
 - Added local guidance pins for legal, moral/ethical, and law-enforcement contacts in the browser and CLI.
 - Added MCP guidance discovery, preparation, and explicit send tools. Requests use existing encrypted conversations and do not attach history automatically.
 - Added exact recipient, known audience, and message review, with checks for changed local destination state.
