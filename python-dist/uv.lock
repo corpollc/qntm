@@ -686,7 +686,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2024.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.0.0" },
+    { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.0.0,<2" },
     { name = "pynacl", specifier = ">=1.5.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]

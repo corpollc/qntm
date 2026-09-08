@@ -54,3 +54,7 @@ Use one profile in this UI and another process (CLI or your LLM agent runtime) a
 - The browser profile and the CLI keep separate local state.
 - Share invite tokens between them out of band.
 - For local relay development, point the UI Settings panel at your local relay URL.
+
+## Guidance contacts
+
+Open **Request guidance** to configure local contacts for legal, moral/ethical, and law-enforcement questions. Review the destination, known audience, and exact message before sending. No contacts ship by default. Pins belong to each browser profile and appear in backups. See [Request guidance](../../docs/guidance.md).

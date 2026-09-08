@@ -86,6 +86,10 @@ export function SettingsPage({
             All data (profiles, conversations, keys, messages) is stored in your browser.
             Export a backup to save it, or import to restore.
           </p>
+          <p className="settings-description">
+            Backups contain unencrypted private keys, messages, and guidance pins. Keep them private.
+            Import only a trusted backup; it replaces the current local data and contact destinations.
+          </p>
           <div className="row">
             <button
               className="button"
@@ -143,8 +147,8 @@ export function SettingsPage({
             <div><strong>Version:</strong> v{APP_VERSION}</div>
           </div>
           <div className="settings-about-links">
-            <span className="settings-about-link">Getting Started Guide</span>
-            <span className="settings-about-link">API Gateway Documentation</span>
+            <a className="settings-about-link" href="https://github.com/corpollc/qntm/blob/main/docs/getting-started.md" target="_blank" rel="noreferrer">Getting Started Guide</a>
+            <a className="settings-about-link" href="https://github.com/corpollc/qntm/blob/main/docs/api-gateway.md" target="_blank" rel="noreferrer">API Gateway Documentation</a>
             {onShowShortcuts && (
               <button
                 className="settings-about-link settings-about-link-button"

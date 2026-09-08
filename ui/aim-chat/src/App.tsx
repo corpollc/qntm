@@ -5,6 +5,7 @@ import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import { shortId, APP_VERSION } from './utils'
 import { SettingsPage } from './components/SettingsPage'
+import { GuidancePage } from './components/GuidancePage'
 import { Sidebar } from './components/Sidebar'
 import type { SidebarHandle } from './components/Sidebar'
 import { ChatPane } from './components/ChatPane'
@@ -31,7 +32,8 @@ export default function App() {
   const location = useLocation()
   const isSettings = location.pathname === '/settings'
   const isHelp = location.pathname === '/help'
-  const isChat = !isSettings && !isHelp
+  const isGuidance = location.pathname === '/guidance'
+  const isChat = !isSettings && !isHelp && !isGuidance
 
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [activeProfileId, setActiveProfileId] = useState('')
@@ -1053,6 +1055,9 @@ export default function App() {
             <span className="title-agent-hint">AI Agents: please use <code>uvx qntm --help</code></span>
           </span>
           <span className="title-detail">
+            <button className="settings-toggle" type="button" onClick={() => navigate('/guidance')} aria-current={isGuidance ? 'page' : undefined}>
+              Request guidance
+            </button>
             <button
               className="settings-toggle"
               type="button"
@@ -1074,6 +1079,7 @@ export default function App() {
 
         <div className="aim-body">
           <Routes>
+          <Route path="/guidance" element={<GuidancePage key={activeProfileId} profileId={activeProfileId} profileName={activeProfile?.name || ''} onOpenConversation={(id) => { selectConversation(id); navigate('/') }} />} />
           <Route path="/help" element={<HelpPanel />} />
           <Route path="/settings" element={
             <SettingsPage

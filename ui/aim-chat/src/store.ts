@@ -4,6 +4,8 @@
  * All state lives in the browser — no server needed.
  */
 
+import type { GuidanceContact } from './guidance'
+
 const STORE_KEY = 'aim-store'
 const DEFAULT_DROPBOX_URL = 'https://inbox.qntm.corpo.llc'
 
@@ -60,6 +62,7 @@ interface StoreData {
   conversations: Record<string, StoredConversation[]> // profileId -> conversations
   history: Record<string, Record<string, StoredMessage[]>> // profileId -> convId -> messages
   contacts: Record<string, Record<string, string>>  // profileId -> key -> name
+  guidanceContacts: Record<string, GuidanceContact[]>
   cursors: Record<string, Record<string, number>>    // profileId -> convId -> seq
   dropboxUrl: string
 }
@@ -115,6 +118,7 @@ function loadStore(): StoreData {
         conversations: normalizeConversations(parsed.conversations),
         history: parsed.history || {},
         contacts: parsed.contacts || {},
+        guidanceContacts: parsed.guidanceContacts || {},
         cursors: parsed.cursors || {},
         dropboxUrl: parsed.dropboxUrl || DEFAULT_DROPBOX_URL,
       }
@@ -127,6 +131,7 @@ function loadStore(): StoreData {
     conversations: {},
     history: {},
     contacts: {},
+    guidanceContacts: {},
     cursors: {},
     dropboxUrl: DEFAULT_DROPBOX_URL,
   }
@@ -189,6 +194,7 @@ export function deleteProfile(profileId: string): void {
   delete store.conversations[profileId]
   delete store.history[profileId]
   delete store.contacts[profileId]
+  delete store.guidanceContacts[profileId]
   delete store.cursors[profileId]
   if (store.activeProfileId === profileId) {
     store.activeProfileId = store.profiles[0]?.id || ''
@@ -262,6 +268,24 @@ export function listContacts(profileId: string): Array<{ key: string; name: stri
     .filter(([k, v]) => k && typeof v === 'string' && v.trim())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, name]) => ({ key, name }))
+}
+
+export function listGuidanceContacts(profileId: string): GuidanceContact[] {
+  const contacts = loadStore().guidanceContacts[profileId]
+  return Array.isArray(contacts) ? contacts : []
+}
+
+export function saveGuidanceContact(profileId: string, contact: GuidanceContact): void {
+  const store = loadStore()
+  const contacts = store.guidanceContacts[profileId] || []
+  store.guidanceContacts[profileId] = [...contacts.filter(c => c.id !== contact.id), contact]
+  saveStore(store)
+}
+
+export function removeGuidanceContact(profileId: string, contactId: string): void {
+  const store = loadStore()
+  store.guidanceContacts[profileId] = (store.guidanceContacts[profileId] || []).filter(c => c.id !== contactId)
+  saveStore(store)
 }
 
 export function setContact(profileId: string, key: string, name: string): void {

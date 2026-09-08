@@ -2,7 +2,7 @@
 
 > **Your AI agent has your Stripe key. What happens when it gets prompt-injected?**
 
-qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent — and no single person — can act alone on consequential API calls. Every action requires cryptographic approval from multiple participants in an end-to-end encrypted conversation.
+qntm combines encrypted messaging with configurable m-of-n approval for API calls routed through its gateway. Operators can require multiple signers before those calls execute. Ordinary messages and API calls made outside the gateway do not receive that protection.
 
 Think of it as **Gnosis Safe, but for any API** — not just on-chain transactions.
 
@@ -28,22 +28,18 @@ pip install qntm
 
 ```bash
 # Terminal 1 — Agent Alice
-export QNTM_HOME=/tmp/alice
-qntm identity generate
-qntm convo create --name "ops-channel"
-# → conv_id: abc123...
-qntm convo invite abc123
-# → invite token: qtok1_...
+qntm --config-dir /tmp/alice identity generate
+qntm --config-dir /tmp/alice convo create --name "ops-channel"
+# Copy the returned conversation ID and invite token.
 
 # Terminal 2 — Agent Bob
-export QNTM_HOME=/tmp/bob
-qntm identity generate
-qntm convo join qtok1_...
-qntm send abc123 "deploy approved"
+qntm --config-dir /tmp/bob identity generate
+qntm --config-dir /tmp/bob convo join <invite-token>
+qntm --config-dir /tmp/bob send <conversation-id> "Ready for review"
 
 # Terminal 1 — Alice receives (encrypted end-to-end)
-qntm recv abc123
-# → {"sender":"bob_key","body":"deploy approved"}
+qntm --config-dir /tmp/alice recv <conversation-id>
+# JSON data.messages entries include sender_kid and unsafe_body
 ```
 
 Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
@@ -60,7 +56,7 @@ qntm recv 48055654db4bb0f64ec63089b70e1bf4
 # → 🔒 echo: Hello, echo bot!
 ```
 
-Every message is encrypted end-to-end. The relay never sees plaintext — only you and the bot can read the conversation.
+Every message is encrypted end-to-end. This demo invitation is public: anyone with the token can read messages in the shared conversation. Do not send private data to the demo.
 
 ### Use from Python/LLM scripts
 
@@ -92,12 +88,18 @@ Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a c
 qntm convo join <invite-link-or-token>
 ```
 
+## Request guidance
+
+Use **Request guidance** in the web UI, `qntm guidance list` in the CLI, or the MCP `guidance_contacts` tool. Pin your own contacts for legal, moral/ethical, or law-enforcement questions. No addresses ship by default.
+
+Requests show the recipient, conversation audience, and exact message before sending. Replies are advice, not authorization to act. See [Request guidance](docs/guidance.md) for local setup and the prepare/send workflow.
+
 ## How It Works
 
 1. **Invite** — out-of-band invite link (chat, email, paste) bootstraps the channel
 2. **Encrypt** — messages are AEAD-encrypted and Ed25519-signed before leaving the sender
 3. **Relay** — envelopes are posted to the relay, which stores opaque CBOR blobs
-4. **Decrypt** — recipients poll the relay, decrypt, and verify sender signatures
+4. **Decrypt** — recipients receive relay subscriptions, decrypt, and verify sender signatures
 
 All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
 
@@ -229,11 +231,14 @@ pip install 'qntm[mcp]'
 }
 ```
 
-9 tools: `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+12 tools: `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`.
 
 [Full MCP docs →](docs/mcp-server.md)
 
 ## Documentation
+
+- [Request Guidance](docs/guidance.md) — locally pinned contacts, message review, and agent tools
+- [Client Safety Audit](docs/audits/2026-09-07-client-safety.md) — documentation, safety boundaries, and agent UX findings
 
 - [MCP Server](docs/mcp-server.md) — use qntm with Claude Desktop, Cursor, any MCP client
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging

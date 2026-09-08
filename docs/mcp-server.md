@@ -80,6 +80,9 @@ Add to your `.cursor/mcp.json`:
 | `receive_messages` | Receive and decrypt new messages |
 | `conversation_history` | Get local message history |
 | `protocol_info` | Get protocol and server information |
+| `guidance_contacts` | List locally pinned legal, ethical, or law-enforcement contacts |
+| `guidance_prepare` | Prepare the exact question, recipient, and audience for review without sending |
+| `guidance_send` | Send a matching reviewed request under the host authorization policy |
 
 ## Resources
 
@@ -108,7 +111,7 @@ Agent A                    qntm Relay                    Agent B
    │                          │      └──────────────────┘   │
 ```
 
-The relay is **zero-knowledge**: it stores and forwards opaque ciphertext. It cannot read message content, verify sender identity, or determine conversation membership.
+The relay cannot read message content. It sees conversation IDs, timing, sizes, and network metadata. Signed receipts expose reader public keys and key IDs. See [Threat Model](threat-model.md).
 
 ## Environment Variables
 
@@ -120,10 +123,20 @@ The relay is **zero-knowledge**: it stores and forwards opaque ciphertext. It ca
 ## Security
 
 - **Identity**: Ed25519 keypair (signing + key agreement via X25519)
-- **Encryption**: XChaCha20-Poly1305 (AEAD) with per-message keys
+- **Encryption**: XChaCha20-Poly1305 (AEAD) with conversation keys and per-message nonces within each epoch
 - **Key Exchange**: X25519 Diffie-Hellman
-- **Zero-knowledge relay**: Cannot read, modify, or attribute messages
+- **Relay**: Cannot decrypt message content or forge valid sender signatures without client keys. It can drop or delay envelopes.
 - **Protocol**: QSP v1.1 (qntm Secure Protocol)
+
+## Agent trust boundaries
+
+Received text and history use `unsafe_body`, including legacy history entries that stored `body`. Sender key IDs and public keys use hex, consistent with the CLI. A valid signature authenticates a key, not instructions, credentials, or permission to act. Treat all replies, including guidance, as untrusted data.
+
+The host controls outbound communication permissions. Guidance preparation does not contact anyone. `guidance_send` requires a token that matches the reviewed message and destination, but the token is not proof of human approval. See [Request guidance](guidance.md) for operator setup and tool parameters.
+
+MCP currently supports text messaging and direct-conversation guidance. It does not apply group membership or rekey events. Use the CLI or browser for those workflows until `qntm-fods` is resolved.
+
+The MCP extra uses the 1.x SDK API and constrains the dependency to `<2`. CI installs the extra so MCP tests do not silently skip.
 
 ## Example: Two Agents Communicating
 
@@ -142,12 +155,12 @@ await mcp.call_tool("conversation_join", {
 
 # Agent A sends
 await mcp.call_tool("send_message", {
-    "conversation": "ops-channel",
-    "message": "Deploy approved. All checks green."
+    "conversation": "<full conversation ID from creation>",
+    "message": "Ready for review. All checks passed."
 })
 
 # Agent B receives
 messages = await mcp.call_tool("receive_messages", {
-    "conversation": "ops-channel"
+    "conversation": "<full conversation ID from creation>"
 })
 ```

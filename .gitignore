@@ -4,6 +4,7 @@
 /ui/aim-chat/dist
 /ui/aim-chat/.qntm-ui
 /ui/aim-chat/*.tsbuildinfo
+/ui/aim-chat/proofshot-artifacts/
 /ui/aim-chat/vite.config.js
 /ui/aim-chat/vite.config.d.ts
 /ui/tui/dist

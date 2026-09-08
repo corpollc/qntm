@@ -37,7 +37,7 @@ Homepage = "https://qntm.corpo.llc"
 Repository = "https://github.com/corpollc/qntm"
 
 [project.optional-dependencies]
-mcp = ["mcp[cli]>=1.0.0"]
+mcp = ["mcp[cli]>=1.0.0,<2"]
 
 [project.scripts]
 qntm = "qntm.cli:main"

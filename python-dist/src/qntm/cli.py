@@ -2789,6 +2789,29 @@ def _resolve_conversation(conversations, input_str, config_dir=None):
 # --- Main ---
 
 
+def cmd_guidance(args):
+    from .guidance import CATEGORIES, NOTICE, list_contacts, pin_contact, remove_contact, prepare_request, send_request
+    config_dir, relay = _get_config_dir(args), _get_dropbox_url(args)
+    try:
+        if args.guidance_command == "list":
+            result = {"categories": CATEGORIES, "contacts": list_contacts(config_dir, args.category), "notice": NOTICE}
+        elif args.guidance_command == "pin":
+            result = pin_contact(config_dir, relay, args.contact, args.category, args.name,
+                                 args.kind, args.conversation, args.recipient, args.replace)
+        elif args.guidance_command == "remove":
+            remove_contact(config_dir, args.contact)
+            result = {"removed": args.contact}
+        elif args.send:
+            result = send_request(config_dir, relay, args.contact, args.question, args.context, args.review_token)
+        else:
+            if args.review_token:
+                raise ValueError("Use --send with --review-token, or omit both to prepare a request.")
+            result = prepare_request(config_dir, relay, args.contact, args.question, args.context)
+        _output("guidance", result)
+    except (ValueError, OSError) as exc:
+        _error(str(exc))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="qntm",
@@ -2800,6 +2823,7 @@ quick start:
   qntm convo join <token>                 accept an invite token
   qntm send <conv> "hello"                send a message (conv = id or prefix)
   qntm recv <conv>                        receive new messages
+  qntm guidance list                      find locally pinned guidance contacts
 
 claude code channel:
   claude plugin marketplace add corpollc/qntm
@@ -2819,6 +2843,27 @@ claude code channel:
                         help="Print version")
 
     subparsers = parser.add_subparsers(dest="command")
+
+    guidance_p = subparsers.add_parser("guidance", help="Ask locally pinned contacts for legal, ethical, or law-enforcement guidance")
+    guidance_sub = guidance_p.add_subparsers(dest="guidance_command", required=True)
+    guidance_list = guidance_sub.add_parser("list", help="List local contacts and categories; no network request")
+    guidance_list.add_argument("--category", choices=["legal", "ethical", "law_enforcement"])
+    guidance_pin = guidance_sub.add_parser("pin", help="Operator setup: pin a verified key and existing conversation locally")
+    guidance_pin.add_argument("contact", help="Stable local contact ID")
+    guidance_pin.add_argument("--category", required=True, choices=["legal", "ethical", "law_enforcement"])
+    guidance_pin.add_argument("--name", required=True, help="Local contact label")
+    guidance_pin.add_argument("--kind", choices=["human", "agent", "organization"], default="human")
+    guidance_pin.add_argument("--conversation", required=True, help="Full conversation ID")
+    guidance_pin.add_argument("--recipient", required=True, help="Full recipient key ID (32 hex characters)")
+    guidance_pin.add_argument("--replace", action="store_true", help="Replace an existing pin with this ID")
+    guidance_remove = guidance_sub.add_parser("remove", help="Remove a local pin")
+    guidance_remove.add_argument("contact")
+    guidance_request = guidance_sub.add_parser("request", help="Prepare an exact message and audience for review; sends only with --send and --review-token")
+    guidance_request.add_argument("contact", help="Pinned contact ID")
+    guidance_request.add_argument("question")
+    guidance_request.add_argument("--context", default="", help="Optional context; no transcript is added automatically")
+    guidance_request.add_argument("--send", action="store_true", help="Send the reviewed request under the host's authorization policy")
+    guidance_request.add_argument("--review-token", default="", help="Token from the matching prepared request")
 
     # identity
     identity_parser = subparsers.add_parser("identity", help="Manage identity keys")
@@ -3067,6 +3112,8 @@ claude code channel:
             cmd_group_list(args)
         else:
             group_parser.print_help()
+    elif args.command == "guidance":
+        cmd_guidance(args)
     elif args.command == "send":
         cmd_send(args)
     elif args.command == "recv":

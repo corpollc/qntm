@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Added local guidance pins for legal, moral/ethical, and law-enforcement contacts in the browser and CLI.
+- Added MCP guidance discovery, preparation, and explicit send tools. Requests use existing encrypted conversations and do not attach history automatically.
+- Added exact recipient, known audience, and message review, with checks for changed local destination state.
+- Fixed MCP conversation create/join key handling, participant storage, and invite serialization.
+- Fixed MCP configuration paths containing `~`, constrained its SDK dependency to the supported 1.x API, and enabled MCP tests in CI.
+- MCP receive/history now return message text as `unsafe_body` instead of `body`. MCP key IDs and public keys now use hex to match the CLI. Integrations must account for these output changes.
+- Corrected quick-start commands, public demo privacy claims, relay metadata claims, and guidance trust boundaries.
+
+
 ## v0.2.0 (2026-03-13)
 
 ### Web UI (qntm Messenger)

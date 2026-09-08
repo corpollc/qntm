@@ -1,143 +1,74 @@
 # Threat Model & Data Security
 
-This document describes what qntm protects, what it does not protect, and what each participant should expect from the system. It is organized by interface so you can jump to the section relevant to your use case.
+This document describes the boundaries of the current implementation. Encryption authenticates message content and signing keys. It does not establish a person's role, an agent's authority, or the safety of an instruction.
 
----
+## Components and stored data
 
-## System Overview
+| Component | Location | Sensitive state |
+|---|---|---|
+| Relay | Cloudflare Worker, KV, and Durable Object SQLite | Encrypted envelopes, sequence state, receipt and network metadata |
+| Gateway | Cloudflare Worker and Durable Object | Conversation keys, API credentials, approval state |
+| Clients | Local machine or browser | Identity private keys, conversation keys, plaintext history, invite tokens, local guidance pins |
+| Invite links | Wherever shared | Bearer secrets that derive initial conversation keys |
 
-qntm has four components that handle sensitive data:
+## Relay visibility
 
-| Component | Runs where | Stores what |
-|-----------|-----------|-------------|
-| **Relay** | Cloudflare Worker + KV | Encrypted CBOR envelopes (opaque blobs) |
-| **Gateway** | Cloudflare Worker + Durable Object | Conversation keys, sealed API credentials, approval state |
-| **Clients** (CLI, Web UI, TUI) | User's machine or browser | Identity private keys, conversation keys, decrypted message history |
-| **Invite links** | Wherever the user shares them | Bearer secret that derives conversation keys |
+The relay cannot decrypt ordinary conversation content without conversation keys. The sender signature and message body type are inside the encrypted envelope. Modified content fails authentication; the relay cannot produce a valid signature for an uncompromised sender.
 
----
+The relay sees conversation IDs, envelope timestamps, sequence numbers, sizes, request timing, and client IP addresses. Signed read receipts also expose a reader key ID and public key linked to a conversation and message. The AIM client submits receipts after receiving messages and after sending its own messages. This lets the relay associate a signing identity with receipt activity. The relay is not an identity-hiding service.
 
-## What the Relay Sees
+The relay can drop, delay, replay, or withhold envelopes and receipts. Client replay checks and cryptographic validation reduce some effects, but encryption does not guarantee availability or delivery.
 
-The relay is **untrusted by design**. It is a dumb store-and-forward service.
+| Metadata | Relay | Passive network observer using HTTPS/WSS |
+|---|---|---|
+| Conversation ID and URL path | Visible | Protected by TLS |
+| Message timing and approximate traffic volume | Visible | Visible |
+| Client IP | Visible | Depends on network position |
+| Signed receipt identity | Visible when submitted | Protected by TLS |
+| Plaintext message content | Encrypted | Encrypted |
 
-**The relay can see:**
-- Conversation IDs (which channel a message belongs to)
-- Envelope timestamps and sequence numbers
-- Envelope sizes
-- IP addresses of senders and pollers
-- Polling frequency and patterns
+A TLS terminator sees request URLs and transport payloads. Plain HTTP/WS exposes transport metadata to network observers. A compromised client or gateway can reveal plaintext regardless of TLS.
 
-**The relay cannot see:**
-- Message plaintext
-- Sender identity (the Ed25519 signature is inside the encrypted envelope)
-- Message body type (text, gate request, governance proposal, etc.)
-- Which specific participant sent a message
+## Gateway trust
 
-**If the relay is compromised:** An attacker gets encrypted blobs and metadata. They learn who is talking to whom (by IP/conversation ID) and when, but not what is being said. They cannot forge messages because they lack signing keys. They cannot decrypt messages because they lack conversation keys.
+The gateway is an endpoint in each promoted conversation. It can decrypt that conversation and the API credentials provisioned to it. An uncompromised gateway enforces configured signature thresholds and excludes its own key from the approval count.
 
----
+These controls apply to requests routed through that gateway. Thresholds are configurable and can permit a single signer. qntm does not restrict API calls made through another tool or a separately held credential. Cryptographic identities do not distinguish a human from an agent.
 
-## What the Gateway Sees
+A compromised gateway can access its conversation keys and credentials and bypass its own enforcement code. Per-conversation keypairs and credential lifetimes limit some exposure, but they do not make a compromised executor safe. Operators can self-host and limit the permissions of provisioned credentials.
 
-The gateway is a **trusted-but-constrained** participant. It holds conversation keys and sealed API credentials.
+## Local client state
 
-**The gateway can see:**
-- Decrypted message content for conversations it has been promoted into
-- API credentials (encrypted to its public key, decrypted at execution time)
-- Request and approval signatures
-- Participant public keys and key IDs
+The Python CLI defaults to `~/.qntm`, with `--config-dir` selecting another directory. MCP uses `QNTM_CONFIG_DIR`. Both store `identity.json`, `conversations.json`, history under `chats/`, and `guidance_contacts.json` when pins exist. These are unencrypted local files.
 
-**The gateway cannot do:**
-- Approve its own requests (excluded from m-of-n threshold)
-- Create or refresh API credentials (only humans can provision secrets)
-- Act without reaching the approval threshold
-- Access conversations it has not been promoted into
+The current Python file writer inherits the process umask and writes in place. It does not enforce private file permissions or atomic replacement. The audit tracks remediation in `qntm-lfpp`. Until then, use a private configuration directory, restrictive permissions, and disk encryption. Keep this state out of version control.
 
-**If the gateway is compromised:** An attacker gains access to decrypted messages and API credentials for all promoted conversations on that gateway instance. This is the most sensitive component. Mitigations:
-- Each conversation gets an isolated gateway keypair
-- API credentials can have TTLs (15min, 60min, 4hr) to limit exposure windows
-- The gateway is open source and auditable
-- Self-hosting is supported for high-security deployments
+The AIM browser stores signing keys, conversation keys, plaintext history, invite tokens, and guidance pins in `localStorage`. Exported JSON backups contain the same sensitive state without encryption. An import replaces local state, including contact destinations and the relay URL. Only import a trusted backup. Import schema validation and a replacement preview are tracked in `qntm-fwds`.
 
----
+The deployed Pages header configuration permits same-origin scripts and Cloudflare Insights scripts. Inline scripts and object embeds are blocked. This policy depends on the hosting platform applying `ui/aim-chat/public/_headers`; it is not guaranteed by the development server. Any allowed script or extension with access to the origin can access local state. Encryption in the browser does not protect against origin or device compromise.
 
-## Client Security
+The terminal UI also keeps local identity keys, conversation keys, and history. Treat its selected configuration directory as sensitive.
 
-### Python CLI
+## Invites, membership, and key rotation
 
-**Stores on disk:**
-- Identity private key (Ed25519, 64 bytes) in `~/.config/qntm/identity.json`
-- Conversation records with symmetric keys in `~/.config/qntm/conversations.json`
-- Message history in `~/.config/qntm/chats/`
-- Stored invite tokens for re-sharing
+An invite is a bearer secret. Anyone with it can derive the initial epoch keys and decrypt accessible ciphertext from that epoch. Knowledge of those keys does not establish the holder's professional role or operator authorization. A public demo invite creates a public shared-key audience.
 
-**Protect by:** File permissions, full-disk encryption, treating `~/.config/qntm/` as sensitive. Do not commit this directory to version control.
+Group rekey operations distribute a new random key to the retained members. A removed participant without that new key cannot decrypt the new epoch. Within an epoch, possession of the symmetric key exposes all accessible ciphertext from that epoch. There is no per-message ratchet or automatic continuous key rotation.
 
-### Web UI (AIM)
+An invite token or retained old key can continue to expose earlier ciphertext. Clients retain invites and can retain other sensitive state, so key rotation alone is not a guarantee that old messages become unrecoverable. Recovery from compromise requires a trusted endpoint, a rekey or new conversation, and control of the remaining secrets.
 
-**Stores in browser:**
-- Identity private key in `localStorage`
-- Conversation keys in `localStorage`
-- Message history in `localStorage`
-- Stored invite tokens for re-sharing
+## Guidance and agent instructions
 
-**Protect by:** Treating the browser profile as sensitive state. Avoid untrusted extensions on the origin. The Content Security Policy blocks inline scripts, external scripts, and object embeds. All crypto runs in-browser — no server-side component.
+Guidance contacts are local operator choices. Pins bind a recipient key to a conversation and relay; they do not certify credentials, jurisdiction, independence, or institutional authority. The entire conversation audience can read a request, including unknown invite holders and any gateway.
 
-### Terminal UI (TUI)
+Preparation does not send a message or attach history. The send path checks that the reviewed content and locally known destination state still match. That check is not a live membership refresh. A review token is a content binding, not proof of human approval or a single-use permission. The host must enforce outbound authorization and protect local configuration.
 
-**Stores on disk:**
-- Same as the Python CLI: identity, conversation keys, and history in a config directory
+Received messages and guidance replies are untrusted data. The CLI and MCP label message text with `unsafe_body`. A valid signature does not make the text a trusted instruction or grant permission to execute it. An agent host must keep conversation content separate from system instructions and approval decisions.
 
----
+No guidance category triggers automatic reporting or escalation. Advice does not satisfy a gateway approval threshold. Guidance does not guarantee a response, prevent an agent from continuing its work, or prove that a contact is independent of the agent's evaluation environment.
 
-## Metadata Exposure
+MCP does not yet apply group membership or rekey events (`qntm-fods`). Use dedicated direct conversations for MCP guidance. See [Request guidance](guidance.md) for setup and the [client safety audit](audits/2026-09-07-client-safety.md) for findings.
 
-qntm encrypts message **content** but does not hide all **metadata**.
+## Remaining limits
 
-| Metadata | Visible to relay | Visible to network observers |
-|----------|-----------------|------------------------------|
-| Conversation ID | Yes | Yes (in request URL) |
-| Message timing | Yes | Yes |
-| Message size | Yes | Yes |
-| Sender IP | Yes | Depends on network path |
-| Sender identity | No | No |
-| Message content | No | No |
-| Participant count | Inferrable from polling patterns | Inferrable |
-
-**What this means:** An observer who can see relay traffic knows that *someone* is messaging in a particular conversation at a particular time. They do not know who the sender is (within the conversation) or what is being said. If IP-level privacy is required, route through a VPN or Tor.
-
----
-
-## Invite Link Security
-
-Invite links are **bearer secrets**. Anyone who possesses an invite link can:
-- Derive the conversation's symmetric keys
-- Join the conversation and read all past and future messages (for that epoch)
-- Send messages as a new participant
-
-**Treat invite links like passwords.** Share them over a trusted side-channel (Signal, iMessage, in person). Do not post them publicly. If an invite link is compromised, create a new conversation and migrate.
-
----
-
-## Forward Secrecy
-
-qntm v1.1 provides **epoch-based** forward secrecy, not per-message.
-
-- When a member is removed, a `group_rekey` rotates the conversation keys to a new epoch
-- The removed member cannot decrypt messages sent after the rekey
-- **Within an epoch**, all messages use the same symmetric key — compromise of that key exposes all messages in the epoch
-- There is no continuous ratchet or automatic key rotation in v1.1
-- Post-compromise recovery requires an explicit rekey by a non-compromised member
-
-**What this means:** If an attacker captures encrypted traffic and later obtains an epoch key, they can decrypt all messages from that epoch. This is a known limitation of the v1.1 protocol. Per-message forward secrecy (Double Ratchet / MLS-style) is not included.
-
----
-
-## What qntm Does Not Protect Against
-
-- **Endpoint compromise:** If an attacker controls a participant's device, they have the private key and can read all messages. This is true of all E2E encryption systems.
-- **Metadata analysis:** Conversation IDs, timing, and message sizes are visible to the relay and network observers.
-- **Social engineering:** If someone is tricked into sharing an invite link or approving a gateway request, the cryptography cannot help.
-- **Relay availability:** The relay can drop or delay messages. It cannot forge or modify them (modifications are detected by AEAD authentication), but it can deny service.
-- **Side-channel attacks:** Timing attacks on the relay, browser fingerprinting, and similar side channels are not addressed by the protocol.
+qntm does not protect against compromised endpoints, malicious guidance, deceptive contact labels, leaked invites, approval mistakes, metadata analysis, or denial of service. Plaintext history is a local record, not a tamper-proof compliance archive. Relay retention and deletion are not proof that every recipient received or erased a message.

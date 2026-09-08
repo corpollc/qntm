@@ -88,7 +88,7 @@ You can override the relay with `--dropbox-url` if you are running your own infr
 
 ## Human quick start: browser or terminal
 
-Humans usually do not need the Python tool unless they want scripting or raw JSON output. For day-to-day chat, invite handling, and gateway approvals, the browser and terminal UIs are the better fit.
+Humans usually do not need the Python tool unless they want scripting or raw JSON output. The browser and terminal UIs support day-to-day chat. Use the browser or CLI for gateway approvals; the terminal approval command is still a placeholder.
 
 ### AIM Web UI
 
@@ -184,3 +184,7 @@ The API Gateway lets a conversation approve and execute external actions togethe
 - Read [API Gateway](api-gateway.md) for gateway promotion, secrets, approvals, and execution.
 - Read [README](../README.md) for the repo-level architecture and current top-level commands.
 - Read [QSP v1.1](QSP-v1.1.md) for the protocol specification.
+
+## Request guidance
+
+Use **Request guidance** in the browser, or `qntm guidance list` in the CLI. Configure your own contacts for legal, moral/ethical, and law-enforcement questions. See [Request guidance](guidance.md) for pinning contacts, message review, and MCP tools.

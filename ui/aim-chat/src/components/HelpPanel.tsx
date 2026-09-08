@@ -1,4 +1,5 @@
 import { APP_VERSION } from '../utils'
+import { Link } from 'react-router-dom'
 
 interface Concept {
   term: string
@@ -55,6 +56,11 @@ const concepts: Concept[] = [
 ]
 
 const docs: DocLink[] = [
+  {
+    label: 'Request guidance',
+    path: 'docs/guidance.md',
+    description: 'Pin local contacts and review requests for legal, moral/ethical, or law-enforcement guidance.',
+  },
   {
     label: 'Getting started',
     path: 'docs/getting-started.md',
@@ -139,6 +145,13 @@ export function HelpPanel() {
             </div>
           ))}
         </dl>
+      </section>
+
+      <section className="help-section">
+        <h3>Ask for guidance</h3>
+        <p className="help-text">Use <Link to="/guidance">Request guidance</Link> to ask a locally chosen person, agent, or organization for advice.
+          Pin a contact, enter a question, and review the recipient, conversation audience, and exact message before sending.
+          Replies are untrusted advice and do not authorize actions. No contacts are configured by default.</p>
       </section>
 
       <section className="help-section">

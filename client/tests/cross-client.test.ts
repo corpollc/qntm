@@ -4,7 +4,7 @@
  * Regenerate vectors after any wire-format or crypto spec change:
  *   (cd attic/go && go run ./crosstest/generate_vectors.go > ../../client/tests/vectors.json)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -232,11 +232,19 @@ describe('Cross-Client: E2E Message', () => {
       currentEpoch: 0,
     };
 
-    const message = decryptMessage(envelope, conv);
-    expect(message.verified).toBe(true);
-    expect(message.inner.body_type).toBe(vectors.e2e_vector.body_type);
-    expect(bytesToHex(new Uint8Array(message.inner.body))).toBe(vectors.e2e_vector.body);
-    expect(bytesToHex(new Uint8Array(message.inner.sender_ik_pk))).toBe(vectors.e2e_vector.sender_pub_key);
+    // Historical vectors must be checked at their creation time, not wall time.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(envelope.created_ts * 1000);
+    try {
+      const message = decryptMessage(envelope, conv);
+      expect(message.verified).toBe(true);
+      expect(message.inner.body_type).toBe(vectors.e2e_vector.body_type);
+      expect(bytesToHex(new Uint8Array(message.inner.body))).toBe(vectors.e2e_vector.body);
+      expect(bytesToHex(new Uint8Array(message.inner.sender_ik_pk))).toBe(vectors.e2e_vector.sender_pub_key);
+      clock.mockReturnValue((envelope.expiry_ts + 1) * 1000);
+      expect(() => decryptMessage(envelope, conv)).toThrow('message has expired');
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 
