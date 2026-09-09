@@ -2520,6 +2520,16 @@ def cmd_gate_secret(args):
 
     service = args.service
     gateway_pubkey = args.gateway_pubkey
+    try:
+        target = _gateway_target(conv_record)
+        public_key = _decode_gateway_public_key(gateway_pubkey)
+        if target and kid_to_wire(key_id_from_public_key(public_key)) != target:
+            raise ValueError("Gateway public key does not match the configured gateway identity")
+        known_public_key = (conv_record.get("gateway") or {}).get("publicKey")
+        if known_public_key and _decode_gateway_public_key(known_public_key) != public_key:
+            raise ValueError("Gateway public key does not match the configured gateway identity")
+    except ValueError as error:
+        _error(str(error))
     value = getattr(args, "value", None) or ""
     if not value:
         value = sys.stdin.readline().strip()

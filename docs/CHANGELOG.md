@@ -16,6 +16,7 @@
 
 - Gateway admission now completes a participant-signed invitation with the gateway's signed acceptance in chat. Sealed access material travels out of band, without an operator admission token.
 - Gateway actions bind the conversation and gateway key, enforce the current roster's governance quorum, and recover sequence numbers across gateway and governance records.
+- Secret delivery requires an explicitly configured or accepted gateway key. The browser no longer guesses another participant as the recipient, and both clients reject a key that conflicts with the configured gateway.
 - Relay receipts no longer delete messages. Bounded receipt metadata and ciphertext expire together, including idle cleanup. Replay spans expired sequence gaps and paginates through the captured head.
 - Python private/atomic state writes, MCP identity/invite encoding, and shared receive/rekey handling; TypeScript subscription callbacks retain replay progress on failure.
 - Claude notifications persist before cursor advancement and survive failed transport writes, restart, and a CLI receiver sharing the profile.

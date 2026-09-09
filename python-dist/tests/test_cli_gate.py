@@ -44,6 +44,23 @@ from qntm.gate import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("status,key_source", [("active", "other"), ("pending", "gateway")])
+def test_secret_command_rejects_wrong_or_unaccepted_gateway_before_send(monkeypatch, tmp_path, status, key_source):
+    from qntm import cli
+    alice, gateway, other = generate_identity(), generate_identity(), generate_identity()
+    record = {"id": "ab" * 16, "gateway": {"status": status,
+              "keyId": base64url_encode(gateway["keyID"]), "publicKey": base64url_encode(gateway["publicKey"])}}
+    monkeypatch.setattr(cli, "_load_identity", lambda _: alice)
+    monkeypatch.setattr(cli, "_load_conversations", lambda _: [record])
+    monkeypatch.setattr(cli, "_conv_to_crypto", lambda _: {})
+    monkeypatch.setattr(cli, "_error", lambda message: (_ for _ in ()).throw(RuntimeError(message)))
+    monkeypatch.setattr(cli, "_send_gate_message_to_conv", lambda *args: pytest.fail("secret must not be sent"))
+    key = gateway if key_source == "gateway" else other
+    args = SimpleNamespace(config_dir=str(tmp_path), dropbox_url="http://relay.test", conversation=record["id"],
+                           service="stripe", gateway_pubkey=base64url_encode(key["publicKey"]), value="private-secret")
+    with pytest.raises(RuntimeError, match="Waiting|does not match"):
+        cli.cmd_gate_secret(args)
+
 def _make_config_dir_with_identity():
     """Create a temp config dir with a generated identity and return (dir, identity)."""
     tmpdir = tempfile.mkdtemp()

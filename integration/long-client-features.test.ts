@@ -44,7 +44,12 @@ describe.sequential('new release features across real clients and relay', () => 
     const shown = await waitForUiStoredHistory(requireUi(harness), conversation, entry => entry.bodyType === 'gate.accept', 'signed gateway acceptance');
     expect(JSON.parse(String(shown.text))).toEqual(body);
     expect(harness.alice.readConversation(conversation).gateway).toMatchObject({ status: 'active' });
-  });
+    const before = harness.alice.readHistory(conversation).filter(entry => entry.body_type === 'gate.secret').length;
+    await expect(harness.alice.run(['gate-secret', '-c', conversation, '--service', 'stripe',
+      '--gateway-pubkey', harness.alice.readIdentity().public_key, '--value', 'must-not-leave-this-client'])).rejects.toThrow('does not match');
+    await harness.alice.run(['recv', conversation]);
+    expect(harness.alice.readHistory(conversation).filter(entry => entry.body_type === 'gate.secret')).toHaveLength(before);
+  }, 30_000);
 
   it('discovers CLI pins through MCP and delivers only the reviewed guidance to the browser', async () => {
     const ui = requireUi(harness);

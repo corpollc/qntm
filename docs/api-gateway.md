@@ -87,6 +87,8 @@ API keys let the gateway authenticate with external services on your behalf. The
 
 The key is immediately encrypted and sent to the gateway. It never appears in plaintext in the conversation.
 
+Secret delivery uses the accepted gateway public key or a key you explicitly configure. Clients reject a key that conflicts with the conversation's configured gateway identity. They never infer the secret recipient from the first other participant.
+
 ### Key Expiration
 
 API keys can have a time-to-live (TTL). After the TTL expires, the gateway will refuse to use the key and log an expiration notice. A signer must provision a new key to resume making API calls for that service.

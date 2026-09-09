@@ -1047,39 +1047,17 @@ export async function gateSecretRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
-  let gwPubKeyBytes: Uint8Array | undefined
+  const gateway = store.findConversation(profileId, conversationId)?.gateway
+  if (gateway?.status === 'pending') throw new Error('Waiting for the gateway to accept in this conversation')
   const selfKidB64 = base64UrlEncode(identity.keyID)
-
-  if (gatewayPublicKey) {
-    gwPubKeyBytes = decodeGatewayPublicKey(gatewayPublicKey)
-  } else {
-    const conv = store.findConversation(profileId, conversationId)
-    if (conv?.gateway?.publicKey) {
-      gwPubKeyBytes = decodeGatewayPublicKey(conv.gateway.publicKey)
-    }
+  const configuredKey = gatewayPublicKey || gateway?.publicKey
+  if (!configuredKey) throw new Error('No gateway public key configured; wait for gateway acceptance or provide a trusted gatewayPublicKey')
+  const gwPubKeyBytes = decodeGatewayPublicKey(configuredKey)
+  if (gateway?.keyId && base64UrlEncode(keyIDFromPublicKey(gwPubKeyBytes)) !== gateway.keyId) {
+    throw new Error('Gateway public key does not match the configured gateway identity')
   }
-
-  if (!gwPubKeyBytes) {
-    const conv = store.findConversation(profileId, conversationId)
-    for (const publicKey of listKnownParticipantPublicKeys(conv, identity)) {
-      const pKid = base64UrlEncode(keyIDFromPublicKey(publicKey))
-      if (pKid !== selfKidB64) {
-        gwPubKeyBytes = publicKey
-        break
-      }
-    }
-    if (!gwPubKeyBytes && conv?.participants) {
-      // conv.participants stores hex key IDs; compare in hex
-      const selfKidHex = bytesToHex(identity.keyID).toLowerCase()
-      for (const participantKeyId of conv.participants) {
-        if (participantKeyId.toLowerCase() !== selfKidHex) {
-          throw new Error('Gateway participant public key is not known yet; receive a message from that participant first, or provide gatewayPublicKey')
-        }
-      }
-    }
-    if (!gwPubKeyBytes) {
-      throw new Error('No gateway participant found (need a non-self participant, or provide gatewayPublicKey)')
-    }
+  if (gateway?.publicKey && bytesToHex(gwPubKeyBytes) !== bytesToHex(decodeGatewayPublicKey(gateway.publicKey))) {
+    throw new Error('Gateway public key does not match the configured gateway identity')
   }
 
   const secretId = crypto.randomUUID()

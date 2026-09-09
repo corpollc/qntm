@@ -554,40 +554,13 @@ describe('browser qntm adapter', () => {
     expect(removeProposal.required_approvals).toBe(2)
   })
 
-  it('encrypts gate secrets with the known participant public key using base64url', async () => {
+  it('never guesses a gateway key from another conversation participant', async () => {
     const { alice, bob, conversationId } = await createConversationPair()
-    const aliceIdentity = identityFor(alice.id)
-    const bobIdentity = identityFor(bob.id)
-
     await sendMessageToConversation(bob.id, bob.name, conversationId, 'hello from bob')
     await receiveMessages(alice.id, alice.name, conversationId)
-
-    const secretMessage = await gateSecretRequest(
-      alice.id,
-      alice.name,
-      conversationId,
-      'stripe',
-      'sk_test_123',
-      'Authorization',
-      'Bearer {value}',
-    )
-    const payload = JSON.parse(secretMessage.text) as {
-      type: string
-      sender_kid: string
-      encrypted_blob: string
-    }
-
-    expect(payload.type).toBe('gate.secret')
-    // sender_kid is now base64url, not hex
-    const aliceSenderKidB64 = publicKeyToString(hexToBytes(aliceIdentity.keyId))
-    expect(payload.sender_kid).toBe(aliceSenderKidB64)
-
-    const decrypted = openSecret(
-      hexToBytes(bobIdentity.privateKey),
-      hexToBytes(aliceIdentity.publicKey),
-      base64UrlDecode(payload.encrypted_blob),
-    )
-    expect(new TextDecoder().decode(decrypted)).toBe('sk_test_123')
+    const before = relay.headSeq(conversationId, 0)
+    await expect(gateSecretRequest(alice.id, alice.name, conversationId, 'stripe', 'sk_test_123', 'Authorization', 'Bearer {value}')).rejects.toThrow('No gateway public key configured')
+    expect(relay.headSeq(conversationId, 0)).toBe(before)
   })
 
   it('accepts a provided base64url gateway public key for gate secrets', async () => {
@@ -645,6 +618,9 @@ describe('browser qntm adapter', () => {
     await receiveMessages(alice.id, alice.name, conversationId)
     expect(store.findConversation(alice.id, conversationId)!.gateway!.status).toBe('active')
     expect(store.findConversation(alice.id, conversationId)!.participants).not.toContain(Array.from(relay.gateway.keyID, b => b.toString(16).padStart(2, '0')).join(''))
+    const beforeSecret = relay.headSeq(conversationId, 0)
+    await expect(gateSecretRequest(alice.id, alice.name, conversationId, 'stripe', 'secret', 'Authorization', 'Bearer {value}', publicKeyToString(hexToBytes(identityFor(bob.id).publicKey)))).rejects.toThrow('does not match')
+    expect(relay.headSeq(conversationId, 0)).toBe(beforeSecret)
     const secret = await gateSecretRequest(alice.id, alice.name, conversationId, 'stripe', 'secret', 'Authorization', 'Bearer {value}')
     const payload = JSON.parse(secret.text)
     expect(payload.gateway_kid).toBe(invitation.gateway_kid)
