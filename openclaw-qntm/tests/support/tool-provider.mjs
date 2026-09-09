@@ -20,16 +20,24 @@ export async function createToolProvider() {
       assert.ok(names.includes('qntm_gateway'), `optional native tool absent: ${names.join(',')}`);
       const results = body.messages.slice(index + 1).filter(message => message.role === 'tool').map(message => JSON.parse(text(message.content)));
       let args;
-      if (results.length === 0) args = { operation: 'status' };
+      if (plan.single) {
+        if (results.length === 0) args = plan.single;
+        else {
+          assert.equal(results.length, 1);
+          assert.equal(results[0].status, plan.expectedStatus);
+          if (plan.expectedCode) assert.equal(results[0].code, plan.expectedCode);
+          outcomes.set(plan.id, results);
+        }
+      } else if (results.length === 0) args = { operation: 'status' };
       else if (results.length === 1) {
-        assert.equal(results[0].status, 'accepted');
+        assert.equal(results[0].status, plan.initialStatus ?? 'accepted');
         args = { operation: 'prepare', action: plan.action, options: plan.options };
       } else if (results.length === 2) {
         assert.equal(results[1].status, 'review_required', JSON.stringify(results[1]));
         args = { operation: 'commit', reviewToken: results[1].reviewToken, reviewHash: results[1].reviewHash };
       } else {
         assert.equal(results.length, 3);
-        assert.equal(results[2].status, 'submitted', JSON.stringify(results[2]));
+        assert.equal(results[2].status, plan.expectedStatus ?? 'submitted', JSON.stringify(results[2]));
         outcomes.set(plan.id, results);
       }
       const delta = args ? { role: 'assistant', tool_calls: [{ index: 0, id: `call_${plan.id}_${results.length}`, type: 'function',

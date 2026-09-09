@@ -8,6 +8,8 @@ The library does not own a daemon, a review screen, or a credential store. Your 
 
 Use `GateClient.createInvitation`, `createGatewayInviteBody`, and `sealGatewayBootstrap` for admission. Post the signed invitation to the conversation, then submit its sealed bootstrap material with `GateClient.promote`. HTTP success is advisory. Activate the gateway only after `matchesGatewayAcceptance` verifies its signed `gate.accept` message against the exact invitation message ID and text. See [gateway invitations](gateway-invitations.md).
 
+Unreleased: `new GateClient(url, { timeoutMs: 30_000, signal })` accepts an optional `AbortSignal` and a deadline covering headers and the complete body. The default is 30 seconds; overrides must be integers from 1 to 300,000 milliseconds. Setup and health calls reject redirects, cap decoded response bodies at 64 KiB, and never automatically retry. A timeout or cancellation does not establish that the server ignored a submitted POST: retain the exact sealed bootstrap for an explicit retry, and verify signed chat acceptance before granting authority.
+
 Construct a `GatewayContext` from that accepted identity and verified current conversation state:
 
 | Field | Meaning |
@@ -70,7 +72,7 @@ Tests exercise encrypted envelope roundtrips, altered signatures, forged termina
 
 The gateway service processes subscription envelopes only in its current epoch. It skips older replay records without retaining prior decryption keys, skips future epochs, and advances its durable relay cursor. Already-consumed sequences are ignored after restart. This does not turn the gateway into a historical decryption service or reauthorize pre-rekey requests; clients retain their own history.
 
-The terminal UI now provides reviewed gateway actions (see [terminal help](../ui/tui/README.md)); OpenClaw structured actions remain in progress. These helpers do not install host-specific tools or grant an agent permission to invoke them.
+The terminal UI and OpenClaw now provide reviewed gateway actions (see [terminal help](../ui/tui/README.md) and [native gateway tools](../openclaw-qntm/README.md#optional-gateway-tools)). These helpers do not install host-specific tools or grant an agent permission to invoke them.
 
 ## Maintain a local authenticated session (unreleased)
 

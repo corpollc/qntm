@@ -117,7 +117,7 @@ export class QntmGatewayActions {
   private pending = new Map<string, Pending>();
   private preparing = new Set<symbol>();
   constructor(private readonly deps: {
-    now?: () => number; client?: (url: string) => Transport; gate?: (url: string) => GateTransport;
+    now?: () => number; client?: (url: string) => Transport; gate?: (url: string, signal?: AbortSignal) => GateTransport;
     saveBootstrap?: typeof writePrivateJSON;
   } = {}) {}
   private now(): number { return this.deps.now?.() ?? Date.now(); }
@@ -128,7 +128,7 @@ export class QntmGatewayActions {
     clearTimeout(this.pending.get(token)?.timer);
     this.pending.delete(token);
   }
-  private gate(url: string): GateTransport { return this.deps.gate?.(url) ?? new GateClient(url); }
+  private gate(url: string, signal?: AbortSignal): GateTransport { return this.deps.gate?.(url, signal) ?? new GateClient(url, { signal }); }
   private client(url: string): Transport { return this.deps.client?.(url) ?? new DropboxClient(url); }
 
   status(scope: GatewayScope, offset = 0, limit = 20): unknown {
@@ -189,7 +189,7 @@ export class QntmGatewayActions {
       requireState(!state.gateway?.accepted, 'already_accepted', 'This conversation already has an accepted gateway');
       requireState(!state.gateway || state.gateway.invitation.body.expires_at * 1000 <= this.now(), 'invitation_pending', 'A gateway invitation is still pending');
       const url = validURL(options.gatewayUrl), invitationId = randomUUID().replaceAll('-', '');
-      const value = await this.gate(url).createInvitation(base64UrlEncode(identity.publicKey), invitationId);
+      const value = await this.gate(url, signal).createInvitation(base64UrlEncode(identity.publicKey), invitationId);
       requireState(value.invitation_id === invitationId && value.inviter_public_key === base64UrlEncode(identity.publicKey)
         && Number.isSafeInteger(value.expires_at) && value.expires_at * 1000 > this.now() && value.expires_at * 1000 <= this.now() + 600_000,
         'invalid_invitation', 'Gateway returned an invalid or mismatched invitation');
@@ -282,7 +282,7 @@ export class QntmGatewayActions {
     }
     if (pending.bootstrap) {
       requireState(digest(loadBootstrap(scope)) === digest(pending.bootstrap), 'bootstrap_stale', 'Saved bootstrap changed since review');
-      await this.gate(pending.bootstrap.url).promote(pending.bootstrap.request);
+      await this.gate(pending.bootstrap.url, signal).promote(pending.bootstrap.request);
       return { status: 'awaiting_signed_acceptance', invitationMessageId: pending.bootstrap.messageId };
     }
     const envelope = createGatewayMessage(scope.account.identity!, checkpoint.conversation, body!, context!, references);
@@ -301,7 +301,7 @@ export class QntmGatewayActions {
         instruction: 'The invitation was posted, but sealed bootstrap persistence failed. It was not delivered; do not blindly repeat admission.' }; }
       if (signal?.aborted) return { status: 'invitation_posted_bootstrap_pending', messageId, sequence,
         instruction: 'Cancelled after the invitation POST. Its sealed bootstrap is saved for explicit retry after the subscription verifies the invitation.' };
-      try { await this.gate(invitation.url).promote(bootstrap.request); }
+      try { await this.gate(invitation.url, signal).promote(bootstrap.request); }
       catch { return { status: 'invitation_posted_bootstrap_pending', messageId, sequence,
         instruction: 'Prepare retry-bootstrap after the subscription verifies this invitation; retry sends only its saved sealed bootstrap.' }; }
       return { status: 'awaiting_signed_acceptance', messageId, sequence };

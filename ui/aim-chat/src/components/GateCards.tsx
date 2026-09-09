@@ -1,3 +1,4 @@
+import { useId, useState } from 'react'
 import type { ChatMessage } from '../types'
 import type {
   GateRequestBody,
@@ -255,6 +256,8 @@ export function GateConfigCard({ message }: { message: ChatMessage }) {
 }
 
 export function GateResultCard({ message }: { message: ChatMessage }) {
+  const [expanded, setExpanded] = useState(false)
+  const responseId = useId()
   const parsed = parseGateMessage(message.text) as GateResultBody | null
   if (!parsed) return <div className="message-body">{message.text}</div>
 
@@ -271,12 +274,12 @@ export function GateResultCard({ message }: { message: ChatMessage }) {
     }
   }
   const truncated = displayBody.length > MAX_BODY_LENGTH
-  if (truncated) {
+  if (truncated && !expanded) {
     displayBody = displayBody.slice(0, MAX_BODY_LENGTH)
   }
 
   return (
-    <div className={`gate-card gate-result ${isSuccess ? 'gate-result-ok' : 'gate-result-err'}`}>
+    <div className={`gate-card gate-result ${isSuccess ? 'gate-result-ok' : 'gate-result-err'}`} data-request-id={parsed.request_id}>
       <div className="gate-card-header">API Response</div>
       <div className="gate-card-body">
         <div><strong>Request:</strong> {shortId(parsed.request_id)}</div>
@@ -292,7 +295,12 @@ export function GateResultCard({ message }: { message: ChatMessage }) {
         {displayBody && (
           <div className="gate-result-body-section">
             <strong>Response:</strong>
-            <pre className="gate-result-body">{displayBody}{truncated ? '\n... (truncated)' : ''}</pre>
+            <pre id={responseId} className="gate-result-body" tabIndex={0} aria-label="API response body">{displayBody}{truncated && !expanded ? '\n... (preview)' : ''}</pre>
+            {truncated && (
+              <button className="button gate-result-toggle" type="button" aria-expanded={expanded} aria-controls={responseId} onClick={() => setExpanded(value => !value)}>
+                {expanded ? 'Show preview' : 'Show full response'}
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -394,6 +394,10 @@
   margin-top: 4px;
 }
 
+.gate-result-toggle {
+  margin-top: 6px;
+}
+
 .gate-result-body {
   margin: 4px 0 0;
   padding: 6px 8px;

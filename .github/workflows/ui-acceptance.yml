@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           package-manager-cache: false
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: |
             client/package-lock.json
@@ -23,6 +23,8 @@ jobs:
             ui/aim-chat/package-lock.json
             ui/tui/package-lock.json
             integration/package-lock.json
+            openclaw-qntm/package-lock.json
+            echo-worker/package-lock.json
 
       - uses: actions/setup-python@v6
         with:
@@ -63,9 +65,17 @@ jobs:
         working-directory: ui/tui
         run: npm ci
 
+      - name: Install OpenClaw and verify its plugin manifest
+        working-directory: openclaw-qntm
+        run: npm ci --ignore-scripts && npm run check:manifest
+
+      - name: Install echo Worker dependencies for the complete integration typecheck
+        working-directory: echo-worker
+        run: npm ci
+
       - name: Install acceptance harness
         working-directory: integration
-        run: npm ci
+        run: npm ci && npm run typecheck
 
       - name: Install Chromium
         working-directory: integration
@@ -75,7 +85,7 @@ jobs:
         working-directory: ui/tui
         run: npm test -- pty-smoke.test.ts
 
-      - name: Exercise browser, CLI, gateway, and relay journeys
+      - name: Exercise browser, CLI, terminal, native OpenClaw, gateway and relay journeys
         working-directory: integration
         run: npm run test:acceptance
 

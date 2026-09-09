@@ -24,7 +24,7 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
 | Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, restart, and signed invitation/acceptance journeys |
 | Adapters | OpenClaw, retained NanoClaw, and Claude channel tests/typecheck; OpenClaw 2026.9.3 compiled-package install, native tool-loop request/votes/secret/governance, encrypted replies, rekey/removal, failed host admission and process-crash recovery on Node 24; real MCP channel transport; runtime dependency audits |
-| Integration and packaging | Protocol model suite; browser/CLI/MCP guidance; TypeScript-to-CLI webhook/executable delivery and restart; lost HTTP acknowledgement recovery; real echo Worker cron delivery and README-extracted quick-start/Python/gateway commands; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
+| Integration and packaging | Strict typecheck of the complete integration project; protocol model suite; browser/CLI/MCP guidance; native OpenClaw admission, execution, withdrawal, governance and stale-review/restart journeys with Python/browser/TypeScript peers; TypeScript-to-CLI webhook/executable delivery and restart; lost HTTP acknowledgement recovery; real echo Worker cron delivery and README-extracted quick-start/Python/gateway commands; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
 
 The cross-surface suite uses local Workers and browser instances; some API recipe journeys call public services. Test failures there must be diagnosed rather than silently skipped. Adapter contract tests do not replace smoke tests in each external host release. The public charter service remains experimental and unwitnessed; its resource limits, TLS, backup restoration and private telemetry require deployment checks in addition to CI.
 
@@ -56,11 +56,12 @@ Relay cleanup is logical expiry. Cloudflare recovery history and copies stored i
 
 ## Feature journey coverage
 
-`cd integration && npm run test:acceptance` includes the existing messaging, gateway, policy, and membership journeys plus the v0.6.0 feature journeys. `npm run test:features` runs just the latter during development.
+`cd integration && npm run test:acceptance` includes messaging, gateway, policy/membership, guidance/hooks, real terminal and native OpenClaw journeys. This suite uses a supported Node 24/26 host because OpenClaw requires it. Install the component dependencies and build the client/terminal as specified in [the acceptance workflow](../.github/workflows/ui-acceptance.yml); `npm run typecheck` checks the complete integration project, including the imported relay/echo Worker types. `npm run test:features` runs guidance/hooks features and `npm run test:openclaw` runs the native OpenClaw journeys during development.
 
 | Feature | Cross-client evidence |
 | --- | --- |
 | Gateway admission | CLI invitation and authenticated gateway acceptance validated by TypeScript and observed in browser history; existing UI workflow invites the gateway from the browser |
+| Native OpenClaw gateway tools | Actual packaged host and model/tool loop admit the real gateway; execute Python/native requests with browser/TypeScript peers; withdraw and restore votes; apply governance; reject terminal requests, another requester, stale reviews after rekey and lost reviews after restart; recover execution and persist removal |
 | Guidance categories | CLI pins for all three categories, discovered/prepared/sent through a real MCP connection, received in the browser; changed reviewed content is rejected |
 | Browser guidance | Browser pin, exact-message review without transmission, then send and matching CLI receive; no automatic history attachment |
 | Receive hooks | TypeScript sender through a real relay to Python watch, HTTP and executable hooks; a failing webhook does not repeat successful executable delivery; pending events survive restart and a shared CLI cursor advance |

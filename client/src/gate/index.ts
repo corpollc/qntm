@@ -71,36 +71,79 @@ export function computePayloadHash(payload: unknown): Uint8Array {
 
 // HTTP client
 
+export interface GateClientOptions {
+  /** Deadline for headers and the complete response body. Default: 30 seconds. */
+  timeoutMs?: number;
+  /** Cancels each request made by this client. Requests are never retried. */
+  signal?: AbortSignal;
+}
+
 export class GateClient {
   private baseURL: string;
-  constructor(baseURL: string) {
+  private timeoutMs: number;
+  constructor(baseURL: string, private readonly options: GateClientOptions = {}) {
     this.baseURL = baseURL.replace(/\/$/, '');
+    this.timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 300_000) {
+      throw new RangeError('Gateway timeout must be an integer from 1 to 300000 milliseconds');
+    }
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    if (!response.ok) throw new GateError(response.status, await response.text());
-    return response.json() as Promise<T>;
+  private async request<T>(path: string, body?: unknown): Promise<T> {
+    const controller = new AbortController();
+    const signal = this.options.signal;
+    const cancel = () => controller.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
+    const timer = setTimeout(() => controller.abort(new DOMException('Gateway request timed out', 'TimeoutError')), this.timeoutMs);
+    try {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      const response = await fetch(`${this.baseURL}${path}`, {
+        ...(body === undefined ? { method: 'GET' } : {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        }),
+        redirect: 'error', signal: controller.signal,
+      });
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      const reader = response.body?.getReader();
+      if (reader) {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            length += value.byteLength;
+            if (length > 64 * 1024) {
+              controller.abort();
+              void reader.cancel().catch(() => {});
+              throw new RangeError('Gateway response exceeds 64 KiB');
+            }
+            chunks.push(value);
+          }
+        } finally { reader.releaseLock(); }
+      }
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      const text = new TextDecoder().decode(bytes);
+      if (!response.ok) throw new GateError(response.status, text);
+      return JSON.parse(text) as T;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    }
   }
 
   createInvitation(inviterPublicKey: string, invitationId: string): Promise<GatewayInvitation> {
-    return this.post('/v1/invitations', { inviter_public_key: inviterPublicKey, invitation_id: invitationId });
+    return this.request('/v1/invitations', { inviter_public_key: inviterPublicKey, invitation_id: invitationId });
   }
 
   /** HTTP completion is advisory: clients activate only after verifying gate.accept in chat. */
   promote(body: GatewayBootstrapRequest): Promise<{ status: 'waiting' | 'joined'; gateway_public_key: string; gateway_kid: string; invitation_id: string }> {
-    return this.post('/v1/promote', body);
+    return this.request('/v1/promote', body);
   }
 
-  async health(): Promise<{ status: string }> {
-    const resp = await fetch(`${this.baseURL}/health`);
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<{ status: string }>;
-  }
+  health(): Promise<{ status: string }> { return this.request('/health'); }
 }
 
 export class GateError extends Error {

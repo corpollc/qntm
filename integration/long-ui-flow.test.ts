@@ -186,6 +186,11 @@ describe.sequential('real long-running gateway integration UI flow', () => {
       expect(typeof uiItemText).toBe('string');
       const uiItemResultBody = JSON.parse(String(uiItemText)) as Record<string, unknown>;
       expect(uiItemResultBody).toEqual(itemResultBody);
+      // Large API objects can put the title beyond the collapsed preview.
+      const resultCard = ui.page.locator(`.gate-result[data-request-id="${phase1TopStoryItemRequestId}"]`);
+      await resultCard.waitFor();
+      const expand = resultCard.getByRole('button', { name: 'Show full response' });
+      if (await expand.count()) await expand.click();
       await waitForUiText(ui, topStoryTitle);
       traceGateResultDelivery('hn.get-item', itemResultBody, uiItemResultBody, [
         `Top story title: ${topStoryTitle}`,
