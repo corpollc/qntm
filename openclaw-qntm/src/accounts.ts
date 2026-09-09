@@ -171,6 +171,7 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
         target: key,
         label: value.name?.trim() || conversation.name?.trim() || rawKey || toHex(conversation.id),
         enabled: value.enabled !== false,
+        gatewayActions: value.gatewayActions,
         invite: bindingInvite || undefined,
         conversationId: toHex(conversation.id),
         conversation,

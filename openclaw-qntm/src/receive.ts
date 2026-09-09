@@ -1,6 +1,7 @@
 import { base64UrlEncode, deserializeEnvelope, receiveConversationEvent } from '@corpollc/qntm';
 import { QntmCheckpointStore, MAX_PENDING_DISPATCHES, validateInbound, type QntmInbound } from './checkpoint.js';
 import { toHex } from './qntm.js';
+import { clearGatewayBootstrap } from './gateway-actions.js';
 import type { ResolvedQntmBinding } from './types.js';
 
 /** The relay cursor, updated keys and pending host dispatch are one local commit. */
@@ -39,5 +40,9 @@ export function receiveQntmEnvelope(store: QntmCheckpointStore, binding: Resolve
     ...previous, cursor: sequence, conversation: event.conversation, session: event.state,
     outbox: inbound ? [...previous.outbox, inbound] : previous.outbox,
   });
+  if (event.state.gateway?.accepted) {
+    // Cleanup failure must not undo committed receive state. A later event retries.
+    try { clearGatewayBootstrap(store, binding); } catch { /* private sealed file remains */ }
+  }
   return rejectedBody ? 'invalid' : event.duplicate ? 'duplicate' : 'accepted';
 }

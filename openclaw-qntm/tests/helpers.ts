@@ -11,7 +11,7 @@ import {
   base64UrlEncode,
 } from "@corpollc/qntm";
 import type { Identity } from "@corpollc/qntm";
-import type { QntmRootConfig } from "../src/types.js";
+import type { QntmRootConfig, QntmConversationConfig } from "../src/types.js";
 import { toHex } from "../src/qntm.js";
 
 export function createIdentityFixture(identity: Identity = generateIdentity()) {
@@ -42,7 +42,7 @@ export function createConfig(params: {
   sessionDmScope?: "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
   conversations?: Record<
     string,
-    { invite?: string; convId?: string; name?: string; enabled?: boolean }
+    QntmConversationConfig
   >;
 }): QntmRootConfig {
   const cfg: QntmRootConfig = {

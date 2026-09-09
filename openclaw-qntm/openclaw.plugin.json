@@ -1,5 +1,15 @@
 {
   "id": "qntm",
+  "contracts": {
+    "tools": [
+      "qntm_gateway"
+    ]
+  },
+  "toolMetadata": {
+    "qntm_gateway": {
+      "optional": true
+    }
+  },
   "channels": [
     "qntm"
   ],
@@ -51,6 +61,23 @@
                 },
                 "invite": {
                   "type": "string"
+                },
+                "gatewayActions": {
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "invite",
+                      "request",
+                      "approve",
+                      "disapprove",
+                      "secret",
+                      "propose",
+                      "gov-approve",
+                      "gov-disapprove"
+                    ]
+                  }
                 },
                 "convId": {
                   "type": "string"
@@ -118,6 +145,23 @@
                       "invite": {
                         "type": "string"
                       },
+                      "gatewayActions": {
+                        "maxItems": 8,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "invite",
+                            "request",
+                            "approve",
+                            "disapprove",
+                            "secret",
+                            "propose",
+                            "gov-approve",
+                            "gov-disapprove"
+                          ]
+                        }
+                      },
                       "convId": {
                         "type": "string"
                       },
@@ -157,6 +201,9 @@
           "sensitive": true,
           "help": "Contains conversation encryption keys."
         },
+        "conversations.*.gatewayActions": {
+          "help": "Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy."
+        },
         "accounts.*.identity": {
           "sensitive": true,
           "help": "Private signing identity. Prefer identityFile or identityDir."
@@ -164,6 +211,9 @@
         "accounts.*.conversations.*.invite": {
           "sensitive": true,
           "help": "Contains conversation encryption keys."
+        },
+        "accounts.*.conversations.*.gatewayActions": {
+          "help": "Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy."
         }
       }
     }

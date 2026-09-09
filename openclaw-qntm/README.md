@@ -81,8 +81,8 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
 | Text conversations | ✅ | Inbound decrypt + outbound reply are implemented. |
 | Multiple bound conversations | ✅ | One relay subscription and cursor per enabled binding. |
 | Rekey, removal and replay | ✅ | Shared authenticated reducer; current keys and removal survive restart. Replies use the latest keys and refuse a removed local identity. |
-| Non-text `body_type` ingest | Partial | Gateway events are verified by the shared reducer, then delivered as untrusted contextual text like `[gate.request] ...`. No gateway action tool yet. |
-| qntm API Gateway `gate.*` actions | ❌ | The plugin does not create or submit `gate.request`, `gate.approval`, `gate.disapproval`, `gate.promote`, `gate.secret`, or related message types. |
+| Non-text `body_type` ingest | Partial | Gateway events are verified by the shared reducer, then delivered as untrusted contextual text like `[gate.request] ...`. The optional gateway tool reads verified workflow state. |
+| qntm API Gateway `gate.*` actions | Partial | Unreleased opt-in `qntm_gateway` supports reviewed admission, requests, votes, credentials and governance. Full cross-client execution/rejection acceptance remains tracked in `qntm-dhqb`. |
 | Media attachments | Partial | OpenClaw media sends are flattened into attachment URLs inside a text message. |
 
 ## Local Verification
@@ -95,9 +95,53 @@ npm run check:manifest
 npm run test:host
 ```
 
-`test:host` installs a packaged plugin into a fresh temporary OpenClaw state directory. It starts the actual pinned host with a local wire-level relay fixture and checks encrypted direct/group replies, rekey/replay and removal across restart. It also locks the disposable host's session database to force admission failure, verifies qntm retained the message after advancing its relay cursor, kills the host with `SIGKILL`, and confirms delivery after restart without resending. A separate test-only reply hook returns deterministic text before model invocation; this test requires no provider key and does not exercise a model's judgment. It leaves existing OpenClaw configuration and conversations untouched. CI runs this check on Node 24. Set `QNTM_KEEP_HOST_SMOKE=1` only when you need the disposable state for diagnosis.
+`test:host` installs a packaged plugin into a fresh temporary OpenClaw state directory. It starts the actual pinned host with a local wire-level relay fixture and checks encrypted direct/group replies, rekey/replay and removal across restart. It also locks the disposable host's session database to force admission failure, verifies qntm retained the message after advancing its relay cursor, kills the host with `SIGKILL`, and confirms delivery after restart without resending. A local deterministic model drives the host's actual tool-call loop through status, prepare and commit for requests, votes, credentials and governance; a peer verifies the resulting encrypted messages. Ordinary chat checks use a test-only reply hook. These fixtures require no external model/provider key and do not test a model's judgment or real gateway API execution. Existing OpenClaw configuration and conversations are untouched. CI runs this check on Node 24. Set `QNTM_KEEP_HOST_SMOKE=1` only when you need the disposable state for diagnosis.
 
-Unit tests also cover disk-full rollback, failed checkpoint writes, stale claim ownership, duplicate admission, bounded storage, strict identity parsing, delayed replies across rekeys, and removal while a reply is in flight. Structured outbound gateway actions remain follow-up work.
+Unit tests also cover disk-full rollback, failed checkpoint writes, stale claim ownership, duplicate admission, bounded storage, strict identity parsing, delayed replies across rekeys, and removal while a reply is in flight. Gateway tool tests cover native routing, changed permissions, one-use reviews, expiry, removal/rekey, verified votes and terminal events, sealed credentials, uncertain sends, and persisted bootstrap retry.
+
+## Optional gateway tools
+
+This checkout adds `qntm_gateway`; it is not part of published 0.6.1. Enable it in the host tool policy, then grant the desired actions on each conversation binding:
+
+```json
+{
+  "tools": { "alsoAllow": ["qntm_gateway"] },
+  "channels": {
+    "qntm": {
+      "conversations": {
+        "ops": {
+          "convId": "0050a49f0b2e738063a89621d1c9b055",
+          "gatewayActions": ["request", "approve", "disapprove", "propose", "gov-approve", "gov-disapprove"]
+        }
+      }
+    }
+  }
+}
+```
+
+Merge this example into an existing configured account with its identity/profile. `gatewayActions` is an explicit local permission list. Missing or empty disables the tool for that conversation; `invite` and `secret` are separate permissions. Account-specific configuration puts the same setting under `channels.qntm.accounts.<account>.conversations.<binding>`. Existing host deny rules still apply.
+
+The tool is available only in a native qntm agent turn. Account, conversation, requester and session come from OpenClaw's routing context; tool arguments cannot select another identity or conversation. Received text and verified peer requests remain untrusted input for the agent's decision. Enabling an action permits the local agent to assess and perform it under its instructions; no extra human or central gateway approval is introduced.
+
+Call `status` to inspect admission and paginated workflow summaries (`offset`, `limit`, default 20, maximum 50). Call `prepare` with an action and its options. The result includes the complete proposed effect, signer, gateway, membership/policy, relevant request or proposal, a `reviewToken` and `reviewHash`. Assess that content before calling `commit` with both exact values. `cancel` discards a review by token.
+
+| Action | Options |
+| --- | --- |
+| `invite` | `gatewayUrl`, optional `floor` (default 1). HTTPS required except loopback. |
+| `request` | `service`, `endpoint`, `verb`, `targetUrl`; optional `payload`, `recipeName`, `arguments`, `requiredApprovals`, `expiresInSeconds`. |
+| `approve`, `disapprove` | `id`: the complete verified request ID. A withdrawal removes this identity's vote; it is not a veto or execution rollback. |
+| `secret` | `service`, `value`; optional `headerName`, `headerTemplate`, `ttl`. |
+| `propose` | `proposalType`; the applicable `proposedFloor`, `proposedRules`, `proposedMembers` or `removedMemberKids`; optional `requiredApprovals`, `expiresInSeconds`. |
+| `gov-approve`, `gov-disapprove` | `id`: the complete verified proposal ID. |
+| `retry-bootstrap` | No options; requires `invite` permission and a matching saved invitation. |
+
+Proposal types are `floor_change`, `rules_change`, `member_add` and `member_remove`. Rules use `{service, endpoint, verb, m}`. Proposed members use `{kid, public_key}` with base64url-encoded key IDs and public keys; `removedMemberKids` is an array of base64url key IDs. If a host truncates or summarizes a review, the agent must not commit without inspecting the complete proposed effect.
+
+Reviews expire within five minutes, live only in this host process and require the original native session/requester. Commit checks current configuration, membership, keys, policy, expiry and verified subject status again. A valid commit attempt consumes the token even if delivery fails; cancelled or ambiguous sends are not automatically retried. The relay subscription alone advances protocol state and its cursor, so a delayed POST acknowledgement cannot overwrite a newer rekey. `submitted` means the relay acknowledged a message, not that an API call ran. A `delivery_unknown` receipt includes its message ID for reconciliation against verified history before preparing another action.
+
+Gateway admission intentionally shares the current conversation keys with the reviewed gateway. Preparation obtains its public invitation; commit posts the signed chat invitation and delivers sealed bootstrap data. HTTP success does not confer authority: the subscription must verify the matching signed `gate.accept`. A failed bootstrap delivery leaves a private sealed file; after the subscription verifies the posted invitation, prepare and commit `retry-bootstrap` to resend that same bootstrap without posting another invitation. If saving fails, the tool reports that the invitation was posted but bootstrap was not delivered. Cancellation after a POST cannot retract that message; an in-flight HTTP request may still finish.
+
+Credential plaintext appears in the tool's input and can therefore reach the host transcript and configured model provider. The review omits plaintext and ciphertext, showing byte count and a SHA-256 digest; the emitted credential is sealed to the accepted gateway. Neither hashing nor sealing removes earlier input copies. Use a dedicated identity/profile and configure host/provider retention accordingly.
 
 ## Local storage, privacy and recovery
 
@@ -106,10 +150,13 @@ The base directory is `OPENCLAW_STATE_DIR`, or `~/.openclaw` when unset. qntm ow
 | File | Contents and retention |
 | --- | --- |
 | `conversations/<conv_id>.json` | Current conversation keys/epoch, creation date/type, participant IDs and known public keys, signed gateway invitation/context, verified gateway workflow history, removal status, relay/legacy cursors, initial configuration hash, identity key ID, exact replay IDs/digests, and up to 64 pending plaintext deliveries. Current state remains until the operator removes it. No prior epoch keys are retained. Replay history is capped at 8,192 IDs; workflow history at 4,096 events and approximately 8 MiB. The complete file is capped at 16 MiB. |
+| `conversations/<conv_id>.json.gateway-bootstrap` | At most 96 KiB: sealed bootstrap ciphertext, identity/conversation/invitation/message IDs, epoch, relay/gateway URLs, gateway public key, relay sequence and expiry. Contains no plaintext conversation keys. Removed after verified acceptance on a received event; failed cleanup retries on later events. Otherwise remains until overwritten by later admission or removed by the operator, including after expiry. Expired or mismatched bootstrap cannot be retried. |
 | `ingress.sqlite` and SQLite sidecars | Pending/claimed/failed plaintext deliveries: conversation and message IDs, sender key ID/public key, epoch, creation time, body type/text and gateway-verification flag; queue account/channel, lane, arrival/update/attempt timestamps, attempt counts and claim token/owner/heartbeat. Host exceptions are replaced by fixed failure strings. At most 1,024 pending/claimed events are admitted; full storage retains the checkpoint outbox and applies backpressure. Pending work has no time-based expiry. |
 | Completed/failed queue records | A completed row drops its plaintext payload when OpenClaw durably adopts the turn, or when a synchronous dispatch completes. Completed IDs are retained for seven days, capped at 8,192; failed records retain their payload for seven days, capped at 1,024. Pruning runs at startup and approximately hourly while the monitor runs. The SQLite main file has a 65,536-page limit (256 MiB with its default page size); sidecars and checkpoint files are additional storage. |
 
 Plaintext delivery text is limited to 64 KiB. Queue deletion and payload clearing are logical operations: SQLite journals, filesystem snapshots and backups can retain earlier data. OpenClaw's own sessions, transcripts, logs, hooks and model-provider calls have separate visibility and retention; qntm's limits do not delete those copies. The relay and dashboard do not receive this local state. See the [metadata inventory](../docs/metadata-privacy.md).
+
+The gateway tool holds up to 64 pending/in-progress reviews per plugin instance in memory. Options are limited to 64 KiB and complete review output to 128 KiB. Pending reviews contain signed action material, subject/context and any sealed credential, expire within five minutes, and are discarded on process exit. These bounds do not limit copies retained by OpenClaw or a model provider.
 
 Configured invite tokens or source profiles can still contain initial conversation keys. Updating the checkpoint does not rewrite or erase that source configuration.
 

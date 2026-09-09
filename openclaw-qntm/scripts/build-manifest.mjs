@@ -21,6 +21,7 @@ try {
   for (const prefix of ['', 'accounts.*.']) {
     uiHints[`${prefix}identity`] = { sensitive: true, help: 'Private signing identity. Prefer identityFile or identityDir.' };
     uiHints[`${prefix}conversations.*.invite`] = { sensitive: true, help: 'Contains conversation encryption keys.' };
+    uiHints[`${prefix}conversations.*.gatewayActions`] = { help: 'Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy.' };
   }
   manifest.channelConfigs = { qntm: { schema, uiHints } };
   const generated = JSON.stringify(manifest, null, 2) + '\n';

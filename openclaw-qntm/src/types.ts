@@ -1,10 +1,14 @@
 import type { Conversation, Identity } from "@corpollc/qntm";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 
+export type QntmGatewayAction = "invite" | "request" | "approve" | "disapprove" | "secret" | "propose" | "gov-approve" | "gov-disapprove";
+
 export type QntmConversationConfig = {
   name?: string;
   enabled?: boolean;
   invite?: string;
+  /** Locally permitted gateway actions. Omitted/empty disables the tool. */
+  gatewayActions?: QntmGatewayAction[];
   convId?: string;
   /** When to dispatch inbound messages to the agent.
    *  - "all" (default): every message is dispatched
@@ -45,6 +49,7 @@ export type ResolvedQntmBinding = {
   target: string;
   label: string;
   enabled: boolean;
+  gatewayActions?: QntmGatewayAction[];
   invite?: string;
   conversationId: string;
   conversation: Conversation;

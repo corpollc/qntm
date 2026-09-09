@@ -6,6 +6,7 @@ const QntmConversationSchema = z
     name: z.string().optional(),
     enabled: z.boolean().optional(),
     invite: z.string().optional(),
+    gatewayActions: z.array(z.enum(["invite", "request", "approve", "disapprove", "secret", "propose", "gov-approve", "gov-disapprove"])).max(8).optional(),
     convId: z.string().optional(),
     trigger: z.enum(["all", "mention"]).optional(),
     triggerNames: z.array(z.string()).optional(),

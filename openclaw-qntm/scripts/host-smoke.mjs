@@ -9,8 +9,11 @@ import {
   generateIdentity, createInvite, inviteToToken, createConversation, deriveConversationKeys,
   createMessage, serializeEnvelope, deserializeEnvelope, decryptMessage, serializeIdentity,
   base64UrlEncode, DropboxClient, createGroupRekeyBody, createGroupRemoveBody, QSP1Suite,
+  createGatewaySession, createGatewayInviteBody, gatewayInvitationHash, receiveConversationEvent,
+  sessionGatewayContext, createGateRequestBody, createGatewayProposalBody, addParticipant,
 } from '@corpollc/qntm';
 import { createHostRelay } from '../tests/support/host-relay.mjs';
+import { createToolProvider } from '../tests/support/tool-provider.mjs';
 import { stagePlugin } from './package.mjs';
 
 const host = fileURLToPath(new URL('../../openclaw.mjs', import.meta.resolve('openclaw/plugin-sdk/channel-core')));
@@ -33,6 +36,7 @@ let gateway;
 let sessionLock;
 let gatewayLog = '';
 const relay = await createHostRelay();
+const provider = await createToolProvider();
 function terminate(child, signal) {
   try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, signal); }
   catch (error) { if (error.code !== 'ESRCH') throw error; }
@@ -56,6 +60,7 @@ const cli = (...args) => command(process.execPath, [host, ...args]);
 async function waitFor(predicate, description, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    if (provider.failures.length) throw new Error(provider.failures.join('\n'));
     if (await predicate()) return;
     if (gateway && (gateway.exitCode != null || gateway.signalCode != null)) throw new Error(`OpenClaw exited ${gateway.exitCode ?? gateway.signalCode}\n${gatewayLog}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -89,6 +94,7 @@ try {
     id: 'qntm-smoke-fixture', name: 'qntm smoke fixture', register(api) {
       api.on('before_agent_reply', (event, ctx) => {
         if (ctx.channel !== 'qntm' && ctx.messageProvider !== 'qntm') return;
+        if (event.cleanedBody.includes('gateway-tool-smoke:')) return;
         return { handled: true, reply: { text: 'host-reply: ' + event.cleanedBody } };
       }, { eligibleTriggers: ['user'] });
     }
@@ -102,13 +108,18 @@ try {
   await new Promise((resolve) => portProbe.close(resolve));
   const identity = generateIdentity();
   const peer = generateIdentity();
-  const conversations = ['direct', 'group'].map((type) => {
+  const conversations = ['direct', 'group', 'group'].map((type) => {
     const invite = createInvite(peer, type);
     return { invite, conversation: createConversation(invite, deriveConversationKeys(invite)) };
   });
   await writeFile(config, JSON.stringify({
     gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token: 'disposable-qntm-smoke-test-token' } },
-    agents: { defaults: { workspace: join(temporary, 'workspace') } },
+    agents: { defaults: { workspace: join(temporary, 'workspace'), model: { primary: 'qntm-fixture/fixture' }, thinkingDefault: 'off',
+      models: { 'qntm-fixture/fixture': {} } } },
+    models: { providers: { 'qntm-fixture': { baseUrl: provider.url, apiKey: 'disposable-local-fixture-key', api: 'openai-completions',
+      models: [{ id: 'fixture', name: 'qntm local test fixture', reasoning: false, input: ['text'], contextWindow: 200000, maxTokens: 4096,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
+    tools: { alsoAllow: ['qntm_gateway'] },
     session: { dmScope: 'per-account-channel-peer', store: join(state, 'smoke-sessions.json') },
     plugins: { enabled: true, allow: ['qntm', 'qntm-smoke-fixture'] },
   }), { mode: 0o600 });
@@ -123,7 +134,9 @@ try {
     identity: base64UrlEncode(serializeIdentity(identity)), relayUrl: relay.url,
     conversations: Object.fromEntries(conversations.map(({ invite }, index) => [
       `chat${index}`, { invite: inviteToToken(invite), name: `Smoke ${index}`,
-        ...(index === 1 ? { trigger: 'mention', triggerNames: ['wire-smoke'] } : {}) },
+        ...(index === 1 ? { trigger: 'mention', triggerNames: ['wire-smoke'] } : {}),
+        ...(index === 2 ? { trigger: 'mention', triggerNames: ['gateway-tool-smoke:'],
+          gatewayActions: ['request', 'approve', 'disapprove', 'secret', 'propose', 'gov-approve', 'gov-disapprove'] } : {}) },
     ])),
   } };
   await writeFile(config, JSON.stringify(cfg));
@@ -151,6 +164,56 @@ try {
     try { return JSON.parse(await readFile(join(state, 'plugins/qntm/accounts/default/conversations', `${hex(conversation.id)}.json`), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
   };
+  // A deterministic loopback model asks the actual agent harness to invoke the
+  // installed optional tool. No direct controller invocation substitutes for it.
+  const managed = conversations[2].conversation, authority = generateIdentity();
+  addParticipant(managed, identity.publicKey);
+  let managedSession = createGatewaySession(managed, [peer.publicKey, identity.publicKey]);
+  const members = Object.fromEntries([peer, identity].map(value => [base64UrlEncode(value.keyID), base64UrlEncode(value.publicKey)]));
+  const admission = createGatewayInviteBody({ invitation_id: 'ac'.repeat(16), inviter_public_key: base64UrlEncode(peer.publicKey),
+    gateway_public_key: base64UrlEncode(authority.publicKey), gateway_kid: base64UrlEncode(authority.keyID),
+    expires_at: Math.floor(Date.now() / 1000) + 600 }, managed, members, 2);
+  async function postManaged(sender, type, body) {
+    const envelope = createMessage(sender, managed, type, new TextEncoder().encode(JSON.stringify(body)));
+    const event = receiveConversationEvent(envelope, managed, peer, managedSession);
+    managedSession = event.state;
+    await client.postMessage(managed.id, serializeEnvelope(envelope));
+    return envelope;
+  }
+  const invited = await postManaged(peer, 'gate.promote', admission);
+  await postManaged(authority, 'gate.accept', { type: 'gate.accept', invitation_id: admission.invitation_id, invitation_msg_id: hex(invited.msg_id),
+    invitation_hash: gatewayInvitationHash(JSON.stringify(admission)), conv_id: hex(managed.id), conv_epoch: 0,
+    gateway_kid: admission.gateway_kid, gateway_public_key: admission.gateway_public_key });
+  await waitFor(async () => (await checkpoint(managed))?.session.gateway?.accepted, 'signed gateway acceptance in host checkpoint');
+  async function toolJourney(id, action, options) {
+    const marker = 'gateway-tool-smoke:' + Buffer.from(JSON.stringify({ id, action, options })).toString('base64url');
+    await client.postMessage(managed.id, serializeEnvelope(createMessage(peer, managed, 'text', new TextEncoder().encode(marker))));
+    await waitFor(() => provider.outcomes.has(id), `native tool prepare and commit: ${id}`, 60_000);
+    const receipt = provider.outcomes.get(id)[2];
+    await waitFor(() => relay.conversations.get(hex(managed.id)).messages.some(record => {
+      const envelope = deserializeEnvelope(Buffer.from(record.envelope_b64, 'base64'));
+      if (hex(envelope.msg_id) !== receipt.messageId) return false;
+      const verified = receiveConversationEvent(envelope, managed, peer, managedSession);
+      assert.equal(hex(verified.message.inner.sender_kid), hex(identity.keyID));
+      managedSession = verified.state;
+      return true;
+    }), `verified native tool message: ${id}`);
+    await waitFor(() => relay.conversations.get(hex(managed.id)).messages.some(record => {
+      const message = decryptMessage(deserializeEnvelope(Buffer.from(record.envelope_b64, 'base64')), managed);
+      return new TextDecoder().decode(message.inner.body) === `gateway-tool-complete:${id}`;
+    }), `native agent tool completion: ${id}`);
+  }
+  await toolJourney('request', 'request', { service: 'demo', endpoint: '/record', verb: 'POST', targetUrl: 'https://example.test/record', payload: { amount: 42 } });
+  const peerRequest = createGateRequestBody(peer, sessionGatewayContext(managedSession), { service: 'demo', endpoint: '/', verb: 'GET', targetUrl: 'https://example.test/' });
+  await postManaged(peer, peerRequest.type, peerRequest);
+  await toolJourney('approve', 'approve', { id: peerRequest.request_id });
+  await toolJourney('disapprove', 'disapprove', { id: peerRequest.request_id });
+  await toolJourney('secret', 'secret', { service: 'demo', value: 'disposable-host-fixture-secret' });
+  await toolJourney('propose', 'propose', { proposalType: 'floor_change', proposedFloor: 1 });
+  const peerProposal = createGatewayProposalBody(peer, sessionGatewayContext(managedSession), { proposalType: 'floor_change', proposedFloor: 1 });
+  await postManaged(peer, peerProposal.type, peerProposal);
+  await toolJourney('gov-approve', 'gov-approve', { id: peerProposal.proposal_id });
+  await toolJourney('gov-disapprove', 'gov-disapprove', { id: peerProposal.proposal_id });
   await sendAndExpect(conversations[0].conversation, 'direct-wire-smoke');
   await sendAndExpect(conversations[1].conversation, 'group-wire-smoke');
   const group = conversations[1].conversation;
@@ -204,7 +267,7 @@ try {
   await waitFor(async () => (await checkpoint(group))?.cursor >= beforeRemovalProbe + 1, 'removed message consumed without wakeup');
   await sendAndExpect(direct, 'still-connected-wire-smoke');
   assert.equal(relay.conversations.get(hex(group.id)).messages.length, beforeRemovalProbe + 1);
-  console.log('PASS: real OpenClaw install/discovery, encrypted direct/group replies, rekey/replay, SIGKILL recovery before adoption, removal across restart.');
+  console.log('PASS: real OpenClaw install/discovery, native model/tool request/votes/secret/governance, encrypted direct/group replies, rekey/replay, SIGKILL recovery before adoption, removal across restart.');
 } catch (error) {
   console.error(gatewayLog);
   throw error;
@@ -212,6 +275,7 @@ try {
   if (sessionLock) { sessionLock.exec('ROLLBACK'); sessionLock.close(); }
   await stopHost();
   await relay.close();
+  await provider.close();
   if (process.env.QNTM_KEEP_HOST_SMOKE === '1') console.log(`Disposable evidence retained: ${temporary}`);
   else await rm(temporary, { recursive: true, force: true });
 }
