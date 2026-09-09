@@ -3,6 +3,7 @@ dolt/
 dolt-access.lock
 
 # Runtime files
+.beads-credential-key
 bd.sock
 bd.sock.startlock
 sync-state.json
@@ -63,3 +64,13 @@ bd.db
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
 # since no pattern above ignores them.
+
+# Added by bd (missing required patterns)
+.env
+export-state.json
+last_pull
+embeddeddolt/
+proxieddb/
+dolt-server.activity
+.beads-credential-key
+proxied_server_client_info.json

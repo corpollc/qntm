@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Normalize wrapped fragment-style invite links before URL parsing so pasted spaces do not corrupt the invite token.
+- Remove historical operator identities, conversation state and the Beads credential key from tracked files; ignore local runtime state and refresh Beads hook scaffolding. Existing Git history still contains the old material; rotation assessment is tracked separately.
 
 - Gateway subscriptions now skip prior and future epochs before decryption, advance their durable replay cursor, and ignore already-consumed sequences. Rekey/restart replay no longer produces invalid-tag noise or lets old-epoch traffic enter current authorization state. Current-epoch envelopes still require full authentication.
 - Browser backup downloads now use password encryption. Restores validate identities and all stored fields, show replacement counts and contact/gateway destinations, and require confirmation before an atomic write. Legacy plaintext imports remain supported; stale reviews, malformed files, incorrect passwords and tampering fail without replacing data.
