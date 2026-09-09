@@ -56,7 +56,23 @@ Pull an encrypted off-host copy from the operator machine:
 uv run --project python-dist python scripts/backup_charter.py
 ```
 
-This creates AES-256-GCM snapshots under `~/.qntm-backups/charter/`. Its private `encryption.key` stays on the operator machine; keep a separate protected recovery copy. A deployment snapshot is taken off-host and restore-checked. **Off-host copies are currently operator-triggered, not scheduled.**
+This creates AES-256-GCM snapshots under `~/.qntm-backups/charter/`. Its private `encryption.key` stays on the operator machine; keep a separate protected recovery copy. The database is plaintext in local process memory during encryption/decryption and contains the registrar signing seed. Backup files and the key require owner-only permissions; symbolic links are rejected. A missing key beside existing snapshots is an error, never permission to generate a replacement key.
+
+Each capture reopens and authenticates its saved ciphertext before it can remove older backups. `--retain-count 28` keeps the new capture and the newest 27 other authenticated snapshots; default manual runs keep everything. Failed captures never trigger pruning. Corrupt, foreign, insecure or symlink entries are preserved for investigation and can exceed that limit. Capture and restore commands share a nonblocking local lock. SSH is noninteractive and has a 90-second deadline; the remote download is limited to 64 MiB. File authentication verifies storage integrity, not a complete database restore or an independent charter witness.
+
+The macOS installer supports a **best-effort** operator-machine schedule: once when loaded/at login, then every six hours. It copies the script outside the checkout and uses a dedicated Python environment. It cannot run while the Mac is powered off, asleep, logged out or offline; inspect `last_success` after returning. This is a second copy outside the charter VM, not an always-on backup service. The encryption key and ciphertext on the same Mac do not protect against compromise or loss of that Mac.
+
+```sh
+uv venv --python 3.12 ~/.local/share/qntm-charter-backup/venv
+uv pip install --python ~/.local/share/qntm-charter-backup/venv/bin/python cryptography==50.0.1
+python3 scripts/install_charter_backup_agent.py --python ~/.local/share/qntm-charter-backup/venv/bin/python
+cat ~/.qntm-backups/charter/status.json
+launchctl print gui/$(id -u)/llc.corpo.qntm.charter-backup
+```
+
+Private `status.json` contains only the attempt time, success flag, last successful capture time, snapshot filename and, on failure, an exception class. It is atomically replaced and retains the last success after a failure. No remote error body, key or database content is logged. This local status is **not** on Grafana; its existing backup-age panel measures same-VM snapshots. Email/paging remains unconfigured. Re-run the installer after changing the script; it replaces only this job. To stop the schedule, run `launchctl bootout gui/$(id -u)/llc.corpo.qntm.charter-backup` and remove its matching plist from `~/Library/LaunchAgents/`; retain the encryption key and snapshots.
+
+A deployment snapshot must also be restore-checked:
 
 ```sh
 uv run --project python-dist python scripts/backup_charter.py --decrypt PATH_TO_SNAPSHOT --output /private/restore/registry.db

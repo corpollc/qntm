@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a best-effort macOS schedule for encrypted off-host charter backups, with a dedicated runtime, single-operation lock, private success/failure status and authenticated retention. Missing recovery keys, tampered files and failed downloads cannot silently replace a key or prune valid history. The Mac must be awake, logged in and online; same-VM Grafana backup metrics remain separate.
 - Added a manual AIM deployment path for browser fixes between package releases. It requires the complete CI suite on the selected commit, records that commit on Cloudflare Pages and serializes production deployments. Tagged releases retain their existing release gate.
 - Made browser installs reproducible across macOS and Linux: refreshed the lockfile within existing version ranges, included Rollup platform packages, and switched UI tests and deployment to `npm ci`. Removed the legacy GitHub Pages base-path override and added a full UI dependency audit covering development tools.
 - Fixed browser invite links exposing their bootstrap secret in HTTP URL queries. Both copy actions now use the same fragment format as Python and TypeScript; opening a link requests confirmation and removes the token from the current address. Legacy query links remain readable, with their unavoidable initial-request exposure documented.
