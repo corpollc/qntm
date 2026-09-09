@@ -15,6 +15,8 @@ def main():
     args = parser.parse_args()
     version = json.loads((ROOT / 'client/package.json').read_text())['version']
     errors = []
+    if (ROOT / 'gate/recipes/starter.json').read_bytes() != (ROOT / 'python-dist/src/qntm/recipes.json').read_bytes():
+        errors.append('Bundled Python recipes are stale: copy gate/recipes/starter.json to python-dist/src/qntm/recipes.json')
 
     def check(label, actual):
         if actual != version:

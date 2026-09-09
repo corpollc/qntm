@@ -233,3 +233,5 @@ jobs:
           uvx pip-audit --no-deps --disable-pip -r /tmp/qntm-runtime-requirements.txt
       - run: pip install build twine
       - run: python -m build python-dist && twine check python-dist/dist/*
+      - name: Exercise installed wheel outside the source tree
+        run: python scripts/check_installed_wheel.py python-dist/dist/*.whl

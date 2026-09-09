@@ -1905,22 +1905,15 @@ def cmd_announce_delete(args):
 
 
 def _load_starter_catalog():
-    """Load the recipe catalog from the starter JSON file.
+    """Load an explicit catalog override or the catalog bundled in the package."""
+    from importlib.resources import files
 
-    Looks for QNTM_RECIPE_CATALOG_PATH env var first, then falls back to
-    gate/recipes/starter.json relative to the repo root.
-    """
     env_path = os.environ.get("QNTM_RECIPE_CATALOG_PATH")
     if env_path:
-        catalog_path = env_path
+        with open(env_path) as f:
+            data = json.load(f)
     else:
-        # Resolve relative to the package: src/qntm/cli.py -> repo root
-        pkg_dir = Path(__file__).resolve().parent
-        repo_root = pkg_dir.parent.parent.parent
-        catalog_path = str(repo_root / "gate" / "recipes" / "starter.json")
-
-    with open(catalog_path) as f:
-        data = json.load(f)
+        data = json.loads(files("qntm").joinpath("recipes.json").read_text(encoding="utf-8"))
 
     recipes = {}
     for name, raw in data.get("recipes", {}).items():
