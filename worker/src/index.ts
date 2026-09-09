@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { envelopeTTLSeconds, expireConversationStats, RelayRetention } from "./retention.js";
 import { RelayMetricsOutbox } from "./metrics.js";
+import { RelayRateLimiter } from "./rate-limit.js";
 import type { RelayMetricsStore } from "./metrics.js";
 export { RelayMetricsDO } from "./metrics-do.js";
 
@@ -16,19 +17,8 @@ export interface Env {
 	RATE_LIMIT_PER_MIN: string;
 }
 
-// In-memory rate limit state (resets per isolate lifetime)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(ip: string, maxPerMin: number): boolean {
-	const now = Date.now();
-	const entry = rateLimitMap.get(ip);
-	if (!entry || now > entry.resetAt) {
-		rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 });
-		return true;
-	}
-	entry.count++;
-	return entry.count <= maxPerMin;
-}
+// Bounded memory only; expired entries are purged on the next non-preflight request.
+const rateLimiter = new RelayRateLimiter();
 
 function equalToken(actual: string, expected: string): boolean {
 	if (actual.length !== expected.length) return false;
@@ -651,7 +641,7 @@ export default {
 		// Rate limiting
 		const ip = request.headers.get("CF-Connecting-IP") || "unknown";
 		const maxPerMin = parseInt(env.RATE_LIMIT_PER_MIN || "500", 10);
-		if (!checkRateLimit(ip, maxPerMin)) {
+		if (!rateLimiter.check(ip, maxPerMin)) {
 			return errorResponse("rate limit exceeded", 429);
 		}
 
@@ -716,7 +706,7 @@ export default {
 				});
 			}
 
-			// Health check — no auth, no rate limit, no DO access
+			// Health check — no auth or DO access; subject to the isolate rate limit above.
 			if (request.method === "GET" && path === "/healthz") {
 				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
 			}
