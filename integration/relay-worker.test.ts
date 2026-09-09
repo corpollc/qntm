@@ -1,15 +1,14 @@
-import { createServer } from 'node:http';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildSignedReceipt, generateIdentity } from '@corpollc/qntm';
-import { ManagedProcess, waitForHttp } from './src/runtime.js';
+import { getFreePorts, ManagedProcess, workerTestEnv } from './src/runtime.js';
 
 interface RelayFrame {
   type: string;
@@ -20,20 +19,6 @@ interface RelayFrame {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONV_ID = '0123456789abcdef0123456789abcdef';
-
-async function getFreePort(): Promise<number> {
-  return await new Promise<number>((resolvePort, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        reject(new Error('Failed to allocate port'));
-        return;
-      }
-      server.close((error) => error ? reject(error) : resolvePort(address.port));
-    });
-  });
-}
 
 async function waitForFrame(
   frames: RelayFrame[],
@@ -82,8 +67,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   let stateDir = '';
 
   beforeAll(async () => {
-    const relayPort = await getFreePort();
-    const inspectorPort = await getFreePort();
+    const [relayPort, inspectorPort] = await getFreePorts(2);
     relayUrl = `http://127.0.0.1:${relayPort}`;
     stateDir = mkdtempSync(join(tmpdir(), 'qntm-relay-acceptance-'));
     relayProcess = new ManagedProcess(
@@ -91,6 +75,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       [
         process.platform === 'win32' ? 'npx.cmd' : 'npx',
         'wrangler', 'dev', '--local',
+        '--name', basename(stateDir).toLowerCase(),
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(inspectorPort),
@@ -101,9 +86,9 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         '--var', `MONITOR_CONVERSATION_ID:${'fe'.repeat(16)}`,
       ],
       join(REPO_ROOT, 'worker'),
-      { ...process.env },
+      workerTestEnv(stateDir),
     );
-    await waitForHttp(`${relayUrl}/healthz`);
+    await relayProcess.waitForHttp(`${relayUrl}/healthz`);
   }, 60_000);
 
   afterAll(async () => {

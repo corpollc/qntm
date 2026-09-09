@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Acceptance tests now require successful HTTP health responses, bound stalled startup requests and report Worker output on failure. Each fixture isolates Wrangler discovery and allocates distinct listener/inspector ports together, preventing false readiness and collisions between concurrent local services.
 - Collapsed browser sidebar panels now exclude their controls from keyboard focus and agent/screen-reader navigation while preserving unsent form drafts. Panel headers identify the content they expand, and browser tests cover Tab, Enter and Space navigation.
 - Refreshed maintained JavaScript test and development dependencies, including Vitest 4.1.11 and Cloudflare's current CLI/type definitions, and updated the Go setup action. CI now audits complete client, browser, terminal, Worker, integration and maintained adapter dependency graphs at moderate severity, including development tools; the legacy NanoClaw adapter keeps its existing runtime-only check.
 - Added a best-effort macOS schedule for encrypted off-host charter backups, with a dedicated runtime, single-operation lock, private success/failure status and authenticated retention. Missing recovery keys, tampered files and failed downloads cannot silently replace a key or prune valid history. The Mac must be awake, logged in and online; same-VM Grafana backup metrics remain separate.

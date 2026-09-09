@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -35,40 +35,69 @@ export interface ConversationAgent extends HistoryAgent {
   readConversation(convId: string): Record<string, unknown>;
 }
 
-async function isHttpReady(url: string, init?: RequestInit): Promise<boolean> {
-  try {
-    const response = await fetch(url, init);
-    return response.ok || response.status >= 400;
-  } catch {
-    return false;
+export async function waitForHttp(url: string, init?: RequestInit, timeoutMs = 30_000): Promise<void> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Readiness timeout must be positive');
+  const deadline = performance.now() + timeoutMs;
+  let lastFailure = 'no response';
+  let lastStatus: number | undefined;
+  while (performance.now() < deadline) {
+    init?.signal?.throwIfAborted();
+    const timeout = AbortSignal.timeout(Math.max(1, Math.ceil(Math.min(1_000, deadline - performance.now()))));
+    try {
+      const response = await fetch(url, {
+        ...init,
+        redirect: 'manual',
+        signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+      });
+      lastStatus = response.status;
+      await response.body?.cancel();
+      if (response.ok) return;
+      lastFailure = `HTTP ${response.status}`;
+    } catch (error) {
+      init?.signal?.throwIfAborted();
+      lastFailure = error instanceof Error ? error.message : String(error);
+    }
+    const remaining = deadline - performance.now();
+    if (remaining > 0) await delay(Math.ceil(Math.min(250, remaining)), undefined, { signal: init?.signal ?? undefined });
   }
+  throw new Error(`Timed out waiting for ${url}: ${lastFailure}${lastStatus === undefined ? '' : ` (last response: HTTP ${lastStatus})`}`);
 }
 
-export async function waitForHttp(url: string, init?: RequestInit, timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await isHttpReady(url, init)) return;
-    await delay(250);
+// Keep the whole batch bound while allocating. Releasing each port before
+// choosing the next can give a Worker and its inspector the same port.
+// Callers must still start promptly: another process can bind after release.
+export async function getFreePorts(count: number): Promise<number[]> {
+  if (!Number.isInteger(count) || count < 1) throw new Error('Port count must be a positive integer');
+  const servers: Server[] = [];
+  const ports: number[] = [];
+  try {
+    for (let index = 0; index < count; index++) {
+      const server = createServer();
+      servers.push(server);
+      await new Promise<void>((resolveListen, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolveListen);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Failed to allocate port');
+      ports.push(address.port);
+    }
+    return ports;
+  } finally {
+    await Promise.all(servers.filter(server => server.listening).map(server => new Promise<void>((resolveClose, reject) => {
+      server.close(error => error ? reject(error) : resolveClose());
+    })));
   }
-  throw new Error(`Timed out waiting for ${url}`);
 }
 
 export async function getFreePort(): Promise<number> {
-  return await new Promise<number>((resolvePort, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        reject(new Error('Failed to allocate port'));
-        return;
-      }
-      const { port } = address;
-      server.close((err) => {
-        if (err) reject(err);
-        else resolvePort(port);
-      });
-    });
-  });
+  return (await getFreePorts(1))[0];
+}
+
+// Scope Wrangler discovery to the fixture so concurrent tests and developers'
+// local Workers cannot replace one another in the shared registry.
+export function workerTestEnv(rootDir: string): NodeJS.ProcessEnv {
+  return { ...process.env, WRANGLER_REGISTRY_PATH: join(rootDir, 'registry') };
 }
 
 function parseCliJson(stdout: string, stderr: string, command: string[]): JsonResult {
@@ -138,6 +167,14 @@ export class ManagedProcess {
     this.stdout += '\n--- restarted ---\n';
     this.stderr += '\n--- restarted ---\n';
     this.child = this.start();
+  }
+
+  async waitForHttp(url: string, init?: RequestInit, timeoutMs = 30_000): Promise<void> {
+    try {
+      await waitForHttp(url, init, timeoutMs);
+    } catch (error) {
+      throw new Error(`${this.name} failed readiness: ${String(error)}\nstdout:\n${this.stdout.slice(-8_192)}\nstderr:\n${this.stderr.slice(-8_192)}`, { cause: error });
+    }
   }
 }
 
@@ -742,22 +779,17 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const cliBaseDir = join(rootDir, 'agents');
   mkdirSync(cliBaseDir, { recursive: true });
 
-  const fixturePort = await getFreePort();
-  const relayPort = await getFreePort();
-  const gatewayPort = await getFreePort();
-  const uiPort = await getFreePort();
-  const relayInspectorPort = await getFreePort();
-  const gatewayInspectorPort = await getFreePort();
   const relayPersistDir = join(rootDir, 'relay-state');
   const gatewayPersistDir = join(rootDir, 'gateway-state');
   mkdirSync(relayPersistDir, { recursive: true });
   mkdirSync(gatewayPersistDir, { recursive: true });
 
+  const qntmBin = await createPythonVenv(rootDir, repoRoot, options.withMcp);
+  const [fixturePort, relayPort, gatewayPort, uiPort, relayInspectorPort, gatewayInspectorPort] = await getFreePorts(6);
   const fixture = await FixtureServer.start(fixturePort);
   const recipeCatalogPath = join(rootDir, 'recipes.json');
   writeRecipeCatalog(recipeCatalogPath, fixture.baseUrl);
 
-  const qntmBin = await createPythonVenv(rootDir, repoRoot, options.withMcp);
   const relayUrl = `http://127.0.0.1:${relayPort}`;
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
   const uiUrl = withUi ? `http://127.0.0.1:${uiPort}` : '';
@@ -766,6 +798,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
       'relay',
       [
         npxCommand(), 'wrangler', 'dev', '--local',
+        '--name', `${basename(rootDir).toLowerCase()}-relay`,
         '--port', String(relayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(relayInspectorPort),
@@ -773,12 +806,13 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--var', 'RATE_LIMIT_PER_MIN:5000',
       ],
       join(repoRoot, 'worker'),
-      { ...process.env },
+      workerTestEnv(rootDir),
     );
   const gatewayProcess = new ManagedProcess(
       'gateway',
       [
         npxCommand(), 'wrangler', 'dev', '--local',
+        '--name', `${basename(rootDir).toLowerCase()}-gateway`,
         '--port', String(gatewayPort),
         '--ip', '127.0.0.1',
         '--inspector-port', String(gatewayInspectorPort),
@@ -788,7 +822,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
       ],
       join(repoRoot, 'gateway-worker'),
-      { ...process.env },
+      workerTestEnv(rootDir),
     );
   const uiProcess = withUi
     ? new ManagedProcess(
@@ -800,10 +834,15 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     : null;
   const processes = [relayProcess, gatewayProcess, uiProcess].filter((process): process is ManagedProcess => process !== null);
 
-  await waitForHttp(`${relayUrl}/healthz`);
-  await waitForHttp(`${gatewayUrl}/health`);
-  if (withUi) {
-    await waitForHttp(uiUrl);
+  try {
+    await relayProcess.waitForHttp(`${relayUrl}/healthz`);
+    await gatewayProcess.waitForHttp(`${gatewayUrl}/health`);
+    if (uiProcess) await uiProcess.waitForHttp(uiUrl);
+  } catch (error) {
+    await fixture.close();
+    for (const process of processes.reverse()) await process.stop();
+    rmSync(rootDir, { recursive: true, force: true });
+    throw error;
   }
 
   let browser: Browser | null = null;
@@ -860,7 +899,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     bootstrapGateway,
     async restartGateway(convId: string, agent: ConversationAgent) {
       await gatewayProcess.restart();
-      await waitForHttp(`${gatewayUrl}/health`);
+      await gatewayProcess.waitForHttp(`${gatewayUrl}/health`);
       // Replaying the idempotent bootstrap is the public recovery contract: it
       // routes to the persisted Durable Object and re-establishes its relay
       // subscription after a local worker process restart.
