@@ -14,7 +14,7 @@ This note summarizes the current gateway approval-model decisions for coding age
 - The gateway must reject any request whose `required_approvals` is below the promoted floor.
 - If `signer_kid` remains in request or approval JSON, treat it as redundant. The only trusted signer identity is the authenticated qntm envelope sender, and any redundant JSON identity must match it.
 - Only votes from senders in the request's frozen `eligible_signer_kids` roster count.
-- Membership-governed actions, especially add/remove participant flows, require unanimity among current human participants even if the promoted floor is lower.
+- Governance requires at least a strict majority of the current participant roster; proposals can require more. This quorum is independent of the API-call floor. Participants can be humans or agents.
 - Any membership change after promotion invalidates all pending unexecuted requests. They must be reissued under a fresh signer snapshot.
 
 ## Implementation Implications

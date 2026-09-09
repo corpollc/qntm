@@ -30,3 +30,7 @@ ui/tui/test-results/
 # Local charter registrar state and executable
 /charter-registry/data/
 /charter-registry/charter-registry
+
+# Local browser acceptance reports
+/ui/aim-chat/test-results/
+/ui/aim-chat/playwright-report/

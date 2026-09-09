@@ -1,13 +1,18 @@
 {
   "name": "channel",
-  "version": "0.1.0",
-  "description": "Encrypted qntm messaging channel for Claude Code — makes Claude a first-class qntm peer",
+  "version": "0.6.0",
+  "description": "Encrypted qntm messaging channel for Claude Code \u2014 makes Claude a first-class qntm peer",
   "author": {
     "name": "Corpo LLC",
     "url": "https://github.com/corpollc"
   },
   "homepage": "https://github.com/corpollc/qntm",
   "repository": "https://github.com/corpollc/qntm",
-  "license": "MIT",
-  "keywords": ["channel", "messaging", "encryption", "qntm"]
+  "license": "BUSL-1.1",
+  "keywords": [
+    "channel",
+    "messaging",
+    "encryption",
+    "qntm"
+  ]
 }

@@ -23,3 +23,8 @@ ENVELOPE_TTL_SECONDS = "604800"   # 7 days
 MAX_ENVELOPE_SIZE = "65536"       # 64KB
 MAX_MESSAGES_PER_CHANNEL = "512"
 RATE_LIMIT_PER_MIN = "500"
+
+# Removes stale entries from the aggregate activity key, including legacy keys
+# created before it had a TTL. Per-conversation content expiry uses DO alarms.
+[triggers]
+crons = ["17 * * * *"]

@@ -1,119 +1,54 @@
-# Deployment Checklist
+# Release and deployment procedure
 
-This is the operational checklist for shipping the hosted qntm stack without drifting the browser UI, published clients, relay worker, and gateway worker out of sync.
+All public packages and hosted surfaces ship from one tagged commit. Pushing `main` runs CI without deploying. Pushing `vX.Y.Z` runs the complete reusable CI workflow inside `Release`; only its successful **Release gate** authorizes publication.
 
-## What Deploys What
+The existing `release.yml` and `publish-npm.yml` workflow identities are retained for PyPI/npm trusted publishing. npm, AIM, relay, and gateway workflows wait for the successful gate on the exact tag and SHA. A failed, cancelled, skipped, missing, or timed-out gate stops publication. A successful gate does not guarantee every later publishing service succeeds: monitor all five workflows and verify their outputs.
 
-- Push to `main`:
-  - `Deploy Dropbox Relay Worker`
-  - `Deploy Gateway Worker`
-- Push tag `v*`:
-  - `Deploy AIM UI`
-  - `Publish npm`
-  - `Release` (PyPI + GitHub release)
-  - `Update Site Version`
+## Release preparation
 
-Important:
+1. Reconcile the candidate with `main` and the latest published tag. Preserve fixes published from another branch.
+2. Run `python3 scripts/set_release_version.py X.Y.Z`. Refresh `python-dist/uv.lock` with `uv lock` if dependencies changed. The Python/TypeScript packages, browser, terminal UI, and Claude plugin use the release version; private worker and adapter package versions are independent.
+3. Write `docs/releases/vX.Y.Z.md` and update `docs/CHANGELOG.md`. Include compatibility changes and experimental boundaries. Regenerate CLI help with `python scripts/generate_cli_reference.py` in a qntm Python environment.
+4. Run `python3 scripts/check_release.py`, then the full CI workflow on the candidate. Use the same gates locally when changing code.
+5. Merge or fast-forward the passing candidate to `main`, verify that commit, then create and push its release tag.
 
-- A tag push does **not** deploy the relay worker.
-- A tag push does **not** deploy the gateway worker.
-- A push to `main` does **not** deploy the AIM UI or publish the client libraries.
+## Quality gates
 
-## Required Secrets
+| Surface | Checks |
+| --- | --- |
+| TypeScript library | Crypto/protocol/event/subscription tests, build, package contents |
+| Python | Full suite with MCP extras on Python 3.10 and 3.12; minimum WebSocket dependency on 3.10; generated help |
+| Charter | Go race tests and vet; real Go/TypeScript HTTP/restart tests; deterministic shared vectors |
+| Browser | Unit/component tests, production build, Playwright conversation journeys, runtime dependency audit |
+| Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
+| Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
+| Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, and restart journeys |
+| Adapters | OpenClaw, NanoClaw, and Claude channel tests/typecheck; real MCP channel transport; runtime dependency audits |
+| Integration and packaging | Protocol model suite; echo-worker typecheck; source/lockfile version checks; Python build and twine validation |
 
-GitHub repository secrets:
+The cross-surface suite uses local Workers and browser instances; some API recipe journeys call public services. Test failures there must be diagnosed rather than silently skipped. Adapter contract tests do not replace smoke tests in each external host release. Go charter support is a reference implementation, not a public service.
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-- `QNTM_GATE_VAULT_KEY`
-- `SITE_DEPLOY_TOKEN` for the site version update job
+## Publish and verify
 
-Cloudflare token UI permissions for the hosted deploy token:
-
-- `Account` -> `Account Settings` -> `Read`
-- `Account` -> `Workers Scripts` -> `Edit`
-- `Account` -> `Workers KV Storage` -> `Edit`
-- `Zone` -> `Workers Routes` -> `Edit`
-- `User` -> `User Details` -> `Read`
-- `User` -> `Memberships` -> `Read`
-
-Optional:
-
-- `Account` -> `Workers Tail` -> `Read`
-
-## Preflight
-
-Run these from a clean checkout of the release candidate commit:
-
-```bash
-cd client && npm ci && npm test && npm run build && npm pack --dry-run
-cd ../worker && npm ci && npx tsc --noEmit
-cd ../gateway-worker && npm ci && npm test && npm run typecheck
-cd ../ui/aim-chat && npm install && npm test && npm run build
-cd ../python-dist && uv run python -m pytest && uv build
-cd ../ui/tui && npm install && npm run build
-```
-
-If you are not shipping a component, note that explicitly in the release notes instead of silently skipping it.
-
-## Release Sequence
-
-1. Land the code on `main`.
-
-2. Watch the worker deploys from that exact `main` commit:
-
-```bash
-gh run list --workflow "Deploy Dropbox Relay Worker" --limit 1
-gh run list --workflow "Deploy Gateway Worker" --limit 1
-```
-
-3. Verify the hosted worker endpoints:
-
-```bash
-curl https://inbox.qntm.corpo.llc/healthz
-curl https://gateway.corpo.llc/health
-```
-
-4. Create and push the release tag from the same `main` commit:
-
-```bash
+```sh
 git tag vX.Y.Z
 git push origin vX.Y.Z
+gh run list --commit COMMIT_SHA
 ```
 
-5. Watch the tag-driven release jobs:
+Verify `Release`, `Publish npm`, `Deploy AIM UI`, `Deploy Dropbox Relay Worker`, and `Deploy Gateway Worker`. The release body comes from the curated notes, not generated commit titles. Install the published Python wheel and npm tarball in fresh environments; verify versions, messaging, and the charter export. Check:
 
-```bash
-gh run list --workflow "Deploy AIM UI" --limit 1
-gh run list --workflow "Publish npm" --limit 1
-gh run list --workflow "Release" --limit 1
-gh run list --workflow "Update Site Version" --limit 1
+```sh
+curl --fail https://inbox.qntm.corpo.llc/healthz
+curl --fail https://gateway.corpo.llc/health
 ```
 
-6. Smoke test the live surfaces:
+Open `https://chat.corpo.llc`, check its version and a private messaging conversation, and exercise gateway admission against the deployed worker. See [relay operations](relay-operations.md) for a two-client transport check and certificate diagnostics.
 
-- `https://chat.corpo.llc`
-- `https://inbox.qntm.corpo.llc/healthz`
-- `https://gateway.corpo.llc/health`
-- latest npm package metadata
-- latest PyPI package metadata
+## Credentials and recovery
 
-For certificate outages and a two-client messaging check, see [Relay operations](relay-operations.md).
+The repository needs `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `QNTM_GATE_VAULT_KEY`. PyPI and npm use their configured trusted publishers. `SITE_DEPLOY_TOKEN` is optional; when absent, the release logs that the separate site's version file was not updated.
 
-## High-Risk Failure Modes
+Manual relay/gateway deployment runs the full CI gate on the selected ref before deploying. Deploy a previous compatible ref to roll back code. Published package versions are immutable; fix forward with a new version if a release artifact is wrong. Do not move a published tag or rotate the gateway vault key during a routine release: existing credentials depend on that key.
 
-- Tagging before `main` is deployed leaves the UI and published clients ahead of the hosted workers.
-- Pushing `main` without tagging leaves the hosted workers ahead of the AIM UI and package releases.
-- Rotating `QNTM_GATE_VAULT_KEY` without a migration strands existing gateway secrets.
-- Changing relay storage behavior should include a quota review for KV and Durable Objects before release.
-
-## Polling Shutdown Notes
-
-For changes that remove or deprecate protocol paths, verify all of these together:
-
-- relay endpoint behavior
-- gateway background behavior
-- browser UI bundle behavior
-- TypeScript client behavior
-- Python CLI behavior
-- release notes calling out the incompatibility
+Relay cleanup is logical expiry. Cloudflare recovery history and copies stored in clients or gateways have separate retention. Old dormant Durable Objects begin metadata migration and alarm scheduling when they next wake; deployment alone does not enumerate them.

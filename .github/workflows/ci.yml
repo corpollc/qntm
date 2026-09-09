@@ -5,6 +5,7 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   test-client:
@@ -76,7 +77,7 @@ jobs:
         working-directory: client
 
       - name: Install dependencies
-        # npm install avoids Rollup's optional dependency bug on Linux runners.
+        # Work around the existing lockfile missing Rollup Linux optional packages.
         run: npm install
 
       - name: Install Rollup Linux binary
@@ -90,6 +91,9 @@ jobs:
 
       - name: Build UI
         run: npm run build
+
+      - name: Browser component journeys
+        run: npx playwright install --with-deps chromium && npm run test:e2e
 
   test-tui:
     runs-on: ubuntu-latest
@@ -150,6 +154,9 @@ jobs:
       - name: Run tests
         run: python -m pytest python-dist/tests/ -v
 
+      - name: Verify CLI help documentation
+        run: python scripts/generate_cli_reference.py --check
+
   test-relay:
     runs-on: ubuntu-latest
     steps:
@@ -166,3 +173,47 @@ jobs:
 
   cross-surface-acceptance:
     uses: ./.github/workflows/ui-acceptance.yml
+
+  test-adapters:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [openclaw-qntm, nanoclaw-qntm, channel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci && npm run build
+        working-directory: client
+      - run: npm ci && npm test && npm run typecheck && npm audit --omit=dev --audit-level=high
+        working-directory: ${{ matrix.package }}
+
+  test-integration-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: client
+      - run: npm ci && npm run test:model
+        working-directory: integration
+      - run: npm ci && npx tsc --noEmit
+        working-directory: echo-worker
+
+  release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_release.py
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+        working-directory: python-dist
+      - run: pip install build twine
+      - run: python -m build python-dist && twine check python-dist/dist/*

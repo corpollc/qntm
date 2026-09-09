@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 jobs:
@@ -16,6 +17,12 @@ jobs:
         working-directory: client
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for all release checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/wait_for_release_gate.py
+        working-directory: .
 
       - uses: actions/setup-node@v4
         with:
@@ -34,13 +41,7 @@ jobs:
 
       - run: npm pack --dry-run
 
-      - name: Get version from tag
-        id: version
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Set package version
-        run: python3 ../scripts/set_release_version.py "${{ steps.version.outputs.version }}"
+      - name: Verify tagged version
+        run: python3 ../scripts/check_release.py --tag "$GITHUB_REF_NAME"
 
       - run: npm publish --access public --provenance

@@ -5,14 +5,14 @@
  * Makes Claude a first-class qntm peer. The channel maintains a single
  * conversation slot persisted in ~/.qntm/channel.json. On first run (empty
  * slot), Claude can either join via an invite token or create a new
- * conversation and offer an invite token. Once paired, the channel polls
+ * conversation and offer an invite token. Once paired, the channel subscribes
  * for messages and exposes a reply tool.
  *
  * Shares ~/.qntm/ state (identity, cursors, history, seen) with the CLI/UI
  * so Claude acts as the identity owner, not a third participant.
  *
  * Usage:
- *   bun run server.ts [--config-dir ~/.qntm] [--dropbox-url URL] [--poll-interval 3000] [--history 20]
+ *   bun run server.ts [--config-dir ~/.qntm] [--dropbox-url URL] [--history 20]
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -37,13 +37,16 @@ import {
   defaultTTL,
   DropboxClient,
   base64UrlEncode,
+  createReceiveEvent,
 } from '@corpollc/qntm';
-import type { DropboxSubscription, Identity, Conversation, OuterEnvelope } from '@corpollc/qntm';
+import type { DropboxSubscription, Identity, Conversation, ReceiveEvent } from '@corpollc/qntm';
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
+import { ChannelInbox, saveJson } from './inbox.js';
+const packageVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -55,14 +58,20 @@ const { values: flags } = parseArgs({
     'config-dir': { type: 'string', default: join(homedir(), '.qntm') },
     'dropbox-url': { type: 'string', default: 'https://inbox.qntm.corpo.llc' },
     'poll-interval': { type: 'string', default: '3000' },
+    'help': { type: 'boolean', short: 'h' },
     'history': { type: 'string', default: '20' },
   },
 });
 
+if (flags.help) {
+  console.log('Usage: bun run server.ts [--config-dir DIR] [--dropbox-url URL] [--history COUNT]\nPersistent WebSocket receive bridge for Claude Code over MCP stdio.\n--history 0 disables startup history. --poll-interval is accepted but obsolete.');
+  process.exit(0);
+}
+
 const CONFIG_DIR = flags['config-dir']!;
 const DROPBOX_URL = flags['dropbox-url']!;
-const POLL_INTERVAL_MS = parseInt(flags['poll-interval']!, 10);
-const HISTORY_COUNT = parseInt(flags['history']!, 10);
+const HISTORY_COUNT = Number(flags['history']);
+if (!Number.isSafeInteger(HISTORY_COUNT) || HISTORY_COUNT < 0) throw new Error('--history must be a nonnegative integer');
 
 // ---------------------------------------------------------------------------
 // Byte helpers
@@ -124,12 +133,6 @@ function decodeKey(s: string): Uint8Array {
 function loadJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   return JSON.parse(readFileSync(path, 'utf-8')) as T;
-}
-
-function saveJson(path: string, data: unknown): void {
-  const dir = path.substring(0, path.lastIndexOf('/'));
-  if (dir) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +280,7 @@ interface HistoryEntry {
   unsafe_body_b64?: string;
   created_ts: number;
   body?: string;
+  receive_event?: ReceiveEvent;
 }
 
 function loadHistory(convIdHex: string): HistoryEntry[] {
@@ -324,6 +328,7 @@ let convIdHex: string | null = null;
 let convCrypto: Conversation | null = null;
 let convName: string | null = null;
 let liveSubscription: DropboxSubscription | null = null;
+let inbox: ChannelInbox | null = null;
 
 if (slot) {
   const rec = findConversation(slot.conv_id_hex);
@@ -367,7 +372,7 @@ const pairedInstructions = [
 ].join('\n');
 
 const mcp = new Server(
-  { name: 'qntm', version: '0.1.0' },
+  { name: 'qntm', version: packageVersion },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -474,7 +479,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const localName = name || `Channel ${idHex.substring(0, 8)}`;
 
     persistConversation(conv, localName, inviteStr);
-    activateBridge(conv, idHex, localName);
+    await activateBridge(conv, idHex, localName);
 
     return {
       content: [{ type: 'text', text: `Joined conversation "${localName}" (${idHex.substring(0, 8)}). Now listening for messages.` }],
@@ -498,7 +503,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const idHex = toHex(conv.id);
 
     persistConversation(conv, name, token);
-    activateBridge(conv, idHex, name);
+    await activateBridge(conv, idHex, name);
 
     return {
       content: [{ type: 'text', text: `Created conversation "${name}". Share this invite token with the other party:\n\n${token}` }],
@@ -540,6 +545,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // Connect MCP
 // ---------------------------------------------------------------------------
 
+mcp.oninitialized = () => { if (paired) startSubscription(); };
 await mcp.connect(new StdioServerTransport());
 
 // ---------------------------------------------------------------------------
@@ -547,7 +553,7 @@ await mcp.connect(new StdioServerTransport());
 // ---------------------------------------------------------------------------
 
 async function emitHistory(): Promise<void> {
-  if (!convIdHex) return;
+  if (!convIdHex || HISTORY_COUNT === 0) return;
 
   const history = loadHistory(convIdHex);
   if (history.length === 0) return;
@@ -573,117 +579,92 @@ async function emitHistory(): Promise<void> {
   console.error(`[qntm-channel] sent ${recent.length} history entries`);
 }
 
-async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<void> {
-  if (!convIdHex || !convCrypto) return;
-
-  const cursors = loadCursors();
-  const seen = loadSeen();
-  const convSeen = seen[convIdHex] || {};
-
-  const history = loadHistory(convIdHex);
-
-  let envelope: OuterEnvelope;
-  try {
-    envelope = deserializeEnvelope(rawEnvBytes);
-  } catch {
-    if (seq > (cursors[convIdHex] || 0)) {
-      cursors[convIdHex] = seq;
-      saveCursors(cursors);
-    }
-    return;
-  }
-
-  const msgIdHex = toHex(envelope.msg_id);
-  if (convSeen[msgIdHex]) {
-    if (seq > (cursors[convIdHex] || 0)) {
-      cursors[convIdHex] = seq;
-      saveCursors(cursors);
-    }
-    return;
-  }
-
-  let msg;
-  try {
-    msg = decryptMessage(envelope, convCrypto);
-  } catch {
-    if (seq > (cursors[convIdHex] || 0)) {
-      cursors[convIdHex] = seq;
-      saveCursors(cursors);
-    }
-    return;
-  }
-
-  convSeen[msgIdHex] = true;
-  seen[convIdHex] = convSeen;
-  saveSeen(seen);
-
-  const inner = msg.inner;
-  const senderKidHex = toHex(inner.sender_kid);
-
-  if (seq > (cursors[convIdHex] || 0)) {
-    cursors[convIdHex] = seq;
-    saveCursors(cursors);
-  }
-
-  // Skip our own messages
-  if (senderKidHex === myKidHex) return;
-
-  const bodyType = inner.body_type;
-  let bodyText: string;
-  try {
-    bodyText = new TextDecoder().decode(inner.body);
-  } catch {
-    bodyText = `[binary ${inner.body.length} bytes]`;
-  }
-
-  const senderName = resolveName(senderKidHex, names);
-
+async function deliverEvent(event: ReceiveEvent): Promise<void> {
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
-      content: bodyText,
+      content: event.message.unsafe_body ?? `[binary base64: ${event.message.unsafe_body_b64}]`,
       meta: {
-        sender: senderName,
-        sender_kid: senderKidHex.substring(0, 8),
-        body_type: bodyType,
+        sender: resolveName(event.message.sender_kid, loadNames()),
+        sender_kid: event.message.sender_kid,
+        body_type: event.message.body_type,
+        event_id: event.event_id,
+        conversation_id: event.conversation_id,
+        sequence: String(event.sequence),
+        content_trust: 'untrusted',
       },
     },
   });
+}
 
-  history.push({
-    msg_id: msgIdHex,
-    direction: 'incoming',
-    sender_kid: senderKidHex,
-    body_type: bodyType,
-    unsafe_body: bodyText,
-    created_ts: envelope.created_ts,
+function drainInbox(): void {
+  void inbox?.drain(deliverEvent).catch(error => {
+    console.error(`[qntm-channel] notification pending; retrying: ${error}`);
   });
+}
 
-  if (history.length > 0) {
-    saveHistory(convIdHex, history);
-    console.error('[qntm-channel] received 1 new message');
+async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<void> {
+  if (!convIdHex || !convCrypto || !inbox || seq <= inbox.cursor) return;
+  const history = loadHistory(convIdHex);
+  let event: ReceiveEvent;
+  try {
+    const envelope = deserializeEnvelope(rawEnvBytes);
+    // A CLI receiver may already have advanced the epoch. Its verified history
+    // preserves this event, but its shared cursor never acknowledges our handoff.
+    const previous = history.find(entry => entry.msg_id === toHex(envelope.msg_id))?.receive_event;
+    if (previous?.message.verified && previous.conversation_id === convIdHex) {
+      event = { ...previous, sequence: seq, message: { ...previous.message, sequence: seq } };
+    } else {
+      const record = findConversation(convIdHex);
+      if (record) convCrypto = convToCrypto(record);
+      event = createReceiveEvent(decryptMessage(envelope, convCrypto), seq);
+    }
+  } catch (error) {
+    console.error(`[qntm-channel] rejected envelope at sequence ${seq}: ${error}`);
+    inbox.capture(seq);
+    return;
   }
+
+  const incoming = event.message.sender_kid !== myKidHex;
+  // This single durable write captures the payload and advances our own cursor.
+  // Shared history/seen files are conveniences, never the delivery authority.
+  inbox.capture(seq, incoming ? event : undefined);
+  if (!history.some(entry => entry.msg_id === event.message.message_id)) {
+    history.push({
+      msg_id: event.message.message_id,
+      direction: incoming ? 'incoming' : 'outgoing',
+      sender_kid: event.message.sender_kid,
+      body_type: event.message.body_type,
+      unsafe_body: event.message.unsafe_body,
+      unsafe_body_b64: event.message.unsafe_body_b64,
+      created_ts: event.message.created_ts,
+      receive_event: event,
+    });
+    saveHistory(convIdHex, history);
+  }
+  const seen = loadSeen();
+  seen[convIdHex] = { ...seen[convIdHex], [event.message.message_id]: true };
+  saveSeen(seen);
+  const cursors = loadCursors();
+  cursors[convIdHex] = Math.max(cursors[convIdHex] || 0, seq);
+  saveCursors(cursors);
+  drainInbox();
 }
 
 function startSubscription(): void {
   if (!convIdHex || !convCrypto || liveSubscription) return;
+  inbox = new ChannelInbox(join(CONFIG_DIR, 'channel-inbox', `${convIdHex}.json`), loadCursors()[convIdHex] || 0);
   console.error('[qntm-channel] starting live relay subscription');
-  void emitHistory();
-  liveSubscription = dropbox.subscribeMessages(convCrypto.id, loadCursors()[convIdHex] || 0, {
-    getCursor: () => (convIdHex ? loadCursors()[convIdHex] || 0 : 0),
-    onMessage: async ({ seq, envelope }) => {
-      await handleEnvelope(envelope, seq);
-    },
-    onError: (err) => {
-      console.error(`[qntm-channel] relay subscription error: ${err}`);
-    },
+  void emitHistory().catch(error => console.error(`[qntm-channel] history notification failed: ${error}`));
+  drainInbox();
+  const retryTimer = setInterval(drainInbox, 1000);
+  retryTimer.unref();
+  liveSubscription = dropbox.subscribeMessages(convCrypto.id, inbox.cursor, {
+    getCursor: () => inbox!.cursor,
+    onMessage: async ({ seq, envelope }) => { await handleEnvelope(envelope, seq); },
+    onError: (err) => { console.error(`[qntm-channel] relay subscription error: ${err}`); },
     onReconnect: (attempt, delayMs) => {
       console.error(`[qntm-channel] relay reconnect attempt ${attempt} in ${delayMs}ms`);
     },
   });
-}
-
-// If already paired on startup, begin immediately
-if (paired) {
-  startSubscription();
 }

@@ -1,6 +1,6 @@
 {
   "name": "@qntm/tui",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Terminal UI chat client for qntm",
   "type": "module",
   "scripts": {
@@ -21,12 +21,12 @@
     "react": "^18.3.1"
   },
   "devDependencies": {
-    "@types/react-test-renderer": "^19.1.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
+    "@types/react-test-renderer": "^19.1.0",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "ink-testing-library": "^4.0.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

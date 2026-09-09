@@ -1111,6 +1111,20 @@ describe('qntm-qko0: promotion and membership invariants', () => {
 });
 
 describe('qntm-qtw2: write-ahead execution recovery', () => {
+  it('preserves governance records newer than the last gate message after restart', async () => {
+    const { doInstance, storage } = makeDO();
+    await storage.put('conv_state', promotedState());
+    await storage.put('msg:00000003', { seq: 3, type: 'gate.executed' });
+    const proposal = { seq: 4, type: 'gov.propose', proposal_id: 'preserve-me' };
+    await storage.put('gov:00000004', proposal);
+    await storage.put('gov:00000009', { seq: 9, type: 'gov.approve', proposal_id: 'preserve-me' });
+    await storage.put('wal:recover-me', { request_id: 'recover-me' });
+    await (doInstance as unknown as { recover(): Promise<void> }).recover();
+    expect(await storage.get('gov:00000004')).toEqual(proposal);
+    const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    expect([...messages.values()].find(msg => msg.request_id === 'recover-me')?.seq).toBe(10);
+  });
+
   it('recover() creates executed marker for WAL entries without gate.executed', async () => {
     const { doInstance, storage } = makeDO();
     await storage.put('conv_state', promotedState());

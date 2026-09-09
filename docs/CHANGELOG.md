@@ -1,21 +1,39 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 (2026-09-09)
 
-- Relay receipts are bounded advisory telemetry and cannot delete messages. `required_acks` remains signed for compatibility; `deleted` is always false. Public stats no longer enumerate conversation IDs.
-- Python CLI/MCP state uses private POSIX permissions and atomic JSON replacement. Existing permissions are repaired on access; unsafe links and shared root configuration paths are rejected.
-- CLI and MCP now share membership/rekey processing and preserve non-text bodies. Received rekeys apply within the batch, and history/state are stored before advancing the cursor.
-- Restored trusted gateway governance quorum, conversation binding, and restart maintenance. Gateway setup now uses a participant-signed invitation, sealed out-of-band access material, and a signed acceptance in chat. No operator admission token is required. Updated clients are required for new setup; CLI uses `gate-promote --gateway-url URL`. Requests and governance proposals bind the selected gateway key to prevent execution by multiple gateways.
-- AIM uses React Router 7.18.3; the TUI lockfile uses ws 8.21.3. CI checks both runtime dependency trees for high/critical advisories.
+[Full release notes](releases/v0.6.0.md)
 
-- Added local guidance pins for legal, moral/ethical, and law-enforcement contacts in the browser and CLI.
-- Added MCP guidance discovery, preparation, and explicit send tools. Requests use existing encrypted conversations and do not attach history automatically.
-- Added exact recipient, known audience, and message review, with checks for changed local destination state.
-- Fixed MCP conversation create/join key handling, participant storage, and invite serialization.
-- Fixed MCP configuration paths containing `~`, constrained its SDK dependency to the supported 1.x API, and enabled MCP tests in CI.
-- MCP receive/history now return message text as `unsafe_body` instead of `body`. MCP key IDs and public keys now use hex to match the CLI. Integrations must account for these output changes.
-- Corrected quick-start commands, public demo privacy claims, relay metadata claims, and guidance trust boundaries.
+### Added
 
+- Continuous `recv --watch` with JSONL, reconnects, repeatable webhooks and executable hooks, independent retries, and shared Python/TypeScript receive-event fixtures.
+- Locally pinned guidance contacts and exact-message review for legal, ethical, and law-enforcement questions in the browser, CLI, and MCP.
+- Experimental charter v0.2 support: TypeScript library, durable Go reference registrar, self-certification, parent/threshold governance, namespaced statements, and verifiable log/map evidence. The draft remains unratified; no public registrar or independent witnesses are included.
+- Full release gating across libraries, workers, adapters, Python versions, real browser/CLI journeys, terminal PTY input, and Go/TypeScript charter integration. Generated CLI help and source/lockfile versions are checked for drift.
+
+### Fixed
+
+- Gateway admission now completes a participant-signed invitation with the gateway's signed acceptance in chat. Sealed access material travels out of band, without an operator admission token.
+- Gateway actions bind the conversation and gateway key, enforce the current roster's governance quorum, and recover sequence numbers across gateway and governance records.
+- Relay receipts no longer delete messages. Bounded receipt metadata and ciphertext expire together, including idle cleanup. Replay spans expired sequence gaps and paginates through the captured head.
+- Python private/atomic state writes, MCP identity/invite encoding, and shared receive/rekey handling; TypeScript subscription callbacks retain replay progress on failure.
+- Claude notifications persist before cursor advancement and survive failed transport writes, restart, and a CLI receiver sharing the profile.
+- Lost send responses recover by matching the exact ciphertext; unresolved delivery reports an unknown outcome and message ID.
+- Reconciled main with the already published v0.5.1 browser fixes. Runtime dependency audit gates remain enabled; vulnerable older Vitest 3 versions were updated.
+
+### Compatibility
+
+- New gateway setup requires updated clients and gateway; use `gate-promote -c CONVERSATION --gateway-url URL --threshold N`.
+- MCP text fields use `unsafe_body`, with hex identifiers matching the CLI. Binary receive events use `unsafe_body_b64`.
+- `required_acks` remains a signed compatibility field; receipt responses always report `deleted: false`.
+- Charter APIs are opt-in TypeScript exports; Python charter support and native Codex/Grok insertion adapters remain unimplemented.
+
+## v0.5.1 (2026-03-22)
+
+- Corrected browser test discovery and Playwright worker serialization for the v0.5 browser release.
+- Preserved conversation rename/delete, custom invite names, paste handling, and URL-based conversation navigation.
+
+Earlier 0.3–0.5 release histories are available in [GitHub Releases](https://github.com/corpollc/qntm/releases). This changelog retains the original v0.2 notes below.
 
 ## v0.2.0 (2026-03-13)
 

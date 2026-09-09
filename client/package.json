@@ -1,6 +1,6 @@
 {
   "name": "@corpollc/qntm",
-  "version": "0.4.20",
+  "version": "0.6.0",
   "qntmSpecVersion": "QSP-v1.1",
   "description": "QSP v1.1 protocol library \u2014 identity, invites, encrypted messaging, and threshold gate signing",
   "type": "module",
@@ -49,15 +49,15 @@
     "test:charter-server": "vitest run --config vitest.charter.config.ts"
   },
   "dependencies": {
-    "@noble/ed25519": "^2.2.3",
-    "@noble/hashes": "^1.7.1",
     "@noble/ciphers": "^1.2.1",
     "@noble/curves": "^1.8.1",
+    "@noble/ed25519": "^2.2.3",
+    "@noble/hashes": "^1.7.1",
     "cbor-x": "^1.6.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^3.2.7"
   }
 }

@@ -42,7 +42,7 @@ qntm --config-dir /tmp/alice recv <conversation-id>
 # JSON data.messages entries include sender_kid and unsafe_body
 ```
 
-Everything is end-to-end encrypted. The relay only sees opaque ciphertext.
+Message contents are end-to-end encrypted. The relay sees ciphertext, conversation and message identifiers, timing, sizes, and transport metadata.
 
 ### Try it now — Echo Bot 🤖
 
@@ -72,10 +72,10 @@ qntm(["send", CONV_ID, "task complete: 3 files processed"])
 # Poll for new messages
 msgs = qntm(["recv", CONV_ID])["data"]["messages"]
 for m in msgs:
-    print(f"{m['sender']}: {m['unsafe_body']}")
+    print(f"{m['sender_kid']}: {m['unsafe_body']}")
 ```
 
-The CLI defaults to JSON output for easy integration with LLM runtimes and agent frameworks. Use `--human` for human-readable output.
+The CLI defaults to JSON output for easy integration with LLM runtimes and agent frameworks.
 
 ### Web UI (for humans)
 
@@ -116,23 +116,22 @@ The gateway lets any conversation pull up and approve / reject API calls. Any pa
 
 ```bash
 # Promote a conversation to require 2-of-3 approval
-qntm gate-promote <conv-id> --url https://gateway.corpo.llc --threshold 2
+qntm gate-promote -c <conv-id> --gateway-url https://gateway.corpo.llc --threshold 2
 
-# Propose a bank wire transfer
-qntm gate-run <conv-id> --recipe mercury.create-payment \
-  --arg recipient="Acme Corp" --arg amount=15000 --arg currency=USD
+# Propose a call using a bundled recipe
+qntm gate-run httpbin.echo -c <conv-id> --arg message="Hello"
 
 # Another participant approves
-qntm gate-approve <conv-id> <request-id>
+qntm gate-approve <request-id> -c <conv-id>
 ```
 
 ### How the Gateway Works
 
 The gateway is an open-source Cloudflare Worker ([`gateway-worker/`](gateway-worker/)). When a conversation is promoted:
 
-1. The gateway generates an isolated keypair for that conversation
+1. A participant requests a gateway invitation, posts it signed in chat, and sends sealed access material out of band. The gateway verifies that invitation and posts its own signed acceptance, completing setup. See [gateway invitations](docs/gateway-invitations.md).
 2. API credentials are encrypted directly to the gateway's public key using NaCl sealed boxes — no participant or the relay can read them
-3. The gateway polls the relay like any other participant, reading encrypted messages and watching for signed requests and approvals
+3. The gateway subscribes to the relay as a conversation participant, decrypting messages and watching for signed requests and approvals
 4. When an approval threshold is met, the gateway decrypts the relevant API credential, injects it into the outgoing HTTP request, executes the call, and posts the result back as an encrypted message
 5. Credentials can have TTLs — when they expire, the gateway notifies the conversation and humans must re-provision
 
@@ -179,6 +178,12 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
 
 The OpenClaw plugin should be treated as chat transport for now, not as a qntm API Gateway controller.
+
+## Experimental charter registry
+
+v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.
+
+The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. The server is separate from messaging and is not deployed as a public registry. Python charter APIs and independent registrar witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
 
 ## Security & Threat Model
 
@@ -242,6 +247,10 @@ pip install 'qntm[mcp]'
 
 ## Documentation
 
+- [Release notes and changelog](docs/CHANGELOG.md)
+- [CLI command reference](docs/cli-reference.md)
+- [Continuous receive and agent hooks](docs/receive-hooks.md)
+- [Client/library parity](docs/client-parity.md)
 - [Request Guidance](docs/guidance.md) — locally pinned contacts, message review, and agent tools
 - [Client Safety Audit](docs/audits/2026-09-07-client-safety.md) — documentation, safety boundaries, and agent UX findings
 

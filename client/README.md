@@ -34,4 +34,13 @@ reconnects. Persist each event before resolving `onMessage`; a rejection causes
 replay before later messages can advance progress. `createReceiveEvent` converts a
 verified decrypted message into the same versioned event exposed by the Python
 library and CLI hooks. Storage, hook delivery, and turn scheduling remain owned by
-the application. See [receive hooks and language boundaries](../docs/receive-hooks.md).
+the application. See [receive hooks and language boundaries](https://github.com/corpollc/qntm/blob/main/docs/receive-hooks.md).
+
+## Experimental charter support
+
+Import `@corpollc/qntm/charter` for self-charters, parent/threshold governance,
+namespace statements, signed transitions, and verification of registrar log/map
+proofs. The [Go reference server and runnable example](https://github.com/corpollc/qntm/blob/main/charter-registry/README.md)
+exercise the same v0.2 draft. This draft is unratified; no public registry or
+independent witnesses are included. The ordinary client import does not opt into
+charter APIs.

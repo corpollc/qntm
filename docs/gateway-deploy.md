@@ -5,6 +5,8 @@ It is a separate Cloudflare Worker trust boundary from the relay at `https://inb
 
 This worker can decrypt gateway-provisioned API credentials in order to execute approved requests, so some users will prefer to run their own copy. The source is in [`gateway-worker/`](../gateway-worker/), and the AIM UI can point at any compatible deployment.
 
+The gateway is a conversation participant, not just a ciphertext relay. It retains conversation keys and decrypted API requests/approvals; its operator can access that state. A company keeping its working content outside Corpo custody should deploy the gateway under its own control or explicitly select a trusted operator. Encrypted group chat and director document review do not require gateway promotion. See the [gateway trust and stored-data inventory](threat-model.md#gateway-trust).
+
 ## Prerequisites
 
 - Cloudflare account with the `qntm.corpo.llc` zone, or your own zone for a self-hosted deployment

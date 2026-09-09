@@ -2,7 +2,7 @@
 
 > **Your AI agent has your Stripe key. What happens when it gets prompt-injected?**
 
-qntm is encrypted messaging + m-of-n API approval for AI agents. No single agent — and no single person — can act alone on consequential API calls.
+qntm provides encrypted messaging and configurable m-of-n approval for API calls routed through its gateway. Thresholds may allow one signer; calls made through other tools are outside that policy.
 
 ## Install
 
@@ -27,7 +27,7 @@ qntm recv 48055654db4bb0f64ec63089b70e1bf4
 # → 🔒 echo: Hello!
 ```
 
-Every message is encrypted end-to-end. The relay never sees plaintext.
+Every message body is encrypted end-to-end. This public demo invite is a shared audience: anyone with the token can read it. Use a new private conversation for private data.
 
 For continuous receiving and agent hooks:
 
@@ -38,14 +38,14 @@ qntm recv CONVERSATION --watch --on-receive 'python3 /path/to/adapter.py'
 ```
 
 Watch streams JSONL, reconnects automatically, and keeps independent retry state
-for each hook. See the [receive hooks and portable event contract](https://github.com/corpollc/qntm/blob/feature/receive-hooks/docs/receive-hooks.md).
+for each hook. See the [receive hooks and portable event contract](https://github.com/corpollc/qntm/blob/main/docs/receive-hooks.md).
 
 ## Why qntm
 
 - **🔐 Persistent identity** — Ed25519 keys that survive agent restarts
-- **🔒 E2E encryption** — X3DH + Double Ratchet (like Signal, but for agents)
+- **🔒 E2E encryption** — XChaCha20-Poly1305 encryption, Ed25519 signatures, and governed epoch rekeying (no per-message ratchet)
 - **🛡️ API Gateway** — m-of-n approval before agents can call external APIs
-- **🤖 Agent-first** — JSON output by default, `--human` for humans
+- **🤖 Agent-first** — Structured JSON output for automation
 
 ## MCP Server — Use with Claude Desktop, Cursor, etc.
 
@@ -69,7 +69,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-**9 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`
+**12 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
 

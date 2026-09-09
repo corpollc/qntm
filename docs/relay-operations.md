@@ -2,6 +2,20 @@
 
 The public relay is `https://inbox.qntm.corpo.llc`, attached as a custom domain to the `qntm-dropbox` Cloudflare Worker. Its health endpoint is `/healthz`; clients send with HTTPS and receive with WSS on `/v1/subscribe`.
 
+## Content and metadata expiry
+
+The relay source assigns `ENVELOPE_TTL_SECONDS` at publication (default seven days, minimum 60 seconds). Reads and receipts do not renew it. Ciphertext still exists temporarily in both Workers KV and Durable Object SQLite; this is a transport buffer, not participant-owned message history.
+
+The retention implementation in `worker/src/retention.ts` schedules a Durable Object alarm for the next expiry. The alarm removes expired SQLite envelopes and their message-ID/reader-ID metadata, including when no one publishes again. Replay and receipt lookup independently filter by expiry, so an overdue alarm cannot make expired messages readable through the relay. KV retains its own TTL. Sequence counters remain, so a returning participant's cursor is not reset or reused. [Cloudflare alarms](https://developers.cloudflare.com/durable-objects/api/alarms/), [KV expiry](https://developers.cloudflare.com/kv/api/write-key-value-pairs/).
+
+On the first activation after upgrading, an old channel's SQLite records receive an expiry of their original creation time plus the configured TTL. Old `msg-seq:` and `receipt-readers:` keys migrate in bounded batches; alarms continue the migration without more client traffic. The previous implementation could leave expired SQLite content and metadata in inactive channels indefinitely. A new deployment does **not** wake every previously created Durable Object: completely dormant legacy objects require an inventoried migration before their stored data can be described as cleaned up.
+
+The aggregate activity key also has a seven-day TTL. The hourly scheduled handler prunes expired channel IDs from legacy and current activity data. Its read/modify/write statistics remain approximate under concurrent sends and KV consistency. Announce-channel names and public signing-key registrations are separate persistent configuration; they do not expire with envelopes.
+
+These changes require deployment before they describe the hosted relay. They have not changed existing production objects or account settings. Release verification must cover the deployed bindings and TTL, the hourly trigger, alarms, dormant legacy objects, request/exception logs, exported datasets and provider recovery retention. Do not use expiry of active database rows as a statement of physical erasure: Cloudflare documents a 30-day point-in-time recovery window for SQLite-backed Durable Objects. The source code alone cannot establish which data is recoverable from a live account. [Cloudflare storage and recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
+
+Local verification is `cd integration && npm run test:relay`. It covers migration and exact expiry boundaries in SQLite, and starts a disposable local Worker to confirm that an idle channel's ciphertext and reader metadata disappear without another relay request. The real alarm test takes about one minute. No production data is used.
+
 ## Diagnose the layer that failed
 
 ```sh

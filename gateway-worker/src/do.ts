@@ -85,7 +85,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
   }
 
   /**
-   * Recovery: reconstruct messageSeq from stored gate messages.
+   * Recovery: reconstruct the shared sequence from gate and governance records.
    * Called lazily on first alarm or fetch after DO eviction/restart.
    * Durable Object storage persists across evictions, so we only
    * need to recover the in-memory sequence counter.
@@ -93,8 +93,9 @@ export class GatewayConversationDO extends DurableObject<Env> {
   private async recover(): Promise<void> {
     if (this.recovered) return;
     const entries = await this.ctx.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const governance = await this.ctx.storage.list<StoredGovProposal>({ prefix: 'gov:' });
     let maxSeq = 0;
-    for (const [, msg] of entries) {
+    for (const msg of [...entries.values(), ...governance.values()]) {
       if (msg.seq > maxSeq) maxSeq = msg.seq;
     }
     this.messageSeq = maxSeq;

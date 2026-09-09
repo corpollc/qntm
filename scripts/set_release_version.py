@@ -62,12 +62,11 @@ def main() -> None:
 
     update_json_version(REPO_ROOT / "client/package.json", version)
     update_json_version(REPO_ROOT / "client/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "echo-worker/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "gateway-worker/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "integration/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "openclaw-qntm/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "ui/aim-chat/package-lock.json", version)
-    update_client_link_version(REPO_ROOT / "ui/tui/package-lock.json", version)
+    for directory in ["ui/aim-chat", "ui/tui", "channel"]:
+        update_json_version(REPO_ROOT / directory / "package.json", version)
+        update_json_version(REPO_ROOT / directory / "package-lock.json", version)
+    for directory in ["echo-worker", "gateway-worker", "integration", "openclaw-qntm", "nanoclaw-qntm", "ui/aim-chat", "ui/tui", "channel"]:
+        update_client_link_version(REPO_ROOT / directory / "package-lock.json", version)
     replace_in_file(
         REPO_ROOT / "python-dist/pyproject.toml",
         r'^version = ".*"$',
@@ -79,16 +78,7 @@ def main() -> None:
         r'^__version__ = ".*"$',
         f'__version__ = "{version}"',
     )
-    replace_in_file(
-        REPO_ROOT / "python-dist/tests/test_version.py",
-        r'^    assert __version__ == ".*"$',
-        f'    assert __version__ == "{version}"',
-    )
-    replace_in_file(
-        REPO_ROOT / "python-dist/tests/test_version.py",
-        r'^            "version": ".*",$',
-        f'            "version": "{version}",',
-    )
+    update_json_version(REPO_ROOT / "channel/.claude-plugin/plugin.json", version)
 
     print(f"updated release version to {version}")
 

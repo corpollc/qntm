@@ -70,12 +70,7 @@ You can use either the full conversation ID or a unique prefix.
 
 ### Human-readable output
 
-The CLI is JSON-first by default. For terminal use, add `--human`:
-
-```bash
-qntm --human inbox
-qntm --human history <conversation>
-```
+The CLI returns structured JSON, including when the reserved `--human` compatibility flag is present. For an interactive terminal interface, use [the terminal UI](../ui/tui/README.md).
 
 ### Default hosted services
 

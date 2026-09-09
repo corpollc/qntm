@@ -9,23 +9,18 @@ permissions:
   id-token: write  # Required for PyPI trusted publisher
 
 jobs:
-  test:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  gate:
+    name: Release gate
+    needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Python dependencies
-        run: pip install -e "python-dist/" && pip install pytest
-
-      - name: Run Python tests
-        run: python -m pytest python-dist/tests/ -v
+      - run: echo "All release checks passed for $GITHUB_SHA"
 
   release:
-    needs: test
+    needs: gate
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -42,11 +37,8 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Sync release version
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          VERSION="${VERSION#v}"  # strip leading v
-          python3 scripts/set_release_version.py "${VERSION}"
+      - name: Verify tagged version
+        run: python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
 
       - name: Build Python package
         run: python -m build python-dist/
@@ -59,7 +51,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: python-dist/dist/*
 
       # Requires SITE_DEPLOY_TOKEN secret with repo scope on corpollc/qntm-site
       - name: Update version.json on site

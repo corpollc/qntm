@@ -10,7 +10,8 @@ from pathlib import Path
 def test_python_package_exports_spec_version():
     from qntm import PROTOCOL_VERSION, SPEC_VERSION, __version__
 
-    assert __version__ == "0.4.20"
+    project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    assert __version__ == project["project"]["version"]
     assert SPEC_VERSION == "QSP-v1.1"
     assert PROTOCOL_VERSION == 1
 
@@ -24,6 +25,7 @@ def test_pyproject_spec_version_matches_runtime():
 
 
 def test_cli_version_reports_spec_metadata(monkeypatch):
+    from qntm import __version__
     from qntm.cli import cmd_version
     from qntm.constants import PROTOCOL_VERSION, SPEC_VERSION
 
@@ -40,7 +42,7 @@ def test_cli_version_reports_spec_metadata(monkeypatch):
     assert captured == {
         "kind": "version",
         "data": {
-            "version": "0.4.20",
+            "version": __version__,
             "spec_version": SPEC_VERSION,
             "protocol_version": PROTOCOL_VERSION,
             "runtime": "python",

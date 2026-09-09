@@ -19,6 +19,8 @@ The relay sees conversation IDs, envelope timestamps, sequence numbers, sizes, r
 
 Receipts are advisory telemetry. A supplied reader key does not establish membership, and `required_acks` remains a signed compatibility field with no deletion authority. Receipt responses always report `deleted: false`; server TTL controls retention. Counts are capped at 256 distinct reader keys per message and do not prove delivery to intended members. Public statistics expose an aggregate conversation count, not conversation IDs.
 
+The relay source now uses expiry alarms for SQLite ciphertext and associated message-ID/reader-ID records, plus expiry checks on reads. KV ciphertext has a separate TTL. Sequence counters and announce registration metadata persist. The aggregate statistics store internally contains recent conversation IDs even though its public response is only a count. Per-isolate rate limiting also keeps IP addresses in memory; provider request logs and backups are a separate retention boundary. See [retention and rollout details](relay-operations.md#content-and-metadata-expiry), including dormant legacy objects and the distinction between logical expiry and provider recovery copies. This source change is not evidence that a hosted deployment has already applied it.
+
 The relay can drop, delay, replay, or withhold envelopes and receipts. Client replay checks and cryptographic validation reduce some effects, but encryption does not guarantee availability or delivery.
 
 | Metadata | Relay | Passive network observer using HTTPS/WSS |
@@ -35,7 +37,11 @@ A TLS terminator sees request URLs and transport payloads. Plain HTTP/WS exposes
 
 The gateway is an endpoint in each promoted conversation. It can decrypt that conversation and the API credentials provisioned to it. An uncompromised gateway enforces configured API-call signature thresholds and excludes its own key from the approval count. Governance changes require at least a strict majority of the current participant roster; a proposer cannot lower that minimum. Requests and votes must claim the same conversation as their authenticated transport and stored gateway state.
 
-Gateway bootstrap requires an operator bearer token, canonical 32-byte conversation keys, and a valid epoch. Repeated bootstrap can resume existing state but cannot overwrite its keys. The browser holds the token in memory and clears it after successful setup.
+The gateway's `conv_state` persists its signing private key, conversation keys, participant roster and rules. `msg:` and `gov:` records persist decrypted request, approval and proposal bodies without a content TTL. API responses are read in plaintext during execution and posted back to the conversation encrypted; execution markers and write-ahead records also persist. Credentials in `vault:` are encrypted at rest under a key available to the gateway operator; credentials can have an explicit expiry, while an empty expiry currently means no expiry. Relay expiry does not erase any of this gateway state.
+
+A company that keeps its working content outside Corpo custody should use a company-controlled executor or another operator it explicitly chooses. Adding the hosted gateway adds that operator to the company's content and credential trust boundary. Ordinary encrypted group conversation and director document review do not require a gateway.
+
+Gateway setup requires a participant-signed invitation in the conversation and matching access material sealed to the invited gateway. The gateway validates the invitation, then signs its acceptance in chat. No operator admission token is required. Repeated setup can resume the same invitation but cannot overwrite an active conversation's keys. The invitation proves a conversation keyholder asked the gateway to join; it does not independently prove every participant consented. See [gateway invitations](gateway-invitations.md).
 
 These controls apply to requests routed through that gateway. Thresholds are configurable and can permit a single signer. qntm does not restrict API calls made through another tool or a separately held credential. Cryptographic identities do not distinguish a human from an agent.
 

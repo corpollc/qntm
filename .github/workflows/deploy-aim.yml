@@ -4,11 +4,20 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for all release checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/wait_for_release_gate.py
 
       - uses: actions/setup-node@v4
         with:
@@ -20,18 +29,13 @@ jobs:
         run: npm ci && npm run build
         working-directory: client
 
-      - name: Set UI version from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          npm pkg set version="$VERSION"
-        working-directory: ui/aim-chat
+      - name: Verify tagged version
+        run: python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
 
       - name: Install UI dependencies
-        run: npm install
-        working-directory: ui/aim-chat
-
-      - name: Install Rollup Linux binary
-        run: npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
+        run: |
+          npm install
+          npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
         working-directory: ui/aim-chat
 
       - name: Build UI

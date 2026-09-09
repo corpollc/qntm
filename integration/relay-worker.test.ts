@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -93,6 +94,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         '--inspector-port', String(inspectorPort),
         '--persist-to', stateDir,
         '--var', 'RATE_LIMIT_PER_MIN:5000',
+        '--var', 'ENVELOPE_TTL_SECONDS:60',
       ],
       join(REPO_ROOT, 'worker'),
       { ...process.env },
@@ -191,4 +193,56 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(Buffer.from(String(frame.envelope_b64), 'base64').toString()).toBe('receipt-retained');
     await closeSocket(retained.socket);
   }, 30_000);
+
+  it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
+    const msgId = 'cd'.repeat(16);
+    const sequence = await publish('idle-expiry', msgId);
+    const receipt = buildSignedReceipt(
+      generateIdentity(), Buffer.from(CONV_ID, 'hex'), Buffer.from(msgId, 'hex'), 1,
+    );
+    const record = await fetch(`${relayUrl}/v1/receipt`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(receipt),
+    });
+    expect(record.status).toBe(200);
+
+    function storedRows(): { messages: number; metadata: number } {
+      const paths = readdirSync(stateDir, { recursive: true }) as string[];
+      const databases = paths.filter((path) => path.endsWith('.sqlite'));
+      let found = false;
+      let messages = 0;
+      let metadata = 0;
+      for (const path of databases) {
+        const db = new DatabaseSync(join(stateDir, path), { readOnly: true });
+        try {
+          const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'").all();
+          if (!tables.length) continue;
+          found = true;
+          const assigned = db.prepare('SELECT expires_at - created_at AS ttl FROM messages').all();
+          for (const row of assigned) expect(row.ttl, 'local test TTL override').toBe(60);
+          messages += Number(db.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n);
+          metadata += Number(db.prepare('SELECT COUNT(*) AS n FROM message_metadata').get()!.n);
+        } finally {
+          db.close();
+        }
+      }
+      expect(found, 'local relay SQLite database exists').toBe(true);
+      return { messages, metadata };
+    }
+
+    expect(storedRows().messages).toBeGreaterThan(0);
+    expect(storedRows().metadata).toBeGreaterThan(0);
+    // No request or publish wakes the DO during this interval. Inspect only the
+    // disposable local database, so an on-read sweep cannot make this test pass.
+    await delay(62_000);
+    expect(storedRows(), `${relayProcess?.stdout}\n${relayProcess?.stderr}`).toEqual({ messages: 0, metadata: 0 });
+
+    const replay = await openSubscription(relayUrl, 0);
+    expect(replay.frames.filter((frame) => frame.type === 'message')).toEqual([]);
+    expect(replay.frames.find((frame) => frame.type === 'ready')?.head_seq).toBe(sequence);
+    await closeSocket(replay.socket);
+    const expiredReceipt = await fetch(`${relayUrl}/v1/receipt`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(receipt),
+    });
+    expect(expiredReceipt.status).toBe(404);
+  }, 75_000);
 });

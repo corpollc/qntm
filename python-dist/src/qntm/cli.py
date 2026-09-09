@@ -3003,6 +3003,7 @@ quick start:
   qntm convo join <token>                 accept an invite token
   qntm send <conv> "hello"                send a message (conv = id or prefix)
   qntm recv <conv>                        receive new messages
+  qntm recv <conv> --watch                stream messages and optional local hooks
   qntm guidance list                      find locally pinned guidance contacts
 
 claude code channel:
@@ -3016,7 +3017,7 @@ claude code channel:
     parser.add_argument("--dropbox-url", dest="dropbox_url", default=None,
                         help=f"HTTP drop box endpoint (default: {DEFAULT_DROPBOX_URL})")
     parser.add_argument("--human", action="store_true",
-                        help="Use human-readable output")
+                        help="Reserved compatibility option; output remains JSON")
     parser.add_argument("--verbose", action="store_true",
                         help="Enable verbose output")
     parser.add_argument("-v", "--version", action="store_true",

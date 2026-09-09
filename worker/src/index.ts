@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { countRecentConversations, recordReceipt } from "./security-policy.js";
+import { countRecentConversations } from "./security-policy.js";
+import { envelopeTTLSeconds, expireConversationStats, RelayRetention, STATS_KEY, STATS_TTL_SECONDS } from "./retention.js";
 
 export interface Env {
 	QNTM_KV: KVNamespace;
@@ -134,14 +135,6 @@ function fromBase64(input: string): Uint8Array {
 	return out;
 }
 
-function toBase64(input: Uint8Array): string {
-	let binary = "";
-	for (let i = 0; i < input.length; i++) {
-		binary += String.fromCharCode(input[i]);
-	}
-	return btoa(binary);
-}
-
 function buildReceiptSignable(payload: ReadReceiptPayload): Uint8Array {
 	const signable = `${receiptProto}|${payload.conv_id}|${payload.msg_id}|${payload.reader_kid}|${payload.read_ts}|${payload.required_acks}`;
 	return new TextEncoder().encode(signable);
@@ -242,16 +235,6 @@ function conversationMessageKey(convID: string, seq: number): string {
 	return `/${convID}/msg/${seq}.cbor`;
 }
 
-const STATS_KEY = "/__stats__/active_conversations";
-
-function messageSequenceIndexKey(msgID: string): string {
-	return `msg-seq:${msgID}`;
-}
-
-function receiptReadersKey(msgID: string): string {
-	return `receipt-readers:${msgID}`;
-}
-
 async function publishConversationMessage(
 	env: Env,
 	convID: string,
@@ -275,32 +258,6 @@ async function publishConversationMessage(
 	return payload.seq!;
 }
 
-async function loadConversationMessagesBySequence(
-	env: Env,
-	convID: string,
-	fromSeq: number,
-	headSeq: number,
-	limit: number,
-): Promise<Array<{ seq: number; envelope_b64: string }>> {
-	if (limit <= 0 || headSeq <= fromSeq) {
-		return [];
-	}
-
-	const messages: Array<{ seq: number; envelope_b64: string }> = [];
-	const lastSeq = Math.min(headSeq, fromSeq + limit);
-	for (let seq = fromSeq + 1; seq <= lastSeq; seq += 1) {
-		const value = await env.QNTM_KV.get(conversationMessageKey(convID, seq), "arrayBuffer");
-		if (value === null) {
-			continue;
-		}
-		messages.push({
-			seq,
-			envelope_b64: toBase64(new Uint8Array(value)),
-		});
-	}
-	return messages;
-}
-
 function validateUpgradeRequest(request: Request): Response | null {
 	if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
 		return errorResponse("websocket upgrade required", 426);
@@ -309,22 +266,16 @@ function validateUpgradeRequest(request: Request): Response | null {
 }
 
 export class ConversationSequencerDO extends DurableObject<Env> {
-	private sqlReady = false;
+	private retention: RelayRetention;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
+		this.retention = new RelayRetention(ctx.storage, envelopeTTLSeconds(env.ENVELOPE_TTL_SECONDS));
+		ctx.blockConcurrencyWhile(() => this.retention.maintain());
 	}
 
-	private ensureSchema(): void {
-		if (this.sqlReady) return;
-		this.ctx.storage.sql.exec(`
-			CREATE TABLE IF NOT EXISTS messages (
-				seq INTEGER PRIMARY KEY,
-				envelope_b64 TEXT NOT NULL,
-				created_at INTEGER NOT NULL DEFAULT (unixepoch())
-			)
-		`);
-		this.sqlReady = true;
+	async alarm(): Promise<void> {
+		await this.retention.maintain();
 	}
 
 	private async handlePublish(request: Request): Promise<Response> {
@@ -346,7 +297,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			}
 			payload.msg_id = payload.msg_id.toLowerCase();
 		}
-		const ttl = parseInt(this.env.ENVELOPE_TTL_SECONDS || "604800", 10);
+		const ttl = envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS);
 		let envelopeBytes: Uint8Array;
 		try {
 			envelopeBytes = fromBase64(payload.envelope_b64);
@@ -358,20 +309,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const seq = current + 1;
 		await this.ctx.storage.put("next_seq", seq);
 		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
-		if (payload.msg_id) {
-			await this.ctx.storage.put(messageSequenceIndexKey(payload.msg_id), seq);
-		}
-
-		// Store in SQLite for KV-list-free reads
-		this.ensureSchema();
-		this.ctx.storage.sql.exec(
-			`INSERT OR REPLACE INTO messages (seq, envelope_b64, created_at) VALUES (?, ?, ?)`,
-			seq, payload.envelope_b64, Math.floor(Date.now() / 1000)
-		);
-
-		// Purge expired messages from SQLite (keep in sync with KV TTL)
-		const cutoff = Math.floor(Date.now() / 1000) - ttl;
-		this.ctx.storage.sql.exec(`DELETE FROM messages WHERE created_at < ?`, cutoff);
+		await this.retention.store(seq, payload.envelope_b64, payload.msg_id);
 
 		const frame = JSON.stringify({
 			type: "message",
@@ -445,7 +383,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		// Unauthenticated subscribe (backwards compatible)
 		const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
-		const replay = await loadConversationMessagesBySequence(this.env, convID, fromSeqRaw, headSeq, 1000);
+		const replay = this.retention.replay(fromSeqRaw, headSeq);
 		for (const message of replay) {
 			server.send(
 				JSON.stringify({
@@ -470,7 +408,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			return Response.json({ error: "invalid msg_id" }, { status: 400 });
 		}
 
-		const seq = ((await this.ctx.storage.get<number>(messageSequenceIndexKey(msgID))) ?? null) as number | null;
+		const seq = await this.retention.messageSequence(msgID);
 		return Response.json({ seq }, { status: 200 });
 	}
 
@@ -488,11 +426,8 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			return Response.json({ error: "invalid receipt identifiers" }, { status: 400 });
 		}
 
-		const readers = ((await this.ctx.storage.get<string[]>(receiptReadersKey(msgID))) ?? []) as string[];
-		const result = recordReceipt(readers, readerKID);
-		if (result.readers.length !== readers.length) {
-			await this.ctx.storage.put(receiptReadersKey(msgID), result.readers);
-		}
+		const result = await this.retention.receipt(msgID, readerKID);
+		if (!result) return Response.json({ receipts: 0, should_delete: false, recorded: false }, { status: 200 });
 
 		return Response.json(
 			{
@@ -505,6 +440,8 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 	private async handleReset(): Promise<Response> {
 		await this.ctx.storage.deleteAll();
+		await this.ctx.storage.deleteAlarm();
+		this.retention = new RelayRetention(this.ctx.storage, envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS));
 		return Response.json({ reset: true }, { status: 200 });
 	}
 
@@ -617,7 +554,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			webSocket.send(JSON.stringify({ type: "auth_ok" } satisfies SubscribeAuthFrame));
 
 			const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
-			const replay = await loadConversationMessagesBySequence(this.env, pending.convID, pending.fromSeq, headSeq, 1000);
+			const replay = this.retention.replay(pending.fromSeq, headSeq);
 			for (const msg of replay) {
 				webSocket.send(
 					JSON.stringify({
@@ -642,6 +579,10 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 }
 
 export default {
+	async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+		await expireConversationStats(env.QNTM_KV);
+	},
+
 	async fetch(request: Request, env: Env): Promise<Response> {
 		// CORS preflight
 		if (request.method === "OPTIONS") {
@@ -721,7 +662,6 @@ export default {
 				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
 			}
 
-			const ttl = parseInt(env.ENVELOPE_TTL_SECONDS || "604800", 10);
 			const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
 
 			if (request.method === "POST" && path === "/v1/send") {
@@ -801,7 +741,7 @@ export default {
 					for (const [k, v] of Object.entries(stats)) {
 						if (v < cutoff) delete stats[k];
 					}
-					await env.QNTM_KV.put(STATS_KEY, JSON.stringify(stats));
+					await env.QNTM_KV.put(STATS_KEY, JSON.stringify(stats), { expirationTtl: STATS_TTL_SECONDS });
 				} catch {
 					// Stats tracking is best-effort, don't fail the send
 				}
@@ -1070,12 +1010,12 @@ export default {
 				if (!recordResponse.ok) {
 					throw new Error(`receipt recording failed: HTTP ${recordResponse.status}`);
 				}
-				const recordPayload = (await recordResponse.json()) as { receipts?: number };
+				const recordPayload = (await recordResponse.json()) as { receipts?: number; recorded?: boolean };
 				const receiptCount = Number.isInteger(recordPayload.receipts) ? recordPayload.receipts! : 0;
 
 				return jsonResponse(
 					{
-						recorded: true,
+						recorded: recordPayload.recorded !== false,
 						deleted: false,
 						receipts: receiptCount,
 						required_acks: payload.required_acks,

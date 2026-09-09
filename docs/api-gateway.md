@@ -180,7 +180,7 @@ Every API request has an expiration time. If the request is not fully approved b
 
 ### Membership Controls
 
-In a gateway-enabled conversation, adding or removing signers requires a proposal-and-approval flow. Direct membership changes are blocked. All existing signers must unanimously approve membership changes, preventing a single compromised account from adding a colluding signer.
+In a gateway-enabled conversation, adding or removing signers requires a proposal-and-approval flow. Direct membership changes are blocked. The gateway requires at least a strict majority of the current signer roster. A proposal may require more approvals but cannot lower that quorum. Cryptographic identities may belong to humans or agents.
 
 
 ## Common Use Cases
@@ -199,4 +199,4 @@ A compliance team uses the gateway to query customer data APIs. Every data acces
 
 ### Agent-governed organizations
 
-DAOs or agent-governed LLCs use the gateway to interact with real-world APIs (banks, HR platforms, government registries). Threshold authorization ensures that automated agents cannot act alone --- human oversight is always required for sensitive operations.
+DAOs or agent-governed LLCs use the gateway to interact with real-world APIs (banks, HR platforms, government registries). Threshold authorization requires the configured number of participant signatures. Participants may be humans or agents; qntm does not distinguish them or require a human signer.
