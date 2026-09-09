@@ -14,7 +14,7 @@ install -m 0644 qntm-charter.service qntm-charter-backup.service qntm-charter-ba
 install -m 0644 nginx.conf /etc/nginx/conf.d/qntm-charter.conf
 # Only this new dedicated VM uses this installer.
 rm -f /etc/nginx/sites-enabled/default
-install -m 0644 compose.yml prometheus.yml alerts.yml blackbox.yml grafana-datasources.yml grafana-dashboards.yml charter-dashboard.json /opt/qntm-charter-monitoring/
+install -m 0644 compose.yml prometheus.yml alerts.yml blackbox.yml grafana-datasources.yml grafana-dashboards.yml charter-dashboard.json relay-dashboard.json /opt/qntm-charter-monitoring/
 if [ ! -f /etc/qntm-charter/grafana-admin-password ]; then
     (umask 077; openssl rand -base64 48 > /etc/qntm-charter/grafana-admin-password)
     chown 472:472 /etc/qntm-charter/grafana-admin-password

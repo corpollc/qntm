@@ -104,6 +104,8 @@ Requests show the recipient, conversation audience, and exact message before sen
 
 All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
 
+**Encryption does not hide metadata from the relay.** Read the [exact metadata visibility and retention inventory](docs/metadata-privacy.md) for routing IDs, timing, sizes, optional receipt/authentication keys, Cloudflare-side telemetry, exported aggregates, logs and backup limits. Operators can use the [private relay traffic and availability dashboard](docs/relay-monitoring.md).
+
 For live incoming messages, use `qntm recv CONVERSATION --watch`. It streams JSONL
 and optionally invokes HTTP or executable hooks. TypeScript applications can use
 `DropboxClient.subscribeMessages` directly; both libraries export the same receive

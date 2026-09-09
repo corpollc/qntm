@@ -30,6 +30,9 @@ jobs:
       - name: Install PTY dependency
         run: sudo apt-get update && sudo apt-get install -y expect
 
+      - name: Install external relay monitor dependencies
+        run: python -m pip install -r monitoring/requirements.txt
+
       - name: Install and build client
         working-directory: client
         run: npm ci && npm run build

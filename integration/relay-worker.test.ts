@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -95,6 +97,8 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         '--persist-to', stateDir,
         '--var', 'RATE_LIMIT_PER_MIN:5000',
         '--var', 'ENVELOPE_TTL_SECONDS:60',
+        '--var', 'METRICS_READ_TOKEN:local-metrics-test-token',
+        '--var', `MONITOR_CONVERSATION_ID:${'fe'.repeat(16)}`,
       ],
       join(REPO_ROOT, 'worker'),
       { ...process.env },
@@ -193,6 +197,66 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(Buffer.from(String(frame.envelope_b64), 'base64').toString()).toBe('receipt-retained');
     await closeSocket(retained.socket);
   }, 30_000);
+
+  it('counts concurrent Cloudflare postings with private totals and aggregate-only public stats', async () => {
+    expect((await fetch(`${relayUrl}/v1/metrics`)).status).toBe(404);
+    expect((await fetch(`${relayUrl}/v1/metrics`, { headers: { Authorization: 'Bearer wrong' } })).status).toBe(404);
+    expect((await fetch(`${relayUrl}/v1/metrics`, { headers: { Authorization: 'local-metrics-test-token' } })).status).toBe(404);
+    const getMetrics = async () => {
+      const response = await fetch(`${relayUrl}/v1/metrics`, { headers: { Authorization: 'Bearer local-metrics-test-token' } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      return await response.json() as { traffic: Array<{ traffic: string; messages: number; active_conversations_7d: number }> };
+    };
+    // Previous tests have posted exactly five envelopes to the same conversation.
+    const rows = Array.from({ length: 16 }, (_, i) => (i + 100).toString(16).padStart(32, '0'));
+    await Promise.all([...rows, 'fe'.repeat(16)].map(async conv_id => {
+      const response = await fetch(`${relayUrl}/v1/send`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conv_id, envelope_b64: btoa('aggregate test') }),
+      });
+      expect(response.status).toBe(201);
+    }));
+    await expect.poll(async () => (await getMetrics()).traffic.find(x => x.traffic === 'application')?.messages, { timeout: 10_000 }).toBe(21);
+    const result = await getMetrics();
+    expect(result.traffic).toEqual(expect.arrayContaining([
+      expect.objectContaining({ traffic: 'application', messages: 21, active_conversations_7d: 17 }),
+      expect.objectContaining({ traffic: 'probe', messages: 1, active_conversations_7d: 1 }),
+    ]));
+    expect(JSON.stringify(result)).not.toContain(CONV_ID);
+    const stats = await (await fetch(`${relayUrl}/v1/stats`)).json();
+    expect(stats).toMatchObject({ active_conversations_7d: 18 });
+    expect(stats).not.toHaveProperty('traffic');
+    expect((await fetch(`${relayUrl}/record`, { method: 'POST', body: '[]' })).status).toBe(404);
+  }, 30_000);
+
+  it('passes the external Python monitor encrypted live-delivery and reconnect/replay probe', async () => {
+    const config = join(stateDir, 'monitor-config.json');
+    writeFileSync(config, JSON.stringify({ relay_url: relayUrl, metrics_read_token: 'local-metrics-test-token' }), { mode: 0o600 });
+    const { stdout, stderr } = await promisify(execFile)(process.env.QNTM_MONITOR_PYTHON || 'python3', [
+      join(REPO_ROOT, 'monitoring/relay_monitor.py'), '--once', '--config', config,
+      '--state-dir', join(stateDir, 'monitor-state'),
+    ], { timeout: 40_000 });
+    expect(stdout).toContain('qntm_relay_stats_scrape_success 1');
+    expect(stdout, stderr).toContain('qntm_relay_probe_success 1');
+    expect(stdout).toContain('qntm_relay_probe_last_success_timestamp_seconds');
+    expect(stdout).not.toContain('local-metrics-test-token');
+  }, 45_000);
+
+  it('rejects malformed public keys and invalid challenge signatures', async () => {
+    for (const key of ['aa'.repeat(16), 'aa'.repeat(32)]) {
+      const frames: Array<{ type: string }> = [];
+      const socket = new WebSocket(`${relayUrl.replace(/^http/, 'ws')}/v1/subscribe?conv_id=${CONV_ID}&pub_key=${key}`);
+      socket.addEventListener('message', event => {
+        const frame = JSON.parse(String(event.data));
+        frames.push(frame);
+        if (frame.type === 'auth_challenge') socket.send(JSON.stringify({ type: 'auth_response', signature_hex: '00'.repeat(64) }));
+      });
+      await waitForFrame(frames, frame => frame.type === 'auth_failed', 'invalid authentication rejected');
+      expect(frames.some(frame => frame.type === 'ready')).toBe(false);
+      await closeSocket(socket);
+    }
+  }, 15_000);
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
     const msgId = 'cd'.repeat(16);

@@ -1,10 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
-import { countRecentConversations } from "./security-policy.js";
-import { envelopeTTLSeconds, expireConversationStats, RelayRetention, STATS_KEY, STATS_TTL_SECONDS } from "./retention.js";
+import { envelopeTTLSeconds, expireConversationStats, RelayRetention } from "./retention.js";
+import { RelayMetricsOutbox } from "./metrics.js";
+import type { RelayMetricsStore } from "./metrics.js";
+export { RelayMetricsDO } from "./metrics-do.js";
 
 export interface Env {
 	QNTM_KV: KVNamespace;
 	CONVO_SEQ_DO: DurableObjectNamespace;
+	RELAY_METRICS_DO: DurableObjectNamespace;
+	METRICS_READ_TOKEN?: string;
+	MONITOR_CONVERSATION_ID?: string;
 	ENVELOPE_TTL_SECONDS: string;
 	MAX_ENVELOPE_SIZE: string;
 	MAX_MESSAGES_PER_CHANNEL: string;
@@ -23,6 +28,13 @@ function checkRateLimit(ip: string, maxPerMin: number): boolean {
 	}
 	entry.count++;
 	return entry.count <= maxPerMin;
+}
+
+function equalToken(actual: string, expected: string): boolean {
+	if (actual.length !== expected.length) return false;
+	let difference = 0;
+	for (let i = 0; i < expected.length; i++) difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
+	return difference === 0;
 }
 
 function corsHeaders(): HeadersInit {
@@ -267,15 +279,52 @@ function validateUpgradeRequest(request: Request): Response | null {
 
 export class ConversationSequencerDO extends DurableObject<Env> {
 	private retention: RelayRetention;
+	private metricsOutbox: RelayMetricsOutbox;
+	private metricsFlush?: Promise<void>;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.retention = new RelayRetention(ctx.storage, envelopeTTLSeconds(env.ENVELOPE_TTL_SECONDS));
-		ctx.blockConcurrencyWhile(() => this.retention.maintain());
+		this.metricsOutbox = new RelayMetricsOutbox(ctx.storage);
+		ctx.blockConcurrencyWhile(async () => {
+			await this.retention.maintain();
+			if (this.metricsOutbox.pending().length) await this.armMetricsRetry();
+		});
 	}
 
 	async alarm(): Promise<void> {
 		await this.retention.maintain();
+		await this.flushMetrics();
+	}
+
+	private flushMetrics(): Promise<void> {
+		if (this.metricsFlush) return this.metricsFlush;
+		this.metricsFlush = this.deliverMetrics().finally(() => { this.metricsFlush = undefined; });
+		return this.metricsFlush;
+	}
+
+	private async deliverMetrics(): Promise<void> {
+		const events = this.metricsOutbox.pending();
+		if (!events.length) return;
+		// Arm recovery before the network call. A lost acknowledgement retries the same IDs.
+		await this.armMetricsRetry();
+		try {
+			const stub = this.env.RELAY_METRICS_DO.get(this.env.RELAY_METRICS_DO.idFromName("aggregate-v1"));
+			const response = await stub.fetch("https://relay-metrics/record", {
+				method: "POST", body: JSON.stringify(events), signal: AbortSignal.timeout(5000),
+			});
+			if (!response.ok) throw new Error("telemetry delivery failed");
+			this.metricsOutbox.acknowledge(events);
+		} catch {
+			// The persisted outbox is retried by the alarm; telemetry cannot fail a send.
+			console.warn("Relay aggregate telemetry delivery deferred");
+		}
+	}
+
+	private async armMetricsRetry(): Promise<void> {
+		const next = Date.now() + 60_000;
+		const current = await this.ctx.storage.getAlarm();
+		if (current === null || current > next) await this.ctx.storage.setAlarm(next);
 	}
 
 	private async handlePublish(request: Request): Promise<Response> {
@@ -309,7 +358,16 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		const seq = current + 1;
 		await this.ctx.storage.put("next_seq", seq);
 		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
-		await this.retention.store(seq, payload.envelope_b64, payload.msg_id);
+		const postedAt = Date.now();
+		await this.retention.store(seq, payload.envelope_b64, payload.msg_id, postedAt, () => {
+			this.metricsOutbox.enqueue({
+				id: crypto.randomUUID(), conv_id: convID, posted_at: postedAt,
+				envelope_bytes: envelopeBytes.byteLength,
+				traffic: convID === this.env.MONITOR_CONVERSATION_ID ? "probe" : "application",
+			});
+		});
+		await this.armMetricsRetry();
+		this.ctx.waitUntil(this.flushMetrics());
 
 		const frame = JSON.stringify({
 			type: "message",
@@ -356,7 +414,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		// Authenticated subscribe: if pub_key is provided, issue a challenge
 		if (pubKeyHex) {
-			if (!isHexID(pubKeyHex, 32)) {
+			if (!isHexID(pubKeyHex, 64)) {
 				server.send(JSON.stringify({ type: "auth_failed", reason: "invalid pub_key" } satisfies SubscribeAuthFrame));
 				server.close(4003, "invalid pub_key");
 				return new Response(null, { status: 101, webSocket: client });
@@ -442,6 +500,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 		await this.ctx.storage.deleteAlarm();
 		this.retention = new RelayRetention(this.ctx.storage, envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS));
+		this.metricsOutbox = new RelayMetricsOutbox(this.ctx.storage);
 		return Response.json({ reset: true }, { status: 200 });
 	}
 
@@ -731,21 +790,6 @@ export default {
 					payload.msg_id,
 				);
 
-				// Track conversation activity for stats
-				try {
-					const statsRaw = await env.QNTM_KV.get(STATS_KEY, "text");
-					const stats: Record<string, number> = statsRaw ? JSON.parse(statsRaw) : {};
-					stats[payload.conv_id] = Date.now();
-					// Prune entries older than 7 days
-					const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-					for (const [k, v] of Object.entries(stats)) {
-						if (v < cutoff) delete stats[k];
-					}
-					await env.QNTM_KV.put(STATS_KEY, JSON.stringify(stats), { expirationTtl: STATS_TTL_SECONDS });
-				} catch {
-					// Stats tracking is best-effort, don't fail the send
-				}
-
 				return jsonResponse({ seq }, 201);
 			}
 
@@ -1028,27 +1072,32 @@ export default {
 				return errorResponse("legacy /v1/drop storage has been removed", 410);
 			}
 
-			// --- Stats endpoint: active conversations in last 7 days ---
-			if (request.method === "GET" && path === "/v1/stats") {
-				const now = Date.now();
-				const cutoff = now - 7 * 24 * 60 * 60 * 1000;
-
-				const statsRaw = await env.QNTM_KV.get(STATS_KEY, "text");
-				const stats: Record<string, number> = statsRaw ? JSON.parse(statsRaw) : {};
-
+			// A separate read-only token protects operational totals. No participant data leaves the DO.
+			if (request.method === "GET" && (path === "/v1/metrics" || path === "/v1/stats")) {
+				if (path === "/v1/metrics") {
+					const expected = env.METRICS_READ_TOKEN;
+					const authorization = request.headers.get("Authorization") ?? "";
+					const actual = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+					if (!expected || !actual || !equalToken(actual, expected)) return errorResponse("not found", 404);
+				}
+				const stub = env.RELAY_METRICS_DO.get(env.RELAY_METRICS_DO.idFromName("aggregate-v1"));
+				const response = await stub.fetch("https://relay-metrics/snapshot");
+				if (!response.ok) return errorResponse("telemetry unavailable", 503);
+				const snapshot = await response.json() as ReturnType<RelayMetricsStore["snapshot"]>;
+				if (path === "/v1/metrics") return jsonResponse(snapshot, 200, { "Cache-Control": "no-store" });
 				return jsonResponse({
-					active_conversations_7d: countRecentConversations(stats, cutoff),
-					measured_at: new Date(now).toISOString(),
-				}, 200);
+					active_conversations_7d: snapshot.traffic.reduce((count, row) => count + row.active_conversations_7d, 0),
+					measured_at: new Date(snapshot.measured_at).toISOString(),
+					measurement_started_at: new Date(snapshot.measurement_started_at).toISOString(),
+				}, 200, { "Cache-Control": "no-store" });
 			}
 
 			return errorResponse("not found", 404);
 
-			} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			const stack = err instanceof Error ? err.stack : undefined;
-			console.error("Unhandled worker error:", message, stack);
-			return jsonResponse({ error: "internal error", detail: message }, 500);
+			} catch {
+			// Exception messages/stacks can contain request-derived metadata.
+			console.error("Unhandled relay worker error");
+			return jsonResponse({ error: "internal error" }, 500);
 		}
 	},
 } satisfies ExportedHandler<Env>;

@@ -119,7 +119,7 @@ export class RelayRetention {
 		await this.schedule(now);
 	}
 
-	async store(seq: number, envelope: string, msgID: string | undefined, now = Date.now()): Promise<void> {
+	async store(seq: number, envelope: string, msgID: string | undefined, now = Date.now(), onStored?: () => void): Promise<void> {
 		this.initialize();
 		const created = Math.floor(now / 1000);
 		this.storage.transactionSync(() => {
@@ -132,6 +132,7 @@ export class RelayRetention {
 				 ON CONFLICT(msg_id) DO UPDATE SET seq = excluded.seq, expires_at = excluded.expires_at`,
 				msgID, seq, created + this.ttl,
 			);
+			onStored?.();
 		});
 		await this.schedule(now);
 	}

@@ -34,6 +34,7 @@ services:
       - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/default.yml:ro
       - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
       - ./charter-dashboard.json:/etc/grafana/dashboards/charter.json:ro
+      - ./relay-dashboard.json:/etc/grafana/dashboards/relay.json:ro
     mem_limit: 512m
     cpus: 0.5
     logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}

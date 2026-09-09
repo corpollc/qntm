@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added a private relay dashboard with Cloudflare-backed message-post totals, rolling active-conversation counts, certificate health and external encrypted messaging probes. Counts begin at deployment, distinguish synthetic traffic, and include both direct chats and groups.
+- Replaced the shared KV activity update with durable aggregate telemetry. Metadata is queued atomically with an envelope, delivered in bounded batches, deduplicated on retry and expired after seven days. A dedicated read-only token protects detailed totals.
+- Added an exe.dev monitor that tests live WebSocket delivery and reconnect/replay using two synthetic identities. Stale collection and failed probes are visible in Grafana; outbound notification recipients remain unconfigured.
+- Fixed optional WebSocket challenge authentication rejecting valid Ed25519 public keys because its hexadecimal length check used 32 characters instead of 64. The external probe now exercises this path against the real relay.
+- Documented the exact relay, telemetry, dashboard and provider metadata boundaries. Relay error handlers now emit fixed diagnostic strings and generic 500 responses instead of logging or echoing exception details that could contain request-derived metadata.
+
 ## v0.6.1 (2026-09-09)
 
 [Full release notes](releases/v0.6.1.md)

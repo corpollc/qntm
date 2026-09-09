@@ -2,6 +2,8 @@
 
 The public relay is `https://inbox.qntm.corpo.llc`, attached as a custom domain to the `qntm-dropbox` Cloudflare Worker. Its health endpoint is `/healthz`; clients send with HTTPS and receive with WSS on `/v1/subscribe`.
 
+The [private relay dashboard and monitoring guide](relay-monitoring.md) covers posted-message counters, active conversations, external HTTPS/TLS checks and encrypted live-delivery/replay probes. Counts distinguish application traffic from the synthetic probe and display when measurement began.
+
 ## Content and metadata expiry
 
 The relay source assigns `ENVELOPE_TTL_SECONDS` at publication (default seven days, minimum 60 seconds). Reads and receipts do not renew it. Ciphertext still exists temporarily in both Workers KV and Durable Object SQLite; this is a transport buffer, not participant-owned message history.
@@ -10,7 +12,7 @@ The retention implementation in `worker/src/retention.ts` schedules a Durable Ob
 
 On the first activation after upgrading, an old channel's SQLite records receive an expiry of their original creation time plus the configured TTL. Old `msg-seq:` and `receipt-readers:` keys migrate in bounded batches; alarms continue the migration without more client traffic. The previous implementation could leave expired SQLite content and metadata in inactive channels indefinitely. A new deployment does **not** wake every previously created Durable Object: completely dormant legacy objects require an inventoried migration before their stored data can be described as cleaned up.
 
-The aggregate activity key also has a seven-day TTL. The hourly scheduled handler prunes expired channel IDs from legacy and current activity data. Its read/modify/write statistics remain approximate under concurrent sends and KV consistency. Announce-channel names and public signing-key registrations are separate persistent configuration; they do not expire with envelopes.
+The old aggregate activity key has a seven-day TTL and an hourly cleanup handler. New monitoring deployments replace its concurrent read/modify/write updates with a durable per-post telemetry outbox and deduplicating aggregate store. Metrics event IDs, conversation IDs, post times and encrypted sizes expire after seven days; exported totals contain no conversation IDs. Announce-channel names and public signing-key registrations are separate persistent configuration and do not expire with envelopes. See the [exact metadata inventory](metadata-privacy.md).
 
 This behavior requires relay v0.6.0 or newer; source changes alone do not alter production objects or account settings. Release verification must cover the deployed bindings and TTL, the hourly trigger, alarms, dormant legacy objects, request/exception logs, exported datasets and provider recovery retention. Do not use expiry of active database rows as a statement of physical erasure: Cloudflare documents a 30-day point-in-time recovery window for SQLite-backed Durable Objects. The source code alone cannot establish which data is recoverable from a live account. [Cloudflare storage and recovery](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
 

@@ -14,15 +14,24 @@ id = "3a542ff3af7c466aba9cb401bc8a07e1"
 name = "CONVO_SEQ_DO"
 class_name = "ConversationSequencerDO"
 
+[[durable_objects.bindings]]
+name = "RELAY_METRICS_DO"
+class_name = "RelayMetricsDO"
+
 [[migrations]]
 tag = "convo-sequencer-v1"
 new_sqlite_classes = ["ConversationSequencerDO"]
+
+[[migrations]]
+tag = "relay-metrics-v1"
+new_sqlite_classes = ["RelayMetricsDO"]
 
 [vars]
 ENVELOPE_TTL_SECONDS = "604800"   # 7 days
 MAX_ENVELOPE_SIZE = "65536"       # 64KB
 MAX_MESSAGES_PER_CHANNEL = "512"
 RATE_LIMIT_PER_MIN = "500"
+MONITOR_CONVERSATION_ID = "feb8e1a9a6823fd7145a82b99f358548" # Dedicated synthetic probe; counted separately.
 
 # Removes stale entries from the aggregate activity key, including legacy keys
 # created before it had a TTL. Per-conversation content expiry uses DO alarms.

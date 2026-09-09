@@ -26,3 +26,25 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: 'Charter local snapshot is missing or older than 30 hours'}
+  - name: relay
+    rules:
+      - alert: RelayHTTPSUnavailable
+        expr: probe_success{job="relay_https"} == 0 or up{job="relay_https"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'External relay DNS, TLS or HTTPS health check is failing'}
+      - alert: RelayCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="relay_https"} - time() < 14 * 86400
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Relay TLS certificate expires in fewer than 14 days'}
+      - alert: RelayMessageProbeFailed
+        expr: qntm_relay_probe_success == 0 or time() - qntm_relay_probe_last_attempt_timestamp_seconds > 540 or absent(qntm_relay_probe_success)
+        for: 6m
+        labels: {severity: critical}
+        annotations: {summary: 'External relay encrypted send, live receive or reconnect/replay probe is failing or stale'}
+      - alert: RelayTelemetryStale
+        expr: up{job="relay_monitor"} == 0 or qntm_relay_stats_scrape_success == 0 or time() - qntm_relay_stats_last_success_timestamp_seconds > 180 or absent(qntm_relay_stats_last_success_timestamp_seconds)
+        for: 3m
+        labels: {severity: warning}
+        annotations: {summary: 'Relay aggregate message and conversation telemetry is unavailable'}

@@ -1,0 +1,31 @@
+[Unit]
+Description=qntm external relay availability and traffic monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qntm-monitor
+Group=qntm-monitor
+ExecStart=/opt/qntm-relay-monitor/venv/bin/python /opt/qntm-relay-monitor/relay_monitor.py
+Restart=always
+RestartSec=10
+UMask=0077
+StateDirectory=qntm-relay-monitor
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/qntm-relay-monitor
+MemoryMax=192M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

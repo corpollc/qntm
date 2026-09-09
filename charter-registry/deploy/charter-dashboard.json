@@ -590,5 +590,13 @@
         }
       }
     }
+  ],
+  "links": [
+    {
+      "title": "Relay traffic & availability",
+      "type": "link",
+      "url": "/d/qntm-relay",
+      "targetBlank": false
+    }
   ]
 }

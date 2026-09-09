@@ -1,0 +1,3 @@
+qntm==0.6.1
+httpx==0.28.1
+websockets==17.1

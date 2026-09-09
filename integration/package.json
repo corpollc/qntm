@@ -7,7 +7,7 @@
     "test": "echo 'Integration tests are opt-in. Run: bun run test:long' && exit 0",
     "test:long": "vitest run --reporter=verbose --maxWorkers=1 long-ui-flow.test.ts long-cli-policy.test.ts long-cli-membership.test.ts long-client-features.test.ts",
     "test:model": "vitest run --reporter=verbose harness.test.ts phase1.test.ts phase2.test.ts phase3.test.ts phase4.test.ts",
-    "test:relay": "vitest run --reporter=verbose relay-worker.test.ts relay-policy.test.ts relay-retention.test.ts",
+    "test:relay": "vitest run --reporter=verbose relay-worker.test.ts relay-policy.test.ts relay-retention.test.ts relay-metrics.test.ts",
     "test:acceptance": "vitest run --reporter=verbose --maxWorkers=1 relay-worker.test.ts long-ui-flow.test.ts long-cli-policy.test.ts long-cli-membership.test.ts long-client-features.test.ts",
     "test:features": "vitest run --reporter=verbose --maxWorkers=1 long-client-features.test.ts",
     "test:readme": "vitest run --reporter=verbose --maxWorkers=1 readme.test.ts echo-worker.test.ts"

@@ -51,3 +51,15 @@ jobs:
       - name: Deploy dropbox relay worker
         run: npx wrangler deploy
         working-directory: worker
+
+      - name: Configure private aggregate metrics reader
+        env:
+          METRICS_READ_TOKEN: ${{ secrets.QNTM_RELAY_METRICS_READ_TOKEN }}
+        run: |
+          if [ -n "$METRICS_READ_TOKEN" ]; then
+            printf '%s' "$METRICS_READ_TOKEN" | npx wrangler secret put METRICS_READ_TOKEN
+          fi
+        working-directory: worker
+
+      - name: Report deployed Worker observability settings
+        run: python3 scripts/report_relay_observability.py

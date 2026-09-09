@@ -13,6 +13,8 @@ This document describes the boundaries of the current implementation. Encryption
 
 ## Relay visibility
 
+The [field-by-field metadata inventory](metadata-privacy.md) distinguishes what the relay can observe, what it persists, what metrics export, and what remains subject to provider logging/recovery. Aggregate dashboards do not imply that the relay holds only aggregate data.
+
 The relay cannot decrypt ordinary conversation content without conversation keys. The sender signature and message body type are inside the encrypted envelope. Modified content fails authentication; the relay cannot produce a valid signature for an uncompromised sender.
 
 The relay sees conversation IDs, envelope timestamps, sequence numbers, sizes, request timing, and client IP addresses. Signed read receipts also expose a reader key ID and public key linked to a conversation and message. The AIM client submits receipts after receiving messages and after sending its own messages. This lets the relay associate a signing identity with receipt activity. The relay is not an identity-hiding service.
