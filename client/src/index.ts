@@ -30,6 +30,8 @@ export {
   checkExpiry, defaultTTL, defaultHandshakeTTL,
 } from './message/index.js';
 export type { DecryptMessageOptions } from './message/index.js';
+export { createGatewaySession, receiveConversationEvent, sessionGatewayContext } from './gate/session.js';
+export type { GatewaySessionState, ConversationEvent } from './gate/session.js';
 
 export {
   signRequest, verifyRequest, signApproval, verifyApproval,

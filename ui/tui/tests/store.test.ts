@@ -64,7 +64,7 @@ describe('Store', () => {
     expect(bobConversations[0]?.type).toBe('direct');
   });
 
-  it('deduplicates near-identical history entries', () => {
+  it('keeps separate message IDs even when text and time match', () => {
     const configDir = makeTempDir('qntm-tui-history-');
     dirs.push(configDir);
 
@@ -92,6 +92,6 @@ describe('Store', () => {
       createdAt: new Date(Date.parse(createdAt) + 1000).toISOString(),
     });
 
-    expect(store.loadHistory('conv-1')).toHaveLength(1);
+    expect(store.loadHistory('conv-1')).toHaveLength(2);
   });
 });

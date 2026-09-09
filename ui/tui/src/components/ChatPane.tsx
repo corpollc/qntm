@@ -1,136 +1,51 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
+import wrapAnsi from 'wrap-ansi';
 import type { StoredMessage } from '../lib/store.js';
-import GateCard from './GateCard.js';
+import { gatewaySummary } from './GateCard.js';
 import { theme } from '../lib/theme.js';
+import { terminalText } from '../lib/gateway.js';
 
 interface ChatPaneProps {
   messages: StoredMessage[];
   conversationName: string;
   scrollOffset: number;
   terminalHeight: number;
+  sidebarVisible?: boolean;
   resolveContact: (kid: string) => string;
 }
-
-function formatTime(iso: string): string {
+const groupTypes = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey']);
+function groupSummary(type: string, text: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '??:??';
+    const body = JSON.parse(text);
+    if (type === 'group_rekey') return `Security keys rotated to epoch ${body.new_conv_epoch}`;
+    if (type === 'group_remove') return `${body.removed_members.length} member(s) removed`;
+    if (type === 'group_add') return `${body.new_members.length} member(s) added`;
+    return `Group ${body.group_name || ''} created`;
+  } catch { return text; }
+}
+
+export default function ChatPane({ messages, scrollOffset, terminalHeight, sidebarVisible, resolveContact }: ChatPaneProps) {
+  const { stdout } = useStdout();
+  const width = Math.max(10, (stdout?.columns ?? 80) - (sidebarVisible ? 30 : 0) - 4);
+  const height = Math.max(3, terminalHeight - 9);
+  const lines: { text: string; color: string }[] = [];
+  for (const message of messages) {
+    const isGateway = message.bodyType.startsWith('gate.') || message.bodyType.startsWith('gov.');
+    const name = message.direction === 'incoming' && message.senderKey
+      ? resolveContact(message.senderKey) || `${message.senderKey.slice(0, 12)}..` : message.sender;
+    const body = groupTypes.has(message.bodyType) ? groupSummary(message.bodyType, message.text)
+      : isGateway ? message.gatewayVerified ? gatewaySummary(message.bodyType, message.text) : `[unverified ${message.bodyType}] ${message.text}` : message.text;
+    const text = terminalText(`${new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${name}: ${body}`);
+    const color = message.bodyType === 'system' ? theme.system : isGateway ? theme.info : message.direction === 'outgoing' ? theme.outgoing : theme.incoming;
+    for (const line of wrapAnsi(text, width, { hard: true, trim: false }).split('\n')) lines.push({ text: line, color });
   }
-}
-
-function isGateType(bodyType: string): boolean {
-  return bodyType.startsWith('gate.');
-}
-
-const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey']);
-
-function formatGroupSystemMessage(bodyType: string, text: string, senderLabel: string): string | null {
-  if (!GROUP_BODY_TYPES.has(bodyType)) return null;
-  try {
-    const parsed = JSON.parse(text);
-    switch (bodyType) {
-      case 'group_genesis': {
-        const name = parsed.group_name || 'Group';
-        const count = (parsed.founding_members || []).length;
-        return `\u{1F465} ${name} created (${count} member${count !== 1 ? 's' : ''})`;
-      }
-      case 'group_add': {
-        const count = (parsed.new_members || []).length;
-        return `\u{2795} ${senderLabel} added ${count} member${count !== 1 ? 's' : ''}`;
-      }
-      case 'group_remove': {
-        const count = (parsed.removed_members || []).length;
-        const reason = parsed.reason ? ` (${parsed.reason})` : '';
-        return `\u{2796} ${senderLabel} removed ${count} member${count !== 1 ? 's' : ''}${reason}`;
-      }
-      case 'group_rekey':
-        return `\u{1F510} Security keys rotated (epoch ${parsed.new_conv_epoch ?? '?'})`;
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
-}
-
-export default function ChatPane({
-  messages,
-  conversationName,
-  scrollOffset,
-  terminalHeight,
-  resolveContact,
-}: ChatPaneProps) {
-  // Reserve space for header, status bar, composer, borders
-  const visibleLines = Math.max(terminalHeight - 10, 5);
-
-  // Show the most recent messages, adjusted by scroll offset
-  const endIdx = Math.max(0, messages.length - scrollOffset);
-  const startIdx = Math.max(0, endIdx - visibleLines);
-  const visible = messages.slice(startIdx, endIdx);
-
+  const end = Math.max(0, lines.length - scrollOffset);
+  const visible = lines.slice(Math.max(0, end - height), end);
   return (
-    <Box flexDirection="column" flexGrow={1}>
-      <Box borderStyle="single" borderColor={theme.borderActive} paddingX={1} flexDirection="column" flexGrow={1}>
-        {messages.length > 0 && scrollOffset > 0 && (
-          <Box justifyContent="flex-end">
-            <Text dimColor>
-              {startIdx + 1}-{endIdx}/{messages.length} (scrolled)
-            </Text>
-          </Box>
-        )}
-
-        {visible.length === 0 && (
-          <Text dimColor>No messages yet. Type a message below to start the conversation.</Text>
-        )}
-
-        {visible.map((msg) => {
-          const time = formatTime(msg.createdAt);
-          let senderLabel = msg.sender;
-          if (msg.direction === 'incoming' && msg.senderKey) {
-            const alias = resolveContact(msg.senderKey);
-            if (alias) senderLabel = alias;
-            else senderLabel = msg.senderKey.slice(0, 12) + '..';
-          }
-
-          if (GROUP_BODY_TYPES.has(msg.bodyType)) {
-            const systemMsg = formatGroupSystemMessage(msg.bodyType, msg.text, senderLabel);
-            return (
-              <Box key={msg.id} flexDirection="row" marginTop={0}>
-                <Text dimColor>{time} </Text>
-                <Text color={theme.system ?? 'gray'}>{systemMsg ?? msg.text}</Text>
-              </Box>
-            );
-          }
-
-          if (isGateType(msg.bodyType)) {
-            return (
-              <Box key={msg.id} flexDirection="column">
-                <Text dimColor>{time} {senderLabel}</Text>
-                <GateCard bodyType={msg.bodyType} text={msg.text} direction={msg.direction} />
-              </Box>
-            );
-          }
-
-          const senderColor = msg.direction === 'outgoing' ? theme.outgoing : theme.incoming;
-
-          return (
-            <Box key={msg.id} flexDirection="row" marginTop={0}>
-              <Text dimColor>{time} </Text>
-              <Text color={senderColor} bold>{senderLabel}</Text>
-              <Text>: {msg.text}</Text>
-            </Box>
-          );
-        })}
-      </Box>
-
-      {scrollOffset > 0 && (
-        <Box justifyContent="center">
-          <Text dimColor>Esc to scroll {'\u00b7'} j/k navigate</Text>
-        </Box>
-      )}
+    <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor={theme.borderActive} paddingX={1}>
+      {visible.length ? visible.map((line, index) => <Text key={index} color={line.color} wrap="truncate">{line.text}</Text>) : <Text dimColor>No messages yet. Type a message below.</Text>}
+      {scrollOffset > 0 && <Text dimColor>Lines {Math.max(1, end - height + 1)}–{end}/{lines.length} · j/k scroll</Text>}
     </Box>
   );
 }

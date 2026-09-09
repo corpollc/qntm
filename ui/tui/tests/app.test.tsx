@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
-import { DropboxClient } from '@corpollc/qntm';
+import { DropboxClient, createGateRequestBody } from '@corpollc/qntm';
+import { gatewayFixture } from './support/gateway.js';
 import { sendMessage } from '../src/lib/poller.js';
 import { Store } from '../src/lib/store.js';
 import { TestRelayServer } from './support/relay.js';
@@ -46,6 +47,32 @@ describe('App integration', () => {
     while (dirs.length > 0) {
       rmSync(dirs.pop()!, { recursive: true, force: true });
     }
+  });
+
+  it('requires every review page before confirmation and cancels without posting', async () => {
+    const f = await gatewayFixture(dirs);
+    const request = createGateRequestBody(f.bob, f.context(), { service: 'demo', endpoint: '/records', verb: 'POST', targetUrl: 'https://api.example.test/records', payload: { exact: 'review me' } });
+    await f.deliver(f.bob, request.type, request);
+    const posted = vi.spyOn(DropboxClient.prototype, 'postMessage').mockResolvedValue(50);
+    const app = render(<App configDir={f.dir} dropboxUrl={relay.url} />);
+    try {
+      await waitFor(() => !!composerState.current?.activeConversation);
+      composerState.current!.onCommand('approve', request.request_id);
+      await waitFor(() => (app.lastFrame() ?? '').includes('Review gate.approval'));
+      expect(posted).not.toHaveBeenCalled();
+      const pages = Number((app.lastFrame() ?? '').match(/page 1\/(\d+)/)![1]);
+      expect(pages).toBeGreaterThan(1);
+      composerState.current!.onCommand('confirm', '');
+      await waitFor(() => (app.lastFrame() ?? '').includes(`Review all ${pages} pages`));
+      expect(posted).not.toHaveBeenCalled();
+      for (let page = 2; page <= pages; page++) {
+        composerState.current!.onCommand('review', String(page));
+        await waitFor(() => (app.lastFrame() ?? '').includes(`page ${page}/${pages}`));
+      }
+      composerState.current!.onCommand('cancel', '');
+      await waitFor(() => !(app.lastFrame() ?? '').includes('Review gate.approval'));
+      expect(posted).not.toHaveBeenCalled();
+    } finally { app.unmount(); posted.mockRestore(); }
   });
 
   it('boots, creates a conversation, sends a message, and receives a reply', async () => {

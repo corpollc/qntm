@@ -44,3 +44,5 @@ __pycache__/
 
 # Local monitoring dashboard verification artifacts
 /monitoring/proofshot-artifacts/
+
+/ui/tui/proofshot-artifacts/
