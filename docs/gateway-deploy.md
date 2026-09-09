@@ -71,7 +71,7 @@ The committed [`gateway-worker/wrangler.toml`](../gateway-worker/wrangler.toml) 
 
 ## GitHub Actions Deploy
 
-The repo includes [`.github/workflows/deploy-gateway.yml`](../.github/workflows/deploy-gateway.yml) for repeatable deploys from `main`.
+The repo includes [`.github/workflows/deploy-gateway.yml`](../.github/workflows/deploy-gateway.yml) for tagged release deployments and manually selected refs. Pushing `main` runs CI; it does not deploy.
 
 Configure these repository secrets before enabling the workflow:
 
@@ -79,7 +79,7 @@ Configure these repository secrets before enabling the workflow:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `QNTM_GATE_VAULT_KEY`
 
-The workflow builds `client/`, runs gateway tests and typechecking, upserts the vault secret, then deploys the worker.
+The workflow waits for the complete release gate on the exact tag and commit (or runs the full suite for a manual deployment). It then builds `client/`, runs gateway tests and typechecking, upserts the existing vault secret, and deploys the worker. See the [release procedure](deployment-checklist.md).
 
 ## Self-Hosting
 
