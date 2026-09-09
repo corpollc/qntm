@@ -26,6 +26,8 @@ Gateway authority comes from the participant's signed invitation and the gateway
 
 ID prefixes need at least four characters and must match exactly one verified subject. Approvals use the full referenced request/proposal, including its target, payload, roster, threshold, and expiry. Confirmation rechecks the current gateway, roster, policy, keys, epoch, and workflow status. A changed context, expired subject, or terminal result requires a fresh review. Typing an action command only prepares it; `/confirm` sends it. Inviting a gateway contacts the given HTTP endpoint to obtain its public identity first, but discloses conversation keys only after confirmation.
 
+Successful sends show the encrypted message's ID in a receipt. This confirms relay submission; use `/gate` for verified gateway acceptance, votes, and execution results. While an action is running, another gateway command shows a warning and must be entered again after completion. Signed actions are never automatically retried.
+
 HTTP admission success does not activate a gateway: its signed `gate.accept` must arrive in chat. Failed bootstrap delivery is saved for `/gate retry`, including across restart. An expired pending invitation can be replaced with a new `/gate invite`; this does not revoke any keys previously disclosed. An accepted gateway cannot be replaced through this command.
 
 A disapproval withdraws your own vote; other participants can still approve. `approved` is a local count, not proof of execution or credential availability. Only authenticated gateway results establish execution. Credential-free service-entry behavior is unchanged; see the main README's existing demonstration.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
-import { DropboxClient, createGateRequestBody } from '@corpollc/qntm';
+import { DropboxClient, createGateRequestBody, deserializeEnvelope } from '@corpollc/qntm';
 import { gatewayFixture } from './support/gateway.js';
 import { sendMessage } from '../src/lib/poller.js';
 import { Store } from '../src/lib/store.js';
@@ -73,6 +73,37 @@ describe('App integration', () => {
       await waitFor(() => !(app.lastFrame() ?? '').includes('Review gate.approval'));
       expect(posted).not.toHaveBeenCalled();
     } finally { app.unmount(); posted.mockRestore(); }
+  });
+
+  it('shows busy feedback after closing a review and identifies the acknowledged message', async () => {
+    const f = await gatewayFixture(dirs);
+    const request = createGateRequestBody(f.bob, f.context(), { service: 'demo', endpoint: '/records', verb: 'GET', targetUrl: 'https://api.example.test/records' });
+    await f.deliver(f.bob, request.type, request);
+    let acknowledge!: (sequence: number) => void;
+    const posted = vi.spyOn(DropboxClient.prototype, 'postMessage').mockReturnValue(new Promise(resolve => { acknowledge = resolve; }));
+    const app = render(<App configDir={f.dir} dropboxUrl={relay.url} />);
+    const text = () => (app.lastFrame() ?? '').replace(/[│\s]/g, '');
+    try {
+      await waitFor(() => !!composerState.current?.activeConversation);
+      composerState.current!.onCommand('approve', request.request_id);
+      await waitFor(() => (app.lastFrame() ?? '').includes('Review gate.approval'));
+      const pages = Number((app.lastFrame() ?? '').match(/page 1\/(\d+)/)![1]);
+      for (let page = 2; page <= pages; page++) {
+        composerState.current!.onCommand('review', String(page));
+        await waitFor(() => (app.lastFrame() ?? '').includes(`page ${page}/${pages}`));
+      }
+      composerState.current!.onCommand('confirm', '');
+      await waitFor(() => posted.mock.calls.length === 1 && !text().includes('Reviewgate.approval'));
+      const messageId = Buffer.from(deserializeEnvelope(posted.mock.calls[0][1]).msg_id).toString('hex');
+      expect(text()).not.toContain(`Message${messageId}.`);
+      composerState.current!.onCommand('disapprove', request.request_id);
+      await waitFor(() => text().includes('Gatewayactionisstillrunning.'));
+      expect(text()).toContain('Waitforitsreceiptbeforeretrying.');
+      expect(posted).toHaveBeenCalledTimes(1);
+      acknowledge(50);
+      await waitFor(() => text().includes(`Message${messageId}.`));
+      expect(posted).toHaveBeenCalledTimes(1); // No automatic retry of a signed action.
+    } finally { acknowledge(50); app.unmount(); posted.mockRestore(); }
   });
 
   it('boots, creates a conversation, sends a message, and receives a reply', async () => {

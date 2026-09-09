@@ -49,6 +49,7 @@ export class TestRelayServer {
   private readonly wss: WebSocketServer;
   readonly conversations = new Map<string, RelayConversation>();
   url = '';
+  beforeSendResponse?: () => Promise<void>;
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
@@ -65,6 +66,7 @@ export class TestRelayServer {
           };
           conv.messages.push(message);
           this.broadcastMessage(conv, message);
+          await this.beforeSendResponse?.();
           sendJson(res, 200, { seq });
           return;
         }

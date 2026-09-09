@@ -211,6 +211,7 @@ export class GatewayActions {
     const conversation = this.store.getConversationCrypto(id)!;
     const envelope = createGatewayMessage(this.identity, conversation, body, context, references);
     const sequence = await this.dropbox.postMessage(conversation.id, serializeEnvelope(envelope));
+    const receipt = `Message ${bytesToHex(envelope.msg_id)}.`;
     // Receive-order state is advanced only by the subscription, never this POST.
     this.store.appendHistory(id, { id: bytesToHex(envelope.msg_id), conversationId: id, direction: 'outgoing', sender: 'You', senderKey: bytesToHex(this.identity.keyID), bodyType: body.type, text: JSON.stringify(body), createdAt: new Date(envelope.created_ts * 1000).toISOString(), gatewayVerified: true });
     if (invitation) {
@@ -218,8 +219,8 @@ export class GatewayActions {
       this.store.updateConversation(id, stored => { stored.pendingGatewayBootstrap = { url: invitation.url, request }; });
       try { await new GateClient(invitation.url).promote(request); }
       catch { throw new Error('Invitation posted; bootstrap delivery failed. Use /gate retry to resend the saved sealed bootstrap.'); }
-      return 'Invitation posted. Waiting for signed gateway acceptance in chat.';
+      return `Invitation posted. ${receipt} Waiting for signed gateway acceptance in chat.`;
     }
-    return `${body.type} sent. Watch /gate for verified votes and results; approvals alone do not prove execution.`;
+    return `${body.type} sent. ${receipt} Watch /gate for verified votes and results; approvals alone do not prove execution.`;
   }
 }

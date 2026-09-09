@@ -65,8 +65,16 @@ export class TuiAgent {
     }
     const details = this.text(from);
     if (confirm) {
+      const type = shown.match(/Review ([\w.]+)\s/)![1];
+      const messages = () => (JSON.parse(readFileSync(join(this.configDir, 'conversations.json'), 'utf8')) as any[])
+        .flatMap(conversation => conversation.messages ?? []);
+      const previous = new Set(messages().map(message => message.id));
       const next = await this.command('/confirm');
-      await this.waitFor(/sent\.|Invitation posted\./, next);
+      // Every Ink redraw contains earlier notices. Correlate completion with
+      // this action's persisted envelope, never a generic historical "sent".
+      await this.waitFor(text => messages().some(message =>
+        message.direction === 'outgoing' && message.bodyType === type && !previous.has(message.id)
+        && compact(text).includes(`Message${message.id}.`)), next);
     }
     return details;
   }

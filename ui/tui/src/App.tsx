@@ -300,7 +300,11 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     const gatewayCommands = ['gate', 'request', 'secret', 'propose', 'approve', 'disapprove', 'gov-approve', 'gov-disapprove', 'review', 'confirm', 'cancel'];
     if (gatewayCommands.includes(cmd.toLowerCase())) {
       void (async () => {
-        if (gatewayBusyRef.current) { setReviewNotice('Gateway action is still running.'); return; }
+        if (gatewayBusyRef.current) {
+          const notice = 'Gateway action is still running. Wait for its receipt before retrying.';
+          setReviewNotice(notice); addSystemMessage(notice, theme.warning);
+          return;
+        }
         gatewayBusyRef.current = true; setGatewayBusy(true);
         try {
           if (!actions || !activeConvId) throw new Error('Select a conversation first.');

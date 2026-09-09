@@ -26,9 +26,10 @@ describe('terminal gateway actions and durable receive state', () => {
     expect(review.details).toContain(base64UrlEncode(f.gateway.publicKey));
     expect(f.dropbox.postMessage).not.toHaveBeenCalled();
     const cursor = f.store.loadCursor(f.convId);
-    await f.actions.confirm(f.convId);
+    const receipt = await f.actions.confirm(f.convId);
     expect(f.store.loadCursor(f.convId)).toBe(cursor);
     const envelope = deserializeEnvelope(vi.mocked(f.dropbox.postMessage).mock.calls[0][1]);
+    expect(receipt).toContain(`Message ${Buffer.from(envelope.msg_id).toString('hex')}.`);
     const verified = decryptGatewayMessage(envelope, f.store.getConversationCrypto(f.convId)!, f.context(), { request });
     expect(verified.body.type).toBe('gate.approval');
     expect(f.store.gatewaySession(f.convId, f.alice).events.some(e => e.body.type === 'gate.approval')).toBe(false);

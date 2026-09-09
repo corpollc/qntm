@@ -66,7 +66,7 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
     const options = file('terminal-request.json', { service: 'fun', endpoint: '/counter', verb: 'POST', targetUrl: `${h.fixture.baseUrl}/counter`, requiredApprovals: 3, payload: { source: 'terminal' } });
     await tui.review(`/request ${options}`);
     await receiveTui('gate.request');
-    const req = JSON.parse(tui.history(convId).filter(m => m.bodyType === 'gate.request').at(-1).text);
+    const req = JSON.parse(tui.history(convId).filter(m => m.bodyType === 'gate.request' && m.direction === 'outgoing').at(-1).text);
     await tui.review(`/disapprove ${req.request_id}`);
     await waitForCliHistory(h.alice, convId, historyMatchesRequest('gate.disapproval', req.request_id), 'terminal disapproval');
     await requireUi(h).approveLatestRequest();
@@ -82,7 +82,7 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
     const proposal = file('terminal-rules.json', { proposalType: 'rules_change', proposedRules: [{ service: '*', endpoint: '*', verb: '*', m: 2 }] });
     await tui.review(`/propose ${proposal}`);
     await receiveTui('gov.propose');
-    const id = JSON.parse(tui.history(convId).filter(m => m.bodyType === 'gov.propose').at(-1).text).proposal_id;
+    const id = JSON.parse(tui.history(convId).filter(m => m.bodyType === 'gov.propose' && m.direction === 'outgoing').at(-1).text).proposal_id;
     await tui.review(`/gov-disapprove ${id}`);
     await waitForCliHistory(h.alice, convId, historyMatchesProposal('gov.disapprove', id), 'terminal governance disapproval');
     await requireUi(h).approveLatestProposal();
