@@ -4,9 +4,9 @@ qntm encrypts message contents; **it does not hide the existence, timing, size o
 
 ## Browser invite links
 
-Published 0.6.1 generates `?invite=TOKEN` links: opening one sends its bootstrap secret to the browser UI host and any infrastructure that receives or logs that request URL. Removing it from the address bar afterward cannot undo this.
+The browser source shipped with 0.6.1 generates `?invite=TOKEN` links: opening one sends its bootstrap secret to the browser UI host and any infrastructure that receives or logs that request URL. Removing it from the address bar afterward cannot undo this.
 
-Unreleased browser code generates `#TOKEN` links, matching the CLI and TypeScript format; fragments are not sent in HTTP requests or Referer headers. The browser reads the fragment locally, opens a join review and removes it from the current address. Clipboard contents, browser history/sync, extensions, scripts on the UI origin and services used to share a link can still access it.
+The hosted browser at `chat.corpo.llc` was updated on September 9, 2026 through [verified deployment 34409405374](https://github.com/corpollc/qntm/actions/runs/34409405374). Current browser code generates `#TOKEN` links, matching the CLI and TypeScript format; fragments are not sent in HTTP requests or Referer headers. The browser reads the fragment locally, opens a join review and removes it from the current address. This browser deployment did not create a new Python/npm release. Clipboard contents, browser history/sync, extensions, scripts on the UI origin and services used to share a link can still access it.
 
 Treat invites as secrets; replace affected conversations or use an authenticated rekey if a previously shared query link reached an untrusted host. Rekeying protects future epochs, not earlier ciphertext encrypted with exposed keys. This fix cannot erase historical provider logs or revoke old keys.
 

@@ -275,9 +275,11 @@ pip install 'qntm[mcp]'
 
 ## Building
 
+Use Node 24.16 or later in the 24.x series for the complete development suite, including the OpenClaw host checks. See the [deployment checklist](docs/deployment-checklist.md) for the full test matrix.
+
 ```bash
-(cd client && npm install && npm run build)    # TypeScript library
-(cd ui/aim-chat && npm install && npm run build)  # Web UI
+(cd client && npm ci && npm run build)          # TypeScript library
+(cd ui/aim-chat && npm ci && npm run build)     # Web UI
 uv build python-dist/                        # Python package
 ```
 

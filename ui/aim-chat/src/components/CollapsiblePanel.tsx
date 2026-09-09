@@ -1,4 +1,4 @@
-import { ReactNode, useRef, useEffect, useState } from 'react'
+import { ReactNode, useRef, useEffect, useState, useId } from 'react'
 
 export interface CollapsiblePanelProps {
   title: string
@@ -18,7 +18,12 @@ export function CollapsiblePanel({
   children,
 }: CollapsiblePanelProps) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const bodyId = useId()
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
+  // React 18 forwards the native inert attribute as a string, not a boolean.
+  // Keep children mounted so drafts survive collapsing while excluding controls
+  // from focus, pointer interaction and the accessibility tree immediately.
+  const inertProps = expanded ? {} : { inert: '' }
 
   useEffect(() => {
     const el = contentRef.current
@@ -42,6 +47,7 @@ export function CollapsiblePanel({
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
+        aria-controls={bodyId}
         onClick={onToggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
       >
@@ -50,6 +56,9 @@ export function CollapsiblePanel({
         {trailing && <span className="collapsible-trailing">{trailing}</span>}
       </div>
       <div
+        {...inertProps}
+        id={bodyId}
+        aria-hidden={!expanded}
         className={`collapsible-body${expanded ? ' collapsible-body-open' : ''}`}
         style={{
           maxHeight: expanded ? (grow ? 'none' : (contentHeight ?? 800)) : 0,
