@@ -68,4 +68,6 @@ Verification uses the context current when the message is processed. To reverify
 
 Tests exercise encrypted envelope roundtrips, altered signatures, forged terminal events, different conversations and epochs, removed signers, stale rosters, expiry, duplicate delivery, last-vote behavior, credential sealing, and nullable Python governance fields. Real browser/Python/TypeScript journeys cover approved execution, policy and membership changes, key rotation, negative authorization, and gateway restart recovery.
 
+The gateway service processes subscription envelopes only in its current epoch. It skips older replay records without retaining prior decryption keys, skips future epochs, and advances its durable relay cursor. Already-consumed sequences are ignored after restart. This does not turn the gateway into a historical decryption service or reauthorize pre-rekey requests; clients retain their own history.
+
 The terminal UI and OpenClaw plugin still need their own gateway action interfaces. These helpers provide a shared implementation for that work; they do not install host-specific tools or grant an agent permission to invoke them.

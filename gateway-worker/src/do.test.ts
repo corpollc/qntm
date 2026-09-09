@@ -285,6 +285,52 @@ function decodePostedBody(fetchMock: ReturnType<typeof vi.fn>, callIndex: number
 // Tests
 // =====================================================================
 
+describe('qntm-fvjk: current-epoch subscription boundary', () => {
+  const deliver = (instance: GatewayConversationDO, seq: number, envelope: Uint8Array) =>
+    (instance as unknown as { handleRelayEnvelope: (s: number, e: Uint8Array) => Promise<void> }).handleRelayEnvelope(seq, envelope);
+
+  it('skips prior/future epochs without decrypt noise, persists progress, and resumes current traffic after restart', async () => {
+    const { doInstance, storage } = makeDO();
+    const current = promotedState({ conv_epoch: 2 });
+    await storage.put('conv_state', current);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const request = buildSignedRequest(alice).body;
+    // Deliberately reuse keys: even an authenticated envelope claiming the wrong
+    // epoch must not add a request or authorization record to current state.
+    for (const [seq, epoch] of [[1, 1], [2, 3]]) {
+      const envelope = createMessage(alice, { ...convFromState(current), currentEpoch: epoch }, 'gate.request', encode(request), undefined, defaultTTL());
+      await deliver(doInstance, seq, serializeEnvelope(envelope));
+    }
+    expect(error).not.toHaveBeenCalled();
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(0);
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(2);
+
+    const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
+    const wire = serializeEnvelope(createMessage(alice, convFromState(current), 'gate.request', encode(request), undefined, defaultTTL()));
+    await deliver(restarted, 3, wire);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(1);
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(3);
+    await deliver(restarted, 3, wire);
+    await deliver(restarted, 2, wire);
+    await deliver(restarted, Number.NaN, wire);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(1);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('still authenticates current-epoch data and reports rejection without leaking exception details', async () => {
+    const { doInstance, storage } = makeDO();
+    const current = promotedState({ conv_epoch: 1 });
+    await storage.put('conv_state', current);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const envelope = createMessage(alice, convFromState(current), 'gate.request', encode(buildSignedRequest(alice).body), undefined, defaultTTL());
+    envelope.ciphertext[0] ^= 1;
+    await deliver(doInstance, 1, serializeEnvelope(envelope));
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(0);
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(1);
+    expect(error).toHaveBeenCalledExactlyOnceWith('GatewayConversationDO rejected relay envelope');
+  });
+});
+
 describe('qntm-d9qb: gate.config rejection', () => {
   it('rejects gate.config from any participant', async () => {
     const { storage, process } = makeDO();

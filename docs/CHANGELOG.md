@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Gateway subscriptions now skip prior and future epochs before decryption, advance their durable replay cursor, and ignore already-consumed sequences. Rekey/restart replay no longer produces invalid-tag noise or lets old-epoch traffic enter current authorization state. Current-epoch envelopes still require full authentication.
 - Browser backup downloads now use password encryption. Restores validate identities and all stored fields, show replacement counts and contact/gateway destinations, and require confirmation before an atomic write. Legacy plaintext imports remain supported; stale reviews, malformed files, incorrect passwords and tampering fail without replacing data.
 - Fixed profile startup redirecting Settings, Help and Guidance links to chat, including the reload after a restore. Settings now scrolls within the application so longer backup reviews remain reachable.
 - Aligned Python and TypeScript message expiry: normal decryption rejects expired messages, both enforce the same timestamp and future-skew bounds, and saved-history verification requires an explicit option. Shared encrypted fixtures cover exact expiry boundaries and tampering in both modes. TypeScript message creation now has Python's default TTL.

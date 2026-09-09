@@ -210,16 +210,23 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!initialState) return;
 
+    if (!Number.isSafeInteger(seq) || seq <= initialState.poll_cursor) return;
+
     const conv = this.buildConversation(initialState, hexToBytes(initialState.conv_id));
     let processed = false;
 
     try {
       const envelope = deserializeEnvelope(envelopeBytes);
-      const msg = decryptMessage(envelope, conv);
-      await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
-      processed = true;
-    } catch (error) {
-      console.error('GatewayConversationDO failed to process relay envelope', error);
+      // Rekeys can precede our own old-epoch messages in subscription/restart
+      // replay. Those records are history, never new authority in this epoch.
+      // Do not retain old keys or try current keys against old ciphertext.
+      if (envelope.conv_epoch === initialState.conv_epoch) {
+        const msg = decryptMessage(envelope, conv);
+        await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
+        processed = true;
+      }
+    } catch {
+      console.error('GatewayConversationDO rejected relay envelope');
     }
 
     const latestState = await this.ctx.storage.get<ConversationState>('conv_state');
