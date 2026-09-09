@@ -27,6 +27,14 @@ describe('extractToken', () => {
     expect(extractToken('https://chat.corpo.llc/#TOKEN123')).toBe('TOKEN123')
   })
 
+  it('normalizes wrapped tokens in fragment links before URL parsing', () => {
+    expect(extractToken('https://chat.corpo.llc/#abc def\nghi')).toBe('abcdefghi')
+  })
+
+  it('normalizes encoded whitespace in query invite links', () => {
+    expect(extractToken('https://chat.corpo.llc/?invite=abc%0Adef%09ghi')).toBe('abcdefghi')
+  })
+
   it('returns empty string for empty input', () => {
     expect(extractToken('')).toBe('')
   })
