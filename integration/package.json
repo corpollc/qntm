@@ -18,11 +18,11 @@
     "@corpollc/qntm": "file:../client"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260313.1",
+    "@cloudflare/workers-types": "5.20260908.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "^24.5.2",
     "playwright": "^1.55.1",
     "typescript": "^5.7.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   }
 }

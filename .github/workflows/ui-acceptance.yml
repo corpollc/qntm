@@ -53,7 +53,7 @@ jobs:
 
       - name: Check gateway security regressions
         working-directory: gateway-worker
-        run: npm test && npm run typecheck
+        run: npm audit --audit-level=moderate && npm test && npm run typecheck
 
       - name: Install AIM UI
         working-directory: ui/aim-chat
