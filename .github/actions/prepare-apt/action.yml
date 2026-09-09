@@ -1,0 +1,28 @@
+name: Prepare Ubuntu package sources
+description: Keep an unused Chrome repository from blocking Ubuntu test dependencies
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Playwright downloads its own Chromium. The runner's optional Chrome
+        # deb repository is unrelated to expect and browser system libraries.
+        # Disable that source only; never bypass APT signatures or checksums.
+        sudo python3 - <<'PY'
+        import pathlib
+        import re
+        import urllib.parse
+
+        for source in pathlib.Path('/etc/apt/sources.list.d').iterdir():
+            if source.suffix not in {'.list', '.sources'} or not source.is_file():
+                continue
+            active = '\n'.join(line.split('#', 1)[0] for line in source.read_text().splitlines())
+            urls = [urllib.parse.urlsplit(url) for url in re.findall(r'https?://[^\s\]]+', active)]
+            chrome = [url.hostname == 'dl.google.com' and url.path.startswith('/linux/chrome') for url in urls]
+            if not any(chrome):
+                continue
+            if not all(chrome):
+                raise SystemExit(f'Refusing to disable mixed package source: {source.name}')
+            source.rename(source.with_name(source.name + '.qntm-disabled'))
+            print(f'Disabled unused Chrome package source: {source.name}')
+        PY

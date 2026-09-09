@@ -28,7 +28,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PTY dependency
+      - name: Prepare Ubuntu package sources
+        uses: ./.github/actions/prepare-apt
+
+      - name: Install expect
         run: sudo apt-get update && sudo apt-get install -y expect
 
       - name: Install external relay monitor dependencies

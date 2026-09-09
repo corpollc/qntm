@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- CI now disables the runner's unused Chrome APT source before installing Ubuntu test dependencies, so a broken Chrome package index cannot block terminal/browser tests. Package signature and checksum verification remains enabled; browser tests still use Playwright's pinned Chromium.
 - OpenClaw now saves authenticated conversation state, current keys, pending delivery and relay progress together. A private local queue retries failed host admission and recovers after a process crash; rekeys and removal survive restart, and delayed replies use current keys. Identity/configuration parsing rejects malformed keys and epochs without echoing private input. Documented exact local plaintext fields, bounds, retention and the handoff's at-least-once limits.
 - OpenClaw now targets the public 2026.9.3 SDK, with a self-contained plugin archive, generated configuration metadata, and a real-host CI smoke test for encrypted direct/group replies and restart replay. Removed the local SDK shims that could hide host API drift. This adapter revision requires a compatible Node 24 or 26 host; structured gateway actions remain unfinished.
 - Normalize wrapped fragment-style invite links before URL parsing so pasted spaces do not corrupt the invite token.
