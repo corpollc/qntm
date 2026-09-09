@@ -30,6 +30,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./charter": {
+      "types": "./dist/charter/index.d.ts",
+      "import": "./dist/charter/index.js"
     }
   },
   "files": [
@@ -41,7 +45,8 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:cross": "vitest run --config vitest.cross.config.ts"
+    "test:cross": "vitest run --config vitest.cross.config.ts",
+    "test:charter-server": "vitest run --config vitest.charter.config.ts"
   },
   "dependencies": {
     "@noble/ed25519": "^2.2.3",
