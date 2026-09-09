@@ -91,6 +91,25 @@ describe('TypeScript client against the Go registrar',()=>{
     const after=await client.chain(agentId);expect(after.record!.sequence).toBe(3);expect(after.record!.statements).toHaveLength(3);
     await client.consistency(heads,before);auditCharterSnapshot(await client.log(before),before,trust);
   });
+  it('self-certifies, experiments in a namespace, and enforces a live threshold transition',async()=>{
+    const agent=generateIdentity(),second=generateIdentity(),third=generateIdentity();
+    const self={keys:[charterKey(agent.publicKey)],threshold:1};
+    const charter=createCharter({registry,agent,governance:self,agentRights:['statement'],extensions:{'open.studio':{purpose:'experiment freely'}}});
+    await client.submit(charter);
+    const experiment=signCharterStatement(createCharterStatement(charter,'statement',{namespace:'open.studio/creative',data:{ideas:['music','robot gardens']}}),agent);
+    await client.submit(experiment);
+    const shared={keys:[charterKey(agent.publicKey),charterKey(second.publicKey),charterKey(third.publicKey)],threshold:2};
+    const rotated=signCharterStatement(createCharterStatement(experiment,'governance.rotate',{governance:shared}),agent);
+    await client.submit(rotated);
+    const unilateral=signCharterStatement(createCharterStatement(rotated,'governance.rotate',{governance:self}),agent);
+    await expect(client.submit(unilateral)).rejects.toMatchObject({status:422,code:'authority_rejected'});
+    await client.submit(signCharterStatement(unilateral,second));
+    const {record}=await client.chain(charterAgentId(agent.publicKey));
+    expect(record!.governance).toEqual(self);
+    expect(record!.statements[0]).toMatchObject({namespace:'open.studio/creative',data:{ideas:['music','robot gardens']}});
+    const heads=await client.heads();auditCharterSnapshot(await client.log(heads),heads,trust);
+  });
+
   it('rejects insecure remote endpoints and malformed agent paths before sending',async()=>{
     expect(()=>new CharterRegistryClient('http://example.com',trust)).toThrow(/HTTPS/);
     expect(()=>new CharterRegistryClient('https://user:password@example.com',trust)).toThrow(/base URL/);

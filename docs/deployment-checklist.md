@@ -22,9 +22,9 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | Browser | Unit/component tests, production build, Playwright conversation journeys, runtime dependency audit |
 | Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
-| Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, and restart journeys |
+| Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, restart, and signed invitation/acceptance journeys |
 | Adapters | OpenClaw, NanoClaw, and Claude channel tests/typecheck; real MCP channel transport; runtime dependency audits |
-| Integration and packaging | Protocol model suite; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
+| Integration and packaging | Protocol model suite; browser/CLI/MCP guidance; TypeScript-to-CLI webhook/executable delivery and restart; lost HTTP acknowledgement recovery; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
 
 The cross-surface suite uses local Workers and browser instances; some API recipe journeys call public services. Test failures there must be diagnosed rather than silently skipped. Adapter contract tests do not replace smoke tests in each external host release. Go charter support is a reference implementation, not a public service.
 
@@ -52,3 +52,20 @@ The repository needs `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `QNTM_
 Manual relay/gateway deployment runs the full CI gate on the selected ref before deploying. Deploy a previous compatible ref to roll back code. Published package versions are immutable; fix forward with a new version if a release artifact is wrong. Do not move a published tag or rotate the gateway vault key during a routine release: existing credentials depend on that key.
 
 Relay cleanup is logical expiry. Cloudflare recovery history and copies stored in clients or gateways have separate retention. Old dormant Durable Objects begin metadata migration and alarm scheduling when they next wake; deployment alone does not enumerate them.
+
+## Feature journey coverage
+
+`cd integration && npm run test:acceptance` includes the existing messaging, gateway, policy, and membership journeys plus the v0.6.0 feature journeys. `npm run test:features` runs just the latter during development.
+
+| Feature | Cross-client evidence |
+| --- | --- |
+| Gateway admission | CLI invitation and authenticated gateway acceptance validated by TypeScript and observed in browser history; existing UI workflow invites the gateway from the browser |
+| Guidance categories | CLI pins for all three categories, discovered/prepared/sent through a real MCP connection, received in the browser; changed reviewed content is rejected |
+| Browser guidance | Browser pin, exact-message review without transmission, then send and matching CLI receive; no automatic history attachment |
+| Receive hooks | TypeScript sender through a real relay to Python watch, HTTP and executable hooks; a failing webhook does not repeat successful executable delivery; pending events survive restart and a shared CLI cursor advance |
+| Send acknowledgement recovery | Proxy drops the successful HTTP response; CLI reconciles through the real WebSocket relay; TypeScript receives one message and the proxy observes one POST |
+| Claude channel | Real MCP client observes pending/live signed events, stable IDs, binary payloads, and self-message suppression; durable queue tests cover failure and restart |
+| Charter | Real Go server accepts self-charters, parent-governed children and namespace experiments from TypeScript; verifies threshold transitions, rejects unauthorized rotation/forks, and survives abrupt restart |
+| Relay retention | Real Worker WebSocket replay and idle alarms, plus SQLite migration, expired sequence gaps and multiple-page replay |
+
+The charter boundary runs with `cd client && npm run test:charter-server`; the Claude channel runs with `cd channel && npm test`. Both are mandatory parts of the same complete CI/release gate.

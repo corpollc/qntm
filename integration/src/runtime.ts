@@ -152,7 +152,7 @@ function npxCommand(): string {
 export class CliAgent {
   readonly name: string;
   readonly configDir: string;
-  private readonly qntmBin: string;
+  readonly qntmBin: string;
   private readonly relayUrl: string;
   private readonly recipeCatalogPath: string;
   private readonly repoRoot: string;
@@ -187,6 +187,12 @@ export class CliAgent {
       throw new Error(`CLI command failed: ${JSON.stringify(parsed)}`);
     }
     return parsed;
+  }
+
+  start(args: string[]): ManagedProcess {
+    return new ManagedProcess(`${this.name}-watch`, [this.qntmBin,
+      '--config-dir', this.configDir, '--dropbox-url', this.relayUrl, ...args],
+    this.repoRoot, { ...process.env, QNTM_RECIPE_CATALOG_PATH: this.recipeCatalogPath });
   }
 
   readIdentity(): Record<string, string> {
@@ -599,6 +605,7 @@ export interface LongHarness {
 
 export interface LongHarnessOptions {
   withUi?: boolean;
+  withMcp?: boolean;
 }
 
 function writeRecipeCatalog(path: string, baseUrl: string): void {
@@ -704,7 +711,7 @@ function writeRecipeCatalog(path: string, baseUrl: string): void {
   writeFileSync(path, JSON.stringify(catalog, null, 2));
 }
 
-async function createPythonVenv(rootDir: string, repoRoot: string): Promise<string> {
+async function createPythonVenv(rootDir: string, repoRoot: string, withMcp = false): Promise<string> {
   const venvDir = join(rootDir, 'venv');
   const systemPython = process.platform === 'win32' ? 'python.exe' : 'python3';
   await execFileAsync(systemPython, ['-m', 'venv', venvDir], {
@@ -713,7 +720,7 @@ async function createPythonVenv(rootDir: string, repoRoot: string): Promise<stri
   });
   const binDir = join(venvDir, process.platform === 'win32' ? 'Scripts' : 'bin');
   const python = join(binDir, process.platform === 'win32' ? 'python.exe' : 'python');
-  await execFileAsync(python, ['-m', 'pip', 'install', '-q', '-e', 'python-dist'], {
+  await execFileAsync(python, ['-m', 'pip', 'install', '-q', '-e', withMcp ? 'python-dist[mcp]' : 'python-dist'], {
     cwd: repoRoot,
     maxBuffer: EXEC_MAX_BUFFER,
   });
@@ -743,7 +750,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   const recipeCatalogPath = join(rootDir, 'recipes.json');
   writeRecipeCatalog(recipeCatalogPath, fixture.baseUrl);
 
-  const qntmBin = await createPythonVenv(rootDir, repoRoot);
+  const qntmBin = await createPythonVenv(rootDir, repoRoot, options.withMcp);
   const relayUrl = `http://127.0.0.1:${relayPort}`;
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
   const uiUrl = withUi ? `http://127.0.0.1:${uiPort}` : '';
