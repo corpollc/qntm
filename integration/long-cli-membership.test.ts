@@ -140,7 +140,8 @@ describe.sequential('real long-running gateway integration CLI membership flow',
         6_000,
       );
 
-      await harness.charlie.run(['gate-approve', pendingRequestId, '-c', convId]);
+      await expect(harness.charlie.run(['gate-approve', pendingRequestId, '-c', convId])).rejects.toThrow('current participant');
+      await harness.charlie.sendGateApprovalClaimingConversation(pendingRequestId, convId, convId);
       await assertNoCliHistory(
         harness.alice,
         convId,
@@ -148,7 +149,8 @@ describe.sequential('real long-running gateway integration CLI membership flow',
         6_000,
       );
 
-      await harness.charlie.run(['gov', 'approve', addCharlieProposalId, '-c', convId]);
+      await expect(harness.charlie.run(['gov', 'approve', addCharlieProposalId, '-c', convId])).rejects.toThrow('current participant');
+      await harness.charlie.sendStaleGovernanceApproval(addCharlieProposalId, convId);
       await assertNoCliHistory(
         harness.alice,
         convId,

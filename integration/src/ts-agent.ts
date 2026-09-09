@@ -31,6 +31,7 @@ import {
   createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
   createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
   parseGatewayBody, validateGatewayContext, verifyGatewayMessage,
+  gatewayProposalSignable,
 } from '@corpollc/qntm';
 import type { Conversation, Identity, GatewayContext, ThresholdRule, GateRequestBody, GatewayProposalBody,
   CreateGateRequestOptions, CreateGateSecretOptions, CreateGatewayProposalOptions, VerifiedGatewayEvent, Message } from '@corpollc/qntm';
@@ -325,6 +326,16 @@ export class TslibAgent {
     await this.sendRaw(transportConvId, 'gate.approval', JSON.stringify(body));
   }
 
+  /** Deliberately bypass safe builders to exercise revoked-key traffic at the gateway. */
+  async sendStaleGovernanceApproval(proposalId: string, convId: string): Promise<void> {
+    const identity = this.requireIdentity();
+    const proposal = this.findGovProposal(this.getConversation(convId), proposalId) as unknown as GatewayProposalBody;
+    const body = { type: 'gov.approve', conv_id: convId, proposal_id: proposalId, signer_kid: base64UrlEncode(identity.keyID),
+      signature: base64UrlEncode(signGovApproval(identity.privateKey, { conv_id: convId, proposal_id: proposalId,
+        proposal_hash: hashProposal(gatewayProposalSignable(proposal)) })) };
+    await this.sendRaw(convId, body.type, JSON.stringify(body));
+  }
+
   private requireIdentity(): Identity {
     if (!this.identity) {
       throw new Error(`${this.name} has no identity`);
@@ -358,13 +369,6 @@ export class TslibAgent {
     }
   }
 
-  private syncParticipantsFromGroupState(state: ConversationState): void {
-    const kids = state.groupState.listMembers().map((kid) => bytesToHex(kid).toLowerCase());
-    if (kids.length > 0) {
-      state.participantKids = [...new Set(kids)];
-    }
-  }
-
   private applyGroupEvent(state: ConversationState, bodyType: string, bodyBytes: Uint8Array): void {
     try {
       if (bodyType === 'group_rekey') {
@@ -389,7 +393,14 @@ export class TslibAgent {
       }
 
       processGroupMessage(bodyType, bodyBytes, state.groupState);
-      this.syncParticipantsFromGroupState(state);
+      if (bodyType === 'group_genesis') for (const member of parseGroupGenesisBody(bodyBytes).founding_members) this.mergeParticipant(state, new Uint8Array(member.public_key));
+      if (bodyType === 'group_add') for (const member of parseGroupAddBody(bodyBytes).new_members) this.mergeParticipant(state, new Uint8Array(member.public_key));
+      if (bodyType === 'group_remove') {
+        const removed = new Set(parseGroupRemoveBody(bodyBytes).removed_members.map(kid => bytesToHex(new Uint8Array(kid))));
+        state.participantKids = state.participantKids.filter(kid => !removed.has(kid));
+        state.participantPublicKeys = state.participantPublicKeys.filter(pk => !removed.has(bytesToHex(keyIDFromPublicKey(hexToBytes(pk)))));
+      }
+      state.conv.participants = state.participantKids.map(hexToBytes);
     } catch {
       // Keep malformed group events in history even if local state cannot apply them.
     }
@@ -530,6 +541,8 @@ export class TslibAgent {
         state.gatewayKid = senderKidB64;
         state.gatewayPublicKey = acceptance.gateway_public_key;
         const invited = JSON.parse(invitation.unsafe_body);
+        state.participantKids = Object.keys(invited.participants).map(kid => bytesToHex(base64UrlDecode(kid)));
+        state.participantPublicKeys = Object.values(invited.participants).map(pk => bytesToHex(base64UrlDecode(String(pk))));
         state.gatewayFloor = invited.floor;
         state.gatewayRules = invited.rules;
       }

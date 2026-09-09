@@ -855,10 +855,12 @@ function browserGatewayContext(profileId: string, conversationId: string, identi
   if (gateway?.status === 'pending') throw new Error('Waiting for the gateway to accept in this conversation')
   if (!conv || !gateway?.keyId || !gateway.publicKey) return undefined
   const participants: Record<string, string> = {}
+  const eligible = new Set(conv.participants.map(kid => base64UrlEncode(hexToBytes(kid))))
   for (const pk of listKnownParticipantPublicKeys(conv, identity)) {
     const kid = base64UrlEncode(keyIDFromPublicKey(pk))
-    if (kid !== gateway.keyId) participants[kid] = base64UrlEncode(pk)
+    if (kid !== gateway.keyId && eligible.has(kid)) participants[kid] = base64UrlEncode(pk)
   }
+  if (Object.keys(participants).length !== eligible.size) throw new Error('Current participant public keys are incomplete')
   let floor = gateway.floor ?? 1
   let rules = [{ service: '*', endpoint: '*', verb: '*', m: floor }]
   const gatewayHex = bytesToHex(base64UrlDecode(gateway.keyId))
