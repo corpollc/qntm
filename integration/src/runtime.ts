@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { spawn, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -63,6 +63,8 @@ export async function waitForHttp(url: string, init?: RequestInit, timeoutMs = 3
   throw new Error(`Timed out waiting for ${url}: ${lastFailure}${lastStatus === undefined ? '' : ` (last response: HTTP ${lastStatus})`}`);
 }
 
+// Best-effort selection for hosts requiring preconfigured nonzero ports.
+// Prefer --port 0 and waitForLocalUrl when the server supports it.
 // Keep the whole batch bound while allocating. Releasing each port before
 // choosing the next can give a Worker and its inspector the same port.
 // Callers must still start promptly: another process can bind after release.
@@ -124,6 +126,9 @@ export class ManagedProcess {
   child: ReturnType<typeof spawn>;
   stdout = '';
   stderr = '';
+  private stdoutStart = 0;
+  private stderrStart = 0;
+  private spawnError: Error | undefined;
 
   constructor(name: string, command: string[], cwd: string, env: NodeJS.ProcessEnv) {
     this.name = name;
@@ -134,6 +139,9 @@ export class ManagedProcess {
   }
 
   private start(): ReturnType<typeof spawn> {
+    this.stdoutStart = this.stdout.length;
+    this.stderrStart = this.stderr.length;
+    this.spawnError = undefined;
     const [cmd, ...args] = this.command;
     const child = spawn(cmd, args, {
       cwd: this.cwd,
@@ -146,6 +154,7 @@ export class ManagedProcess {
     child.stderr.on('data', (chunk) => {
       this.stderr += chunk.toString();
     });
+    child.once('error', error => { this.spawnError = error; });
     return child;
   }
 
@@ -172,6 +181,36 @@ export class ManagedProcess {
   async waitForHttp(url: string, init?: RequestInit, timeoutMs = 30_000): Promise<void> {
     try {
       await waitForHttp(url, init, timeoutMs);
+    } catch (error) {
+      throw new Error(`${this.name} failed readiness: ${String(error)}\nstdout:\n${this.stdout.slice(-8_192)}\nstderr:\n${this.stderr.slice(-8_192)}`, { cause: error });
+    }
+  }
+
+  /** Discover the socket the server actually bound with --port 0, then check
+   * HTTP health. Keep that port for explicit restarts at the same endpoint. */
+  async waitForLocalUrl(kind: 'worker' | 'vite', healthPath = '/', timeoutMs = 30_000): Promise<string> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Readiness timeout must be positive');
+    const deadline = performance.now() + timeoutMs;
+    const pattern = kind === 'worker'
+      ? /Ready on (http:\/\/127\.0\.0\.1:(\d+))\/?[ \t]*\r?\n/
+      : /Local:[ \t]+(http:\/\/127\.0\.0\.1:(\d+))\/?[ \t]*\r?\n/;
+    try {
+      while (performance.now() < deadline) {
+        if (this.spawnError) throw this.spawnError;
+        if (this.child.exitCode !== null || this.child.signalCode !== null) throw new Error('Process exited before readiness');
+        const match = pattern.exec(stripVTControlCharacters(this.stdout.slice(this.stdoutStart)))
+          ?? pattern.exec(stripVTControlCharacters(this.stderr.slice(this.stderrStart)));
+        if (match) {
+          const port = Number(match[2]);
+          if (port < 1 || port > 65535) throw new Error('Server reported an invalid listener port');
+          await waitForHttp(`${match[1]}${healthPath}`, undefined, Math.max(1, deadline - performance.now()));
+          const portArg = this.command.indexOf('--port');
+          if (portArg >= 0 && this.command[portArg + 1] === '0') this.command[portArg + 1] = String(port);
+          return match[1];
+        }
+        await delay(Math.max(1, Math.min(50, deadline - performance.now())));
+      }
+      throw new Error('Timed out waiting for the bound local listener');
     } catch (error) {
       throw new Error(`${this.name} failed readiness: ${String(error)}\nstdout:\n${this.stdout.slice(-8_192)}\nstderr:\n${this.stderr.slice(-8_192)}`, { cause: error });
     }
@@ -534,13 +573,18 @@ export class FixtureServer {
     this.state = state;
   }
 
-  static async start(port: number): Promise<FixtureServer> {
+  static async start(port = 0): Promise<FixtureServer> {
     const state = { counterExecutions: 0 };
     const server = createServer((req, res) => {
       void handleFixtureRequest(req, res, state);
     });
-    await new Promise<void>((resolveServer) => server.listen(port, '127.0.0.1', () => resolveServer()));
-    return new FixtureServer(server, port, state);
+    await new Promise<void>((resolveServer, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', resolveServer);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing fixture listener');
+    return new FixtureServer(server, address.port, state);
   }
 
   async close(): Promise<void> {
@@ -785,59 +829,58 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
   mkdirSync(gatewayPersistDir, { recursive: true });
 
   const qntmBin = await createPythonVenv(rootDir, repoRoot, options.withMcp);
-  const [fixturePort, relayPort, gatewayPort, uiPort, relayInspectorPort, gatewayInspectorPort] = await getFreePorts(6);
-  const fixture = await FixtureServer.start(fixturePort);
+  const fixture = await FixtureServer.start();
   const recipeCatalogPath = join(rootDir, 'recipes.json');
   writeRecipeCatalog(recipeCatalogPath, fixture.baseUrl);
 
-  const relayUrl = `http://127.0.0.1:${relayPort}`;
-  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
-  const uiUrl = withUi ? `http://127.0.0.1:${uiPort}` : '';
-
-  const relayProcess = new ManagedProcess(
-      'relay',
-      [
-        npxCommand(), 'wrangler', 'dev', '--local',
-        '--name', `${basename(rootDir).toLowerCase()}-relay`,
-        '--port', String(relayPort),
-        '--ip', '127.0.0.1',
-        '--inspector-port', String(relayInspectorPort),
-        '--persist-to', relayPersistDir,
-        '--var', 'RATE_LIMIT_PER_MIN:5000',
-      ],
-      join(repoRoot, 'worker'),
-      workerTestEnv(rootDir),
-    );
-  const gatewayProcess = new ManagedProcess(
-      'gateway',
-      [
-        npxCommand(), 'wrangler', 'dev', '--local',
-        '--name', `${basename(rootDir).toLowerCase()}-gateway`,
-        '--port', String(gatewayPort),
-        '--ip', '127.0.0.1',
-        '--inspector-port', String(gatewayInspectorPort),
-        '--persist-to', gatewayPersistDir,
-        '--var', `DROPBOX_URL:${relayUrl}`,
-        '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
-        '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
-      ],
-      join(repoRoot, 'gateway-worker'),
-      workerTestEnv(rootDir),
-    );
-  const uiProcess = withUi
-    ? new ManagedProcess(
-        'aim-ui',
-        [npmCommand(), 'run', 'dev', '--', '--host', '127.0.0.1', '--port', String(uiPort)],
-        join(repoRoot, 'ui/aim-chat'),
-        { ...process.env },
-      )
-    : null;
-  const processes = [relayProcess, gatewayProcess, uiProcess].filter((process): process is ManagedProcess => process !== null);
-
+  let relayUrl = '', gatewayUrl = '', uiUrl = '';
+  const processes: ManagedProcess[] = [];
+  let gatewayProcess: ManagedProcess;
   try {
-    await relayProcess.waitForHttp(`${relayUrl}/healthz`);
-    await gatewayProcess.waitForHttp(`${gatewayUrl}/health`);
-    if (uiProcess) await uiProcess.waitForHttp(uiUrl);
+    const relayProcess = new ManagedProcess(
+        'relay',
+        [
+          npxCommand(), 'wrangler', 'dev', '--local',
+          '--name', `${basename(rootDir).toLowerCase()}-relay`,
+          '--port', '0',
+          '--ip', '127.0.0.1',
+          '--inspector-port', '0',
+          '--persist-to', relayPersistDir,
+          '--var', 'RATE_LIMIT_PER_MIN:5000',
+        ],
+        join(repoRoot, 'worker'),
+        workerTestEnv(rootDir),
+      );
+    processes.push(relayProcess);
+    relayUrl = await relayProcess.waitForLocalUrl('worker', '/healthz');
+    gatewayProcess = new ManagedProcess(
+        'gateway',
+        [
+          npxCommand(), 'wrangler', 'dev', '--local',
+          '--name', `${basename(rootDir).toLowerCase()}-gateway`,
+          '--port', '0',
+          '--ip', '127.0.0.1',
+          '--inspector-port', '0',
+          '--persist-to', gatewayPersistDir,
+          '--var', `DROPBOX_URL:${relayUrl}`,
+          '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
+          '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
+        ],
+        join(repoRoot, 'gateway-worker'),
+        workerTestEnv(rootDir),
+      );
+    processes.push(gatewayProcess);
+    gatewayUrl = await gatewayProcess.waitForLocalUrl('worker', '/health');
+    if (withUi) {
+      const uiProcess = new ManagedProcess(
+          'aim-ui',
+          [npmCommand(), 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '0', '--strictPort'],
+          join(repoRoot, 'ui/aim-chat'),
+          { ...process.env },
+        );
+      processes.push(uiProcess);
+      uiUrl = await uiProcess.waitForLocalUrl('vite');
+    }
   } catch (error) {
     await fixture.close();
     for (const process of processes.reverse()) await process.stop();

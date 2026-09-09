@@ -4,7 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createConversation, createInvite, createMessage, decryptMessage, deriveConversationKeys, deserializeEnvelope, DropboxClient, generateIdentity, serializeEnvelope } from '@corpollc/qntm';
 import echo, { handleConversation, type Env } from '../echo-worker/src/index.js';
-import { ManagedProcess, getFreePorts, workerTestEnv } from './src/runtime.js';
+import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
 function fixture() {
   const sender = generateIdentity(), bot = generateIdentity();
@@ -73,8 +73,12 @@ describe.sequential('actual echo Worker, cron, and relay', () => {
   let root: string, relay: DropboxClient, echoUrl: string;
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), 'qntm-echo-acceptance-'));
-    const [relayPort, echoPort, relayInspectorPort, echoInspectorPort] = await getFreePorts(4);
-    const relayUrl = `http://127.0.0.1:${relayPort}`; echoUrl = `http://127.0.0.1:${echoPort}`;
+    const startWorker = async (name: 'relay' | 'echo', configArgs: string[] = []) => {
+      const child = new ManagedProcess(name, ['npx', 'wrangler', 'dev', '--local', '--ip', '127.0.0.1', '--port', '0', '--inspector-port', '0', '--name', `${basename(root).toLowerCase()}-${name}`, '--persist-to', join(root, name), ...configArgs], resolve(name === 'relay' ? '../worker' : '../echo-worker'), workerTestEnv(root));
+      processes.push(child);
+      return child.waitForLocalUrl('worker', '/healthz');
+    };
+    const relayUrl = await startWorker('relay');
     relay = new DropboxClient(relayUrl);
     const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
     const config = join(root, 'echo.json');
@@ -84,10 +88,7 @@ describe.sequential('actual echo Worker, cron, and relay', () => {
         IDENTITY_PRIVATE_KEY: b64(f.bot.privateKey), IDENTITY_PUBLIC_KEY: b64(f.bot.publicKey),
         CONV_ROOT_KEY: b64(f.conv.keys.root), CONV_AEAD_KEY: b64(f.conv.keys.aeadKey), CONV_NONCE_KEY: b64(f.conv.keys.nonceKey),
       } }));
-    for (const [name, port, inspector, configArgs] of [['relay', relayPort, relayInspectorPort, []], ['echo', echoPort, echoInspectorPort, ['--config', config, '--test-scheduled']]] as const) {
-      processes.push(new ManagedProcess(name, ['npx', 'wrangler', 'dev', '--local', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(inspector), '--name', `${basename(root).toLowerCase()}-${name}`, '--persist-to', join(root, name), ...configArgs], resolve(name === 'relay' ? '../worker' : '../echo-worker'), workerTestEnv(root)));
-    }
-    await processes[0].waitForHttp(`${relayUrl}/healthz`); await processes[1].waitForHttp(`${echoUrl}/healthz`);
+    echoUrl = await startWorker('echo', ['--config', config, '--test-scheduled']);
   }, 60_000);
   afterAll(async () => { for (const p of processes) await p.stop(); if (root) rmSync(root, { force: true, recursive: true }); });
 

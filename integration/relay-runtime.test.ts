@@ -1,8 +1,26 @@
 import { createServer, type RequestListener, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getFreePorts, ManagedProcess, waitForHttp } from './src/runtime.js';
+import { FixtureServer, getFreePorts, ManagedProcess, waitForHttp } from './src/runtime.js';
 
 const servers: Server[] = [];
+const children: ManagedProcess[] = [];
+
+function child(script: string): ManagedProcess {
+  const processFixture = new ManagedProcess('local-listener', [process.execPath, '-e', script, '--', '--port', '0'], process.cwd(), { ...process.env });
+  children.push(processFixture);
+  return processFixture;
+}
+
+function listenerScript(kind: 'worker' | 'vite', status = 200): string {
+  return `const {createServer} = require('node:http');
+    const server = createServer((req, res) => res.writeHead(${status}).end());
+    server.listen(Number(process.argv[2]), '127.0.0.1', () => {
+      const url = 'http://127.0.0.1:' + server.address().port;
+      // Split the port across chunks and include real terminal color codes.
+      process.stdout.write('\\x1b[32m${kind === 'worker' ? 'Ready on ' : 'Local:   '}' + url.slice(0, -2));
+      setTimeout(() => process.stdout.write(url.slice(-2) + '\\x1b[0m\\n'), 75);
+    });`;
+}
 
 async function listen(handler: RequestListener, port = 0): Promise<string> {
   const server = createServer(handler);
@@ -17,6 +35,7 @@ async function listen(handler: RequestListener, port = 0): Promise<string> {
 }
 
 afterEach(async () => {
+  await Promise.all(children.splice(0).map(processFixture => processFixture.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
     server.closeAllConnections();
@@ -78,5 +97,51 @@ describe('local service readiness', () => {
     expect(new Set(ports).size).toBe(16);
     const urls = await Promise.all(ports.map(port => listen((_request, response) => response.end('ready'), port)));
     await Promise.all(urls.map(url => waitForHttp(url)));
+  });
+
+  it.each(['worker', 'vite'] as const)('discovers concurrent bound %s listeners through split, colored output', async kind => {
+    const workers = [child(listenerScript(kind)), child(listenerScript(kind))];
+    const urls = await Promise.all(workers.map(worker => worker.waitForLocalUrl(kind, '/healthz', 3_000)));
+    expect(new Set(urls).size).toBe(2);
+    for (let index = 0; index < urls.length; index++) {
+      expect(new URL(urls[index]).port).toBe(workers[index].command.at(-1));
+      expect((await fetch(`${urls[index]}/healthz`)).status).toBe(200);
+    }
+  });
+
+  it('does not treat a bound listener announcement as successful HTTP readiness', async () => {
+    const worker = child(listenerScript('worker', 404));
+    await expect(worker.waitForLocalUrl('worker', '/healthz', 1_500)).rejects.toThrow(/HTTP 404/);
+  });
+
+  it('fails promptly with process diagnostics when startup exits', async () => {
+    const worker = child('console.error("fixture bind failed"); process.exit(7)');
+    const started = performance.now();
+    await expect(worker.waitForLocalUrl('worker', '/', 5_000)).rejects.toThrow(/Process exited before readiness[\s\S]*fixture bind failed/);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it('keeps the assigned service port through a process restart', async () => {
+    const worker = child(listenerScript('worker'));
+    const original = await worker.waitForLocalUrl('worker', '/healthz', 3_000);
+    await worker.restart();
+    expect(await worker.waitForLocalUrl('worker', '/healthz', 3_000)).toBe(original);
+  });
+
+  it('ignores an earlier process announcement after restart', async () => {
+    const url = await listen((_request, response) => response.end('ready'));
+    const worker = child(`console.log('Ready on ${url}'); setInterval(() => {}, 1000)`);
+    expect(await worker.waitForLocalUrl('worker', '/', 3_000)).toBe(url);
+    worker.command[2] = 'setInterval(() => {}, 1000)';
+    await worker.restart();
+    await expect(worker.waitForLocalUrl('worker', '/', 200)).rejects.toThrow('Timed out waiting for the bound local listener');
+  });
+
+  it('uses the fixture server bound address without releasing a guessed port', async () => {
+    const first = await FixtureServer.start(), second = await FixtureServer.start();
+    servers.push(first.server, second.server);
+    expect(first.baseUrl).not.toBe(second.baseUrl);
+    expect(new URL(first.baseUrl).port).not.toBe('0');
+    await Promise.all([waitForHttp(`${first.baseUrl}/topstories.json`), waitForHttp(`${second.baseUrl}/topstories.json`)]);
   });
 });

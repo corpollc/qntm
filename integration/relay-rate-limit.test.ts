@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getFreePorts, ManagedProcess, workerTestEnv } from './src/runtime.js';
+import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 import { MAX_RATE_LIMIT_IPS, RATE_LIMIT_WINDOW_MS, RelayRateLimiter } from '../worker/src/rate-limit.js';
 
 describe('bounded per-isolate relay rate limiting', () => {
@@ -74,15 +74,13 @@ describe('bounded per-isolate relay rate limiting', () => {
 
 it('enforces HTTP 429 in the real Worker while leaving CORS preflight available', async () => {
   const state = await mkdtemp(join(tmpdir(), 'qntm-rate-limit-'));
-  const [port, inspector] = await getFreePorts(2);
   const relay = new ManagedProcess('rate-limit', [process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    'wrangler', 'dev', '--local', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(inspector),
+    'wrangler', 'dev', '--local', '--ip', '127.0.0.1', '--port', '0', '--inspector-port', '0',
     '--name', basename(state).toLowerCase(),
     '--persist-to', state, '--var', 'RATE_LIMIT_PER_MIN:2'], fileURLToPath(new URL('../worker', import.meta.url)), workerTestEnv(state));
-  const url = `http://127.0.0.1:${port}/healthz`;
   try {
     // The successful readiness request uses the first of this IP's two slots.
-    await relay.waitForHttp(url);
+    const url = `${await relay.waitForLocalUrl('worker', '/healthz')}/healthz`;
     expect((await fetch(url)).status).toBe(200);
     const limited = await fetch(url);
     expect(limited.status).toBe(429);

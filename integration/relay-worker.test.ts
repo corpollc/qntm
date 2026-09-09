@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildSignedReceipt, generateIdentity } from '@corpollc/qntm';
-import { getFreePorts, ManagedProcess, workerTestEnv } from './src/runtime.js';
+import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
 interface RelayFrame {
   type: string;
@@ -67,8 +67,6 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   let stateDir = '';
 
   beforeAll(async () => {
-    const [relayPort, inspectorPort] = await getFreePorts(2);
-    relayUrl = `http://127.0.0.1:${relayPort}`;
     stateDir = mkdtempSync(join(tmpdir(), 'qntm-relay-acceptance-'));
     relayProcess = new ManagedProcess(
       'relay-acceptance',
@@ -76,9 +74,9 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         process.platform === 'win32' ? 'npx.cmd' : 'npx',
         'wrangler', 'dev', '--local',
         '--name', basename(stateDir).toLowerCase(),
-        '--port', String(relayPort),
+        '--port', '0',
         '--ip', '127.0.0.1',
-        '--inspector-port', String(inspectorPort),
+        '--inspector-port', '0',
         '--persist-to', stateDir,
         '--var', 'RATE_LIMIT_PER_MIN:5000',
         '--var', 'ENVELOPE_TTL_SECONDS:60',
@@ -88,7 +86,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       join(REPO_ROOT, 'worker'),
       workerTestEnv(stateDir),
     );
-    await relayProcess.waitForHttp(`${relayUrl}/healthz`);
+    relayUrl = await relayProcess.waitForLocalUrl('worker', '/healthz');
   }, 60_000);
 
   afterAll(async () => {

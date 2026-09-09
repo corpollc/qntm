@@ -39,7 +39,7 @@ describe.sequential('real long-running gateway integration CLI membership flow',
   }, LONG_TIMEOUT);
 
   afterAll(async () => {
-    await harness.stop();
+    await harness?.stop();
   }, LONG_TIMEOUT);
 
   it('phase 8: lets an offline third participant catch up through add and removal rekeys', async () => {

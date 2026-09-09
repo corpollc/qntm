@@ -51,7 +51,7 @@ describe.sequential('real long-running gateway integration UI flow', () => {
   }, LONG_TIMEOUT);
 
   afterAll(async () => {
-    await harness.stop();
+    await harness?.stop();
   }, LONG_TIMEOUT);
 
   it('phase 1: bootstraps the gateway and stores a successful API result in chat', async () => {

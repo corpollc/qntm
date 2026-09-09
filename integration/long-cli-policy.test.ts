@@ -35,7 +35,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
   }, LONG_TIMEOUT);
 
   afterAll(async () => {
-    await harness.stop();
+    await harness?.stop();
   }, LONG_TIMEOUT);
 
   it('phase 5: invalidates a conflicting proposal in transcript', async () => {
