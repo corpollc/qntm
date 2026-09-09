@@ -39,7 +39,7 @@ The build installs locked dependencies with `npm ci`, builds `client` first, the
 wrangler pages deploy dist --project-name=qntm-aim --branch=main --commit-hash=COMMIT_SHA --commit-dirty=true
 ```
 
-The command runs from `ui/aim-chat` inside the gated workflow. `--commit-dirty=true` permits generated build output; the checkout and recorded commit still identify the tested source. Use the workflow instead of a local production upload that bypasses its gate. A browser-only deployment leaves package versions unchanged, so the version displayed by the UI is not sufficient to identify a hotfix.
+The command runs from `ui/aim-chat` inside the gated workflow. `--commit-dirty=true` marks the deployment's working tree as dirty; the checkout and recorded commit identify the tested source. Use the workflow instead of a local production upload that bypasses its gate. A browser-only deployment leaves package versions unchanged, so the version displayed by the UI is not sufficient to identify a hotfix.
 
 ## Preview behavior
 
