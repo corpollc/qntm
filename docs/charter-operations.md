@@ -19,7 +19,7 @@ const trust = {
 const registry = new CharterRegistryClient('https://charter.qntm.corpo.llc', trust);
 ```
 
-See the [TypeScript example](../charter-registry/README.md#typescript-client) for submitting a self-charter, publishing a statement and verifying its evidence. Retain checkpoints locally and compare consistency across updates.
+See the [TypeScript example](../charter-registry/README.md#typescript-client) or [Python example](../charter-registry/README.md#python-client) for submitting a self-charter, publishing a statement and verifying its evidence. Python charter support is unreleased. Both clients use this same pin and audience. Retain checkpoints locally and compare consistency across updates.
 
 ## TLS and network boundary
 
