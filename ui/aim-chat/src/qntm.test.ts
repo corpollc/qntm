@@ -1,4 +1,5 @@
 import {
+  generateIdentity, base64UrlEncode, createMessage, serializeEnvelope, gatewayInvitationHash,
   base64UrlDecode,
   computePayloadHash,
   hashProposal,
@@ -14,7 +15,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as store from './store'
 import {
   createInviteForProfile,
-  bootstrapGatewayForConversation,
   gateApproveRequest,
   gateDisapproveRequest,
   gatePromoteRequest,
@@ -62,6 +62,7 @@ class MemoryStorage implements Storage {
 
 class FakeDropboxRelay {
   private conversations = new Map<string, Array<{ seq: number; envelope_b64: string }>>()
+  readonly gateway = generateIdentity()
   readonly receipts: Array<Record<string, unknown>> = []
 
   replay(convId: string, fromSeq: number): Array<{ seq: number; envelope_b64: string }> {
@@ -78,6 +79,12 @@ class FakeDropboxRelay {
       : input instanceof URL
         ? input.toString()
         : input.url
+
+    if (url.endsWith('/v1/invitations')) {
+      const body = JSON.parse(String(init?.body))
+      return Response.json({ ...body, gateway_public_key: base64UrlEncode(this.gateway.publicKey), gateway_kid: base64UrlEncode(this.gateway.keyID), expires_at: Math.floor(Date.now() / 1000) + 600 })
+    }
+    if (url.endsWith('/v1/promote')) return Response.json({ status: 'joined' })
 
     if (url.endsWith('/v1/send')) {
       const body = JSON.parse(String(init?.body || '{}')) as { conv_id: string; envelope_b64: string }
@@ -356,7 +363,7 @@ describe('browser qntm adapter', () => {
     await sendMessageToConversation(bob.id, bob.name, conversationId, 'hello from bob')
     await receiveMessages(alice.id, alice.name, conversationId)
 
-    const gatewayKid = 'gateway-kid-placeholder'
+    const gatewayKid = 'http://gateway.test'
     const promoteMessage = await gatePromoteRequest(alice.id, alice.name, conversationId, gatewayKid, 2)
     const payload = JSON.parse(promoteMessage.text) as {
       type: string
@@ -614,67 +621,33 @@ describe('browser qntm adapter', () => {
     expect(new TextDecoder().decode(decrypted)).toBe('sk_test_explicit')
   })
 
-  it('bootstraps gateway identity and reuses it for gate secrets', async () => {
+  it('keeps HTTP success pending until a matching gateway signature arrives, then encrypts secrets to that gateway', async () => {
     const { alice, bob, conversationId } = await createConversationPair()
-    const aliceIdentity = identityFor(alice.id)
-    const bobIdentity = identityFor(bob.id)
-
-    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url
-
-      if (url === 'http://gateway.test/v1/promote') {
-        return Promise.resolve(new Response(JSON.stringify({
-          conv_id: conversationId,
-          gateway_public_key: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
-          gateway_kid: publicKeyToString(hexToBytes(bobIdentity.keyId)),
-          created: true,
-        }), { status: 201 }))
-      }
-
-      return relay.handleFetch(input, init)
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const bootstrap = await bootstrapGatewayForConversation(
-      alice.id,
-      conversationId,
-      'http://gateway.test',
-      'promotion-token',
-    )
-    expect(bootstrap).toEqual({
-      gatewayPublicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
-      gatewayKid: publicKeyToString(hexToBytes(bobIdentity.keyId)),
-    })
-    expect(store.findConversation(alice.id, conversationId)?.gateway).toEqual({
-      publicKey: publicKeyToString(hexToBytes(bobIdentity.publicKey)),
-      keyId: publicKeyToString(hexToBytes(bobIdentity.keyId)),
-    })
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://gateway.test/v1/promote',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer promotion-token' }),
-      }),
-    )
-
-    const secretMessage = await gateSecretRequest(
-      alice.id,
-      alice.name,
-      conversationId,
-      'stripe',
-      'sk_test_bootstrap',
-      'Authorization',
-      'Bearer {value}',
-    )
-    const payload = JSON.parse(secretMessage.text) as { encrypted_blob: string }
-    const decrypted = openSecret(
-      hexToBytes(bobIdentity.privateKey),
-      hexToBytes(aliceIdentity.publicKey),
-      base64UrlDecode(payload.encrypted_blob),
-    )
-    expect(new TextDecoder().decode(decrypted)).toBe('sk_test_bootstrap')
+    await sendMessageToConversation(bob.id, bob.name, conversationId, 'hello')
+    await receiveMessages(alice.id, alice.name, conversationId)
+    const invitationMessage = await gatePromoteRequest(alice.id, alice.name, conversationId, 'http://gateway.test', 2)
+    const gateway = store.findConversation(alice.id, conversationId)!.gateway!
+    expect(gateway.status).toBe('pending')
+    const capsule = JSON.parse(new TextDecoder().decode(openSecret(relay.gateway.privateKey, hexToBytes(identityFor(alice.id).publicKey), base64UrlDecode(gateway.pending!.request.sealed))))
+    expect(capsule).toMatchObject({ conv_id: conversationId, invitation_msg_id: invitationMessage.id, conv_epoch: 0 })
+    await expect(gateSecretRequest(alice.id, alice.name, conversationId, 'stripe', 'secret', 'Authorization', 'Bearer {value}')).rejects.toThrow('Waiting')
+    const invitation = JSON.parse(invitationMessage.text)
+    const acceptance = { type: 'gate.accept', invitation_id: invitation.invitation_id, invitation_msg_id: invitationMessage.id,
+      invitation_hash: gatewayInvitationHash(invitationMessage.text), conv_id: conversationId, conv_epoch: 0,
+      gateway_kid: invitation.gateway_kid, gateway_public_key: invitation.gateway_public_key }
+    await sendMessageToConversation(bob.id, bob.name, conversationId, JSON.stringify(acceptance), 'gate.accept')
+    await receiveMessages(alice.id, alice.name, conversationId)
+    expect(store.findConversation(alice.id, conversationId)!.gateway!.status).toBe('pending')
+    const stored = store.findConversation(alice.id, conversationId)!
+    const conv = { id: hexToBytes(conversationId), type: 'group' as const, keys: { root: hexToBytes(stored.keys.root), aeadKey: hexToBytes(stored.keys.aeadKey), nonceKey: hexToBytes(stored.keys.nonceKey) }, participants: [], currentEpoch: 0, createdAt: new Date() }
+    const envelope = createMessage(relay.gateway, conv, 'gate.accept', new TextEncoder().encode(JSON.stringify(acceptance)), undefined, 3600)
+    await relay.handleFetch('http://relay.test/v1/send', { body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...serializeEnvelope(envelope))) }) })
+    await receiveMessages(alice.id, alice.name, conversationId)
+    expect(store.findConversation(alice.id, conversationId)!.gateway!.status).toBe('active')
+    expect(store.findConversation(alice.id, conversationId)!.participants).not.toContain(Array.from(relay.gateway.keyID, b => b.toString(16).padStart(2, '0')).join(''))
+    const secret = await gateSecretRequest(alice.id, alice.name, conversationId, 'stripe', 'secret', 'Authorization', 'Bearer {value}')
+    const payload = JSON.parse(secret.text)
+    expect(payload.gateway_kid).toBe(invitation.gateway_kid)
+    expect(new TextDecoder().decode(openSecret(relay.gateway.privateKey, hexToBytes(identityFor(alice.id).publicKey), base64UrlDecode(payload.encrypted_blob)))).toBe('secret')
   })
 })

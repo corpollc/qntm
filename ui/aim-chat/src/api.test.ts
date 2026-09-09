@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import * as qntm from './qntm'
+import * as store from './store'
 
 class MemoryStorage implements Storage {
   private data = new Map<string, string>()
@@ -54,17 +55,21 @@ describe('api', () => {
     expect(api.listConversations(profile.id).conversations).toHaveLength(1)
   })
 
+  it('exposes verified gateway state to the conversation panel', () => {
+    const profile = api.createProfile('Alice').profile
+    api.generateIdentity(profile.id)
+    const invite = api.createInvite(profile.id, 'Gateway')
+    store.updateConversation(profile.id, invite.conversationId, c => ({ ...c, gateway: { publicKey: 'pk', keyId: 'kid', status: 'active', floor: 2 } }))
+    expect(api.listConversations(profile.id).conversations[0].gateway).toMatchObject({ status: 'active', floor: 2 })
+  })
+
   it('loads starter gate recipes', () => {
     const recipes = api.gateRecipes()
     expect(recipes.recipes.length).toBeGreaterThan(0)
     expect(recipes.recipes.some((recipe) => recipe.name === 'jokes.dad')).toBe(true)
   })
 
-  it('bootstraps the gateway before sending gate.promote', async () => {
-    const bootstrapSpy = vi.spyOn(qntm, 'bootstrapGatewayForConversation').mockResolvedValue({
-      gatewayPublicKey: 'gateway-public-key',
-      gatewayKid: 'gateway-kid',
-    })
+  it('starts the participant invitation flow', async () => {
     const promoteSpy = vi.spyOn(qntm, 'gatePromoteRequest').mockResolvedValue({
       id: 'm1',
       conversationId: 'conv-1',
@@ -81,17 +86,10 @@ describe('api', () => {
       'Alice',
       'conv-1',
       'http://gateway.test',
-      'promotion-token',
       2,
     )
 
-    expect(bootstrapSpy).toHaveBeenCalledWith(
-      'profile-1',
-      'conv-1',
-      'http://gateway.test',
-      'promotion-token',
-    )
-    expect(promoteSpy).toHaveBeenCalledWith('profile-1', 'Alice', 'conv-1', 'gateway-kid', 2)
+    expect(promoteSpy).toHaveBeenCalledWith('profile-1', 'Alice', 'conv-1', 'http://gateway.test', 2)
     expect(response.message.bodyType).toBe('gate.promote')
   })
 })

@@ -7,14 +7,12 @@ import { Spinner } from './Spinner'
 import { Tooltip } from './Tooltip'
 
 export interface GatePanelProps {
-  gateStatus: { promoted: boolean; threshold: number; signerCount: number }
+  gateStatus: { promoted: boolean; pending?: boolean; threshold: number; signerCount: number }
   gateRecipes: GateRecipe[]
   selectedRecipe: string
   activeRecipe: GateRecipe | null
   gateServerUrl: string
   setGateServerUrl: (value: string) => void
-  gatePromotionToken: string
-  setGatePromotionToken: (value: string) => void
   gateArgs: Record<string, string>
   gatePromoteThreshold: number
   setGatePromoteThreshold: (value: number) => void
@@ -46,8 +44,6 @@ export function GatePanel({
   activeRecipe,
   gateServerUrl,
   setGateServerUrl,
-  gatePromotionToken,
-  setGatePromotionToken,
   gateArgs,
   gatePromoteThreshold,
   setGatePromoteThreshold,
@@ -119,7 +115,7 @@ export function GatePanel({
       <aside className="gate-panel">
         <section className="panel gate-status-panel">
           <div className="gate-status-info">
-            <div className="gate-status-badge inactive">API Gateway Inactive</div>
+            <div className="gate-status-badge inactive">{gateStatus.pending ? 'Waiting for gateway' : 'API Gateway Inactive'}</div>
             <div className="gate-preview-notice">Technical Preview — Likely Broken</div>
             <div className="meta">
               <div>Enable the API Gateway to make group-approved API calls with multi-party authorization.</div>
@@ -134,8 +130,8 @@ export function GatePanel({
         <section className="panel">
           <h2>Enable API Gateway <Tooltip text="Enables group-approved API calls. All conversation participants become signers." /></h2>
           <div className="gate-hint">
-            All conversation participants become signers.
-            Set how many must approve each API call.
+            The gateway will read this conversation and accept the invitation in chat.
+            All current participants become signers. Set how many must approve each API call.
           </div>
           <div className="meta">
             Default hosted gateway: <code>{HOSTED_GATEWAY_URL}</code>. Self-hosted gateways can override this field.
@@ -147,17 +143,6 @@ export function GatePanel({
             placeholder={getDefaultGatewayUrl()}
             value={gateServerUrl}
             onChange={(event) => setGateServerUrl(event.target.value)}
-          />
-          <label className="label" htmlFor="gate-promotion-token">Promotion token <Tooltip text="Provided by the gateway operator. Used only for this bootstrap request and never stored." /></label>
-          <input
-            id="gate-promotion-token"
-            className="input"
-            type="password"
-            autoComplete="off"
-            required
-            placeholder="Gateway operator token"
-            value={gatePromotionToken}
-            onChange={(event) => setGatePromotionToken(event.target.value)}
           />
           <label className="label" htmlFor="gate-promote-threshold">Required approvals <Tooltip text="The number of participants who must approve before an API call executes." /></label>
           <input
@@ -171,10 +156,10 @@ export function GatePanel({
           <button
             className="button full"
             type="button"
-            disabled={isWorking || !gatePromotionToken.trim()}
+            disabled={isWorking || !gateServerUrl.trim()}
             onClick={() => void onGatePromote()}
           >
-            {isWorking ? <Spinner /> : 'Enable API Gateway'}
+            {isWorking ? <Spinner /> : gateStatus.pending ? 'Retry gateway invitation' : 'Invite API Gateway'}
           </button>
         </section>
       </aside>

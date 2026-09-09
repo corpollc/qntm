@@ -1,6 +1,7 @@
+import { createInvitation, acceptInvitation, finishAcceptance } from './handshake.js';
 import { DurableObject } from 'cloudflare:workers';
 import {
-  generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
+  keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   DropboxClient, deserializeEnvelope, decryptMessage,
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
@@ -9,7 +10,7 @@ import {
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, DropboxSubscription, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
-  Env, ConversationState, PromoteRequest, PromoteResponse,
+  Env, ConversationState,
   GatePromoteMessage, GateRequestMessage, GateApprovalMessage,
   GateDisapprovalMessage, GateSecretMessage,
   GovProposeMessage, GovApproveMessage,
@@ -28,6 +29,7 @@ function trustedGovernanceQuorum(convState: ConversationState): number {
 
 function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
   return {
+    ...(msg.gateway_kid ? { gateway_kid: msg.gateway_kid } : {}),
     conv_id: msg.conv_id,
     proposal_id: msg.proposal_id,
     proposal_type: msg.proposal_type,
@@ -129,89 +131,36 @@ export class GatewayConversationDO extends DurableObject<Env> {
     }
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+  private setupQueue: Promise<unknown> = Promise.resolve();
 
-    if (request.method === 'POST' && url.pathname === '/promote') {
-      return this.handlePromote(request);
-    }
-
-    return new Response('Not Found', { status: 404 });
+  private serializeSetup<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.setupQueue.then(action);
+    this.setupQueue = result.catch(() => undefined);
+    return result;
   }
 
-  /**
-   * Bootstrap: create or return the per-conversation keypair.
-   * Idempotent.
-   */
-  private async handlePromote(request: Request): Promise<Response> {
-    const body = await request.json() as PromoteRequest;
-
-    const existing = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (existing) {
-      if (existing.conv_id !== body.conv_id) {
-        return Response.json(
-          { error: 'conv_id mismatch: this DO instance is already bootstrapped for a different conversation' },
-          { status: 409 },
-        );
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method !== 'POST') return new Response('Not Found', { status: 404 });
+    return this.serializeSetup(async () => {
+      if (url.pathname === '/invitations') return createInvitation(this.ctx.storage, await request.json());
+      if (url.pathname !== '/promote') return new Response('Not Found', { status: 404 });
+      const response = await acceptInvitation(this.ctx.storage, this.env.DROPBOX_URL, await request.json());
+      const active = await this.ctx.storage.get<ConversationState>('conv_state');
+      if (active?.gate_promoted) {
+        await this.recover();
+        this.ensureRelaySubscription(active);
+        await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
       }
-      if (
-        existing.conv_aead_key !== body.conv_aead_key ||
-        existing.conv_nonce_key !== body.conv_nonce_key ||
-        existing.conv_epoch !== body.conv_epoch
-      ) {
-        return Response.json(
-          { error: 'promotion material mismatch: existing conversation state cannot be overwritten' },
-          { status: 409 },
-        );
-      }
-      this.ensureRelaySubscription(existing);
-      // A local worker restart can preserve DO storage while losing the
-      // scheduled alarm. Re-arm maintenance whenever the public idempotent
-      // bootstrap wakes an existing conversation.
-      await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
-      return Response.json({
-        conv_id: existing.conv_id,
-        gateway_public_key: existing.public_key,
-        gateway_kid: existing.kid,
-        created: false,
-      } satisfies PromoteResponse);
-    }
-
-    const identity = generateIdentity();
-    const kid = base64UrlEncode(keyIDFromPublicKey(identity.publicKey));
-
-    const convState: ConversationState = {
-      conv_id: body.conv_id,
-      private_key: base64UrlEncode(identity.privateKey),
-      public_key: base64UrlEncode(identity.publicKey),
-      kid,
-      conv_aead_key: body.conv_aead_key,
-      conv_nonce_key: body.conv_nonce_key,
-      conv_epoch: body.conv_epoch,
-      poll_cursor: 0,
-      promoted_at: new Date().toISOString(),
-      gate_promoted: false,
-      rules: [],
-      participants: {},
-      promotion_floor: 1,
-    };
-
-    await this.ctx.storage.put('conv_state', convState);
-    this.ensureRelaySubscription(convState);
-    await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
-
-    return Response.json({
-      conv_id: convState.conv_id,
-      gateway_public_key: convState.public_key,
-      gateway_kid: convState.kid,
-      created: true,
-    } satisfies PromoteResponse, { status: 201 });
+      return response;
+    });
   }
 
   /**
    * Alarm: keep the live relay subscription attached and run maintenance.
    */
   async alarm(): Promise<void> {
+    await this.serializeSetup(() => finishAcceptance(this.ctx.storage, this.env.DROPBOX_URL));
     await this.recover();
     const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
     if (!initialState) return;
@@ -292,6 +241,15 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
 
+    const targetState = await this.ctx.storage.get<ConversationState>('conv_state');
+    if (targetState?.invitation_id) {
+      // Admission is closed by the durable acceptance outbox. Further invitations cannot change it.
+      if (bodyType === 'gate.promote') return;
+      if (bodyType.startsWith('gate.') || bodyType.startsWith('gov.')) {
+        const target = JSON.parse(bodyStr) as { gateway_kid?: string };
+        if (target.gateway_kid !== targetState.kid) return;
+      }
+    }
     if (!GATEWAY_BODY_TYPES.has(bodyType)) {
       return;
     }
@@ -396,6 +354,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     // qntm-3gde: Verify the Ed25519 request signature against the authenticated sender's public key
     const signable = {
+      ...(msg.gateway_kid ? { gateway_kid: msg.gateway_kid } : {}),
       conv_id: msg.conv_id,
       request_id: msg.request_id,
       verb: msg.verb,
@@ -473,6 +432,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const reqMsg = JSON.parse(reqStored.body) as GateRequestMessage;
     assertConversationID('gate.approval referenced request', reqMsg.conv_id, convState);
     const reqSignable = {
+      ...(reqMsg.gateway_kid ? { gateway_kid: reqMsg.gateway_kid } : {}),
       conv_id: reqMsg.conv_id,
       request_id: reqMsg.request_id,
       verb: reqMsg.verb,

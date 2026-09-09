@@ -10,6 +10,7 @@ export interface IdentityInfo {
 }
 
 export interface Conversation {
+  gateway?: { status?: 'pending' | 'active'; keyId: string; floor?: number } | null
   id: string
   name: string
   type: string

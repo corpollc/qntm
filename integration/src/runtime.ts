@@ -17,7 +17,6 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const RETRY_INTERVAL_MS = 250;
 const RATE_LIMIT_RETRY_MS = 500;
 const GATEWAY_POLL_INTERVAL_MS = 250;
-const GATEWAY_PROMOTION_TOKEN = 'qntm-local-integration-promotion-token';
 
 export interface JsonResult {
   ok: boolean;
@@ -311,12 +310,11 @@ export class AimUiAgent {
     await panel.waitFor({ state: 'visible', timeout: 10_000 });
   }
 
-  async enableGateway(gatewayUrl: string, threshold: number, promotionToken: string): Promise<void> {
+  async enableGateway(gatewayUrl: string, threshold: number): Promise<void> {
     await this.openGatewayPanel();
     await this.page.locator('#gate-promote-url').fill(gatewayUrl);
-    await this.page.locator('#gate-promotion-token').fill(promotionToken);
     await this.page.locator('#gate-promote-threshold').fill(String(threshold));
-    await this.page.getByRole('button', { name: 'Enable API Gateway' }).click();
+    await this.page.getByRole('button', { name: 'Invite API Gateway' }).click();
     await this.page.getByText('API Gateway Active').waitFor({ timeout: 15_000 });
   }
 
@@ -581,7 +579,6 @@ export interface LongHarness {
   rootDir: string;
   relayUrl: string;
   gatewayUrl: string;
-  gatewayPromotionToken: string;
   uiUrl: string;
   recipeCatalogPath: string;
   gatewayBootstrap: { gateway_public_key: string; gateway_kid: string };
@@ -775,7 +772,6 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
         '--var', `DROPBOX_URL:${relayUrl}`,
         '--var', `POLL_INTERVAL_MS:${GATEWAY_POLL_INTERVAL_MS}`,
         '--var', `GATE_VAULT_KEY:${'00'.repeat(32)}`,
-        '--var', `GATEWAY_PROMOTION_TOKEN:${GATEWAY_PROMOTION_TOKEN}`,
       ],
       join(repoRoot, 'gateway-worker'),
       { ...process.env },
@@ -812,22 +808,17 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     convId: string,
     agent: ConversationAgent,
   ): Promise<{ gateway_public_key: string; gateway_kid: string }> => {
-    const conversation = agent.readConversation(convId);
-    const keys = conversation.keys as Record<string, string>;
-    const gate = new GateClient(gatewayUrl, GATEWAY_PROMOTION_TOKEN);
-    return await gate.promote(
-      convId,
-      hexToBase64Url(keys.aead_key),
-      hexToBase64Url(keys.nonce_key),
-      Number(conversation.current_epoch || 0),
-    );
+    const promoted = await agent.run(['gate-promote', '-c', convId, '--gateway-url', gatewayUrl, '--threshold', '2']);
+    if (!promoted.ok) throw new Error(promoted.error);
+    await waitForCliHistory(agent, convId, entry => entry.body_type === 'gate.accept', 'gateway signed acceptance', 30_000);
+    return { gateway_public_key: String(promoted.data!.gateway_public_key), gateway_kid: String(promoted.data!.gateway_kid) };
+
   };
 
   return {
     rootDir,
     relayUrl,
     gatewayUrl,
-    gatewayPromotionToken: GATEWAY_PROMOTION_TOKEN,
     uiUrl,
     recipeCatalogPath,
     gatewayBootstrap: { gateway_public_key: '', gateway_kid: '' },
@@ -859,7 +850,8 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
       // Replaying the idempotent bootstrap is the public recovery contract: it
       // routes to the persisted Durable Object and re-establishes its relay
       // subscription after a local worker process restart.
-      await bootstrapGateway(convId, agent);
+      const gateway = agent.readConversation(convId).gateway as { bootstrap: { request: Parameters<GateClient['promote']>[0] } };
+      await new GateClient(gatewayUrl).promote(gateway.bootstrap.request);
     },
     getCounterExecutions() {
       return fixture.getCounterExecutions();

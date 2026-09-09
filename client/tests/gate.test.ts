@@ -22,8 +22,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('GateClient promotion authentication', () => {
-  it('sends the configured admin token when bootstrapping a conversation', async () => {
+describe('GateClient invitation transport', () => {
+  it('sends only a sealed invitation capsule without operator authorization', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       conv_id: 'a'.repeat(32),
       gateway_public_key: 'gateway-public-key',
@@ -31,12 +31,13 @@ describe('GateClient promotion authentication', () => {
       created: true,
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
-    const client = new GateClient('https://gateway.example', 'promotion-token');
+    const client = new GateClient('https://gateway.example');
 
-    await client.promote('a'.repeat(32), 'aead-key', 'nonce-key', 0);
+    await client.promote({ invitation_id: 'a'.repeat(32), inviter_public_key: 'inviter', sealed: 'encrypted-material' });
 
     const request = fetchMock.mock.calls[0]![1] as RequestInit;
-    expect(request.headers).toMatchObject({ Authorization: 'Bearer promotion-token' });
+    expect(request.headers).not.toHaveProperty('Authorization');
+    expect(JSON.parse(request.body as string)).toEqual({ invitation_id: 'a'.repeat(32), inviter_public_key: 'inviter', sealed: 'encrypted-material' });
   });
 });
 

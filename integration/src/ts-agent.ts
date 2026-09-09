@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  matchesGatewayAcceptance,
   DropboxClient,
   QSP1Suite,
   addParticipant,
@@ -47,6 +48,7 @@ interface HistoryEntry {
 }
 
 interface ConversationState {
+  gatewayKid?: string;
   id: string;
   name: string;
   conv: Conversation;
@@ -212,6 +214,7 @@ export class TslibAgent {
     const expiresAtUnix = Math.floor(Date.now() / 1000) + 3600;
     const eligibleSignerKids = state.participantKids.map((kid) => base64UrlEncode(hexToBytes(kid))).sort();
     const signable = {
+      ...(state.gatewayKid ? { gateway_kid: state.gatewayKid } : {}),
       conv_id: claimedConvId,
       request_id: requestId,
       verb: 'POST',
@@ -250,6 +253,7 @@ export class TslibAgent {
     const state = this.getConversation(transportConvId);
     const request = this.findGateRequest(state, requestId);
     const requestSignable = {
+      ...(typeof request.gateway_kid === 'string' ? { gateway_kid: request.gateway_kid } : {}),
       conv_id: String(request.conv_id),
       request_id: requestId,
       verb: String(request.verb),
@@ -392,6 +396,7 @@ export class TslibAgent {
   private async sendRaw(convId: string, bodyType: string, bodyText: string): Promise<JsonResult> {
     const identity = this.requireIdentity();
     const state = this.getConversation(convId);
+    if (state.gatewayKid && (bodyType.startsWith('gate.') || bodyType.startsWith('gov.'))) bodyText = JSON.stringify({ ...JSON.parse(bodyText), gateway_kid: state.gatewayKid });
     const bodyBytes = new TextEncoder().encode(bodyText);
     const envelope = createMessage(identity, state.conv, bodyType, bodyBytes, undefined, defaultTTL());
     await this.dropbox.postMessage(state.conv.id, serializeEnvelope(envelope));
@@ -449,9 +454,16 @@ export class TslibAgent {
       const bodyType = decrypted.inner.body_type || 'text';
       const bodyBytes = new Uint8Array(decrypted.inner.body);
       const bodyText = groupBodyToJson(bodyType, bodyBytes) ?? new TextDecoder().decode(bodyBytes);
+      if (bodyType === 'gate.accept') {
+        const acceptance = JSON.parse(bodyText);
+        const invitation = state.history.find(m => m.message_id === acceptance.invitation_msg_id && m.body_type === 'gate.promote');
+        if (!invitation || !matchesGatewayAcceptance(acceptance, senderKidB64, invitation.message_id, invitation.unsafe_body)) continue;
+        if (state.gatewayKid && state.gatewayKid !== senderKidB64) continue;
+        state.gatewayKid = senderKidB64;
+      }
 
       this.applyGroupEvent(state, bodyType, bodyBytes);
-      this.mergeParticipant(state, new Uint8Array(decrypted.inner.sender_ik_pk));
+      if (!bodyType.startsWith('gate.') && !bodyType.startsWith('gov.') && !bodyType.startsWith('group_')) this.mergeParticipant(state, new Uint8Array(decrypted.inner.sender_ik_pk));
 
       this.addHistoryEntry(state, {
         message_id: messageId,
@@ -511,6 +523,7 @@ export class TslibAgent {
     const state = this.getConversation(convId);
     const request = this.findGateRequest(state, requestId);
     const signable = {
+      ...(typeof request.gateway_kid === 'string' ? { gateway_kid: request.gateway_kid } : {}),
       conv_id: String(request.conv_id),
       request_id: requestId,
       verb: String(request.verb),
@@ -557,6 +570,7 @@ export class TslibAgent {
     const state = this.getConversation(convId);
     const proposal = this.findGovProposal(state, proposalId);
     const signable = {
+      ...(typeof proposal.gateway_kid === 'string' ? { gateway_kid: proposal.gateway_kid } : {}),
       conv_id: String(proposal.conv_id),
       proposal_id: proposalId,
       proposal_type: String(proposal.proposal_type) as 'floor_change' | 'rules_change' | 'member_add' | 'member_remove',

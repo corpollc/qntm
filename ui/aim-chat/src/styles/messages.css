@@ -43,6 +43,8 @@
 }
 
 .sender {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-weight: 700;
   color: var(--brand-dark);
 }

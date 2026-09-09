@@ -53,7 +53,6 @@ export default function App() {
   const [gateRecipes, setGateRecipes] = useState<GateRecipe[]>([])
   const [selectedRecipe, setSelectedRecipe] = useState('')
   const [gateServerUrl, setGateServerUrl] = useState('http://localhost:8080')
-  const [gatePromotionToken, setGatePromotionToken] = useState('')
   const [gateArgs, setGateArgs] = useState<Record<string, string>>({})
   const [gatePromoteThreshold, setGatePromoteThreshold] = useState(2)
 
@@ -128,13 +127,12 @@ export default function App() {
 
   // Derive gate status from message history
   const gateStatus = useMemo(() => {
-    let promoted = false
-    let threshold = 0
+    const promoted = selectedConversation?.gateway?.status === 'active'
+    let threshold = selectedConversation?.gateway?.floor || 0
     for (const msg of messages) {
-      if (msg.bodyType === 'gate.promote') {
+      if (msg.bodyType === 'gate.promote' && !promoted) {
         try {
           const body = JSON.parse(msg.text)
-          promoted = true
           if (body.rules?.[0]?.m) threshold = body.rules[0].m
         } catch { /* ignore */ }
       } else if (msg.bodyType === 'gov.applied') {
@@ -148,6 +146,7 @@ export default function App() {
     }
     return {
       promoted,
+      pending: selectedConversation?.gateway?.status === 'pending',
       threshold,
       signerCount: selectedConversation?.participants.length || 0,
     }
@@ -799,12 +798,6 @@ export default function App() {
     if (!activeProfileId || !selectedConversationId) {
       return
     }
-    if (!gatePromotionToken.trim()) {
-      setError('Enter the gateway promotion token')
-      addToast('Enter the gateway promotion token', 'error')
-      return
-    }
-
     setIsWorking(true)
     try {
       await api.gatePromote(
@@ -812,19 +805,20 @@ export default function App() {
         activeProfile?.name || '',
         selectedConversationId,
         gateServerUrl.trim(),
-        gatePromotionToken,
         gatePromoteThreshold,
       )
       await refreshHistory(activeProfileId, selectedConversationId)
-      setStatus(`API Gateway enabled: ${gatePromoteThreshold} approvals required`)
-      addToast(`API Gateway enabled: ${gatePromoteThreshold} approvals required`, 'success')
-      setGatePromotionToken('')
+      const message = api.listConversations(activeProfileId).conversations.find(c => c.id === selectedConversationId)?.gateway?.status === 'active'
+        ? 'Gateway joined the conversation.' : 'Invitation sent. Waiting for the gateway to accept in chat.'
+      setStatus(message)
+      addToast(message, 'success')
       setError('')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to enable API Gateway'
       setError(msg)
       addToast(msg, 'error')
     } finally {
+      setConversations(api.listConversations(activeProfileId).conversations)
       setIsWorking(false)
     }
   }
@@ -1174,8 +1168,6 @@ export default function App() {
               activeRecipe={activeRecipe}
               gateServerUrl={gateServerUrl}
               setGateServerUrl={setGateServerUrl}
-              gatePromotionToken={gatePromotionToken}
-              setGatePromotionToken={setGatePromotionToken}
               gateArgs={gateArgs}
               gatePromoteThreshold={gatePromoteThreshold}
               setGatePromoteThreshold={setGatePromoteThreshold}

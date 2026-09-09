@@ -26,7 +26,6 @@ GitHub repository secrets:
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `QNTM_GATE_VAULT_KEY`
-- `QNTM_GATEWAY_PROMOTION_TOKEN`
 - `SITE_DEPLOY_TOKEN` for the site version update job
 
 Cloudflare token UI permissions for the hosted deploy token:

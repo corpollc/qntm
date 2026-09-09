@@ -27,8 +27,10 @@ def _proposal_signable_map(
     eligible_signer_kids: list[str],
     required_approvals: int,
     expires_at_unix: int,
+    gateway_kid: str | None = None,
 ) -> dict:
     return {
+        **({"gateway_kid": gateway_kid} if gateway_kid else {}),
         "conv_id": conv_id,
         "proposal_id": proposal_id,
         "proposal_type": proposal_type,
@@ -55,6 +57,7 @@ def sign_proposal(
     eligible_signer_kids: list[str],
     required_approvals: int,
     expires_at_unix: int,
+    gateway_kid: str | None = None,
 ) -> bytes:
     signable = _proposal_signable_map(
         conv_id=conv_id,
@@ -67,6 +70,7 @@ def sign_proposal(
         eligible_signer_kids=eligible_signer_kids,
         required_approvals=required_approvals,
         expires_at_unix=expires_at_unix,
+        gateway_kid=gateway_kid,
     )
     return _suite.sign(private_key, marshal_canonical(signable))
 
@@ -83,6 +87,7 @@ def hash_proposal(
     eligible_signer_kids: list[str],
     required_approvals: int,
     expires_at_unix: int,
+    gateway_kid: str | None = None,
 ) -> bytes:
     signable = _proposal_signable_map(
         conv_id=conv_id,
@@ -95,6 +100,7 @@ def hash_proposal(
         eligible_signer_kids=eligible_signer_kids,
         required_approvals=required_approvals,
         expires_at_unix=expires_at_unix,
+        gateway_kid=gateway_kid,
     )
     return _suite.hash(marshal_canonical(signable))
 
@@ -126,6 +132,7 @@ def create_proposal_body(
     proposed_rules=None,
     proposed_members=None,
     removed_member_kids=None,
+    gateway_kid: str | None = None,
 ) -> dict:
     proposal_id = str(_uuid.uuid4())
     expires_at_unix = int(time.time()) + expires_in_seconds
@@ -141,9 +148,11 @@ def create_proposal_body(
         eligible_signer_kids=eligible_signer_kids,
         required_approvals=required_approvals,
         expires_at_unix=expires_at_unix,
+        gateway_kid=gateway_kid,
     )
     return {
         "type": GOV_MESSAGE_PROPOSE,
+        **({"gateway_kid": gateway_kid} if gateway_kid else {}),
         "conv_id": conv_id,
         "proposal_id": proposal_id,
         "proposal_type": proposal_type,

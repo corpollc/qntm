@@ -178,9 +178,11 @@ def _gate_signable_map(
     payload_hash: bytes,
     eligible_signer_kids: list[str],
     required_approvals: int,
+    gateway_kid: str | None = None,
 ) -> dict:
     """Build the canonical CBOR map for a gate request."""
     return {
+        **({"gateway_kid": gateway_kid} if gateway_kid else {}),
         "conv_id": conv_id,
         "request_id": request_id,
         "verb": verb,
@@ -228,12 +230,13 @@ def sign_request(
     payload_hash: bytes,
     eligible_signer_kids: list[str],
     required_approvals: int,
+    gateway_kid: str | None = None,
 ) -> bytes:
     """Sign a gate request. Returns 64-byte Ed25519 signature."""
     m = _gate_signable_map(
         conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
-        eligible_signer_kids, required_approvals,
+        eligible_signer_kids, required_approvals, gateway_kid,
     )
     tbs = marshal_canonical(m)
     return _suite.sign(private_key, tbs)
@@ -253,12 +256,13 @@ def verify_request(
     payload_hash: bytes,
     eligible_signer_kids: list[str],
     required_approvals: int,
+    gateway_kid: str | None = None,
 ) -> bool:
     """Verify a gate request signature."""
     m = _gate_signable_map(
         conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
-        eligible_signer_kids, required_approvals,
+        eligible_signer_kids, required_approvals, gateway_kid,
     )
     tbs = marshal_canonical(m)
     return _suite.verify(public_key, tbs, signature)
@@ -276,12 +280,13 @@ def hash_request(
     payload_hash: bytes,
     eligible_signer_kids: list[str],
     required_approvals: int,
+    gateway_kid: str | None = None,
 ) -> bytes:
     """SHA-256 of the CBOR-encoded GateSignable."""
     m = _gate_signable_map(
         conv_id, request_id, verb, target_endpoint,
         target_service, target_url, expires_at_unix, payload_hash,
-        eligible_signer_kids, required_approvals,
+        eligible_signer_kids, required_approvals, gateway_kid,
     )
     tbs = marshal_canonical(m)
     return hashlib.sha256(tbs).digest()
@@ -518,41 +523,25 @@ class GateError(Exception):
 class GateClient:
     """HTTP client for the qntm-gate server."""
 
-    def __init__(self, base_url: str, admin_token: Optional[str] = None):
+    def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.admin_token = admin_token
         self._client = httpx.Client(timeout=30)
-
-    def _headers(self, with_auth: bool = False) -> dict[str, str]:
-        h = {"Content-Type": "application/json"}
-        if with_auth and self.admin_token:
-            h["Authorization"] = f"Bearer {self.admin_token}"
-        return h
 
     def _check(self, resp: httpx.Response) -> None:
         if resp.status_code >= 400:
             raise GateError(resp.status_code, resp.text)
 
-    def promote(
-        self,
-        conv_id: str,
-        conv_aead_key: str,
-        conv_nonce_key: str,
-        conv_epoch: int,
-    ) -> dict:
-        """POST to /v1/promote to register gateway for a conversation."""
-        resp = self._client.post(
-            f"{self.base_url}/v1/promote",
-            headers=self._headers(with_auth=True),
-            json={
-                "conv_id": conv_id,
-                "conv_aead_key": conv_aead_key,
-                "conv_nonce_key": conv_nonce_key,
-                "conv_epoch": conv_epoch,
-            },
-        )
+    def _post(self, path: str, body: dict) -> dict:
+        resp = self._client.post(f"{self.base_url}{path}", json=body)
         self._check(resp)
         return resp.json()
+
+    def create_invitation(self, inviter_public_key: str, invitation_id: str) -> dict:
+        return self._post("/v1/invitations", {"inviter_public_key": inviter_public_key, "invitation_id": invitation_id})
+
+    def promote(self, request: dict) -> dict:
+        """Deliver sealed access material. Activation requires verified gate.accept in chat."""
+        return self._post("/v1/promote", request)
 
     def health(self) -> dict:
         resp = self._client.get(f"{self.base_url}/health")

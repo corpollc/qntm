@@ -1,3 +1,4 @@
+import type { GatewayInvitation, GatewayBootstrapRequest } from './handshake.js';
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { base64UrlEncode, base64UrlDecode } from '../identity/index.js';
@@ -72,50 +73,25 @@ export function computePayloadHash(payload: unknown): Uint8Array {
 
 export class GateClient {
   private baseURL: string;
-  private adminToken?: string;
-
-  constructor(baseURL: string, adminToken?: string) {
+  constructor(baseURL: string) {
     this.baseURL = baseURL.replace(/\/$/, '');
-    this.adminToken = adminToken;
   }
 
-  private headers(withAuth = false): Record<string, string> {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (withAuth && this.adminToken) {
-      h['Authorization'] = `Bearer ${this.adminToken}`;
-    }
-    return h;
-  }
-
-  /**
-   * POST /v1/promote — bootstrap a conversation for gate use.
-   * Returns the gateway's per-conversation public key and KID.
-   */
-  async promote(convId: string, convAeadKey: string, convNonceKey: string, convEpoch: number): Promise<{
-    conv_id: string;
-    gateway_public_key: string;
-    gateway_kid: string;
-    created: boolean;
-  }> {
-    const resp = await fetch(`${this.baseURL}/v1/promote`, {
-      method: 'POST',
-      headers: this.headers(true),
-      body: JSON.stringify({
-        conv_id: convId,
-        conv_aead_key: convAeadKey,
-        conv_nonce_key: convNonceKey,
-        conv_epoch: convEpoch,
-      }),
+  private async post<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    if (!resp.ok) {
-      throw new GateError(resp.status, await resp.text());
-    }
-    return resp.json() as Promise<{
-      conv_id: string;
-      gateway_public_key: string;
-      gateway_kid: string;
-      created: boolean;
-    }>;
+    if (!response.ok) throw new GateError(response.status, await response.text());
+    return response.json() as Promise<T>;
+  }
+
+  createInvitation(inviterPublicKey: string, invitationId: string): Promise<GatewayInvitation> {
+    return this.post('/v1/invitations', { inviter_public_key: inviterPublicKey, invitation_id: invitationId });
+  }
+
+  /** HTTP completion is advisory: clients activate only after verifying gate.accept in chat. */
+  promote(body: GatewayBootstrapRequest): Promise<{ status: 'waiting' | 'joined'; gateway_public_key: string; gateway_kid: string; invitation_id: string }> {
+    return this.post('/v1/promote', body);
   }
 
   async health(): Promise<{ status: string }> {

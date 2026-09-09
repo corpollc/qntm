@@ -34,6 +34,7 @@ export interface ProposedMember {
 }
 
 export interface GovProposalSignable {
+  gateway_kid?: string;
   conv_id: string;
   proposal_id: string;
   proposal_type: GovProposalType;
@@ -55,6 +56,7 @@ export interface GovApprovalSignable {
 // Proposal body (JSON message body sent in conversation)
 
 export interface GovProposalBody {
+  gateway_kid?: string;
   type: typeof GovMessagePropose;
   conv_id: string;
   proposal_id: string;
@@ -138,6 +140,7 @@ export function verifyGovApproval(
 // High-level helpers
 
 export interface CreateProposalOptions {
+  gatewayKid?: string;
   convId: string;
   proposalType: GovProposalType;
   proposedFloor?: number;
@@ -164,6 +167,7 @@ export function createProposalBody(
   const proposedMembers = options.proposedMembers?.map(m => ({ kid: m.kid, public_key: m.publicKey }));
 
   const signable: GovProposalSignable = {
+    ...(options.gatewayKid ? { gateway_kid: options.gatewayKid } : {}),
     conv_id: options.convId,
     proposal_id: proposalId,
     proposal_type: options.proposalType,
@@ -180,6 +184,7 @@ export function createProposalBody(
 
   return {
     type: GovMessagePropose,
+    ...(options.gatewayKid ? { gateway_kid: options.gatewayKid } : {}),
     conv_id: options.convId,
     proposal_id: proposalId,
     proposal_type: options.proposalType,

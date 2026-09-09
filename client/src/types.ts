@@ -241,6 +241,7 @@ export interface ExpiredPayload {
 }
 
 export interface GateSignable {
+  gateway_kid?: string;
   conv_id: string;
   request_id: string;
   verb: string;

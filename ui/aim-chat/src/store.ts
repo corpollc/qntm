@@ -4,6 +4,7 @@
  * All state lives in the browser — no server needed.
  */
 
+import type { GatewayInvitation, GatewayBootstrapRequest } from '@corpollc/qntm'
 import type { GuidanceContact } from './guidance'
 
 const STORE_KEY = 'aim-store'
@@ -27,6 +28,11 @@ export interface StoredConversationKeys {
 }
 
 export interface StoredGatewayIdentity {
+  status?: 'pending' | 'active'
+  invitationId?: string
+  floor?: number
+  pending?: { invitation: GatewayInvitation; request: GatewayBootstrapRequest; url: string; messageId: string; text: string }
+
   publicKey: string // base64url
   keyId: string     // base64url
 }
@@ -81,6 +87,10 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
     participantPublicKeys: Array.isArray(raw?.participantPublicKeys) ? raw.participantPublicKeys : [],
     gateway: raw?.gateway && typeof raw.gateway === 'object'
       ? {
+          status: raw.gateway.status,
+          invitationId: raw.gateway.invitationId,
+          floor: raw.gateway.floor,
+          pending: raw.gateway.pending,
           publicKey: typeof raw.gateway.publicKey === 'string' ? raw.gateway.publicKey : '',
           keyId: typeof raw.gateway.keyId === 'string' ? raw.gateway.keyId : '',
         }

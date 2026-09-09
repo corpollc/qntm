@@ -22,7 +22,7 @@ TUI's ws dependency comes from Ink's React DevTools window polyfill. Ink loads t
 
 ## Operational boundaries
 
-Before deploying the gateway change, configure `GATEWAY_PROMOTION_TOKEN` in the worker and `QNTM_GATEWAY_PROMOTION_TOKEN` for the deployment workflow. Missing configuration returns 503 for bootstrap; missing or incorrect bearer authorization returns 401. The browser needs the operator-supplied token. Existing conversation traffic still uses signed qntm messages. These changes have not been deployed to production.
+The operator-token setup described in this historical audit was superseded on 2026-09-08 by [participant invitations and signed acceptance](../gateway-invitations.md). Deploy the updated gateway and clients together; no promotion token is required. These changes have not been deployed to production.
 
 Private file permissions do not encrypt local state or protect it from the same operating-system user. Individual file replacement is atomic; concurrent writers still require coordination. Guidance review remains offline: receive pending messages first to refresh the locally known audience. A valid signature or pinned contact does not grant authority to execute advice.
 

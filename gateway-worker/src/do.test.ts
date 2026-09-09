@@ -142,18 +142,8 @@ describe('idempotent bootstrap recovery', () => {
       'ensureRelaySubscription',
     ).mockImplementation(() => undefined);
 
-    const response = await doInstance.fetch(new Request('http://do/promote', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        conv_id: state.conv_id,
-        conv_aead_key: state.conv_aead_key,
-        conv_nonce_key: state.conv_nonce_key,
-        conv_epoch: state.conv_epoch,
-      }),
-    }));
+    await doInstance.alarm();
 
-    expect(response.status).toBe(200);
     expect(storage.alarmTimes).toHaveLength(1);
     expect(storage.alarmTimes[0]).toBeGreaterThan(Date.now());
   });
@@ -873,8 +863,8 @@ describe('qntm-qko0: promotion and membership invariants', () => {
       }),
     }));
 
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('cannot be overwritten') });
+    expect(response.status).toBe(400);
+    expect(await storage.get('conv_state')).toEqual(state);
   });
 
   it('rejects gate.promote with gateway KID in participants', async () => {

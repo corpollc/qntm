@@ -54,7 +54,7 @@ export function GateRequestCard({
         </div>
         <div><strong>Endpoint:</strong> {parsed.target_endpoint}</div>
         <div><strong>Service:</strong> {parsed.target_service}</div>
-        <div><strong>Conv:</strong> {parsed.conv_id}</div>
+        <div title={parsed.conv_id}><strong>Conversation:</strong> {shortId(parsed.conv_id)}</div>
         <div><strong>Requester:</strong> {shortId(parsed.signer_kid)}</div>
         <div><strong>Expires:</strong> {new Date(parsed.expires_at).toLocaleTimeString()}</div>
         {hasArgs && (
@@ -214,9 +214,9 @@ export function GatePromoteCard({ message }: { message: ChatMessage }) {
 
   return (
     <div className="gate-card gate-promote">
-      <div className="gate-card-header">API Gateway Enabled</div>
+      <div className="gate-card-header">API Gateway Invited</div>
       <div className="gate-card-body">
-        <div><strong>Conv:</strong> {parsed.conv_id}</div>
+        <div title={parsed.conv_id}><strong>Conversation:</strong> {shortId(parsed.conv_id)}</div>
         <div><strong>Floor:</strong> {threshold}-of-{n}</div>
         <div><strong>Participants:</strong> {n}</div>
         {participantKids.map((kid) => (
@@ -298,4 +298,8 @@ export function GateResultCard({ message }: { message: ChatMessage }) {
       </div>
     </div>
   )
+}
+
+export function GateAcceptanceCard() {
+  return <div className="gate-card gate-promote"><div className="gate-card-header">Gateway joined</div><div className="gate-card-body">The gateway accepted the invitation in this conversation.</div></div>
 }

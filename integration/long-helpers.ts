@@ -372,14 +372,6 @@ export async function setupCliGovernedConversation(
   const gatewayKid = bootstrap.gateway_kid;
 
   await harness.alice.run([
-    'gate-promote',
-    '-c',
-    convId,
-    '--threshold',
-    '2',
-    `--gateway-kid=${gatewayKid}`,
-  ]);
-  await harness.alice.run([
     'gate-secret',
     '-c',
     convId,
@@ -451,14 +443,6 @@ export async function setupTwoPartyGovernedConversation(
   const gatewayPublicKey = bootstrap.gateway_public_key;
   const gatewayKid = bootstrap.gateway_kid;
 
-  await harness.alice.run([
-    'gate-promote',
-    '-c',
-    convId,
-    '--threshold',
-    '2',
-    `--gateway-kid=${gatewayKid}`,
-  ]);
 
   return {
     convId,

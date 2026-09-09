@@ -71,21 +71,9 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bootstrapBody),
       });
-      expect(unauthenticated.status).toBe(401);
-      const wrongToken = await fetch(`${harness.gatewayUrl}/v1/promote`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer definitely-not-the-token',
-        },
-        body: JSON.stringify(bootstrapBody),
-      });
-      expect(wrongToken.status).toBe(401);
-
-      await ui.enableGateway(harness.gatewayUrl, 2, harness.gatewayPromotionToken);
-      expect(await ui.page.evaluate((token) => {
-        return Object.values(window.localStorage).some((value) => value.includes(token));
-      }, harness.gatewayPromotionToken)).toBe(false);
+      expect(unauthenticated.status).toBe(400);
+      await ui.enableGateway(harness.gatewayUrl, 2);
+      await waitForCliHistory(harness.alice, convId, entry => entry.body_type === 'gate.accept', 'verified gateway acceptance', 30_000);
       const promoteEntry = await waitForCliHistory(
         harness.alice,
         convId,

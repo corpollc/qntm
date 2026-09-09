@@ -8,6 +8,7 @@ import {
   GateDisapprovalCard,
   GateExecutedCard,
   GateExpiredCard,
+  GateAcceptanceCard,
   GatePromoteCard,
   GateConfigCard,
   GateResultCard,
@@ -57,6 +58,7 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
   govDisapprovedByMe: Set<string>
   govApplied: Set<string>
 }) {
+  if (message.bodyType === 'gate.accept') return <GateAcceptanceCard />
   if (message.bodyType === 'gate.promote') return <GatePromoteCard message={message} />
   if (message.bodyType === 'gate.config') return <GateConfigCard message={message} />
   if (message.bodyType === 'gate.request') {

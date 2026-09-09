@@ -5,36 +5,13 @@ export interface Env {
   DROPBOX_URL: string;
   POLL_INTERVAL_MS: string;
   ENABLE_DEBUG_ROUTES?: string;
-  /** Bearer token required for the bootstrap-only promotion endpoint. */
-  GATEWAY_PROMOTION_TOKEN: string;
-}
 
-/** Request body for POST /v1/promote */
-export interface PromoteRequest {
-  /** Hex-encoded conversation ID */
-  conv_id: string;
-  /** Conversation AEAD key material needed for decrypting dropbox envelopes */
-  conv_aead_key: string; // base64url-encoded
-  /** Conversation nonce key for deriving per-message nonces */
-  conv_nonce_key: string; // base64url-encoded
-  /** Current conversation epoch */
-  conv_epoch: number;
-}
-
-/** Response from POST /v1/promote */
-export interface PromoteResponse {
-  /** Hex-encoded conversation ID */
-  conv_id: string;
-  /** Gateway's per-conversation Ed25519 public key (base64url) */
-  gateway_public_key: string;
-  /** Gateway's key ID: base64url(Trunc16(SHA-256(public_key))) */
-  gateway_kid: string;
-  /** Whether this was a new keypair (true) or existing one returned (false) */
-  created: boolean;
 }
 
 /** Stored state for a gateway-managed conversation */
 export interface ConversationState {
+  /** Present for participant invitation/acceptance setup. */
+  invitation_id?: string;
   conv_id: string;
   /** Ed25519 private key (base64url) - never leaves DO */
   private_key: string;
@@ -88,6 +65,7 @@ export interface GatePromoteMessage {
 
 /** Parsed gate.request message body */
 export interface GateRequestMessage {
+  gateway_kid?: string;
   type: 'gate.request';
   conv_id: string;
   request_id: string;
@@ -168,6 +146,7 @@ export interface StoredGateMessage {
 
 /** Parsed gov.propose message body */
 export interface GovProposeMessage {
+  gateway_kid?: string;
   type: 'gov.propose';
   conv_id: string;
   proposal_id: string;

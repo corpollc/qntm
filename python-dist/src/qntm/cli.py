@@ -4,6 +4,7 @@ Matches the Go CLI's JSON output format for compatibility.
 """
 
 import argparse
+import httpx
 import base64
 import json
 import os
@@ -71,6 +72,7 @@ from .gate import (
     GATE_MESSAGE_PROMOTE,
     GATE_MESSAGE_REQUEST,
     GATE_MESSAGE_SECRET,
+    GateClient, GateError,
     Recipe,
     RecipeParam,
     compute_payload_hash,
@@ -80,6 +82,7 @@ from .gate import (
     sign_approval,
     sign_request,
 )
+from .gateway_handshake import create_gateway_invite_body, seal_gateway_bootstrap, matches_gateway_acceptance
 from .group import (
     GroupState,
     apply_rekey,
@@ -410,6 +413,8 @@ def _merge_conversation_participant(conv_record, sender_kid_hex: str) -> bool:
 
 
 NON_MEMBER_SYSTEM_BODY_TYPES = {
+    "gate.accept",
+    "gate.promote",
     "gate.executed",
     "gate.result",
     "gate.expired",
@@ -1037,6 +1042,23 @@ def _process_received_messages(config_dir, identity, conversations, conv_record,
         sender_pk = bytes(inner["sender_ik_pk"])
         body_bytes = bytes(inner["body"])
         body_type = inner["body_type"]
+
+        gateway = conv_record.get("gateway") or {}
+        if body_type == "gate.accept":
+            try:
+                acceptance = json.loads(body_bytes)
+                invitation = next((item for item in history if item.get("msg_id") == acceptance.get("invitation_msg_id") and item.get("body_type") == "gate.promote"), None)
+                if acceptance.get("conv_id") != conv_id_hex or not invitation or not matches_gateway_acceptance(acceptance, kid_to_wire(inner["sender_kid"]), invitation["msg_id"], invitation["unsafe_body"]):
+                    continue
+                if gateway.get("invitationId") and gateway["invitationId"] != acceptance["invitation_id"]:
+                    continue
+                conv_record["gateway"] = {"publicKey": acceptance["gateway_public_key"], "keyId": acceptance["gateway_kid"], "status": "active",
+                                          "invitationId": acceptance["invitation_id"], "floor": json.loads(invitation["unsafe_body"])["floor"],
+                                          "bootstrap": gateway.get("pending") or gateway.get("bootstrap")}
+            except (ValueError, KeyError, TypeError):
+                continue
+        if gateway.get("status") == "active" and body_type in NON_MEMBER_SYSTEM_BODY_TYPES - {"gate.promote", "gate.accept"} and kid_to_wire(inner["sender_kid"]) != gateway["keyId"]:
+            continue
 
         # Apply group membership/epoch state changes before learning senders so
         # governed membership updates can adjust the roster deterministically.
@@ -1826,7 +1848,7 @@ def _load_starter_catalog():
 
 def _build_gate_request_message(identity, recipe, conv_id, args,
                                 eligible_signer_kids=None,
-                                required_approvals=None):
+                                required_approvals=None, gateway_kid=None):
     """Build a gate.request message dict. Returns (msg_dict, request_id)."""
     from datetime import timedelta
 
@@ -1855,10 +1877,12 @@ def _build_gate_request_message(identity, recipe, conv_id, args,
         payload_hash=payload_hash,
         eligible_signer_kids=eligible_signer_kids,
         required_approvals=required_approvals,
+        gateway_kid=gateway_kid,
     )
 
     msg = {
         "type": GATE_MESSAGE_REQUEST,
+        **({"gateway_kid": gateway_kid} if gateway_kid else {}),
         "conv_id": conv_id,
         "request_id": request_id,
         "verb": recipe.verb,
@@ -1896,6 +1920,7 @@ def _build_gate_approval_message(identity, request_msg):
         payload_hash=payload_hash,
         eligible_signer_kids=request_msg.get("eligible_signer_kids", []),
         required_approvals=request_msg.get("required_approvals", 1),
+        gateway_kid=request_msg.get("gateway_kid"),
     )
 
     sig = sign_approval(
@@ -2110,10 +2135,13 @@ def cmd_gate_run(args):
             args=recipe_args or None,
             eligible_signer_kids=eligible_signer_kids,
             required_approvals=required_approvals,
+            gateway_kid=_gateway_target(conv_record),
         )
     except ValueError as e:
         _error(str(e))
 
+    if _gateway_target(conv_record):
+        msg["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GATE_MESSAGE_REQUEST, msg, dropbox_url,
     )
@@ -2166,6 +2194,8 @@ def cmd_gate_approve(args):
 
     approval_msg = _build_gate_approval_message(identity, req_msg)
 
+    if _gateway_target(conv_record):
+        approval_msg["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GATE_MESSAGE_APPROVAL, approval_msg, dropbox_url,
     )
@@ -2211,6 +2241,8 @@ def cmd_gate_disapprove(args):
         "signer_kid": kid_to_wire(identity["keyID"]),
     }
 
+    if _gateway_target(conv_record):
+        disapproval_msg["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GATE_MESSAGE_DISAPPROVAL, disapproval_msg, dropbox_url,
     )
@@ -2292,63 +2324,61 @@ def cmd_gate_pending(args):
     })
 
 
+def _gateway_target(conv_record):
+    gateway = conv_record.get("gateway") or {}
+    if gateway.get("status") == "pending":
+        raise ValueError("Waiting for the gateway to accept in this conversation")
+    return gateway.get("keyId")
+
+
 def cmd_gate_promote(args):
     config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
     identity = _load_identity(config_dir)
     if not identity:
         _error("no identity found; run 'qntm identity generate' first")
-
-    conv_id_input = args.conversation
     conversations = _load_conversations(config_dir)
-    conv_record = _resolve_conversation(conversations, conv_id_input)
+    conv_record = _resolve_conversation(conversations, args.conversation)
     if not conv_record:
-        _error(f"conversation {conv_id_input} not found")
-
+        _error(f"conversation {args.conversation} not found")
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
-
-    gateway_kid = getattr(args, "gateway_kid", None) or ""
-    threshold = args.threshold
-
+    gateway = conv_record.get("gateway") or {}
+    if gateway.get("status") == "active":
+        _error("Gateway has already joined")
+    pending = gateway.get("pending")
     try:
+        if pending:
+            with GateClient(pending["url"]) as client:
+                try:
+                    client.promote(pending["request"])
+                    _output("gate.promote", {"conversation_id": conv_id_hex, "status": "waiting", "gateway_kid": gateway["keyId"], "gateway_public_key": gateway["publicKey"]})
+                    return
+                except GateError as error:
+                    if error.status != 410:
+                        raise
         known_pks = _load_known_participant_public_keys(config_dir, conv_record, identity=identity)
-        missing_kids = [
-            kid_hex for kid_hex in _participant_kids_from_conversation(conv_record)
-            if kid_hex not in known_pks
-        ]
-        if missing_kids:
-            _error(
-                "missing participant public keys for gate.promote; run 'qntm recv' to learn "
-                f"them before promoting: {', '.join(sorted(missing_kids))}"
-            )
-        payload = _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
-                                         known_participant_pks=known_pks)
-    except ValueError as e:
-        _error(str(e))
-
-    result, envelope = _send_gate_message_to_conv(
-        identity, conv_crypto, conv_id_hex, GATE_MESSAGE_PROMOTE, payload, dropbox_url,
-    )
-
-    history = _load_history(config_dir, conv_id_hex)
-    history.append({
-        "msg_id": envelope["msg_id"].hex(),
-        "direction": "outgoing",
-        "body_type": GATE_MESSAGE_PROMOTE,
-        "unsafe_body": json.dumps(payload),
-        "created_ts": envelope["created_ts"],
-    })
-    _save_history(config_dir, conv_id_hex, history)
-
-    _output("gate.promote", {
-        "conversation_id": conv_id_hex,
-        "gateway_kid": gateway_kid,
-        "threshold": threshold,
-        "participants": len(payload["participants"]),
-    })
-
+        missing = set(_participant_kids_from_conversation(conv_record)) - set(known_pks)
+        if missing:
+            _error("missing participant public keys; run 'qntm recv' before inviting the gateway")
+        with GateClient(args.gateway_url) as client:
+            invitation = client.create_invitation(pubkey_to_wire(identity["publicKey"]), _uuid.uuid4().hex)
+            participants = {kid_to_wire(bytes.fromhex(kid)): pubkey_to_wire(pk) for kid, pk in known_pks.items()}
+            payload = create_gateway_invite_body(invitation, conv_crypto, participants, args.threshold)
+            result, envelope = _send_gate_message_to_conv(identity, conv_crypto, conv_id_hex, GATE_MESSAGE_PROMOTE, payload, _get_dropbox_url(args))
+            history = _load_history(config_dir, conv_id_hex)
+            history.append({"msg_id": envelope["msg_id"].hex(), "direction": "outgoing", "body_type": GATE_MESSAGE_PROMOTE,
+                            "unsafe_body": json.dumps(payload, separators=(",", ":")), "created_ts": envelope["created_ts"]})
+            _save_history(config_dir, conv_id_hex, history)
+            request = seal_gateway_bootstrap(identity, invitation, conv_crypto, envelope["msg_id"].hex(), result["seq"])
+            conv_record["gateway"] = {"publicKey": invitation["gateway_public_key"], "keyId": invitation["gateway_kid"],
+                                      "status": "pending", "invitationId": invitation["invitation_id"], "floor": args.threshold,
+                                      "pending": {"url": args.gateway_url, "request": request}}
+            _save_conversations(config_dir, conversations)
+            client.promote(request)
+        _output("gate.promote", {"conversation_id": conv_id_hex, "status": "waiting", "gateway_kid": invitation["gateway_kid"],
+                                 "gateway_public_key": invitation["gateway_public_key"], "threshold": args.threshold})
+    except (ValueError, GateError, httpx.HTTPError) as error:
+        _error(str(error))
 
 
 def cmd_gate_secret(args):
@@ -2393,6 +2423,8 @@ def cmd_gate_secret(args):
     except ValueError as e:
         _error(str(e))
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GATE_MESSAGE_SECRET, payload, dropbox_url,
     )
@@ -2434,6 +2466,7 @@ def cmd_gov_propose_floor(args):
     history = _load_history(config_dir, conv_id_hex)
     payload = create_proposal_body(
         identity,
+        gateway_kid=_gateway_target(conv_record),
         conv_id=conv_id_hex,
         proposal_type="floor_change",
         proposed_floor=args.floor,
@@ -2445,6 +2478,8 @@ def cmd_gov_propose_floor(args):
         expires_in_seconds=args.expires_in,
     )
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
     )
@@ -2485,6 +2520,7 @@ def cmd_gov_propose_add(args):
     public_key = _decode_identity_public_key(args.public_key)
     payload = create_proposal_body(
         identity,
+        gateway_kid=_gateway_target(conv_record),
         conv_id=conv_id_hex,
         proposal_type="member_add",
         proposed_members=[{
@@ -2499,6 +2535,8 @@ def cmd_gov_propose_add(args):
         expires_in_seconds=args.expires_in,
     )
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
     )
@@ -2539,6 +2577,7 @@ def cmd_gov_propose_remove(args):
     member_kid = kid_to_wire(_decode_identity_key_id(args.key_id))
     payload = create_proposal_body(
         identity,
+        gateway_kid=_gateway_target(conv_record),
         conv_id=conv_id_hex,
         proposal_type="member_remove",
         removed_member_kids=[member_kid],
@@ -2551,6 +2590,8 @@ def cmd_gov_propose_remove(args):
         expires_in_seconds=args.expires_in,
     )
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GOV_MESSAGE_PROPOSE, payload, dropbox_url,
     )
@@ -2594,6 +2635,7 @@ def cmd_gov_approve(args):
         _error(str(e))
 
     proposal_hash = hash_proposal(
+        gateway_kid=proposal.get("gateway_kid"),
         conv_id=proposal["conv_id"],
         proposal_id=proposal["proposal_id"],
         proposal_type=proposal["proposal_type"],
@@ -2618,6 +2660,8 @@ def cmd_gov_approve(args):
         )),
     }
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GOV_MESSAGE_APPROVE, payload, dropbox_url,
     )
@@ -2659,6 +2703,8 @@ def cmd_gov_disapprove(args):
         "signer_kid": kid_to_wire(identity["keyID"]),
     }
 
+    if _gateway_target(conv_record):
+        payload["gateway_kid"] = _gateway_target(conv_record)
     result, envelope = _send_gate_message_to_conv(
         identity, conv_crypto, conv_id_hex, GOV_MESSAGE_DISAPPROVE, payload, dropbox_url,
     )
@@ -3001,8 +3047,8 @@ claude code channel:
                                 help="Conversation ID or prefix")
     gate_promote_p.add_argument("--threshold", type=int, required=True,
                                 help="Approval threshold (M-of-N)")
-    gate_promote_p.add_argument("--gateway-kid", default="",
-                                help="KID of gateway participant")
+    gate_promote_p.add_argument("--gateway-url", required=True,
+                                help="Gateway server URL; any participant may invite it")
 
     # gate-secret
     gate_secret_p = subparsers.add_parser("gate-secret", help="Provision a secret to gate conversation")

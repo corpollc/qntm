@@ -4,6 +4,7 @@
  */
 
 import {
+  GateClient, createGatewayInviteBody, sealGatewayBootstrap, matchesGatewayAcceptance,
   generateIdentity as clientGenerateIdentity,
   keyIDFromPublicKey,
   publicKeyToString,
@@ -292,10 +293,6 @@ function getDropbox(): DropboxClient {
   return new DropboxClient(store.getDropboxUrl())
 }
 
-interface GatewayBootstrap {
-  gatewayPublicKey: string
-  gatewayKid: string
-}
 
 function submitReceiptBestEffort(
   dropbox: DropboxClient,
@@ -337,6 +334,7 @@ async function sendEnvelope(
 function formatConversation(conv: store.StoredConversation): Conversation {
   return {
     id: conv.id,
+    gateway: conv.gateway,
     name: conv.name || `${conv.type || 'chat'}-${conv.id.slice(0, 8)}`,
     type: conv.type || 'direct',
     participants: conv.participants || [],
@@ -385,6 +383,8 @@ function mergeConversationParticipants(
 }
 
 const NON_MEMBER_SYSTEM_BODY_TYPES = new Set([
+  'gate.accept',
+  'gate.promote',
   'gate.executed',
   'gate.result',
   'gate.expired',
@@ -605,6 +605,23 @@ async function applyReceivedEnvelope(
   const bodyText = groupBodyToJson(bodyType, rawBodyBytes) ?? new TextDecoder().decode(rawBodyBytes)
   const createdAt = new Date(envelope.created_ts * 1000).toISOString()
 
+  const selectedGateway = store.findConversation(profileId, conversationId)?.gateway
+  if (bodyType === 'gate.accept') {
+    try {
+      const acceptance = JSON.parse(bodyText)
+      const invitation = store.getHistory(profileId, conversationId).find(m => m.id === acceptance.invitation_msg_id && m.bodyType === 'gate.promote')
+      if (acceptance.conv_id !== conversationId || !invitation || !matchesGatewayAcceptance(acceptance, base64UrlEncode(decrypted.inner.sender_kid), invitation.id, invitation.text) ||
+        (selectedGateway?.invitationId && selectedGateway.invitationId !== acceptance.invitation_id)) {
+        return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+      }
+      store.updateConversation(profileId, conversationId, c => ({ ...c, gateway: { publicKey: acceptance.gateway_public_key, keyId: acceptance.gateway_kid,
+        status: 'active', invitationId: acceptance.invitation_id, floor: JSON.parse(invitation.text).floor } }))
+    } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
+  }
+  if (selectedGateway?.status === 'active' && NON_MEMBER_SYSTEM_BODY_TYPES.has(bodyType) && bodyType !== 'gate.promote' && bodyType !== 'gate.accept' &&
+      base64UrlEncode(decrypted.inner.sender_kid) !== selectedGateway.keyId) {
+    return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+  }
   applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
 
   let nextConvCrypto: ConvCrypto | null = activeConvCrypto
@@ -667,6 +684,9 @@ export async function sendMessageToConversation(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
+  if ((bodyType.startsWith('gate.') || bodyType.startsWith('gov.')) && bodyType !== 'gate.promote') {
+    text = JSON.stringify({ ...JSON.parse(text), ...gatewayTarget(profileId, conversationId) })
+  }
   const bodyBytes = new TextEncoder().encode(text)
   const envelope = createMessage(identity, convCrypto, bodyType, bodyBytes, undefined, defaultTTL())
 
@@ -839,6 +859,7 @@ export async function gateRunRequest(
   const requiredApprovals = Math.max(recipe.threshold ?? eligibleSignerKids.length, minimumApprovals, 1)
 
   const signable = {
+    ...gatewayTarget(profileId, conversationId),
     conv_id: conversationId,
     request_id: requestId,
     verb: recipe.verb,
@@ -901,6 +922,7 @@ export async function gateApproveRequest(
   const payloadHash = computePayloadHash(reqMsg.payload ?? null)
 
   const signable = {
+    ...(typeof reqMsg.gateway_kid === 'string' ? { gateway_kid: reqMsg.gateway_kid } : {}),
     conv_id: reqMsg.conv_id as string,
     request_id: requestId,
     verb: reqMsg.verb as string,
@@ -958,89 +980,46 @@ export async function gateDisapproveRequest(
 
 export async function gatePromoteRequest(
   profileId: string, profileName: string, conversationId: string,
-  gatewayKid: string, threshold: number
+  gateServerUrl: string, threshold: number,
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
-  if (!identity) throw new Error('No identity found')
-  const convCrypto = getConvCrypto(profileId, conversationId)
-  if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
-
-  // Build participants map: base64url kid → base64url public key (gateway excluded)
   const conv = store.findConversation(profileId, conversationId)
+  const convCrypto = getConvCrypto(profileId, conversationId)
+  if (!identity || !conv || !convCrypto) throw new Error('Conversation identity is unavailable')
+  if (conv.gateway?.status === 'active') throw new Error('Gateway has already joined')
+  const pending = conv.gateway?.pending
+  if (pending) {
+    try {
+      await new GateClient(pending.url).promote(pending.request)
+      return resolveMessageSender(profileId, store.getHistory(profileId, conversationId).find(m => m.id === pending.messageId)!)
+    } catch (error) {
+      if (!(error instanceof Error) || !('status' in error) || error.status !== 410) throw error
+      // Expired, unaccepted invitations may be replaced with a new challenge.
+    }
+  }
+  const client = new GateClient(gateServerUrl.trim())
+  const invitation = await client.createInvitation(base64UrlEncode(identity.publicKey), bytesToHex(crypto.getRandomValues(new Uint8Array(16))))
   const participants: Record<string, string> = {}
-  const knownPublicKeys = listKnownParticipantPublicKeys(conv, identity)
-  for (const pk of knownPublicKeys) {
-    const kid = base64UrlEncode(keyIDFromPublicKey(pk))
-    if (kid === gatewayKid) continue // Exclude gateway
-    participants[kid] = base64UrlEncode(pk)
-  }
-
-  const promotePayload = {
-    type: 'gate.promote',
-    conv_id: conversationId,
-    gateway_kid: gatewayKid,
-    participants,
-    rules: [{ service: '*', endpoint: '*', verb: '*', m: threshold }],
-    floor: threshold,
-  }
-
-  const bodyText = JSON.stringify(promotePayload)
-  return sendMessageToConversation(profileId, profileName, conversationId, bodyText, 'gate.promote')
+  for (const pk of listKnownParticipantPublicKeys(conv, identity)) participants[base64UrlEncode(keyIDFromPublicKey(pk))] = base64UrlEncode(pk)
+  const text = JSON.stringify(createGatewayInviteBody(invitation, convCrypto, participants, threshold))
+  const envelope = createMessage(identity, convCrypto, 'gate.promote', new TextEncoder().encode(text), undefined, defaultTTL())
+  const sequence = await getDropbox().postMessage(convCrypto.id, serializeEnvelope(envelope))
+  const message: store.StoredMessage = { id: bytesToHex(envelope.msg_id), conversationId, direction: 'outgoing', sender: profileName,
+    senderKey: '', bodyType: 'gate.promote', text, createdAt: new Date(envelope.created_ts * 1000).toISOString() }
+  store.addHistoryMessage(profileId, conversationId, message)
+  const request = sealGatewayBootstrap(identity, invitation, convCrypto, message.id, sequence)
+  store.updateConversation(profileId, conversationId, c => ({ ...c, gateway: {
+    publicKey: invitation.gateway_public_key, keyId: invitation.gateway_kid, status: 'pending', invitationId: invitation.invitation_id, floor: threshold,
+    pending: { invitation, request, url: gateServerUrl.trim(), messageId: message.id, text },
+  } }))
+  await client.promote(request)
+  return resolveMessageSender(profileId, message)
 }
 
-export async function bootstrapGatewayForConversation(
-  profileId: string,
-  conversationId: string,
-  gateServerUrl: string,
-  promotionToken: string,
-): Promise<GatewayBootstrap> {
-  const convCrypto = getConvCrypto(profileId, conversationId)
-  if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
-
-  const baseUrl = gateServerUrl.trim().replace(/\/+$/, '')
-  if (!baseUrl) {
-    throw new Error('Gateway server URL is required')
-  }
-  const token = promotionToken.trim()
-  if (!token) {
-    throw new Error('Gateway promotion token is required')
-  }
-
-  const response = await fetch(`${baseUrl}/v1/promote`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      conv_id: conversationId,
-      conv_aead_key: base64UrlEncode(convCrypto.keys.aeadKey),
-      conv_nonce_key: base64UrlEncode(convCrypto.keys.nonceKey),
-      conv_epoch: convCrypto.currentEpoch,
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Gateway bootstrap failed: HTTP ${response.status} ${await response.text()}`)
-  }
-
-  const data = await response.json() as { gateway_public_key?: unknown; gateway_kid?: unknown }
-  if (typeof data.gateway_public_key !== 'string' || typeof data.gateway_kid !== 'string') {
-    throw new Error('Gateway bootstrap returned an invalid response')
-  }
-
-  store.updateConversation(profileId, conversationId, (conv) => ({
-    ...conv,
-    gateway: {
-      publicKey: data.gateway_public_key as string,
-      keyId: data.gateway_kid as string,
-    },
-  }))
-
-  return {
-    gatewayPublicKey: data.gateway_public_key,
-    gatewayKid: data.gateway_kid,
-  }
+function gatewayTarget(profileId: string, conversationId: string): { gateway_kid?: string } {
+  const gateway = store.findConversation(profileId, conversationId)?.gateway
+  if (gateway?.status === 'pending') throw new Error('Waiting for the gateway to accept in this conversation')
+  return gateway?.keyId ? { gateway_kid: gateway.keyId } : {}
 }
 
 export async function gateSecretRequest(
@@ -1123,6 +1102,7 @@ export async function govProposeFloorChange(
   const conv = store.findConversation(profileId, conversationId)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   const proposal = createProposalBody(identity, {
+    gatewayKid: gatewayTarget(profileId, conversationId).gateway_kid,
     convId: conversationId,
     proposalType: 'floor_change',
     proposedFloor,
@@ -1154,6 +1134,7 @@ export async function govProposeMemberAdd(
   const publicKey = decodeIdentityPublicKey(memberPublicKey)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   const proposal = createProposalBody(identity, {
+    gatewayKid: gatewayTarget(profileId, conversationId).gateway_kid,
     convId: conversationId,
     proposalType: 'member_add',
     proposedMembers: [{
@@ -1187,6 +1168,7 @@ export async function govProposeMemberRemove(
   const conv = store.findConversation(profileId, conversationId)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   const proposal = createProposalBody(identity, {
+    gatewayKid: gatewayTarget(profileId, conversationId).gateway_kid,
     convId: conversationId,
     proposalType: 'member_remove',
     removedMemberKids: [base64UrlEncode(decodeIdentityKeyID(memberKeyId))],
@@ -1218,6 +1200,7 @@ export async function govApproveProposal(
 
   const proposal = findGovernanceProposalInHistory(profileId, conversationId, proposalId)
   const proposalHash = hashProposal({
+    ...(typeof proposal.gateway_kid === 'string' ? { gateway_kid: proposal.gateway_kid } : {}),
     conv_id: proposal.conv_id as string,
     proposal_id: proposal.proposal_id as string,
     proposal_type: proposal.proposal_type as 'floor_change' | 'rules_change' | 'member_add' | 'member_remove',

@@ -184,6 +184,7 @@ function storedVoteMatchesConversation(body: string | undefined, expectedConvID:
 function buildSignable(req: GateRequestMessage): GateSignable {
   const payloadHash = computePayloadHash(req.payload ?? null);
   return {
+    ...(req.gateway_kid ? { gateway_kid: req.gateway_kid } : {}),
     conv_id: req.conv_id,
     request_id: req.request_id,
     verb: req.verb,

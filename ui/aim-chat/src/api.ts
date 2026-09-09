@@ -13,6 +13,7 @@ import starterCatalog from '../../../gate/recipes/starter.json'
 function formatConversation(conv: store.StoredConversation): Conversation {
   return {
     id: conv.id,
+    gateway: conv.gateway,
     name: conv.name || `${conv.type || 'chat'}-${conv.id.slice(0, 8)}`,
     type: conv.type || 'direct',
     participants: conv.participants || [],
@@ -127,22 +128,9 @@ export const api = {
     profileName: string,
     conversationId: string,
     gateServerUrl: string,
-    promotionToken: string,
     threshold: number,
   ): Promise<{ message: ChatMessage; warning?: string }> {
-    const bootstrap = await qntm.bootstrapGatewayForConversation(
-      profileId,
-      conversationId,
-      gateServerUrl,
-      promotionToken,
-    )
-    const message = await qntm.gatePromoteRequest(
-      profileId,
-      profileName,
-      conversationId,
-      bootstrap.gatewayKid,
-      threshold,
-    )
+    const message = await qntm.gatePromoteRequest(profileId, profileName, conversationId, gateServerUrl, threshold)
     return { message }
   },
 
