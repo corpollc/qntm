@@ -52,6 +52,8 @@ The repository needs `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `QNTM_
 
 Manual AIM/relay/gateway/echo deployment runs the full CI gate on the selected ref before deploying. For a browser security fix between package releases, run `gh workflow run deploy-aim.yml --ref BRANCH_OR_TAG`, inspect that run's commit SHA, and wait for both the complete verification suite and deployment to succeed. AIM records that SHA on its production Pages deployment; this does not publish Python/npm packages or change their version. Verify the live asset against the built artifact and exercise the affected browser journey. Production AIM deployments are serialized without interrupting an active deployment.
 
+The [AIM deployment runbook](aim-deploy.md) lists the Pages project, required token permissions, production-versus-preview behavior, live verification and rollback steps. Manual AIM runs always target production, even when their source ref is a feature branch.
+
 Deploy a previous compatible ref to roll back code. For AIM, select a ref that contains the manual workflow or use the prior deployment's Cloudflare Pages rollback action; do not rebuild an old published tag using changed source. Published package versions are immutable; fix forward with a new version if a release artifact is wrong. Do not move a published tag or rotate the gateway vault key during a routine release: existing credentials depend on that key.
 
 Relay cleanup is logical expiry. Cloudflare recovery history and copies stored in clients or gateways have separate retention. Old dormant Durable Objects begin metadata migration and alarm scheduling when they next wake; deployment alone does not enumerate them.

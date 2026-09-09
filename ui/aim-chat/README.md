@@ -28,9 +28,12 @@ npm run dev
 
 - Vite UI: `http://localhost:5173`
 - Production build: `npm run build`
+- Preview that build locally: `npm run preview`
 - Tests: `npm test`
 
 The checked-in lockfile includes platform-specific Rollup packages. Local builds, CI and the Pages deployment use `npm ci`; do not install a separate Linux binary or modify dependencies during deployment. The static `dist/` artifact uses the domain root (`/`) and HashRouter routes. A custom-domain cutover is a separate deployment step.
+
+For the production Pages project, credentials, deployment triggers, preview behavior and rollback, see the [AIM deployment runbook](../../docs/aim-deploy.md).
 
 ## Storage
 
@@ -42,7 +45,7 @@ The checked-in lockfile includes platform-specific Rollup packages. Local builds
 
 - Messages are encrypted in the browser. A gateway explicitly invited to a conversation receives its keys, and invite links carry bootstrap secrets; both are deliberate key sharing.
 - Those secrets are still recoverable by any script that can execute on the same origin, so treat the browser profile as sensitive.
-- Unreleased: copied invite links keep their bootstrap secret in a URL fragment, which the browser does not send to the web host. Older `?invite=` links remain readable but expose their token in the initial HTTP request. See the [exact metadata inventory](../../docs/metadata-privacy.md).
+- The hosted browser was updated on September 9, 2026: copied invite links keep their bootstrap secret in a URL fragment, which the browser does not send to the web host. The source at the 0.6.1 tag still emits query links. Older `?invite=` links remain readable but expose their token in the initial HTTP request. See the [exact metadata inventory](../../docs/metadata-privacy.md).
 - The app ships with a restrictive Content Security Policy to reduce script-injection risk, but that does not make `localStorage` equivalent to hardware-backed key storage.
 - For higher-trust deployments, use a dedicated browser profile and consider a future move to WebCrypto non-exportable keys + IndexedDB.
 
