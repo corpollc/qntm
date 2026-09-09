@@ -38,7 +38,33 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Down"
+                },
+                "1": {
+                  "text": "Up"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -75,7 +101,25 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "d"
+          "unit": "none",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 7
+              },
+              {
+                "color": "green",
+                "value": 14
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -461,8 +505,8 @@
     },
     {
       "id": 13,
-      "title": "Active alert conditions",
-      "type": "timeseries",
+      "title": "Firing alert rules",
+      "type": "stat",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -476,13 +520,26 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "ALERTS{alertstate=\"firing\"}",
+          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
           "legendFormat": "{{instance}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
         },
         "overrides": []
       },
