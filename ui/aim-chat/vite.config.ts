@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -11,5 +12,9 @@ export default defineConfig({
   define: {
     // cbor-x uses Buffer.isBuffer() — provide global Buffer for browser
     'globalThis.Buffer': 'globalThis.Buffer',
+  },
+  test: {
+    environment: 'happy-dom',
+    exclude: ['tests/e2e/**', 'node_modules/**'],
   },
 })

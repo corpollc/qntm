@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import type { DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
-import { shortId, APP_VERSION } from './utils'
+import { shortId, APP_VERSION, extractToken } from './utils'
 import { SettingsPage } from './components/SettingsPage'
 import { GuidancePage } from './components/GuidancePage'
 import { Sidebar } from './components/Sidebar'
@@ -13,6 +13,7 @@ import { GatePanel } from './components/GatePanel'
 import { ShortcutsHelp } from './components/ShortcutsHelp'
 import { HelpPanel } from './components/HelpPanel'
 import { JoinModal } from './components/JoinModal'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import {
   relayConversationIds,
@@ -20,6 +21,7 @@ import {
   selectedConversationRelayStatus,
   type RelayConnectionState,
 } from './relayStatus'
+import { parseInviteConvId } from './qntm'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -84,6 +86,7 @@ export default function App() {
 
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
   const [showJoinModal, setShowJoinModal] = useState(false)
+  const [deleteConfirmConvId, setDeleteConfirmConvId] = useState<string | null>(null)
 
   const messageTailRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
@@ -160,7 +163,10 @@ export default function App() {
       delete next[convId]
       return next
     })
-  }, [])
+    if (convId) {
+      navigate(`/c/${convId}`)
+    }
+  }, [navigate])
 
   const toggleHideConversation = useCallback((convId: string) => {
     setHiddenConversations(prev => {
@@ -259,7 +265,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     const token = params.get('invite')
     if (token) {
-      setInviteToken(token)
+      setInviteToken(token.replace(/\s+/g, ''))
       setShowJoinModal(true)
       // Clean the URL so the token isn't visible/bookmarked
       const url = new URL(window.location.href)
@@ -267,6 +273,70 @@ export default function App() {
       window.history.replaceState({}, '', url.pathname + url.hash)
     }
   }, [])
+
+  // Global paste listener: detect invite tokens pasted outside text inputs
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      const active = document.activeElement
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return // Let native paste happen
+      }
+
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text) return
+
+      const token = extractToken(text)
+      if (!token) return
+
+      const convId = parseInviteConvId(token)
+      if (!convId) return // Not a valid invite token
+
+      // Check if we already have this conversation
+      const existing = conversations.find(c => c.id === convId)
+      if (existing) {
+        selectConversation(convId)
+      } else {
+        setInviteToken(token)
+        setShowJoinModal(true)
+      }
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [conversations, selectConversation])
+
+  // Sync selected conversation from URL on mount/navigation
+  useEffect(() => {
+    const match = location.pathname.match(/^\/c\/(.+)$/)
+    if (match) {
+      const convId = match[1]
+      const exists = conversations.some(c => c.id === convId)
+      if (exists) {
+        if (convId !== selectedConversationIdRef.current) {
+          setSelectedConversationId(convId)
+          setUnreadCounts((prev) => {
+            if (!prev[convId]) return prev
+            const next = { ...prev }
+            delete next[convId]
+            return next
+          })
+        }
+      } else if (conversations.length > 0) {
+        // Conv doesn't exist — fall back to first visible
+        const firstVisible = conversations.find(c => !hiddenConversations.has(c.id))
+        const target = firstVisible?.id || conversations[0]?.id || ''
+        if (target) {
+          selectConversation(target)
+        } else {
+          navigate('/', { replace: true })
+        }
+      }
+    }
+  }, [location.pathname, conversations, hiddenConversations, navigate, selectConversation])
 
   useEffect(() => {
     void initializeProfiles()
@@ -486,17 +556,20 @@ export default function App() {
         return next
       })
 
-      setSelectedConversationId((previous) => {
-        if (
-          previous &&
-          conversationsResponse.conversations.some((conversation) => conversation.id === previous)
-        ) {
-          return previous
-        }
-
+      const previousId = selectedConversationIdRef.current
+      const stillExists = conversationsResponse.conversations.some(c => c.id === previousId)
+      if (stillExists) {
+        // Keep current selection, but ensure URL is in sync
+        if (previousId) navigate(`/c/${previousId}`, { replace: true })
+      } else {
         const firstVisible = conversationsResponse.conversations.find((c) => !hiddenConversations.has(c.id))
-        return firstVisible?.id || conversationsResponse.conversations[0]?.id || ''
-      })
+        const target = firstVisible?.id || conversationsResponse.conversations[0]?.id || ''
+        if (target) {
+          selectConversation(target)
+        } else {
+          navigate('/', { replace: true })
+        }
+      }
 
       setError('')
     } catch (err) {
@@ -613,6 +686,7 @@ export default function App() {
     try {
       await api.selectProfile(profileId)
       setActiveProfileId(profileId)
+      navigate('/')
       const switchMsg = `Switched profile to ${profiles.find((profile) => profile.id === profileId)?.name || profileId}`
       setStatus(switchMsg)
       addToast(switchMsg, 'success')
@@ -653,21 +727,61 @@ export default function App() {
     }
   }
 
-  async function onCreateInvite() {
+  function handleRenameConversation(convId: string, newName: string) {
+    if (!activeProfileId) return
+    const result = api.renameConversation(activeProfileId, convId, newName)
+    setConversations(result.conversations)
+  }
+
+  function requestDeleteConversation(convId: string) {
+    setDeleteConfirmConvId(convId)
+  }
+
+  function confirmDeleteConversation() {
+    const convId = deleteConfirmConvId
+    if (!convId || !activeProfileId) {
+      setDeleteConfirmConvId(null)
+      return
+    }
+    // Close relay subscription
+    const sub = subscriptionsRef.current.get(convId)
+    if (sub) {
+      sub.close()
+      subscriptionsRef.current.delete(convId)
+    }
+    // Remove from store
+    const result = api.deleteConversation(activeProfileId, convId)
+    setConversations(result.conversations)
+    // Clean up related state
+    setHiddenConversations(prev => {
+      if (!prev.has(convId)) return prev
+      const next = new Set(prev)
+      next.delete(convId)
+      window.localStorage.setItem('aim-hidden-conversations', JSON.stringify([...next]))
+      return next
+    })
+    if (selectedConversationId === convId) {
+      setSelectedConversationId('')
+      navigate('/')
+    }
+    setDeleteConfirmConvId(null)
+  }
+
+  async function onCreateInvite(name: string) {
     if (!activeProfileId) {
       return
     }
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Room`
-      const response = await api.createInvite(activeProfileId, name)
+      const convName = name.trim() || `${activeProfile?.name || 'Conversation'} Room`
+      const response = await api.createInvite(activeProfileId, convName)
 
       setCreatedInviteToken(response.inviteToken)
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setStatus('Invite created. Token copied below.')
@@ -695,7 +809,7 @@ export default function App() {
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setInviteToken('')
@@ -712,7 +826,7 @@ export default function App() {
     }
   }
 
-  async function onAcceptInvite() {
+  async function onAcceptInvite(name: string) {
     if (!activeProfileId) {
       return
     }
@@ -724,12 +838,12 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const name = inviteName.trim() || `${activeProfile?.name || 'Conversation'} Link`
-      const response = await api.acceptInvite(activeProfileId, token, name)
+      const convName = name.trim() || `${activeProfile?.name || 'Conversation'} Link`
+      const response = await api.acceptInvite(activeProfileId, token, convName)
       setConversations(response.conversations)
 
       if (response.conversationId) {
-        setSelectedConversationId(response.conversationId)
+        selectConversation(response.conversationId)
       }
 
       setInviteToken('')
@@ -1105,8 +1219,6 @@ export default function App() {
             identity={identity}
             newProfileName={newProfileName}
             setNewProfileName={setNewProfileName}
-            inviteName={inviteName}
-            setInviteName={setInviteName}
             inviteToken={inviteToken}
             setInviteToken={setInviteToken}
             createdInviteToken={createdInviteToken}
@@ -1119,6 +1231,8 @@ export default function App() {
             showHidden={showHidden}
             setShowHidden={setShowHidden}
             toggleHideConversation={toggleHideConversation}
+            onRenameConversation={handleRenameConversation}
+            onDeleteConversation={requestDeleteConversation}
             visibleContactKeys={visibleContactKeys}
             contactDrafts={contactDrafts}
             contactNameByKey={contactNameByKey}
@@ -1207,6 +1321,15 @@ export default function App() {
             }}
           />
         )}
+        <ConfirmDialog
+          open={deleteConfirmConvId !== null}
+          title="Delete Conversation"
+          message="You won't be able to rejoin without a new invitation."
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDeleteConversation}
+          onCancel={() => setDeleteConfirmConvId(null)}
+        />
         <footer className="status-bar app-status-bar" aria-live="polite">
           <span className="status-bar-version">qntm v{APP_VERSION} &middot; &copy; {new Date().getFullYear()} <a href="https://corpo.llc" target="_blank" rel="noopener noreferrer">Corpo, LLC</a>. All rights reserved.</span>
           <span className={`status-bar-message${footerStatusIsError ? ' status-bar-message-error' : ''}`}>

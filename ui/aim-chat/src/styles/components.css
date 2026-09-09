@@ -239,6 +239,56 @@
   color: var(--danger);
 }
 
+.conversation-edit {
+  padding: 0 6px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--tint-separator);
+  font-size: 13px;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.conversation:hover .conversation-edit {
+  opacity: 1;
+}
+
+.conversation-edit:hover {
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--brand-primary);
+}
+
+.conversation-delete {
+  padding: 0 6px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--tint-separator);
+  font-size: 13px;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.conversation:hover .conversation-delete {
+  opacity: 1;
+}
+
+.conversation-delete:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
+}
+
+.conversation-rename-input {
+  flex: 1;
+  min-width: 0;
+  margin: 4px;
+  padding: 4px 8px;
+  font: inherit;
+}
+
 .conversation-name {
   font-size: var(--text-base);
   font-weight: 400;

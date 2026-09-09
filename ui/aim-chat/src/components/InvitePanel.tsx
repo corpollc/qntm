@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { Ref } from 'react'
 import type { IdentityInfo } from '../types'
 import { Tooltip } from './Tooltip'
+import { extractToken } from '../utils'
 
 const INVITE_BASE_URL = `${window.location.origin}${window.location.pathname}`
 
@@ -14,37 +15,19 @@ function tokenToLink(token: string): string {
   return `${INVITE_BASE_URL}?invite=${encodeURIComponent(token)}`
 }
 
-/** Extract a raw token from a pasted invite link or bare token */
-function extractToken(input: string): string {
-  const trimmed = input.trim()
-  try {
-    const url = new URL(trimmed)
-    const invite = url.searchParams.get('invite')
-    if (invite) return invite
-    // Also accept fragment-style URLs
-    if (url.hash) return url.hash.replace(/^#/, '')
-  } catch {
-    // Not a URL — treat as bare token
-  }
-  return trimmed
-}
 
 export interface InvitePanelProps {
-  inviteName: string
-  setInviteName: (value: string) => void
   inviteToken: string
   setInviteToken: (value: string) => void
   createdInviteToken: string
   identity: IdentityInfo
   isWorking: boolean
-  onCreateInvite: () => void
-  onAcceptInvite: () => void
+  onCreateInvite: (name: string) => void
+  onAcceptInvite: (name: string) => void
   newConversationInputRef?: Ref<HTMLInputElement>
 }
 
 export function InvitePanel({
-  inviteName,
-  setInviteName,
   inviteToken,
   setInviteToken,
   createdInviteToken,
@@ -54,7 +37,7 @@ export function InvitePanel({
   onAcceptInvite,
   newConversationInputRef,
 }: InvitePanelProps) {
-  const [createName, setCreateName] = useState(inviteName)
+  const [createName, setCreateName] = useState('')
   const [joinName, setJoinName] = useState('')
   const [copied, setCopied] = useState(false)
   const [joinSuccess, setJoinSuccess] = useState(false)
@@ -73,14 +56,11 @@ export function InvitePanel({
   }, [inviteToken])
 
   function handleCreate() {
-    setInviteName(createName)
-    // Allow setInviteName to propagate before calling handler
-    setTimeout(() => onCreateInvite(), 0)
+    onCreateInvite(createName)
   }
 
   function handleJoin() {
-    setInviteName(joinName)
-    setTimeout(() => onAcceptInvite(), 0)
+    onAcceptInvite(joinName)
   }
 
   async function handleCopyLink() {

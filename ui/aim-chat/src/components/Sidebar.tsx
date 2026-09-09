@@ -12,8 +12,6 @@ export interface SidebarProps {
   identity: IdentityInfo
   newProfileName: string
   setNewProfileName: (value: string) => void
-  inviteName: string
-  setInviteName: (value: string) => void
   inviteToken: string
   setInviteToken: (value: string) => void
   createdInviteToken: string
@@ -26,6 +24,8 @@ export interface SidebarProps {
   showHidden: boolean
   setShowHidden: (fn: (prev: boolean) => boolean) => void
   toggleHideConversation: (convId: string) => void
+  onRenameConversation: (convId: string, newName: string) => void
+  onDeleteConversation: (convId: string) => void
   visibleContactKeys: string[]
   contactDrafts: Record<string, string>
   contactNameByKey: Record<string, string>
@@ -34,8 +34,8 @@ export interface SidebarProps {
   onCreateProfile: (event: FormEvent<HTMLFormElement>) => void
   onRenameProfile: (profileId: string, newName: string) => void
   onDeleteProfile: (profileId: string) => void
-  onCreateInvite: () => void
-  onAcceptInvite: () => void
+  onCreateInvite: (name: string) => void
+  onAcceptInvite: (name: string) => void
   onContactDraftChange: (key: string, value: string) => void
   onSaveContact: (key: string) => void
   setStatus: (value: string) => void
@@ -55,8 +55,6 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   identity,
   newProfileName,
   setNewProfileName,
-  inviteName,
-  setInviteName,
   inviteToken,
   setInviteToken,
   createdInviteToken,
@@ -69,6 +67,8 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
   showHidden,
   setShowHidden,
   toggleHideConversation,
+  onRenameConversation,
+  onDeleteConversation,
   visibleContactKeys,
   contactDrafts,
   contactNameByKey,
@@ -151,8 +151,6 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
         onToggle={() => toggle('invites')}
       >
         <InvitePanel
-          inviteName={inviteName}
-          setInviteName={setInviteName}
           inviteToken={inviteToken}
           setInviteToken={setInviteToken}
           createdInviteToken={createdInviteToken}
@@ -195,6 +193,8 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
           showHidden={showHidden}
           setShowHidden={setShowHidden}
           toggleHideConversation={toggleHideConversation}
+          onRenameConversation={onRenameConversation}
+          onDeleteConversation={onDeleteConversation}
           conversationFilter={conversationFilter}
           setConversationFilter={setConversationFilter}
           filterInputRef={filterInputRef}
