@@ -16,15 +16,21 @@ There is no Express server or local API bridge anymore. The browser app uses the
 
 ## Run
 
+From the repository root, build the local TypeScript dependency first:
+
 ```bash
+npm --prefix client ci
+npm --prefix client run build
 cd ui/aim-chat
-npm install
+npm ci
 npm run dev
 ```
 
 - Vite UI: `http://localhost:5173`
 - Production build: `npm run build`
 - Tests: `npm test`
+
+The checked-in lockfile includes platform-specific Rollup packages. Local builds, CI and the Pages deployment use `npm ci`; do not install a separate Linux binary or modify dependencies during deployment. The static `dist/` artifact uses the domain root (`/`) and HashRouter routes. A custom-domain cutover is a separate deployment step.
 
 ## Storage
 

@@ -56,6 +56,8 @@ Relay cleanup is logical expiry. Cloudflare recovery history and copies stored i
 
 ## Feature journey coverage
 
+The AIM browser build uses `npm ci` in tests and deployment. Its lockfile contains the platform-specific Rollup packages and patched dependencies within the declared version ranges. The browser job audits the complete UI dependency graph at moderate severity, including development tooling; other component development graphs remain tracked separately. Build the local TypeScript library before installing/building AIM, and publish only its static `dist/` directory at the domain root. No environment override selects a GitHub Pages subpath.
+
 `cd integration && npm run test:acceptance` includes messaging, gateway, policy/membership, guidance/hooks, real terminal and native OpenClaw journeys. This suite uses a supported Node 24/26 host because OpenClaw requires it. Install the component dependencies and build the client/terminal as specified in [the acceptance workflow](../.github/workflows/ui-acceptance.yml); `npm run typecheck` checks the complete integration project, including the imported relay/echo Worker types. `npm run test:features` runs guidance/hooks features and `npm run test:openclaw` runs the native OpenClaw journeys during development.
 
 | Feature | Cross-client evidence |

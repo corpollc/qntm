@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Made browser installs reproducible across macOS and Linux: refreshed the lockfile within existing version ranges, included Rollup platform packages, and switched UI tests and deployment to `npm ci`. Removed the legacy GitHub Pages base-path override and added a full UI dependency audit covering development tools.
 - Fixed browser invite links exposing their bootstrap secret in HTTP URL queries. Both copy actions now use the same fragment format as Python and TypeScript; opening a link requests confirmation and removes the token from the current address. Legacy query links remain readable, with their unavoidable initial-request exposure documented.
 - Bounded the relay's in-memory IP rate-limit table to 10,000 entries per isolate and purge expired counters on subsequent requests. A full table rejects new IPs without evicting active quotas. Documented the capacity tradeoff and the fact that idle isolates do not guarantee immediate metadata deletion.
 - Bounded TypeScript gateway setup and health requests with a default 30-second deadline, optional cancellation, a 64 KiB response limit and redirect rejection. Native OpenClaw setup propagates cancellation through this shared client. No setup POST is automatically retried; signed chat acceptance remains the authority.

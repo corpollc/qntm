@@ -84,14 +84,10 @@ jobs:
         working-directory: client
 
       - name: Install dependencies
-        # Work around the existing lockfile missing Rollup Linux optional packages.
-        run: npm install
+        run: npm ci
 
-      - name: Install Rollup Linux binary
-        run: npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
-
-      - name: Audit runtime dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit UI runtime and development dependencies
+        run: npm audit --audit-level=moderate
 
       - name: Run tests
         run: npm test

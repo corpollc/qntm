@@ -34,9 +34,7 @@ jobs:
         run: python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
 
       - name: Install UI dependencies
-        run: |
-          npm install
-          npm install --no-save @rollup/rollup-linux-x64-gnu@4.59.0
+        run: npm ci
         working-directory: ui/aim-chat
 
       - name: Build UI
