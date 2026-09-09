@@ -34,3 +34,7 @@ ui/tui/test-results/
 # Local browser acceptance reports
 /ui/aim-chat/test-results/
 /ui/aim-chat/playwright-report/
+
+# Python tool caches
+__pycache__/
+*.py[cod]
