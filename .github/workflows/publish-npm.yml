@@ -16,7 +16,7 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Wait for all release checks
         env:
@@ -24,8 +24,9 @@ jobs:
         run: python3 scripts/wait_for_release_gate.py
         working-directory: .
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
+          package-manager-cache: false
           node-version: "22"
           cache: npm
           cache-dependency-path: client/package-lock.json

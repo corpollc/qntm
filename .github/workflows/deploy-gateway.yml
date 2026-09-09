@@ -22,7 +22,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       GATE_VAULT_KEY: ${{ secrets.QNTM_GATE_VAULT_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Wait for all release checks
         if: github.event_name == 'push'
@@ -30,8 +30,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/wait_for_release_gate.py
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
+          package-manager-cache: false
           node-version: "22"
           cache: npm
           cache-dependency-path: |
