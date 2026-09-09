@@ -26,7 +26,7 @@ The operator-token setup described in this historical audit was superseded on 20
 
 Private file permissions do not encrypt local state or protect it from the same operating-system user. Individual file replacement is atomic; concurrent writers still require coordination. Guidance review remains offline: receive pending messages first to refresh the locally known audience. A valid signature or pinned contact does not grant authority to execute advice.
 
-The original P2 backup-import validation finding remains tracked as `qntm-fwds`. Development-only npm advisories remain outside the runtime upgrade and are tracked for reachability review and toolchain updates in `qntm-yokf`.
+The original P2 backup-import validation finding (`qntm-fwds`) was subsequently addressed by the September 9 unreleased [backup validation and encryption changes](../browser-backups.md). Development-only npm advisories remain outside the runtime upgrade and are tracked for reachability review and toolchain updates in `qntm-yokf`.
 
 ## Validation
 

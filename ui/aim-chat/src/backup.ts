@@ -1,0 +1,252 @@
+import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity } from '@corpollc/qntm'
+import type { StoreData } from './store'
+
+export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
+const STORE_KEY = 'aim-store'
+const FORMAT = 'qntm-aim-backup'
+const ITERATIONS = 600_000
+const encoder = new TextEncoder()
+const fail = (path: string): never => { throw new Error(`Invalid backup: ${path}.`) }
+type Obj = Record<string, any>
+
+function object(value: unknown, path: string, fields?: string[]): Obj {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path)
+  const obj = value as Obj
+  if (Object.keys(obj).some(key => ['__proto__', 'constructor', 'prototype'].includes(key) || (fields && !fields.includes(key)))) fail(path)
+  return obj
+}
+function text(value: unknown, path: string, max = 1024, empty = false): string {
+  if (typeof value !== 'string' || (!empty && !value.length) || value.length > max) fail(path)
+  return value as string
+}
+function list(value: unknown, path: string, max = 10_000): any[] {
+  if (!Array.isArray(value) || value.length > max) fail(path)
+  return value as any[]
+}
+function integer(value: unknown, path: string, min = 0): number {
+  if (!Number.isSafeInteger(value) || (value as number) < min) fail(path)
+  return value as number
+}
+function hex(value: unknown, bytes: number, path: string): string {
+  const s = text(value, path, bytes * 2)
+  if (!new RegExp(`^[a-f0-9]{${bytes * 2}}$`).test(s)) fail(path)
+  return s
+}
+function hexBytes(value: string): Uint8Array {
+  return Uint8Array.from(value.match(/../g)!, v => parseInt(v, 16))
+}
+function b64(value: unknown, path: string, length?: number): Uint8Array {
+  const s = text(value, path, MAX_BACKUP_BYTES * 2)
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) fail(path)
+  const bytes = base64UrlDecode(s)
+  if ((length !== undefined && bytes.length !== length) || encode64(bytes) !== s) fail(path)
+  return bytes
+}
+// The core encoder is intended for small protocol fields; avoid argument limits for backups.
+function encode64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function date(value: unknown, path: string) {
+  if (!Number.isFinite(Date.parse(text(value, path, 64)))) fail(path)
+}
+function url(value: unknown, path: string) {
+  let parsed: URL
+  try { parsed = new URL(text(value, path, 2048)) } catch { return fail(path) }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) fail(path)
+}
+function unique(values: string[], path: string) {
+  if (new Set(values).size !== values.length) fail(path)
+}
+function parsedJSON(json: string): Obj {
+  if (typeof json !== 'string' || json.length > MAX_BACKUP_BYTES || encoder.encode(json).length > MAX_BACKUP_BYTES) fail('file exceeds 10 MiB')
+  let parsed: unknown
+  try { parsed = JSON.parse(json) } catch { return fail('JSON syntax') }
+  return object(parsed, 'root object')
+}
+
+/** Validate all persisted fields before any storage mutation; no network access. */
+export function validateBackup(json: string): StoreData {
+  const data = object(parsedJSON(json), 'store fields', ['activeProfileId', 'profiles', 'identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'cursors', 'dropboxUrl'])
+  const profiles = list(data.profiles, 'profiles', 100)
+  const profileIds = profiles.map(p => {
+    object(p, 'profile fields', ['id', 'name'])
+    if (!/^[a-z0-9][a-z0-9_-]{0,127}$/.test(text(p.id, 'profile ID', 128)) || ['constructor', 'prototype'].includes(p.id)) fail('profile ID')
+    text(p.name, 'profile name', 1024)
+    return p.id as string
+  })
+  unique(profileIds, 'duplicate profile IDs')
+  text(data.activeProfileId, 'active profile', 128, true)
+  if (data.activeProfileId && !profileIds.includes(data.activeProfileId)) fail('active profile is missing')
+  url(data.dropboxUrl, 'relay URL')
+  // Guidance pins were introduced after the original backup format.
+  if (data.guidanceContacts === undefined) data.guidanceContacts = {}
+  for (const name of ['identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'cursors']) {
+    object(data[name], name)
+    if (Object.keys(data[name]).some(id => !profileIds.includes(id))) fail(`${name} references a missing profile`)
+  }
+  for (const identity of Object.values(data.identities) as Obj[]) {
+    object(identity, 'identity fields', ['privateKey', 'publicKey', 'keyId'])
+    const privateKey = hexBytes(hex(identity.privateKey, 64, 'private key'))
+    const publicKey = hexBytes(hex(identity.publicKey, 32, 'public key'))
+    const keyID = hexBytes(hex(identity.keyId, 16, 'identity key ID'))
+    try { validateIdentity({ privateKey, publicKey, keyID }) } catch { fail('identity key pair does not match') }
+    if (identity.privateKey.slice(64) !== identity.publicKey) fail('private key public suffix does not match')
+  }
+  for (const pid of profileIds) {
+    const conversations = list(data.conversations[pid] ?? [], 'conversations', 1000)
+    unique(conversations.map(c => hex(object(c, 'conversation').id, 16, 'conversation ID')), 'duplicate conversation IDs')
+    for (const conv of conversations) {
+      object(conv, 'conversation fields', ['id', 'name', 'type', 'keys', 'participants', 'participantPublicKeys', 'gateway', 'createdAt', 'currentEpoch', 'inviteToken'])
+      text(conv.name, 'conversation name', 1024, true)
+      if (!['direct', 'group', 'announce'].includes(conv.type)) fail('conversation type')
+      object(conv.keys, 'conversation keys', ['root', 'aeadKey', 'nonceKey'])
+      for (const key of ['root', 'aeadKey', 'nonceKey']) hex(conv.keys[key], 32, 'conversation key')
+      const participants = list(conv.participants, 'participants', 1000).map(p => hex(p, 16, 'participant key ID'))
+      unique(participants, 'duplicate participant key IDs')
+      if (conv.participantPublicKeys !== undefined) {
+        const keys = list(conv.participantPublicKeys, 'participant public keys', 1000).map(p => hex(p, 32, 'participant public key'))
+        unique(keys, 'duplicate participant public keys')
+      }
+      date(conv.createdAt, 'conversation creation time')
+      integer(conv.currentEpoch, 'conversation epoch')
+      if (conv.inviteToken !== undefined) text(conv.inviteToken, 'invite token', 65536)
+      if (conv.gateway != null) validateGateway(conv.gateway, conv)
+    }
+    for (const [id, messages] of Object.entries(object(data.history[pid] ?? {}, 'history'))) {
+      hex(id, 16, 'history conversation ID')
+      for (const msg of list(messages, 'messages', 10_000)) {
+        object(msg, 'message fields', ['id', 'conversationId', 'direction', 'sender', 'senderKey', 'bodyType', 'text', 'createdAt'])
+        text(msg.id, 'message ID', 256)
+        if (msg.conversationId !== id) fail('message conversation mismatch')
+        if (!['incoming', 'outgoing'].includes(msg.direction)) fail('message direction')
+        text(msg.sender, 'sender name', 1024, true)
+        text(msg.senderKey, 'sender key', 128, true)
+        text(msg.bodyType, 'body type', 256)
+        text(msg.text, 'message text', 1024 * 1024, true)
+        date(msg.createdAt, 'message creation time')
+      }
+    }
+    for (const [id, cursor] of Object.entries(object(data.cursors[pid] ?? {}, 'cursors'))) {
+      hex(id, 16, 'cursor conversation ID'); integer(cursor, 'cursor')
+    }
+    for (const [key, name] of Object.entries(object(data.contacts[pid] ?? {}, 'contacts'))) {
+      text(key, 'contact key', 256); text(name, 'contact name', 1024)
+    }
+    const contacts = list(data.guidanceContacts[pid] ?? [], 'guidance contacts', 1000)
+    unique(contacts.map(c => text(object(c, 'guidance contact').id, 'guidance ID', 128)), 'duplicate guidance IDs')
+    for (const contact of contacts) {
+      object(contact, 'guidance fields', ['id', 'category', 'name', 'kind', 'conversationId', 'recipientKeyId', 'relayUrl'])
+      if (!['legal', 'ethical', 'law_enforcement'].includes(contact.category)) fail('guidance category')
+      if (!['human', 'agent', 'organization'].includes(contact.kind)) fail('guidance contact type')
+      text(contact.name, 'guidance name', 120)
+      hex(contact.conversationId, 16, 'guidance conversation ID')
+      hex(contact.recipientKeyId, 16, 'guidance recipient key ID')
+      url(contact.relayUrl, 'guidance relay URL')
+    }
+  }
+  return data as StoreData
+}
+
+function validateGateway(value: unknown, conv: Obj) {
+  const gw = object(value, 'gateway fields', ['status', 'invitationId', 'floor', 'pending', 'publicKey', 'keyId'])
+  if (!validateGatewayIdentity(gw.publicKey, gw.keyId)) fail('gateway identity')
+  if (gw.status !== undefined && !['pending', 'active'].includes(gw.status)) fail('gateway status')
+  if (gw.floor !== undefined) integer(gw.floor, 'gateway floor', 1)
+  if (gw.invitationId !== undefined) text(gw.invitationId, 'gateway invitation ID', 256)
+  if (gw.pending !== undefined) {
+    const pending = object(gw.pending, 'pending gateway fields', ['invitation', 'request', 'url', 'messageId', 'text'])
+    const invitation = object(pending.invitation, 'gateway invitation', ['invitation_id', 'inviter_public_key', 'gateway_public_key', 'gateway_kid', 'expires_at'])
+    const request = object(pending.request, 'gateway bootstrap', ['invitation_id', 'inviter_public_key', 'sealed'])
+    text(invitation.invitation_id, 'gateway invitation ID', 256)
+    b64(invitation.inviter_public_key, 'gateway inviter', 32)
+    integer(invitation.expires_at, 'gateway invitation expiry', 1)
+    if (invitation.gateway_public_key !== gw.publicKey || invitation.gateway_kid !== gw.keyId || request.invitation_id !== invitation.invitation_id || request.inviter_public_key !== invitation.inviter_public_key) fail('gateway invitation mismatch')
+    b64(request.sealed, 'sealed gateway bootstrap')
+    url(pending.url, 'gateway URL')
+    hex(pending.messageId, 16, 'gateway invitation message ID')
+    text(pending.text, 'gateway invitation text', 65536)
+    let body: Obj
+    try { body = JSON.parse(pending.text) } catch { return fail('gateway invitation text') }
+    if (!body || body.type !== 'gate.promote' || body.conv_id !== conv.id || body.invitation_id !== invitation.invitation_id || body.gateway_kid !== gw.keyId) fail('gateway invitation context')
+  }
+}
+
+export interface BackupSummary {
+  profiles: Array<{ name: string; id: string; keyId: string | null }>
+  conversations: number
+  messages: number
+  relayUrl: string
+  guidance: Array<{ profile: string; name: string; category: string; recipientKeyId: string; conversationId: string; relayUrl: string }>
+  gateways: Array<{ profile: string; conversationId: string; keyId: string; status: string; url?: string }>
+}
+function summary(data: StoreData): BackupSummary {
+  return {
+    profiles: data.profiles.map(p => ({ ...p, keyId: data.identities[p.id]?.keyId ?? null })),
+    conversations: Object.values(data.conversations).reduce((n, rows) => n + rows.length, 0),
+    messages: Object.values(data.history).reduce((n, convs) => n + Object.values(convs).reduce((m, rows) => m + rows.length, 0), 0),
+    relayUrl: data.dropboxUrl,
+    guidance: data.profiles.flatMap(p => (data.guidanceContacts[p.id] ?? []).map(c => ({ profile: p.name, ...c }))),
+    gateways: data.profiles.flatMap(p => (data.conversations[p.id] ?? []).filter(c => c.gateway).map(c => ({ profile: p.name, conversationId: c.id, keyId: c.gateway!.keyId, status: c.gateway!.status ?? 'legacy', url: c.gateway!.pending?.url }))),
+  }
+}
+export function rawBackup(): string {
+  return localStorage.getItem(STORE_KEY) ?? JSON.stringify({ activeProfileId: '', profiles: [], identities: {}, conversations: {}, history: {}, contacts: {}, guidanceContacts: {}, cursors: {}, dropboxUrl: 'https://inbox.qntm.corpo.llc' })
+}
+export function importBackup(json: string): void {
+  const data = validateBackup(json)
+  // One atomic localStorage write; quota failures leave the prior value intact.
+  localStorage.setItem(STORE_KEY, JSON.stringify(data))
+}
+export interface BackupReview { incoming: BackupSummary; current: BackupSummary | null; encrypted: boolean }
+// Keep key material and replacement snapshots out of UI props and preview strings.
+const reviews = new WeakMap<BackupReview, { json: string; previous: string | null }>()
+export async function prepareBackup(json: string, password = ''): Promise<BackupReview> {
+  const parsed = parsedJSON(json)
+  const encrypted = parsed.format === FORMAT
+  const cleartext = encrypted ? await decryptBackup(parsed, password) : json
+  const incoming = validateBackup(cleartext)
+  let current: BackupSummary | null = null
+  try { current = summary(validateBackup(rawBackup())) } catch { /* Corrupted local data can still be replaced explicitly. */ }
+  const review = { incoming: summary(incoming), current, encrypted }
+  reviews.set(review, { json: JSON.stringify(incoming), previous: localStorage.getItem(STORE_KEY) })
+  return review
+}
+export function restoreBackup(review: BackupReview): void {
+  const saved = reviews.get(review)
+  if (!saved) throw new Error('Review this backup before restoring it.')
+  if (localStorage.getItem(STORE_KEY) !== saved.previous) throw new Error('Local data changed. Review the backup again before replacing it.')
+  importBackup(saved.json)
+  reviews.delete(review)
+}
+
+async function passwordKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+  text(password, 'password', 1024)
+  const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey'])
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', iterations: ITERATIONS, salt: new Uint8Array(salt) }, material,
+    { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+}
+const associatedData = encoder.encode(`${FORMAT}:1:PBKDF2-SHA256:${ITERATIONS}:AES-256-GCM`)
+export async function exportEncryptedBackup(password: string): Promise<string> {
+  if (password.length < 12) throw new Error('Use a backup password of at least 12 characters.')
+  const cleartext = JSON.stringify(validateBackup(rawBackup()))
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await passwordKey(password, salt)
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: associatedData, tagLength: 128 }, key, encoder.encode(cleartext))
+  const json = JSON.stringify({ format: FORMAT, version: 1, kdf: 'PBKDF2-SHA256', iterations: ITERATIONS, cipher: 'AES-256-GCM', salt: base64UrlEncode(salt), iv: base64UrlEncode(iv), ciphertext: encode64(new Uint8Array(ciphertext)) })
+  parsedJSON(json) // Exported files must fit the same import limit.
+  return json
+}
+async function decryptBackup(parsed: Obj, password: string): Promise<string> {
+  object(parsed, 'encrypted backup fields', ['format', 'version', 'kdf', 'iterations', 'cipher', 'salt', 'iv', 'ciphertext'])
+  if (parsed.version !== 1 || parsed.kdf !== 'PBKDF2-SHA256' || parsed.iterations !== ITERATIONS || parsed.cipher !== 'AES-256-GCM') fail('unsupported encryption format')
+  const salt = b64(parsed.salt, 'salt', 16), iv = b64(parsed.iv, 'nonce', 12), ciphertext = b64(parsed.ciphertext, 'ciphertext')
+  if (ciphertext.length < 16) fail('ciphertext')
+  if (!password) throw new Error('Enter the password for this encrypted backup.')
+  const key = await passwordKey(password, salt)
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(iv), additionalData: associatedData, tagLength: 128 }, key, new Uint8Array(ciphertext))
+    return new TextDecoder('utf-8', { fatal: true }).decode(plain)
+  } catch { throw new Error('Cannot decrypt backup: incorrect password or damaged file.') }
+}

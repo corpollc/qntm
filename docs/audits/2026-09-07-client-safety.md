@@ -4,7 +4,9 @@
 
 This review covered the main README, setup and threat documentation, Python CLI/MCP, AIM contact and backup flows, and selected relay/gateway trust boundaries. It included local reproductions, package audits, tests, and browser verification. It was not a complete cryptographic or production penetration audit. No production messages or exploit attempts were sent.
 
-Beads is authoritative for follow-up. The findings below describe the original code examined in this session. The four P1 findings were subsequently remediated; see [P1 remediation](2026-09-07-p1-remediation.md). The P2 backup-import finding remains open.
+September 9 follow-up: `qntm-fwds` is implemented in the unreleased client changes with schema/key validation, destination/replacement review, stale-review rejection and encrypted Settings downloads. See [browser backups](../browser-backups.md). The findings below preserve the original audit observations.
+
+Beads is authoritative for follow-up. The findings below describe the original code examined in this session. The four P1 findings were subsequently remediated; see [P1 remediation](2026-09-07-p1-remediation.md). The P2 backup-import finding is addressed by the September 9 follow-up above.
 
 ## Findings that need follow-up
 

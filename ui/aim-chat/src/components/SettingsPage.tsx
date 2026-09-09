@@ -1,4 +1,4 @@
-import { api } from '../api'
+import { BackupPanel } from './BackupPanel'
 import { APP_VERSION } from '../utils'
 
 export interface SettingsPageProps {
@@ -80,61 +80,7 @@ export function SettingsPage({
 
       <section className="settings-section">
         <h2 className="settings-section-title">Data</h2>
-        <div className="panel">
-          <h2>Backup &amp; Restore</h2>
-          <p className="settings-description">
-            All data (profiles, conversations, keys, messages) is stored in your browser.
-            Export a backup to save it, or import to restore.
-          </p>
-          <p className="settings-description">
-            Backups contain unencrypted private keys, messages, and guidance pins. Keep them private.
-            Import only a trusted backup; it replaces the current local data and contact destinations.
-          </p>
-          <div className="row">
-            <button
-              className="button"
-              type="button"
-              onClick={() => {
-                const data = api.exportBackup()
-                const blob = new Blob([data], { type: 'application/json' })
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `aim-backup-${new Date().toISOString().slice(0, 10)}.json`
-                a.click()
-                URL.revokeObjectURL(url)
-                setStatus('Backup exported')
-              }}
-            >
-              Export backup
-            </button>
-            <label className="button" style={{ cursor: 'pointer' }}>
-              Import backup
-              <input
-                type="file"
-                accept=".json"
-                style={{ display: 'none' }}
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  if (!file) return
-                  const reader = new FileReader()
-                  reader.onload = () => {
-                    try {
-                      api.importBackup(reader.result as string)
-                      setStatus('Backup restored — reloading...')
-                      setTimeout(() => window.location.reload(), 500)
-                    } catch (err) {
-                      const msg = err instanceof Error ? err.message : 'Invalid backup file'
-                      setError(msg)
-                      setStatus(msg)
-                    }
-                  }
-                  reader.readAsText(file)
-                }}
-              />
-            </label>
-          </div>
-        </div>
+        <BackupPanel setStatus={setStatus} setError={setError} />
       </section>
 
       <div className="settings-divider" />

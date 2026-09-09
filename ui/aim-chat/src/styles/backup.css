@@ -1,0 +1,14 @@
+.backup-panel > .input { width: 100%; margin-bottom: 12px; }
+.backup-panel .row { flex-wrap: wrap; margin-top: 12px; gap: 10px; }
+.backup-review { margin-top: 24px; padding: 18px; border: 1px solid var(--brand-primary); border-radius: 6px; }
+.backup-review h3 { margin-top: 0; }
+.backup-counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.backup-counts th, .backup-counts td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+.backup-review p, .backup-destinations li { overflow-wrap: anywhere; line-height: 1.6; }
+.backup-destinations li { margin-bottom: 12px; }
+.backup-destinations ul { padding-left: 20px; }
+.backup-destinations code { font-size: var(--text-xs); }
+.backup-trust { display: flex; gap: 10px; align-items: flex-start; line-height: 1.6; margin: 20px 0; }
+.backup-trust input { margin-top: 6px; flex-shrink: 0; }
+.backup-review button:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 600px) { .backup-review { padding: 10px; } .backup-counts th, .backup-counts td { padding: 8px 4px; } }

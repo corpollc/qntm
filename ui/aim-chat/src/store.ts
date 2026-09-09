@@ -61,7 +61,7 @@ export interface StoredMessage {
   createdAt: string
 }
 
-interface StoreData {
+export interface StoreData {
   activeProfileId: string
   profiles: StoredProfile[]
   identities: Record<string, StoredIdentity>       // profileId -> identity

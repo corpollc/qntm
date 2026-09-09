@@ -32,6 +32,8 @@ const EMPTY_IDENTITY: IdentityInfo = {
 export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
+  const pathnameRef = useRef(location.pathname)
+  pathnameRef.current = location.pathname
   const isSettings = location.pathname === '/settings'
   const isHelp = location.pathname === '/help'
   const isGuidance = location.pathname === '/guidance'
@@ -480,7 +482,9 @@ export default function App() {
 
   async function initializeProfiles() {
     try {
-      const response = await api.listProfiles()
+      // Store reads and profile creation are synchronous. Avoid yielding between
+      // them: React StrictMode can otherwise initialize two empty profiles.
+      const response = api.listProfiles()
       let nextProfiles = response.profiles
       let nextActiveId = response.activeProfileId
 
@@ -558,6 +562,13 @@ export default function App() {
 
       const previousId = selectedConversationIdRef.current
       const stillExists = conversationsResponse.conversations.some(c => c.id === previousId)
+      // Startup/refresh may finish after navigation. Keep non-chat pages open,
+      // including the settings route used after a confirmed backup restore.
+      if (['/settings', '/help', '/guidance'].includes(pathnameRef.current)) {
+        setSelectedConversationId(stillExists ? previousId : conversationsResponse.conversations[0]?.id || '')
+        setError('')
+        return
+      }
       if (stillExists) {
         // Keep current selection, but ensure URL is in sync
         if (previousId) navigate(`/c/${previousId}`, { replace: true })

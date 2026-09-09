@@ -58,3 +58,5 @@ Use one profile in this UI and another process (CLI or your LLM agent runtime) a
 ## Guidance contacts
 
 Open **Request guidance** to configure local contacts for legal, moral/ethical, and law-enforcement questions. Review the destination, known audience, and exact message before sending. No contacts ship by default. Pins belong to each browser profile and appear in backups. See [Request guidance](../../docs/guidance.md).
+
+**Settings → Backup & Restore** downloads password-encrypted backups and accepts validated legacy JSON files. Restore previews replacement counts, identities, relays, gateways and guidance destinations before confirmation. Local browser storage remains plaintext. See [backup format and limits](../../docs/browser-backups.md).

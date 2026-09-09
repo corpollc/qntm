@@ -666,6 +666,9 @@
   flex-direction: column;
   gap: 16px;
   max-width: 600px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
 }
 
 .settings-section {

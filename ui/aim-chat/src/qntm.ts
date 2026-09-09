@@ -44,6 +44,7 @@ import {
 import type { DropboxSubscription, GatewayContext, GateRequestBody, GatewayProposalBody } from '@corpollc/qntm'
 
 import * as store from './store'
+import { rawBackup, importBackup as importValidatedBackup } from './backup'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
 
 const _suite = new QSP1Suite()
@@ -1355,12 +1356,9 @@ export async function govDisapproveProposal(
 // ---- Backup / Restore ----
 
 export function exportBackup(): string {
-  const raw = localStorage.getItem('aim-store')
-  return raw || '{}'
+  return rawBackup()
 }
 
 export function importBackup(json: string): void {
-  // Validate it's parseable
-  JSON.parse(json) // throws if invalid
-  localStorage.setItem('aim-store', json)
+  importValidatedBackup(json)
 }

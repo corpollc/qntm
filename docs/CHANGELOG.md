@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Browser backup downloads now use password encryption. Restores validate identities and all stored fields, show replacement counts and contact/gateway destinations, and require confirmation before an atomic write. Legacy plaintext imports remain supported; stale reviews, malformed files, incorrect passwords and tampering fail without replacing data.
+- Fixed profile startup redirecting Settings, Help and Guidance links to chat, including the reload after a restore. Settings now scrolls within the application so longer backup reviews remain reachable.
 - Aligned Python and TypeScript message expiry: normal decryption rejects expired messages, both enforce the same timestamp and future-skew bounds, and saved-history verification requires an explicit option. Shared encrypted fixtures cover exact expiry boundaries and tampering in both modes. TypeScript message creation now has Python's default TTL.
 - Added a private relay dashboard with Cloudflare-backed message-post totals, rolling active-conversation counts, certificate health and external encrypted messaging probes. Counts begin at deployment, distinguish synthetic traffic, and include both direct chats and groups.
 - Replaced the shared KV activity update with durable aggregate telemetry. Metadata is queued atomically with an envelope, delivered in bounded batches, deduplicated on retry and expired after seven days. A dedicated read-only token protects detailed totals.
