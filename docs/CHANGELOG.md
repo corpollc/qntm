@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a hostname-scoped Cloudflare configuration rule so Browser Integrity Check accepts normal Python relay/gateway clients. Documented the separate Durable Object runtime-quota outage, the gateway's idle connection costs, and why encrypted probes are necessary even when HTTP health passes. This is an account configuration change, not a package fix.
+
 - Terminal acceptance tests now wait for rendered composer state before pressing Return, and the PTY bridge drains complete JSON frames without buffered-input stalls. A regression pauses the real terminal process to catch command/Return coalescing under load.
 - CI now disables the runner's unused Chrome APT source before installing Ubuntu test dependencies, so a broken Chrome package index cannot block terminal/browser tests. Package signature and checksum verification remains enabled; browser tests still use Playwright's pinned Chromium.
 - OpenClaw now saves authenticated conversation state, current keys, pending delivery and relay progress together. A private local queue retries failed host admission and recovers after a process crash; rekeys and removal survive restart, and delayed replies use current keys. Identity/configuration parsing rejects malformed keys and epochs without echoing private input. Documented exact local plaintext fields, bounds, retention and the handoff's at-least-once limits.

@@ -31,6 +31,20 @@ A TLS handshake failure occurs before the Worker sees an HTTP request. A healthy
 
 Cloudflare's [Universal SSL coverage](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) for `*.corpo.llc` does not cover `inbox.qntm.corpo.llc`. A Worker [custom domain provisions its own managed certificate](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#certificates). Confirm that the certificate includes the exact relay hostname and is active.
 
+## Machine clients and Cloudflare limits
+
+A successful curl health check does not establish Python or WebSocket availability. Cloudflare's [Browser Integrity Check](https://developers.cloudflare.com/waf/tools/browser-integrity-check/) can reject non-browser headers with HTTP 403 and error 1010 before a request reaches the Worker. The deployed configuration rule **qntm API clients - browser integrity compatibility** sets only `bic: false` for this expression:
+
+```text
+(http.host in {"inbox.qntm.corpo.llc" "gateway.corpo.llc"})
+```
+
+This rule is configured under **Rules → Configuration Rules**, outside Wrangler deployment. It does not change TLS, application signatures, the private metrics token, rate limits, or other hostnames. Verify using normal client headers; changing a test's user agent can conceal a block affecting published clients.
+
+The relay and hosted gateway share one Cloudflare account and its Durable Object allowances. On the Workers Free plan, the duration limit is **13,000 GB-seconds per day**, resetting at **00:00 UTC**. Exhaustion can leave `/healthz` returning 200 while `/v1/subscribe`, `/v1/stats`, `/v1/metrics` and message storage fail with generic 500 responses. A short operator-only live tail can distinguish the provider exception from application failures. Keep request headers, URLs and bodies out of incident reports, and stop the tail after diagnosis. Persistent request logging is not required.
+
+The current gateway keeps an outbound relay WebSocket and a five-second maintenance alarm for each promoted conversation. An outbound connection prevents Durable Object hibernation, so idle accepted gateways can consume duration even without new messages. Account capacity must cover this resident runtime; increasing a Worker CPU limit does not fix an exhausted daily duration allowance. The paid plan has a monthly included allowance and metered overages. See [Cloudflare pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [object lifecycle](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/). Track both account usage and actual encrypted delivery; a working dashboard process alone does not prove relay health.
+
 ## Certificate authority authorization
 
 `qntm.corpo.llc` is a DNS-only CNAME to the GitHub Pages site. A CAA lookup can inherit restrictions from that CNAME target. Follow Cloudflare's [CAA guidance](https://developers.cloudflare.com/ssl/edge-certificates/caa-records/) when checking both the hostname and its ancestors/aliases.
@@ -60,3 +74,11 @@ Muse's sandbox and local clients could create identities and conversations but f
 Reattaching the existing custom-domain binding caused a managed Google Trust Services certificate to be requested. Validation initially errored. The parent CNAME's inherited CAA set allowed other issuers but excluded Google; adding the explicit leaf CAA record at approximately 19:41 PDT removed that restriction. Validation challenges propagated and HTTPS recovered by 19:54 PDT. The served certificate was issued by Google Trust Services WE1 and expires December 8, 2026.
 
 Two fresh local clients then completed verified encrypted messaging in both directions. Codex and Muse's Lubber also exchanged verified messages in Muse's existing conversation. Lubber reported ambiguous send failures during recovery, including messages that arrived despite a local error; this is separate client/proxy reliability evidence to retain when reviewing retries. No application deployment, package release, or billing change was required to restore TLS.
+
+## September 9, 2026 runtime incident
+
+The independent monitor first logged failed metrics collection and encrypted delivery at **18:22:42 UTC**. During diagnosis, standard Python health requests also encountered Browser Integrity Check error 1010. The hostname-scoped configuration rule above restored those HTTP requests at approximately **18:53 UTC**, verified from the operator's Mac and exe.dev with unmodified Python headers.
+
+Messaging still failed. A temporary live Worker tail confirmed **`Exceeded allowed duration in Durable Objects free tier.`** The account dashboard attributed about 14,300 GB-seconds of current-period runtime to the gateway versus 44 to the relay. These are current-period totals, not exact daily billing figures. The last relay deployment preceded the incident by hours. The application error response correctly hid provider details; the independent encrypted probe exposed the failure that `/healthz` missed.
+
+Provider-capacity recovery and gateway idle-runtime changes are tracked separately. Recovery requires a successful authenticated live-delivery/replay probe and fresh aggregate telemetry; HTTP health alone is insufficient. No persistent Worker request logging was enabled during this diagnosis.

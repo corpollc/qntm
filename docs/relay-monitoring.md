@@ -27,6 +27,8 @@ The public `/v1/stats` returns the active-conversation count plus measurement ti
 
 The collector runs on `qntm-charter.exe.xyz`, outside Cloudflare and independently of the operator's Mac. It shares the charter VM's failure domain: a total failure of that VM also removes this dashboard and monitor.
 
+The relay and hosted gateway also share Cloudflare account quotas. Gateway idle runtime can exhaust a Durable Object allowance and stop relay storage while basic HTTPS health still passes. See the [runtime incident and capacity notes](relay-operations.md#machine-clients-and-cloudflare-limits). The encrypted probe covers this failure; account quota/billing collection is not yet part of the dashboard.
+
 - Blackbox exporter verifies public HTTPS, DNS and the served certificate every 15 seconds.
 - The Python monitor fetches aggregate counters approximately once per minute.
 - Every five minutes, two dedicated synthetic identities authenticate a receive WebSocket, post one encrypted message, verify its live delivery, then reconnect and verify persisted replay. The probe uses the published Python package and retains its own keys and cursor across restarts. It receives only its synthetic conversation.
