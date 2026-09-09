@@ -30,9 +30,14 @@ import qntm
 from qntm.cli import _load_starter_catalog, _build_gate_request_message
 from qntm.identity import generate_identity
 from qntm.wire import kid_to_wire
+from qntm.charter import create_charter, charter_key, charter_agent_id, replay_charter_chain
 assert Path(qntm.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 catalog = _load_starter_catalog()
 identity = generate_identity()
+charter = create_charter(registry='installed-wheel', agent=identity,
+    governance={'keys':[charter_key(identity['publicKey'])], 'threshold':1})
+record = replay_charter_chain([charter], registry='installed-wheel', agent_id=charter_agent_id(identity['publicKey']))
+assert record.sequence == 0 and not record.decommissioned
 message, request_id = _build_gate_request_message(identity=identity, recipe=catalog['httpbin.echo'],
     conv_id='ab'*16, args={'data':'installed wheel'}, eligible_signer_kids=[kid_to_wire(identity['keyID'])], required_approvals=1)
 assert message['request_id'] == request_id
@@ -45,7 +50,7 @@ print(json.dumps({'version': qntm.__version__, 'catalog': json.loads(files('qntm
         if actual['catalog'] != expected:
             raise SystemExit('Installed recipe catalog differs from canonical catalog')
         subprocess.run([str(python), '-I', '-m', 'qntm.cli', '--help'], cwd=target, env=env, check=True, capture_output=True)
-        print(f"Installed wheel v{actual['version']}: CLI, default catalog and signed request construction passed outside the repository")
+        print(f"Installed wheel v{actual['version']}: CLI, default catalog, signed request and charter construction/replay passed outside the repository")
 
 
 if __name__ == '__main__':

@@ -7,13 +7,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { generateIdentity } from '../src/identity/index.js';
-import { createCharter,createCharterStatement,signCharterStatement,charterKey,charterAgentId,CharterRegistryClient,CharterRegistryError,verifyCharterHeads,verifyCharterInclusion,verifyCharterConsistency,verifyCharterChainResponse,auditCharterSnapshot } from '../src/charter/index.js';
+import { createCharter,createCharterStatement,signCharterStatement,charterKey,charterAgentId,CharterRegistryClient,CharterRegistryError,verifyCharterHeads,verifyCharterInclusion,verifyCharterConsistency,verifyCharterChainResponse,verifyCharterReceipt,auditCharterSnapshot } from '../src/charter/index.js';
 import type { CharterTrust,CharterHeads,CharterStatement,CharterInclusion,CharterChainResponse } from '../src/charter/index.js';
 
 const registry='interop.registry';
 const directory=mkdtempSync(join(tmpdir(),'qntm-charter-interop-'));
 const binary=join(directory,'registrar');
 let process:ChildProcess,base:string,client:CharterRegistryClient,trust:CharterTrust;
+const python = globalThis.process.env.QNTM_CHARTER_PYTHON ?? 'python3';
 const clone=<T>(x:T):T=>JSON.parse(JSON.stringify(x));
 async function start() {
   process=spawn(binary,['--listen','127.0.0.1:0','--data-dir',directory,'--registry',registry],{stdio:['ignore','pipe','pipe']});
@@ -109,6 +110,41 @@ describe('TypeScript client against the Go registrar',()=>{
     expect(record!.statements[0]).toMatchObject({namespace:'open.studio/creative',data:{ideas:['music','robot gardens']}});
     const heads=await client.heads();auditCharterSnapshot(await client.log(heads),heads,trust);
   });
+
+  it('interoperates with Python across parent governance, thresholds, proofs and restart',async()=>{
+    const parent=generateIdentity();
+    const parentCharter=createCharter({registry,agent:parent,governance:{keys:[charterKey(parent.publicKey)],threshold:1}});
+    const parentReceipt=await client.submit(parentCharter);
+    const peer=(action:string,extra:Record<string,unknown>={})=>JSON.parse(execFileSync(python,[
+      fileURLToPath(new URL('../../python-dist/tests/charter_server_peer.py',import.meta.url)),
+    ],{
+      input:JSON.stringify({action,base,trust,parent_seed:Buffer.from(parent.privateKey.slice(0,32)).toString('hex'),...extra}),
+      encoding:'utf8',timeout:60_000,maxBuffer:4*1024*1024,
+    }));
+    const created=peer('bootstrap',{parent_charter:parentCharter,parent_receipt:parentReceipt});
+    verifyCharterReceipt(created.receipt,created.statement,trust);
+    const child=await client.chain(created.agent_id);
+    expect(child.record!.sequence).toBe(1);
+    expect(child.record!.charter.extensions!['unregistered.art']).toMatchObject({ideas:['gardens','🎨',null]});
+    expect(child.record!.governance!.keys).toEqual([charterKey(parent.publicKey)]);
+    const rotated=signCharterStatement(createCharterStatement(created.statement,'governance.rotate',{
+      governance:{keys:[charterKey(parent.publicKey),created.child_key],threshold:2},
+    }),parent);
+    await client.submit(rotated);
+    const changed=peer('transition');
+    verifyCharterReceipt(changed.receipt,changed.statement,trust);
+    const updated=await client.chain(created.agent_id);
+    expect(updated.record!.constitution).toEqual({values:['curiosity','care'],source:'python'});
+    expect(updated.record!.sequence).toBe(3);
+    expect(peer('documentation').sequence).toBe(1);
+    const heads=await client.heads();
+    await stop('SIGKILL');await start();
+    expect(await client.heads()).toEqual(heads);
+    const audit=peer('audit',{heads});
+    expect(audit.audited_entries).toBe(heads.log.signed.tree_size);
+    expect(audit.historical_snapshots).toBe(heads.log.signed.tree_size+1);
+    auditCharterSnapshot(await client.log(heads),heads,trust);
+  },90_000);
 
   it('rejects insecure remote endpoints and malformed agent paths before sending',async()=>{
     expect(()=>new CharterRegistryClient('http://example.com',trust)).toThrow(/HTTPS/);

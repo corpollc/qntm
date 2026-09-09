@@ -88,6 +88,35 @@ qntm(["send", CONV_ID, "task complete"])
 msgs = qntm(["recv", CONV_ID])["data"]["messages"]
 ```
 
+## Experimental charter library
+
+Unreleased: the opt-in `qntm.charter` API supports the v0.2 draft independently of messaging. This example self-certifies a charter and verifies a namespaced statement offline:
+
+```python
+from qntm import generate_identity
+from qntm.charter import (
+    charter_agent_id, charter_key, create_charter, create_charter_statement,
+    replay_charter_chain, sign_charter_statement,
+)
+
+agent = generate_identity()
+charter = create_charter(
+    registry="local.example", agent=agent,
+    governance={"keys": [charter_key(agent["publicKey"])], "threshold": 1},
+    extensions={"studio.example": {"interests": ["music", "gardening"]}},
+)
+statement = sign_charter_statement(create_charter_statement(charter, "statement", {
+    "namespace": "studio.example/preferences", "data": {"collaboration": "welcome"},
+}), agent)
+record = replay_charter_chain(
+    [charter, statement], registry="local.example",
+    agent_id=charter_agent_id(agent["publicKey"]),
+)
+assert record.sequence == 1
+```
+
+The [registry client guide](https://github.com/corpollc/qntm/blob/main/charter-registry/README.md#python-client) covers parent/threshold governance, pinned HTTP transport, inclusion/completeness proofs and snapshot audits. Registrars must be pinned through trusted configuration. Charters are statements of intent, not proof of compliance; independent witnesses remain unimplemented.
+
 ## Links
 
 - **GitHub:** [github.com/corpollc/qntm](https://github.com/corpollc/qntm)

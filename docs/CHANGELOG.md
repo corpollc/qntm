@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added the opt-in Python `qntm.charter` library for the experimental v0.2 registry: self-certification, parent and threshold governance, canonical signing, offline authority replay, pinned HTTP access and complete proof/snapshot verification. Shared fixtures and real Python/TypeScript/Go journeys cover invalid authority, threshold changes, historical evidence and abrupt server restart. Independent witnesses remain unfinished; applications still own checkpoint persistence and freshness policy.
+
 - Added a hostname-scoped Cloudflare configuration rule so Browser Integrity Check accepts normal Python relay/gateway clients. Restored messaging after the separate Durable Object runtime-quota outage by activating Workers Paid; independent authenticated delivery/replay and telemetry verified recovery. Documented the gateway's idle connection costs and the need for account usage monitoring. These are account configuration changes, not package fixes.
 
 - Terminal acceptance tests now wait for rendered composer state before pressing Return, and the PTY bridge drains complete JSON frames without buffered-input stalls. A regression pauses the real terminal process to catch command/Return coalescing under load.

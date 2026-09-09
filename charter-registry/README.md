@@ -11,7 +11,7 @@ cd charter-registry
 go run ./cmd/charter-registry --listen 127.0.0.1:8085 --data-dir ./data --registry localhost
 ```
 
-The startup JSON prints the bound address, registry audience, and registrar public key. Distribute that public key through a trusted channel. The TypeScript client requires an explicit pin; it never learns trust automatically from `/v1/info`.
+The startup JSON prints the bound address, registry audience, and registrar public key. Distribute that public key through a trusted channel. Both maintained clients require an explicit pin; neither learns trust automatically from `/v1/info`.
 
 The database contains the registrar's private signing seed and all accepted statements. The server creates its directory with mode 0700 and database with mode 0600, holds an exclusive process lock, and commits/fsyncs each statement before returning a receipt. Restarting preserves its identity and historical signed heads. Startup replays the stored history and rejects corruption or a different registry audience.
 
@@ -56,6 +56,47 @@ For a parent-governed child, put the parent's public key in `governance` and add
 
 A signature proves a key made a statement. It does not prove compliance with that statement. A valid checkpoint can also be old: clients must retain checkpoints and apply their own freshness policy. Merkle proofs alone cannot detect a registrar maintaining isolated, internally consistent views. Independent witnesses or checkpoint gossip remain necessary for that threat.
 
+## Python client
+
+Unreleased: install this checkout with `pip install ./python-dist` and import `qntm.charter`. Normal messaging imports do not opt into charter behavior. Supply `configured_registry_url`, `configured_registry_id`, and `configured_registrar_key` from trusted local configuration. The key is a dictionary containing canonical `kid` and `pubkey` strings; see the [hosted registrar pin](../docs/charter-operations.md).
+
+```python
+from qntm import generate_identity
+from qntm.charter import (
+    CharterRegistryClient, audit_charter_snapshot, charter_agent_id, charter_key,
+    create_charter, create_charter_statement, sign_charter_statement,
+)
+
+trust = {"registry": configured_registry_id, "registrar": configured_registrar_key}
+agent = generate_identity()  # Persist privately if this agent will continue.
+charter = create_charter(
+    registry=trust["registry"], agent=agent,
+    governance={"keys": [charter_key(agent["publicKey"])], "threshold": 1},
+    extensions={"studio.example": {"interests": ["music", "gardening"]}},
+)
+with CharterRegistryClient(configured_registry_url, trust) as registry:
+    receipt = registry.submit(charter)
+    statement = sign_charter_statement(create_charter_statement(charter, "statement", {
+        "namespace": "studio.example/preferences", "data": {"collaboration": "welcome"},
+    }), agent)
+    registry.submit(statement)
+    result = registry.chain(charter_agent_id(agent["publicKey"]))
+    checkpoint = result.evidence["heads"]
+    registry.consistency(receipt["heads"], checkpoint)
+    audit_charter_snapshot(registry.log(checkpoint), checkpoint, trust)
+    assert result.record.sequence == 1
+```
+
+`create_charter()` adds the agent signature. For a parent-governed child, name the parent in `governance` and call `sign_charter_statement(charter, parent)` before submission. Add enough governor signatures to satisfy the current threshold. `governance=None` freezes a record at birth, including informational writes. Self-governance instead names the agent's own key as a governor.
+
+`replay_charter_chain(chain, registry=..., agent_id=...)` authenticates an offline chain and returns a `CharterRecord` with snake-case attributes. Wire documents remain dictionaries using the same keys and canonical encodings as TypeScript and Go. Namespaced data has no implicit authority or merge behavior. Both libraries support all core statement types, governance commitments, operational-key declarations, successor/decommission statements, head/receipt/range/consistency verification, and full snapshot audits.
+
+The synchronous transport has the same verified `submit`, `heads`, `chain`, `consistency`, and `log` operations as TypeScript. `heads(snapshot_size)` and `chain(agent_id, snapshot_size)` require the exact requested historical snapshot. `CharterRegistryError` exposes `status` and `code`; malformed authority/evidence raises `CharterError`. HTTP transport errors remain HTTPX exceptions. HTTPS is required except on loopback; redirects and automatic submission retries are disabled. The client uses HTTPX timeouts of 30 seconds and caps each decoded response at 32 MiB, both configurable at construction. Close it or use a context manager. After a lost submission response, inspect the authenticated chain before deciding whether to submit again.
+
+`charter_json_bytes`, `canonicalize_charter_json`, and `parse_charter_json` implement the shared RFC 8785 wire domain with duplicate-key, Unicode, and nesting checks. JSON number tokens use binary64 rounding, matching `JSON.parse`. In-memory Python integers that cannot be represented exactly in binary64 are rejected; use strings for exact large numbers. Sequences, thresholds, and proof indices must remain safe integers. Public keys and signature points follow the same strict subgroup rules in all three implementations.
+
+Clients do not silently save trust or checkpoints. Persist authenticated heads in your own private storage, enforce your freshness policy, and use `consistency()` when advancing them. A stale but correctly signed snapshot remains valid historical evidence. Independent witnesses and checkpoint gossip are still separate work.
+
 ## Reference HTTP profile
 
 This transport makes the draft executable; it is not a ratified protocol. JSON bodies use the draft's canonical wire encodings. HTTPS is required by the client except for loopback development. Writes are authorized by statement signatures, with no operator admission token. Responses have `Cache-Control: no-store`.
@@ -90,10 +131,11 @@ cd charter-registry
 go test -race ./...
 go vet ./...
 cd ../client
+python3 -m pip install -e ../python-dist
 npm ci
 npm run build
 npm test
 npm run test:charter-server
 ```
 
-Shared deterministic fixtures in `specs/test-vectors/charter-registry-v02.json` cover authority rules, strict Ed25519 key acceptance, and JCS interoperability. Regenerate with `node client/scripts/generate-charter-vectors.mjs` after building the client. The integration suite starts the real Go server, verifies proofs from TypeScript, exercises competing writes, and kills/restarts the server to check persistence.
+Shared deterministic fixtures in `specs/test-vectors/charter-registry-v02.json` cover authority rules, strict Ed25519 key acceptance, and JCS interoperability in Python, TypeScript and Go. Regenerate with `node client/scripts/generate-charter-vectors.mjs` after building the client. The integration suite starts the real Go server, exchanges signed parent/child and threshold changes between Python and TypeScript, verifies historical proofs and snapshot audits from both clients, exercises competing writes, and kills/restarts the server to check persistence. It also executes the Python HTTP example above. Set `QNTM_CHARTER_PYTHON` when the installed Python client uses a non-default interpreter. Python unit tests run with `python -m pytest python-dist/tests` from the repository root.

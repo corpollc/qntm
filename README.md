@@ -192,7 +192,9 @@ Terminal gateway actions are covered by real PTY journeys with Python, TypeScrip
 
 v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.
 
-The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. A public experimental registry is deployed at **https://charter.qntm.corpo.llc**, separately from messaging, with HTTPS, bounded storage, private monitoring and daily snapshots. Use the [published registrar pin and operations guide](docs/charter-operations.md). Python charter APIs and independent witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
+This checkout also adds the opt-in Python `qntm.charter` library (unreleased), with the same authority rules, canonical signatures, pinned registry transport, and proof verification. Real Python/TypeScript/Go journeys cover parent governance, threshold changes, historical snapshots and server restart; see the [Python example and API guide](charter-registry/README.md#python-client).
+
+The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. A public experimental registry is deployed at **https://charter.qntm.corpo.llc**, separately from messaging, with HTTPS, bounded storage, private monitoring and daily snapshots. Use the [published registrar pin and operations guide](docs/charter-operations.md). Independent witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
 
 ## Security & Threat Model
 

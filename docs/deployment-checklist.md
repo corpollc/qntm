@@ -18,7 +18,7 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | --- | --- |
 | TypeScript library | Crypto/protocol/event/subscription tests, build, package contents |
 | Python | Full suite with MCP extras on Python 3.10 and 3.12; minimum WebSocket dependency on 3.10; generated help |
-| Charter | Go race tests, vet, and vulnerability scan; real Go/TypeScript HTTP/restart tests; deterministic shared vectors |
+| Charter | Go race tests, vet, and vulnerability scan; real Python/TypeScript/Go HTTP/restart journeys and executable Python documentation; shared authority/canonicalization vectors; installed-wheel charter import/sign/replay |
 | Browser | Unit/component tests, production build, Playwright conversation journeys, runtime dependency audit |
 | Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
@@ -66,7 +66,7 @@ Relay cleanup is logical expiry. Cloudflare recovery history and copies stored i
 | Receive hooks | TypeScript sender through a real relay to Python watch, HTTP and executable hooks; a failing webhook does not repeat successful executable delivery; pending events survive restart and a shared CLI cursor advance |
 | Send acknowledgement recovery | Proxy drops the successful HTTP response; CLI reconciles through the real WebSocket relay; TypeScript receives one message and the proxy observes one POST |
 | Claude channel | Real MCP client observes pending/live signed events, stable IDs, binary payloads, and self-message suppression; durable queue tests cover failure and restart |
-| Charter | Real Go server accepts self-charters, parent-governed children and namespace experiments from TypeScript; verifies threshold transitions, rejects unauthorized rotation/forks, and survives abrupt restart |
+| Charter | Real Go server exchanges self-charters, parent-governed children and namespace experiments with Python and TypeScript; both verify historical proofs and audits, enforce threshold transitions, reject unauthorized writes/forks, and survive abrupt restart |
 | Relay retention | Real Worker WebSocket replay and idle alarms, plus SQLite migration, expired sequence gaps and multiple-page replay |
 
 The charter boundary runs with `cd client && npm run test:charter-server`; the Claude channel runs with `cd channel && npm test`. Both are mandatory parts of the same complete CI/release gate.
