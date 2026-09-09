@@ -137,12 +137,9 @@ Threshold rules give you fine-grained control over how many approvals are requir
 - **Endpoint** -- The target endpoint path (or `*` for any endpoint).
 - **Verb** -- The HTTP method (or `*` for any method).
 
-Rules are matched from most specific to least specific:
+Every specified field must match the request. Among matching rules, an exact service takes precedence, then an exact endpoint, then an exact verb. For example, a service + endpoint rule takes precedence over a service + verb rule. The first rule wins when specificity is equal. `*` and legacy empty strings both mean any value; a rule with wildcards in all three fields is the default fallback.
 
-1. Exact service + exact endpoint + exact verb (most specific)
-2. Exact service + exact verb
-3. Exact service only
-4. Wildcard (`*` for all three --- the default fallback)
+A lower threshold for one endpoint never applies to another endpoint merely because the service matches.
 
 **Example configuration:**
 

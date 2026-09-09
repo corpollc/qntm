@@ -329,21 +329,21 @@ def lookup_threshold(
     endpoint: str,
     verb: str,
 ) -> Optional[ThresholdRule]:
-    """Find the best matching threshold rule by priority scoring."""
+    """Match all fields, then prefer service/endpoint/verb specificity; first tie wins."""
     best: Optional[ThresholdRule] = None
     best_score = -1
 
     for rule in rules:
         score = 0
-        if rule.service != "*":
+        if rule.service not in ("*", ""):
             if rule.service != service:
                 continue
             score += 4
-        if rule.endpoint != "*":
+        if rule.endpoint not in ("*", ""):
             if rule.endpoint != endpoint:
                 continue
             score += 2
-        if rule.verb != "*":
+        if rule.verb not in ("*", ""):
             if rule.verb != verb:
                 continue
             score += 1

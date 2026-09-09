@@ -1,0 +1,250 @@
+[
+  {
+    "name": "specific read exemption",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      },
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/balance",
+    "verb": "GET",
+    "expected_index": 1
+  },
+  {
+    "name": "different endpoint keeps default",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      },
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "GET",
+    "expected_index": 0
+  },
+  {
+    "name": "different verb keeps default",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      },
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/balance",
+    "verb": "DELETE",
+    "expected_index": 0
+  },
+  {
+    "name": "different service keeps default",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      },
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "payroll",
+    "endpoint": "/balance",
+    "verb": "GET",
+    "expected_index": 0
+  },
+  {
+    "name": "unrelated rule cannot match without fallback",
+    "rules": [
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "payroll",
+    "endpoint": "/balance",
+    "verb": "GET",
+    "expected_index": null
+  },
+  {
+    "name": "wrong endpoint cannot match without fallback",
+    "rules": [
+      {
+        "service": "bank",
+        "endpoint": "/balance",
+        "verb": "GET",
+        "m": 1
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "GET",
+    "expected_index": null
+  },
+  {
+    "name": "global verb rule must match verb",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "GET",
+        "m": 1
+      },
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "POST",
+    "expected_index": 1
+  },
+  {
+    "name": "global endpoint rule must match endpoint",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "/balance",
+        "verb": "*",
+        "m": 1
+      },
+      {
+        "service": "*",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 3
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "GET",
+    "expected_index": 1
+  },
+  {
+    "name": "empty legacy fields are wildcards",
+    "rules": [
+      {
+        "service": "",
+        "endpoint": "",
+        "verb": "",
+        "m": 2
+      },
+      {
+        "service": "bank",
+        "endpoint": "",
+        "verb": "DELETE",
+        "m": 4
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "DELETE",
+    "expected_index": 1
+  },
+  {
+    "name": "endpoint specificity beats verb specificity",
+    "rules": [
+      {
+        "service": "bank",
+        "endpoint": "*",
+        "verb": "POST",
+        "m": 2
+      },
+      {
+        "service": "bank",
+        "endpoint": "/transfer",
+        "verb": "*",
+        "m": 4
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "POST",
+    "expected_index": 1
+  },
+  {
+    "name": "service specificity beats global endpoint",
+    "rules": [
+      {
+        "service": "*",
+        "endpoint": "/transfer",
+        "verb": "POST",
+        "m": 2
+      },
+      {
+        "service": "bank",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 4
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/transfer",
+    "verb": "POST",
+    "expected_index": 1
+  },
+  {
+    "name": "first equal specificity wins",
+    "rules": [
+      {
+        "service": "bank",
+        "endpoint": "*",
+        "verb": "*",
+        "m": 4
+      },
+      {
+        "service": "bank",
+        "endpoint": "",
+        "verb": "",
+        "m": 2
+      }
+    ],
+    "service": "bank",
+    "endpoint": "/balance",
+    "verb": "GET",
+    "expected_index": 0
+  },
+  {
+    "name": "no rules",
+    "rules": [],
+    "service": "bank",
+    "endpoint": "/balance",
+    "verb": "GET",
+    "expected_index": null
+  }
+]

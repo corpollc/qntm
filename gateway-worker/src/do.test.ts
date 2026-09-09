@@ -149,6 +149,21 @@ describe('idempotent bootstrap recovery', () => {
   });
 });
 
+describe('threshold endpoint isolation', () => {
+  it('does not apply a lower threshold from a different endpoint to a signed request', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState({ promotion_floor: 1, rules: [
+      { service: '*', endpoint: '*', verb: '*', m: 2 },
+      { service: 'test-svc', endpoint: '/safe-read', verb: 'GET', m: 1 },
+    ] }));
+    const request = buildSignedRequest(alice, { required_approvals: 1 });
+    await expect(process('gate.request', encode(request.body), alice.keyID, alice.publicKey)).rejects.toThrow('below rule threshold 2');
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(0);
+    const valid = buildSignedRequest(alice, { required_approvals: 2 });
+    await expect(process('gate.request', encode(valid.body), alice.keyID, alice.publicKey)).resolves.toBeUndefined();
+  });
+});
+
 function buildSignedRequest(signer: { privateKey: Uint8Array; publicKey: Uint8Array }, overrides?: Record<string, unknown>) {
   const signerKid = base64UrlEncode(keyIDFromPublicKey(signer.publicKey));
   const convId = 'a'.repeat(32);

@@ -121,27 +121,17 @@ export function lookupThreshold(
   endpoint: string,
   verb: string,
 ): ThresholdRule | undefined {
-  // Priority: exact(service+endpoint+verb) > service+verb > service > default
+  // All specified fields must match. Specificity is service, endpoint, then
+  // verb; the first rule wins ties. Empty strings are legacy wildcards.
   let bestMatch: ThresholdRule | undefined;
   let bestScore = -1;
-
+  const wildcard = (value: string) => value === '' || value === '*';
   for (const rule of rules) {
-    let score = 0;
-
-    if (rule.service === service) {
-      score = 1;
-      if (rule.endpoint === endpoint) {
-        score = 2;
-        if (rule.verb === verb) {
-          score = 3;
-        }
-      } else if (rule.endpoint === '' && rule.verb === verb) {
-        score = 1.5; // service+verb but no endpoint
-      }
-    } else if (rule.service === '' || rule.service === '*') {
-      score = 0.5; // default
-    }
-
+    if ((!wildcard(rule.service) && rule.service !== service) ||
+        (!wildcard(rule.endpoint) && rule.endpoint !== endpoint) ||
+        (!wildcard(rule.verb) && rule.verb !== verb)) continue;
+    const score = (wildcard(rule.service) ? 0 : 4) +
+      (wildcard(rule.endpoint) ? 0 : 2) + (wildcard(rule.verb) ? 0 : 1);
     if (score > bestScore) {
       bestScore = score;
       bestMatch = rule;

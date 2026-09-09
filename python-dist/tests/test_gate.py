@@ -3,6 +3,9 @@
 import hashlib
 import json
 import time
+from pathlib import Path
+
+import pytest
 
 from qntm.gate import (
     ThresholdRule,
@@ -150,6 +153,13 @@ class TestPayloadHash:
 
 
 # --- Threshold matching ---
+
+@pytest.mark.parametrize("case", json.loads((Path(__file__).parents[2] / "specs/test-vectors/gateway-thresholds.json").read_text()), ids=lambda case: case["name"])
+def test_shared_threshold_selection(case):
+    rules = [ThresholdRule(**rule) for rule in case["rules"]]
+    selected = lookup_threshold(rules, case["service"], case["endpoint"], case["verb"])
+    expected = case["expected_index"]
+    assert selected is (None if expected is None else rules[expected])
 
 class TestThresholdMatching:
     def _rules(self):
