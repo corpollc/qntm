@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import type { DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
-import { shortId, APP_VERSION, extractToken } from './utils'
+import { shortId, APP_VERSION, buildInviteLink, extractToken } from './utils'
 import { SettingsPage } from './components/SettingsPage'
 import { GuidancePage } from './components/GuidancePage'
 import { Sidebar } from './components/Sidebar'
@@ -262,19 +262,23 @@ export default function App() {
 
   useKeyboardShortcuts(shortcutActions)
 
-  // Parse invite token from URL on load (e.g., chat.corpo.llc?invite=TOKEN)
+  // Invite fragments never reach the HTTP host. Recognize only valid tokens so
+  // ordinary HashRouter routes and accessibility anchors do not open a dialog.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('invite')
+    const url = new URL(window.location.href)
+    const fragment = url.hash.slice(1)
+    const fragmentToken = parseInviteConvId(fragment) ? fragment : ''
+    const token = fragmentToken || url.searchParams.get('invite')
     if (token) {
       setInviteToken(token.replace(/\s+/g, ''))
       setShowJoinModal(true)
-      // Clean the URL so the token isn't visible/bookmarked
-      const url = new URL(window.location.href)
+      // Legacy query links already reached the host; scrubbing cannot undo that.
       url.searchParams.delete('invite')
-      window.history.replaceState({}, '', url.pathname + url.hash)
+      if (fragmentToken) url.hash = '/'
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+      if (fragmentToken) navigate('/', { replace: true })
     }
-  }, [])
+  }, [location.pathname, navigate])
 
   // Global paste listener: detect invite tokens pasted outside text inputs
   useEffect(() => {
@@ -1279,7 +1283,7 @@ export default function App() {
             conversationCount={conversations.length}
             onOpenInvites={() => sidebarRef.current?.openInvites()}
             onCopyInviteLink={(token) => {
-              const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`
+              const link = buildInviteLink(token)
               navigator.clipboard.writeText(link)
               addToast('Invite Link Copied', 'success')
             }}

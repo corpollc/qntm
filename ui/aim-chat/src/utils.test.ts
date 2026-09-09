@@ -1,6 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { extractToken } from './utils'
+import { buildInviteLink, extractToken } from './utils'
+import { createInvite, generateIdentity, inviteFromURL, inviteToToken } from '@corpollc/qntm'
 import { parseInviteConvId } from './qntm'
+
+describe('browser invite links', () => {
+  it('puts the secret only in a fragment, replaces existing routing and drops outer queries', () => {
+    const invite = createInvite(generateIdentity(), 'group')
+    const token = inviteToToken(invite)
+    const link = buildInviteLink(token, 'https://chat.corpo.llc/?invite=old&tracking=value#/settings')
+    const url = new URL(link)
+    expect(url.search).toBe('')
+    expect(url.hash).toBe(`#${token}`)
+    expect(`${url.origin}${url.pathname}${url.search}`).not.toContain(token)
+    expect(inviteFromURL(link)).toEqual(invite)
+    expect(extractToken(link)).toBe(token)
+  })
+})
 
 describe('extractToken', () => {
   it('returns bare token as-is', () => {

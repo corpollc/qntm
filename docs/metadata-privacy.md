@@ -2,6 +2,14 @@
 
 qntm encrypts message contents; **it does not hide the existence, timing, size or routing of conversations from the relay and its hosting provider**. This inventory describes the relay and monitoring implementation in this repository. A relay operator can change their deployment, and Cloudflare's infrastructure has access beyond what the application elects to save.
 
+## Browser invite links
+
+Published 0.6.1 generates `?invite=TOKEN` links: opening one sends its bootstrap secret to the browser UI host and any infrastructure that receives or logs that request URL. Removing it from the address bar afterward cannot undo this.
+
+Unreleased browser code generates `#TOKEN` links, matching the CLI and TypeScript format; fragments are not sent in HTTP requests or Referer headers. The browser reads the fragment locally, opens a join review and removes it from the current address. Clipboard contents, browser history/sync, extensions, scripts on the UI origin and services used to share a link can still access it.
+
+Treat invites as secrets; replace affected conversations or use an authenticated rekey if a previously shared query link reached an untrusted host. Rekeying protects future epochs, not earlier ciphertext encrypted with exposed keys. This fix cannot erase historical provider logs or revoke old keys.
+
 ## What the relay receives
 
 TLS ends at Cloudflare. Cloudflare and the Worker can see the HTTP request URL, method, headers, body, source network address and request timing. The application uses `CF-Connecting-IP` for rate limiting. User-Agent, Origin and other supplied headers are available to the Worker even when the application does not save them. TLS also exposes connection timing, duration, transport sizes and negotiated connection properties to the hosting provider.

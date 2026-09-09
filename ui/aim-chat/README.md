@@ -34,8 +34,9 @@ npm run dev
 
 ## Security model
 
-- Private keys and conversation keys remain in the browser; they are not sent to an app server.
+- Messages are encrypted in the browser. A gateway explicitly invited to a conversation receives its keys, and invite links carry bootstrap secrets; both are deliberate key sharing.
 - Those secrets are still recoverable by any script that can execute on the same origin, so treat the browser profile as sensitive.
+- Unreleased: copied invite links keep their bootstrap secret in a URL fragment, which the browser does not send to the web host. Older `?invite=` links remain readable but expose their token in the initial HTTP request. See the [exact metadata inventory](../../docs/metadata-privacy.md).
 - The app ships with a restrictive Content Security Policy to reduce script-injection risk, but that does not make `localStorage` equivalent to hardware-backed key storage.
 - For higher-trust deployments, use a dedicated browser profile and consider a future move to WebCrypto non-exportable keys + IndexedDB.
 

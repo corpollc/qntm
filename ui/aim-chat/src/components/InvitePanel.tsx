@@ -2,17 +2,11 @@ import { useState, useEffect } from 'react'
 import type { Ref } from 'react'
 import type { IdentityInfo } from '../types'
 import { Tooltip } from './Tooltip'
-import { extractToken } from '../utils'
-
-const INVITE_BASE_URL = `${window.location.origin}${window.location.pathname}`
+import { buildInviteLink, extractToken } from '../utils'
 
 function truncateToken(token: string): string {
   if (token.length <= 20) return token
   return `${token.slice(0, 10)}...${token.slice(-10)}`
-}
-
-function tokenToLink(token: string): string {
-  return `${INVITE_BASE_URL}?invite=${encodeURIComponent(token)}`
 }
 
 
@@ -65,7 +59,7 @@ export function InvitePanel({
 
   async function handleCopyLink() {
     try {
-      await navigator.clipboard.writeText(tokenToLink(createdInviteToken))
+      await navigator.clipboard.writeText(buildInviteLink(createdInviteToken))
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
@@ -77,7 +71,7 @@ export function InvitePanel({
     setInviteToken(extractToken(value))
   }
 
-  const inviteLink = createdInviteToken ? tokenToLink(createdInviteToken) : ''
+  const inviteLink = createdInviteToken ? buildInviteLink(createdInviteToken) : ''
 
   return (
     <>

@@ -3,6 +3,14 @@ import pkg from '../package.json'
 
 export const APP_VERSION = pkg.version
 
+/** A bare fragment also works with the Python and TypeScript invite parsers. */
+export function buildInviteLink(token: string, baseUrl = window.location.href): string {
+  const url = new URL(baseUrl)
+  url.search = ''
+  url.hash = token
+  return url.toString()
+}
+
 export function shortId(value: string): string {
   if (!value) {
     return ''
