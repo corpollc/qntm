@@ -98,6 +98,8 @@ gh run list --workflow "Update Site Version" --limit 1
 - latest npm package metadata
 - latest PyPI package metadata
 
+For certificate outages and a two-client messaging check, see [Relay operations](relay-operations.md).
+
 ## High-Risk Failure Modes
 
 - Tagging before `main` is deployed leaves the UI and published clients ahead of the hosted workers.

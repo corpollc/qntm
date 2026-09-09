@@ -4,16 +4,19 @@ Matches the Go CLI's JSON output format for compatibility.
 """
 
 import argparse
+import http.client
 import httpx
 import base64
 import json
 import os
+import socket
 import sys
 import time
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
+from websockets.exceptions import WebSocketException
 
 from . import __version__
 from .constants import PROTOCOL_VERSION, SPEC_VERSION
@@ -677,6 +680,19 @@ except ImportError:
     _ssl_context = ssl.create_default_context()
 
 
+class SendDeliveryUnknown(Exception):
+    """A POST failed and replay could not establish whether it committed."""
+
+    def __init__(self, conversation_id, message_id, cause):
+        self.conversation_id = conversation_id
+        self.message_id = message_id
+        self.cause_type = type(cause).__name__
+        super().__init__(
+            f"Send outcome unknown ({self.cause_type}); message_id={message_id}. "
+            "Check recv/history or the receiving peer before resending; a new send may duplicate it."
+        )
+
+
 def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
     """Send envelope to remote dropbox via POST /v1/send."""
     envelope_b64 = base64.b64encode(envelope_bytes).decode()
@@ -699,8 +715,24 @@ def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
+            result = json.loads(resp.read())
+        if not isinstance(result, dict) or type(result.get("seq")) is not int or result["seq"] < 1:
+            raise ValueError("invalid relay acknowledgement")
+        return result
+    except (OSError, http.client.HTTPException, ValueError) as error:
+        # Explicit client rejections are not ambiguous. A dropped response or
+        # server error can happen after commit, so never automatically POST again.
+        if isinstance(error, urllib.error.HTTPError) and 400 <= error.code < 500:
+            raise
+        try:
+            sequence = _find_sent_envelope(dropbox_url, conv_id_hex, envelope_bytes)
+        except Exception:
+            sequence = None
+        if sequence is not None:
+            return {"seq": sequence, "acknowledgement": "reconciled"}
+        raise SendDeliveryUnknown(conv_id_hex, payload_obj.get("msg_id"), error) from error
 
 
 def _subscribe_url(dropbox_url, conv_id_hex, from_seq):
@@ -708,6 +740,39 @@ def _subscribe_url(dropbox_url, conv_id_hex, from_seq):
     scheme = "wss" if parsed.scheme == "https" else "ws"
     query = urlencode({"conv_id": conv_id_hex, "from_seq": from_seq})
     return urlunsplit((scheme, parsed.netloc, "/v1/subscribe", query, ""))
+
+
+def _find_sent_envelope(dropbox_url, conv_id_hex, envelope_bytes):
+    """Read-only, bounded recovery. Compare the entire ciphertext, not just its ID.
+
+    No receive cursor or local history is advanced. A missing result is unknown,
+    not proof of rejection (for example, a large replay may exceed these bounds).
+    """
+    from websockets.sync.client import connect
+
+    url = _subscribe_url(dropbox_url, conv_id_hex, 0)
+    deadline = time.monotonic() + 15
+    options = {"open_timeout": 10, "close_timeout": 2, "max_size": 2 << 20,
+               "additional_headers": {"User-Agent": f"qntm-python/{__version__}"}}
+    if url.startswith("wss://"):
+        options["ssl"] = _ssl_context
+    with connect(url, **options) as websocket:
+        for _ in range(1000):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            frame = json.loads(websocket.recv(timeout=remaining))
+            if frame.get("type") == "ready":
+                break
+            if frame.get("type") != "message":
+                continue
+            try:
+                received = base64.b64decode(frame["envelope_b64"], validate=True)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if received == envelope_bytes and type(frame.get("seq")) is int and frame["seq"] > 0:
+                return frame["seq"]
+    return None
 
 
 def _recv_once(dropbox_url, conv_id_hex, from_seq):
@@ -765,7 +830,7 @@ def _output(kind, data, ok=True):
     sys.stdout.flush()
 
 
-def _error(message):
+def _error(message, *, code=None, data=None):
     result = {
         "ok": False,
         "kind": "error",
@@ -773,6 +838,10 @@ def _error(message):
         "rules": AGENT_RULES,
         "system_warning": SYSTEM_WARNING,
     }
+    if code is not None:
+        result["code"] = code
+    if data is not None:
+        result["data"] = data
     json.dump(result, sys.stderr, indent=None, separators=(",", ":"))
     sys.stderr.write("\n")
     sys.stderr.flush()
@@ -992,6 +1061,7 @@ def cmd_send(args):
         "body_type": "text",
         "body": text,
         "created_ts": envelope["created_ts"],
+        "acknowledgement": result.get("acknowledgement", "received"),
     })
     _save_history(config_dir, conv_id_hex, history)
 
@@ -1002,6 +1072,7 @@ def cmd_send(args):
         "body_type": "text",
         "body": text,
         "created_ts": envelope["created_ts"],
+        "acknowledgement": result.get("acknowledgement", "received"),
     })
 
 
@@ -2872,7 +2943,7 @@ def cmd_guidance(args):
         _error(str(exc))
 
 
-def main():
+def _main():
     parser = argparse.ArgumentParser(
         prog="qntm",
         description="qntm - agent-first secure messaging CLI",
@@ -3235,6 +3306,25 @@ claude code channel:
         cmd_version(args)
     else:
         parser.print_help()
+
+
+def main():
+    try:
+        _main()
+    except SendDeliveryUnknown as error:
+        _error(str(error), code="send_delivery_unknown", data={
+            "conversation_id": error.conversation_id, "message_id": error.message_id,
+            "delivery": "unknown", "cause": error.cause_type,
+        })
+    except (urllib.error.URLError, http.client.HTTPException, ConnectionError,
+            TimeoutError, socket.gaierror, ssl.SSLError, httpx.TransportError,
+            WebSocketException) as error:
+        data = {"cause": type(error).__name__}
+        if isinstance(error, urllib.error.HTTPError):
+            data["http_status"] = error.code
+        # Do not echo exception strings that may embed URL credentials or tokens.
+        _error(f"Network request failed ({type(error).__name__}); check endpoint connectivity and TLS configuration.",
+               code="network_error", data=data)
 
 
 if __name__ == "__main__":

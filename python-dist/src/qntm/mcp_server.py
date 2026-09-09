@@ -357,6 +357,7 @@ def send_message(conversation: str, message: str) -> dict:
         "conversation_id": conv_id_hex,
         "message_id": msg_id_hex,
         "sequence": seq,
+        "acknowledgement": result.get("acknowledgement", "received"),
     }
 
 
