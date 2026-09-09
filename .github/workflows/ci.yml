@@ -33,6 +33,26 @@ jobs:
       - name: Verify publish tarball
         run: npm pack --dry-run
 
+  test-charter-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: charter-registry/go.mod
+          cache-dependency-path: charter-registry/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: go test -race ./... && go vet ./...
+        working-directory: charter-registry
+      - run: npm ci && npm run build && npm run test:charter-server
+        working-directory: client
+      - name: Verify deterministic charter vectors
+        run: node client/scripts/generate-charter-vectors.mjs && git diff --exit-code -- specs/test-vectors/charter-registry-v02.json
+
   test-aim-ui:
     runs-on: ubuntu-latest
     defaults:

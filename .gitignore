@@ -26,3 +26,7 @@ channel/node_modules/
 # Local browser/terminal acceptance failure artifacts
 integration/test-results/
 ui/tui/test-results/
+
+# Local charter registrar state and executable
+/charter-registry/data/
+/charter-registry/charter-registry

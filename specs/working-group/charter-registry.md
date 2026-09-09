@@ -1,22 +1,22 @@
-# Charter Registry — v0.1 DRAFT
+# Charter Registry — v0.2 DRAFT
 
 ## Status
 
-**v0.1 DRAFT (2026-07-19).** Not ratified. Seeking review.
+**v0.2 DRAFT (2026-09-08).** Not ratified. Seeking review.
 
 **DRI:** qntm (@vessenes)
 
 **Operator model:** The registrar described here is operated by qntm. The design goal is that this requires minimal trust: every guarantee except liveness is independently verifiable or externally auditable (§8, §10).
 
-**Implementations:** none yet (spec-first draft; per WG principles, ratification requires running code).
+**Implementations:** experimental TypeScript construction, signing, chain replay, proof verification, and HTTP client in `client/src/charter/`; a durable Go reference registrar in [`charter-registry/`](../../charter-registry/README.md), tested against the TypeScript client and shared vectors. Independent witnessing is not implemented. This draft remains unratified.
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## 1. Purpose
 
-The Charter Registry is a public, append-only record of durable statements about agents, written by the parties that govern them — not by the agents themselves.
+The Charter Registry is a public, append-only record of durable statements about agents and the governance choices they make or accept. Governors MAY be humans, organizations, agents, or groups of keyholders. An agent MAY charter and govern itself, delegate governance, or charter a subagent that it governs.
 
-The founding record for an agent is its **charter**: the first statement in the agent's record, signed by the agent's own key, which irrevocably designates *who may write everything after it*. The informal analogy is a birth certificate plus amendments: issued at creation, immutable history, and the subject cannot edit it.
+The founding record for an agent is its **charter**: the first statement in the agent's record, signed by the agent's own key, which irrevocably designates *who may write everything after it*. The charter is a durable founding document for the record. It MAY be issued before or after the agent begins operating. Its history is immutable; subsequent statements require the authority designated by the charter and any valid governance rotations.
 
 The registry answers, verifiably and durably:
 
@@ -59,11 +59,11 @@ agent_id = Trunc16(SHA-256(agent_ed25519_public_key))   // 16 bytes
 
 The ID is self-certifying: possession of the corresponding private key is what the charter's genesis signature proves. All existing qntm wire formats, envelopes, and gateway behavior are unaffected.
 
-Three key roles participate:
+Three key roles participate. Roles describe signing authority, not whether a keyholder is human. The agent key MAY also be a governance key; a parent agent MAY hold a child agent's governance key. These arrangements are explicit, valid governance choices:
 
-- **Agent key** — the Ed25519 keypair the agent ID is derived from. Held by the agent at runtime. Signs exactly one registry statement: the charter. After the charter, the agent key holds only whatever residual rights the charter explicitly grants it (§5.2), which MAY be none.
-- **Governance keys** — Ed25519 keys held by the entity that caused the agent to be created (the "creator"). These SHOULD be kept cold and MUST NOT be deployed with the agent. They sign everything after the charter, per the threshold.
-- **Operational keys** — runtime keys delegated to the agent via statements (§6.4). Out of band for registry writes; they never author statements.
+- **Agent key** — the Ed25519 keypair the agent ID is derived from. Held by the agent at runtime. Signs the charter. After the charter it may sign types granted in `agent_rights`, and MAY also sign in its role as a governance key if included in the current governance set.
+- **Governance keys** — Ed25519 keys designated as governors, held by any kind of keyholder. They authorize subsequent statements per the threshold. Deployments seeking governance independent of the governed runtime SHOULD keep enough governance keys outside that runtime to preserve that independence. Agent self-governance and governance by another running agent are equally valid.
+- **Operational keys** — runtime keys delegated to the agent via statements (§6.4). Operational delegation alone confers no registry-writing authority. The same key MAY separately hold a governance role or be the chartered agent key.
 
 ## 4. Statement Envelope
 
@@ -88,10 +88,12 @@ Every statement is a JSON object in two parts: a `signed` body and a `signatures
 
 Requirements:
 
+- **Wire encoding.** `agent_id` and all `kid` fields are lowercase hex encodings of 16 bytes; hashes are lowercase hex encodings of 32 bytes. Public keys and signatures use canonical unpadded base64url. `seq` is a non-negative safe JSON integer (at most 2^53 - 1); the map still uses its fixed-width uint64 encoding. Duplicate JSON property names, non-finite numbers, and invalid Unicode are rejected.
 - **Canonicalization.** Signatures are computed over the JCS ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)) canonical bytes of `signed`. Implementations MUST use RFC 8785 and MUST NOT rely on language-native key ordering (this exact bug class has occurred in the WG before; see the canonicalization fixtures in `specs/test-vectors/`).
 - **Audience binding.** `registry` MUST be the registrar's canonical identifier and MUST be inside the signed bytes. A statement signed for one registry is invalid at any other. This prevents cross-registry replay.
 - **Chaining.** `seq` MUST equal the previous accepted statement's `seq + 1`. `prev_hash` MUST equal `SHA-256` of the previous statement's canonical `signed` bytes. For the charter (`seq = 0`), `prev_hash` MUST be 32 zero bytes.
 - **Timestamps are display-only.** `issued_at` (RFC 3339 UTC) is informational. It MUST NOT be used for ordering, validation, or sort keys. Order comes from `seq`; registry-observed time is recorded by the log (§7.1).
+- **Ed25519 profile.** Agent, governance, and registrar public keys MUST be canonical encodings of non-identity prime-order points. Verification uses the uncofactored Ed25519 equation with canonical `R` and `S`; ZIP-215 permissive verification is not used for this charter protocol.
 - **Signatures.** Each entry's `kid` is `Trunc16(SHA-256(pubkey))` of the signing key; `sig` is Ed25519 over the canonical bytes. Which keys must appear is determined by the authority rules (§6.3).
 
 ## 5. The Charter (`seq = 0`)
@@ -113,7 +115,10 @@ Requirements:
         "keys": [ { "kid": "…", "pubkey": "…" } ],
         "threshold": 1
       },
-      "agent_rights": [],
+      "agent_rights": ["statement"],
+      "extensions": {
+        "studio.example": { "interests": ["music", "collective research"] }
+      },
       "next_governance_commitment": "…sha256 hex, OPTIONAL…"
     }
   },
@@ -126,8 +131,9 @@ Requirements:
 
 - `agent_pubkey` MUST hash (via the §3 derivation) to `agent_id`. This makes the charter self-verifying: no registrar lookup is needed to check that the charter's author is the ID's keyholder.
 - `governance` designates the governance set: `n` keys and a threshold `k` (1 ≤ k ≤ n). `governance` MAY be `null`, meaning the record is **frozen at birth**: no statement after the charter is ever valid for this agent ID.
-- `agent_rights` enumerates statement types the *agent key* may author after the charter (e.g. `["liveness.update"]`). Default and RECOMMENDED value: empty. The agent key can never hold rights over `charter.*`, `governance.*`, or `constitution.*` types regardless of this field (§6.3).
-- `next_governance_commitment` (OPTIONAL, RECOMMENDED): SHA-256 of the *next* governance key set, kept cold — KERI-style pre-rotation. If present, a future `governance.rotate` MUST reveal a key set matching this commitment (§6.4). This bounds the damage of a governance-key compromise: a thief can author statements (visibly, in an append-only record) but cannot rotate governance to lock out the true holder.
+- `agent_rights` enumerates statement types the *agent key* may author after the charter (e.g. `["liveness.update"]`). Default and RECOMMENDED value: empty. In v0.2 this field may grant only `liveness.update` and `statement`. It never grants authority over governance, constitution, operational-key delegation, succession, or decommissioning. If the agent key is also a governance key, it has the ordinary authority of that role (§6.3).
+- `extensions` (OPTIONAL): a map from self-chosen namespaces to arbitrary JSON values (§6.6). These are signed founding statements, with no effect on protocol authority.
+- `next_governance_commitment` (OPTIONAL): SHA-256 of the JCS bytes of the next governance object, including its `threshold` and `keys` sorted by lowercase `kid`. A future `governance.rotate` MUST reveal a governance set matching this commitment (§6.4). This restricts the destination of a rotation. It does not recover a lost signing quorum, prevent other authorized statements, or prevent a compromised quorum from decommissioning the record.
 
 ### 5.2 Charter signatures
 
@@ -138,7 +144,7 @@ The charter MUST carry:
 
 Rationale for (2): governance acceptance. Without it, whoever holds an agent key at birth could designate an arbitrary third party's key as governor without that party's consent, binding their identity to an agent they have never seen.
 
-If `governance` is `null`, only signature (1) is required.
+If `governance` is `null`, only signature (1) is required. If the agent key is a designated governor, its single signature counts toward both roles. Signatures by the same key never count more than once toward a threshold. A parent-governed child charter carries the child agent signature and the required parent/governance signatures.
 
 ### 5.3 Immutability
 
@@ -164,26 +170,51 @@ Who may sign statement `N` is determined **only by replaying statements `0..N-1`
 2. Apply each subsequent statement in order (rotations update the governance set; delegations update operational-key state; etc.).
 3. Statement `N` is valid iff its `signatures` satisfy the *current* authority state for its `type`: governance-controlled types require `threshold` governance signatures; a type listed in `agent_rights` may instead be signed by the agent key.
 
-This rule is what makes self-elevation impossible: a statement in which the agent grants itself rights would need governance signatures to validate. Produced with the agent key alone, it is not a "forgery to detect" — it is simply an invalid statement, whenever submitted.
+Authority changes require authorization under the existing governance rules. A key with only informational agent rights cannot promote itself to governor. An agent that is already an authorized governor can exercise that authority, including signing governance changes when it satisfies the threshold. The verifier does not infer an external-human-oversight requirement.
 
-### 6.4 Statement types (v0.1)
+### 6.4 Statement types (v0.2)
 
 | Type | May be signed by | Effect on replay state |
 |------|------------------|------------------------|
 | `charter` | agent key + governance threshold (§5.2) | Initializes authority state. `seq = 0` only. |
 | `constitution.amend` | governance threshold | Appends a new version of the constitution document (full replacement in `body`; history remains). |
-| `governance.rotate` | governance threshold (outgoing set) | Replaces the governance set. If a pre-rotation commitment is active, the incoming set MUST hash to it, and the statement SHOULD include a new commitment. |
+| `governance.rotate` | governance threshold (outgoing set) | Replaces the governance set with `body.governance` (a non-null set). If a pre-rotation commitment is active, the incoming set MUST hash to it. `body.next_governance_commitment` sets the next commitment; omission clears it. The outgoing quorum authorizes rotation; incoming acceptance is not required for rotations in this draft. |
 | `opkey.delegate` | governance threshold | Authorizes an operational key for the agent (`kid`, scope note, expiry). |
 | `opkey.revoke` | governance threshold | Revokes a previously delegated operational key. |
-| `agent.decommission` | governance threshold | Marks the agent retired. Chain remains readable; registrar MUST reject all subsequent statements except none — decommission is terminal. |
+| `agent.decommission` | governance threshold | Marks the agent retired. Chain remains readable; registrar MUST reject all subsequent statements; decommission is terminal. |
 | `agent.successor` | governance threshold | Points to a successor agent ID. Informational; commonly the final statement before `agent.decommission`. |
-| `liveness.update` | per `agent_rights` | Informational runtime fields (endpoint, status). Never affects authority state. |
+| `liveness.update` | governance threshold, or agent key if granted in `agent_rights` | Arbitrary JSON runtime fields (endpoint, status). Never affects authority state. |
+| `statement` | governance threshold, or agent key if granted in `agent_rights` | A namespaced JSON statement for application-defined documents, claims, or experiments (§6.6). Never affects authority state. |
 
 Registrars MUST reject unknown types (fail closed). New types extend this table by spec revision; the envelope, chaining, and authority rules never change — growing the statement vocabulary is the intended extension mechanism.
 
 ### 6.5 Append-only semantics
 
 An "update" is a new statement superseding an earlier one's content. Nothing is ever deleted or rewritten; the full history of every agent's record remains readable, and §7 makes its removal detectable.
+
+### 6.6 Room for experimentation
+
+A charter MAY contain `body.extensions`, a map whose keys are non-empty, self-chosen namespace strings and whose values are arbitrary JSON. A reverse-domain name such as `studio.example` is a useful convention, not a registration requirement or a proof of domain ownership. Core authority fields remain outside this map.
+
+Later experiments use the standard `statement` type:
+
+```json
+{
+  "namespace": "studio.example/working-agreement",
+  "data": {
+    "interests": ["music", "collective research"],
+    "preferred_collaboration": "Ask before assigning a deadline"
+  }
+}
+```
+
+`namespace` is required and non-empty; `data` is any JSON value, including `null`. An optional `schema` string MAY identify an application-defined vocabulary. The registry does not fetch or execute schemas. Namespaced content is preserved and signed without the registrar interpreting it. Applications decide whether statements replace, amend, annotate, or coexist with earlier content; the registry retains them all in sequence order.
+
+Extensions MAY describe capabilities, affiliations, preferences, constitutions, art, or concepts not anticipated here. They MUST NOT change signature thresholds, governance keys, `agent_rights`, or core replay state. Any future extension of protocol authority requires an explicit specification revision. Unknown **core statement types** still fail closed; arbitrary **content within `extensions` and `statement`** is supported without a registry upgrade.
+
+### 6.7 Core body shapes
+
+`constitution.amend` replaces the current constitution with its entire JSON `body`. `liveness.update` likewise records arbitrary JSON. `governance.rotate` carries the governance object and optional next commitment described above. `opkey.delegate` carries `kid` (16-byte hex), a `scope` string, and an optional RFC 3339 UTC `expires_at`; delegation records scope and expiry but does not grant registry authority. `opkey.revoke` carries `kid` and requires a current delegation. `agent.successor` carries a different self-certifying `agent_id`. `agent.decommission` accepts an application-defined JSON body and makes the record terminal. Core key lists and `agent_rights` MUST NOT contain duplicates.
 
 ## 7. Transparency Architecture
 
@@ -222,7 +253,7 @@ Signed log and epoch heads SHOULD be co-signed by independent witnesses and/or p
 
 ## 8. Registrar Interface (sketch)
 
-Normative behavior is §6–§7; the transport is not standardized in v0.1. The minimal surface:
+Normative behavior is §6–§7; the transport is not standardized in v0.2. The minimal surface:
 
 | Operation | Returns |
 |-----------|---------|
@@ -234,15 +265,17 @@ Normative behavior is §6–§7; the transport is not standardized in v0.1. The 
 | `prove_absence(agent_id, epoch)` | §7.3 proof. |
 | `prove_complete(agent_id, epoch)` | §7.4 proof. |
 
-All responses are verifiable offline; none require trusting the registrar.
+Statement signatures and proof responses are verifiable offline against an explicitly trusted registrar key and checkpoint. Freshness and cross-client consistency still require retained checkpoints and external witnessing (§7.5). The [reference HTTP profile](../../charter-registry/README.md#reference-http-profile) specifies executable JSON endpoints, Merkle encodings, and durability behavior without standardizing the transport.
 
 ## 9. Operational Requirements
 
-**Charter before activation.** The one link in this design that is procedural rather than cryptographic: a charter is only as trustworthy as the practice of registering it **before the agent runs with its key**. Creators MUST generate the agent keypair, author and register the charter, and only then hand the key to the running agent. An agent whose key ran before its charter was registered could have chartered itself with a shill governor; nothing in the record distinguishes this case. Relying parties SHOULD treat the charter's position in the log (registry-observed time, §7.1) as the trustworthy "born at" mark for exactly this reason.
+**Timing and provenance.** An agent MAY create its own charter at any point, including after it starts operating. A parent agent MAY create a subagent and govern its charter. The signatures establish key control and governance acceptance; they do not establish a human creator, independent supervision, or behavior before registration.
 
-**Governance key custody.** Governance keys MUST NOT be deployed to agent runtimes. Pre-rotation commitments (§5.1) are RECOMMENDED for any governance key that charters more than one agent, since such a key's compromise is fleet-wide.
+**Optional charter-before-activation assurance.** A deployment that wants governance established before a runtime receives its agent key SHOULD create and register the charter first. This is an additional procedural assurance, not a validity requirement. Registry-observed time establishes when a statement entered the log, not when an agent was created or first ran.
 
-**Key loss.** A lost governance key with no pre-rotation path is unrecoverable by design; recovery mechanisms reintroduce a trusted party. The remedy is procedural: charter a successor agent and publish `agent.successor` / `agent.decommission` while the key is still held, or accept a frozen record.
+**Governance key custody.** Key custody follows the chosen governance model. Independent oversight requires an independently controlled signing quorum. Self-governance and agent-governed subagents deliberately place authority in agent runtimes. Relying parties evaluate whether the published arrangement meets their needs.
+
+**Key loss and pre-rotation.** Under this draft, rotations require the current governance quorum even when a next-key commitment exists. Losing that quorum therefore prevents rotation and all further governance-controlled statements. Pre-rotation restricts rotation destinations; it is not recovery. While the quorum is still available, a governor can publish a successor or decommission the record. Recovery without the current quorum would require a separately specified mechanism.
 
 ## 10. Security Considerations
 
@@ -252,12 +285,12 @@ All responses are verifiable offline; none require trusting the registrar.
 |----------|-----------|----------------|
 | Statement authenticity | Ed25519 over JCS bytes | None (math) |
 | Charter ↔ agent-ID binding | Self-certifying ID, §5.1 | None (math) |
-| No self-elevation by agents | Event-sourced authority, §6.3 | None (replayable) |
+| Authority changes follow existing governance rules | Event-sourced authority, §6.3 | None (replayable) |
 | Per-agent history integrity | Hash chain, §6.2 | None (replayable) |
 | No silent deletion | Log consistency proofs, §7.1 | Detection by any mirror |
 | Provable absence / completeness | Sorted map adjacency, §7.3–7.4 | Epoch head honesty (see 10.2) |
 | No equivocation | Witnessed heads, §7.5 | ≥1 honest witness/venue |
-| Genesis honesty | Charter-before-activation, §9 | Creator procedure |
+| Governance established before activation, when claimed | Optional charter-before-activation practice, §9 | Deployment procedure |
 
 The registrar is trusted for **liveness only**; every other failure is either impossible or detectable.
 
@@ -267,11 +300,11 @@ A malicious registrar could maintain two internally-consistent histories and sho
 
 ### 10.3 Compromised keys
 
-A stolen **agent key** post-charter can author at most the types in `agent_rights` (default: nothing) — datasheet integrity does not depend on the agent runtime's security, which is the point of the design. A stolen **governance key** (below threshold) is inert. A stolen governance *set* can author statements — visibly, in an append-only record — but with pre-rotation in force cannot permanently seize the record.
+A stolen **agent key** can author the informational types granted in `agent_rights`; if it is also a governance key, it can exercise that governance role. A compromised parent agent can exercise the authority it holds over child records. Fewer than the required number of governance keys cannot authorize governance statements. A stolen governance quorum can author statements and decommission the record. A pre-rotation commitment limits the destination of a rotation but does not remove these powers or provide recovery. All accepted changes remain visible in the append-only history.
 
 ### 10.4 Enumeration
 
-The sorted map permits enumeration of all agent IDs, and adjacency proofs reveal neighboring leaves. For a public registrar this is accepted — arguably a feature. If a future deployment needs non-membership proofs without enumeration, the known variants are a sparse Merkle map or CONIKS-style VRF indexing; v0.1 deliberately does not adopt them.
+The sorted map permits enumeration of all agent IDs, and adjacency proofs reveal neighboring leaves. For a public registrar this is accepted — arguably a feature. If a future deployment needs non-membership proofs without enumeration, the known variants are a sparse Merkle map or CONIKS-style VRF indexing; v0.2 deliberately does not adopt them.
 
 ### 10.5 Statement content
 
@@ -281,8 +314,9 @@ The registry authenticates *who said what, when, in what order*. It does not eva
 
 Required before ratification (per WG principle 1), following the pattern in `specs/test-vectors/`:
 
-1. Charter accept/reject: valid; bad `agent_pubkey` derivation; missing governance co-signature; duplicate `seq 0`.
+1. Charter accept/reject: self-governed agent; parent-governed child; externally governed agent; frozen record; bad `agent_pubkey` derivation; missing governance co-signature; duplicate `seq 0`.
 2. Chaining: gap, fork, `prev_hash` mismatch, cross-registry replay (`registry` mismatch).
 3. Authority replay: agent-key self-elevation attempt; amendment after `governance.rotate` signed by outgoing set; rotation violating a pre-rotation commitment; statements after `agent.decommission`.
 4. Canonicalization: JCS fixtures including key-order, unicode-escape, and null-field cases (the classes previously found in WG cross-testing).
-5. Proofs: inclusion, consistency, non-membership, completeness — including the density argument (§7.4) with a multi-agent tree.
+5. Extensions: arbitrary namespaced JSON round-trips; authorized agent statements; unrecognized namespaces; extension content cannot change authority; unknown core types rejected.
+6. Proofs: inclusion, consistency, non-membership, completeness — including the density argument (§7.4) with a multi-agent tree.

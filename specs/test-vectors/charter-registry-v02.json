@@ -1,0 +1,3197 @@
+{
+  "draft_version": "0.2",
+  "cases": [
+    {
+      "name": "self-charter",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496"
+    },
+    {
+      "name": "parent-governed child",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997"
+    },
+    {
+      "name": "missing governance acceptance",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "BgVvejxhJy7eCnr1s1Ci6N_AwUGPCgICWGPPsTeqq22Y5kdiZnQ5CSqfwrgQ8ey2ns_N6np-RHY7Lyzba0dDDQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "a448b110d547ac64f971c863494c81bddfaa6c14b2ea68bf0fe1e0468145a435"
+    },
+    {
+      "name": "missing agent signature",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997"
+    },
+    {
+      "name": "threshold charter",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "Z3F_Cqi5p6zB6MKXEaeFETdzZ7LRbhfy1QtY3zzUnkBek2MT6e7L97VkNuQZy79Iz-Wd0c4w4dZDLc9EJsH5BA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "uyekcuvUcpCOh_d9xmzQFPYKBBh85Rhp9gftn8Qz4v96eBe2zlvdyqcmbd8Tt2jz1tBA1fSjd91GXwI0ssFyCQ"
+            },
+            {
+              "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+              "sig": "W2L8Xxewl0dDiZiEaFEtmpgsBur_3l0fYyADsxrGSQm_ENOzl8q-9QscpN9XUI5PVxY1Lv4q9bbiVF4DF3Q-DQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  },
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 2
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "b04c48010e1d2e8a4552f56e12612da398e3b0b09b31f80d9617d47b06bf6ef4"
+    },
+    {
+      "name": "threshold not met",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "Z3F_Cqi5p6zB6MKXEaeFETdzZ7LRbhfy1QtY3zzUnkBek2MT6e7L97VkNuQZy79Iz-Wd0c4w4dZDLc9EJsH5BA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "uyekcuvUcpCOh_d9xmzQFPYKBBh85Rhp9gftn8Qz4v96eBe2zlvdyqcmbd8Tt2jz1tBA1fSjd91GXwI0ssFyCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  },
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 2
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "b04c48010e1d2e8a4552f56e12612da398e3b0b09b31f80d9617d47b06bf6ef4"
+    },
+    {
+      "name": "duplicate signature cannot meet quorum",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "Z3F_Cqi5p6zB6MKXEaeFETdzZ7LRbhfy1QtY3zzUnkBek2MT6e7L97VkNuQZy79Iz-Wd0c4w4dZDLc9EJsH5BA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "uyekcuvUcpCOh_d9xmzQFPYKBBh85Rhp9gftn8Qz4v96eBe2zlvdyqcmbd8Tt2jz1tBA1fSjd91GXwI0ssFyCQ"
+            },
+            {
+              "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+              "sig": "W2L8Xxewl0dDiZiEaFEtmpgsBur_3l0fYyADsxrGSQm_ENOzl8q-9QscpN9XUI5PVxY1Lv4q9bbiVF4DF3Q-DQ"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "uyekcuvUcpCOh_d9xmzQFPYKBBh85Rhp9gftn8Qz4v96eBe2zlvdyqcmbd8Tt2jz1tBA1fSjd91GXwI0ssFyCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  },
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 2
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "b04c48010e1d2e8a4552f56e12612da398e3b0b09b31f80d9617d47b06bf6ef4"
+    },
+    {
+      "name": "signature tampering",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              },
+              "extensions": {
+                "experiment": true
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "509f750786e937dd2c963f7a8320c4f7238a2d8b0873568bb0f05459d145b268"
+    },
+    {
+      "name": "cross-registry replay",
+      "valid": false,
+      "registry": "other.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496"
+    },
+    {
+      "name": "agent informational statement cannot change authority",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "0k6DEPwNuTC-PWC5M1q-gfOpCyVd8IceyTuzKMQ5ijx80GnsM7fOCmbcNEHsIgQUugkX7QYBGqs_ee6E3D5rDw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {
+                "agent_rights": [
+                  "governance.rotate"
+                ],
+                "creative": [
+                  null,
+                  42,
+                  "🎨"
+                ],
+                "governance": {
+                  "keys": [
+                    {
+                      "kid": "34750f98bd59fcfc946da45aaabe933b",
+                      "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                    }
+                  ],
+                  "threshold": 1
+                }
+              },
+              "namespace": "anything/new",
+              "schema": "urn:example:v1"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "ef961569ef967a7a6c7476c78645a9ca17fcf1e65f478ad440b0fd84b451853b"
+    },
+    {
+      "name": "informational signer cannot elevate",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "0k6DEPwNuTC-PWC5M1q-gfOpCyVd8IceyTuzKMQ5ijx80GnsM7fOCmbcNEHsIgQUugkX7QYBGqs_ee6E3D5rDw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {
+                "agent_rights": [
+                  "governance.rotate"
+                ],
+                "creative": [
+                  null,
+                  42,
+                  "🎨"
+                ],
+                "governance": {
+                  "keys": [
+                    {
+                      "kid": "34750f98bd59fcfc946da45aaabe933b",
+                      "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                    }
+                  ],
+                  "threshold": 1
+                }
+              },
+              "namespace": "anything/new",
+              "schema": "urn:example:v1"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "OnpGUosPw1HPF_oqG_csHo64uHWiwGs-7YamTVceDfqcmd6jClMazF5NOohAclaKOW8SDz3Dy8AJvsoxE_4qBA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ef961569ef967a7a6c7476c78645a9ca17fcf1e65f478ad440b0fd84b451853b",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "governance.rotate"
+          }
+        }
+      ],
+      "head_hash": "208cb000379d4ce667cb5f694317a491b97d276c42adef454f112903a890077e"
+    },
+    {
+      "name": "parent can amend constitution",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "7jbvAUZ0SctR8bnsimLLm2zWI1kgpBdLqWlBoDMUNkaiG_s0ZrTS8o0u45AeWigIz2IqFxwPf6cOqCiPne_DCg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "values": [
+                "curiosity",
+                "care"
+              ]
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "constitution.amend"
+          }
+        }
+      ],
+      "head_hash": "68fc4948a7d5acbd8dfe865120c8c57b50e5aeb1a3c022edfac527f0cfd6198f"
+    },
+    {
+      "name": "agent cannot amend parent-governed constitution",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "zDD8Oivtd-NhM0ACGMKdR0snqSHq_iygLTrKMK2w2d0PhjOhhL2-ER2E7w617A41Fis1sF6U2bJNyjTF-H6CCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": null,
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "constitution.amend"
+          }
+        }
+      ],
+      "head_hash": "2703b5c6653e88c88fb5a1c05d78fb4f78c0bdceda60b898955fc7310705de4e"
+    },
+    {
+      "name": "ungranted informational right",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+              "sig": "nm1MSyKwng-vuTSGO9N3nwO0qYy0-wWPO6azJ8NVya_OaUTvHMgIhPrwY3gxVrC4KhjakT1-qR8O739_-vbVCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": null,
+              "namespace": "test"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "78b183d193b343ca0e29843533ac95d228e8bd75f6618e733381b50a8dbf5ade"
+    },
+    {
+      "name": "null experimental data",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "r2eK4Bgubgno6gU9yrds0RZ-0NOkrDIUFsTX7kVBXFok7ha2wTv260rc51tOTvJg-2o5rlDSgpO716omjUQKDA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": null,
+              "namespace": "test"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "78b183d193b343ca0e29843533ac95d228e8bd75f6618e733381b50a8dbf5ade"
+    },
+    {
+      "name": "empty namespace",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "Hb0NseqxqFnPYEUZvRgZ32rDBUdPx24ksKjnIiWkfhVqSugvYZxVZOtRILNVax6uBvDtzNNc4dIMnND3Fpb4DQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {},
+              "namespace": ""
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "1049e1a53f6da5ab415713549466d72b15a212bbde154f5872c6e55caf00c38f"
+    },
+    {
+      "name": "missing experimental data",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "2QC5cscdfoBv3-WbbHbyEN78nHe7fAvK4oVVseROjtdGTPIiDDavHG9kKg2pRmqsR8yhFoj0eY-K1LTG8tVHBg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "namespace": "test"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "27bc0fe11f83d14ff17f00c3fdadddd8500e7df85a3c6b02442a6643e517d683"
+    },
+    {
+      "name": "frozen charter",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "DjDBtqrtP73tNQPny_4mcVsjmHDO-vhS2ywjxcFZa0aX61t_WeYyseEhHK-fiTzjiKR7eMkVQAMnBVaF0aG0Cg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement"
+              ],
+              "governance": null
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "8d44b434d86723d19a7e4cbaab38cffd27d7a115d7c60c5efdc35a33722a4873"
+    },
+    {
+      "name": "frozen means all later writes rejected",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "DjDBtqrtP73tNQPny_4mcVsjmHDO-vhS2ywjxcFZa0aX61t_WeYyseEhHK-fiTzjiKR7eMkVQAMnBVaF0aG0Cg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement"
+              ],
+              "governance": null
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "pMQqkVw91o9LQup_VRmW8lLsp024C7krNTQcTZF-zBMY7NnccQvhG_GENOMLKMNOhJpI2xX76MSDXCrZW5l9CQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": null,
+              "namespace": "test"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "8d44b434d86723d19a7e4cbaab38cffd27d7a115d7c60c5efdc35a33722a4873",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "6d869f63a9d851a7492ca87bb7f87308edc103e972a6a6e90e53709120465c5f"
+    },
+    {
+      "name": "outgoing quorum authorizes rotation",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "smEcchS95StdSzccghwoLDMI_eMgA1hC-7lM7En4nVleE3a1ldDdYmC105FsEGLD_T1RoJOFtSYAQYaNJo0EAQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        }
+      ],
+      "head_hash": "f535acb6dd4e6a6acaa470375e350223a5ebf18e1f2fba3fa91811e23fbbc380"
+    },
+    {
+      "name": "incoming quorum has authority after rotation",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "smEcchS95StdSzccghwoLDMI_eMgA1hC-7lM7En4nVleE3a1ldDdYmC105FsEGLD_T1RoJOFtSYAQYaNJo0EAQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+              "sig": "d1OzmSI2wTLzycn9EjbvnIu4W1bje88q5x1wBgrjHB6qKMInTopvi3QfhKBqefnlKQIzFZUCMFooO8i06HXWAA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": [
+              "new"
+            ],
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "f535acb6dd4e6a6acaa470375e350223a5ebf18e1f2fba3fa91811e23fbbc380",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "constitution.amend"
+          }
+        }
+      ],
+      "head_hash": "21b831b09dac881c2fc2253b66705c83f90980e3c1ba7b274ec0dff4511bbc55"
+    },
+    {
+      "name": "outgoing key loses authority",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "smEcchS95StdSzccghwoLDMI_eMgA1hC-7lM7En4nVleE3a1ldDdYmC105FsEGLD_T1RoJOFtSYAQYaNJo0EAQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "VSCWHaCgv6FfBhR5VC5tTlBpOKSneWjo911n96rCo5MuRRLsMBQBwzE0M2RYT5dzyiUl3uoSZABJiXGV4GxjCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": [
+              "old"
+            ],
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "f535acb6dd4e6a6acaa470375e350223a5ebf18e1f2fba3fa91811e23fbbc380",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "constitution.amend"
+          }
+        }
+      ],
+      "head_hash": "d5280df9fc6bb95c80c2595143026fe3663d0bbac0edfe7abac961ec92f85122"
+    },
+    {
+      "name": "committed rotation",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "3a9hCRt25tBs1jWE7mmzJFCPpVKxWb0zg0YI6nZz7DunSEQrcOPkDVC2EUms_eq2wXv7uiYwxga_YymxUOuVCA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "K_YvsBT0aIQAxtrHjMlwIGhAq57LIdSzrv5nM1pE03kn9UmEk1rpUFXGar-0Yo_lOMMhGx0lmywx-IBrNi1RCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              },
+              "next_governance_commitment": "04a050ffe76efef703f5a3a527cbf64c8b3b14e2cecf5a2653dcc6c962bac16e"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "LKwxbYcv70KWdmKwjmdXfj3tw9d3r2P0uWyaI70sVOBc7uNEWWKmK2wHkRBv0HqNJPH1IoukN2w_rsdKz0LoAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "40be9f3eab66e06b4ae097e13c3953c0febef39b1dd2182f0467457cfcc236b7",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        }
+      ],
+      "head_hash": "84709ff887e984faed73d2e22c37bdfa0150671b32864de345521edcab7ec67c"
+    },
+    {
+      "name": "rotation commitment mismatch",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "3a9hCRt25tBs1jWE7mmzJFCPpVKxWb0zg0YI6nZz7DunSEQrcOPkDVC2EUms_eq2wXv7uiYwxga_YymxUOuVCA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "K_YvsBT0aIQAxtrHjMlwIGhAq57LIdSzrv5nM1pE03kn9UmEk1rpUFXGar-0Yo_lOMMhGx0lmywx-IBrNi1RCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              },
+              "next_governance_commitment": "04a050ffe76efef703f5a3a527cbf64c8b3b14e2cecf5a2653dcc6c962bac16e"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "YG13DJ-BhmNtAF5Tn0SWEZzpfes6KuAZ8Bc7crf03q-IyqRwVEsvxuC5TOOzX1WBozJFi2l8GWLKeBrncYvVBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "40be9f3eab66e06b4ae097e13c3953c0febef39b1dd2182f0467457cfcc236b7",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        }
+      ],
+      "head_hash": "0cde2d8f14e6c13722dc3fb2629833ab96d5baf8845a4df051eb4eafada12934"
+    },
+    {
+      "name": "precommitment cannot recover lost quorum",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "3a9hCRt25tBs1jWE7mmzJFCPpVKxWb0zg0YI6nZz7DunSEQrcOPkDVC2EUms_eq2wXv7uiYwxga_YymxUOuVCA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "K_YvsBT0aIQAxtrHjMlwIGhAq57LIdSzrv5nM1pE03kn9UmEk1rpUFXGar-0Yo_lOMMhGx0lmywx-IBrNi1RCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              },
+              "next_governance_commitment": "04a050ffe76efef703f5a3a527cbf64c8b3b14e2cecf5a2653dcc6c962bac16e"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+              "sig": "j3djN8PWfud4AsiY6IgRkQ1OnCzR8SF6osHX4YwGsyjAbJjzu_uOoKe5IgD41BKqZVmD5ai-F4Q7eVrlXcoaBA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "b62e867fa2f33afe62d5d6b1642e1621",
+                    "pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "40be9f3eab66e06b4ae097e13c3953c0febef39b1dd2182f0467457cfcc236b7",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "governance.rotate"
+          }
+        }
+      ],
+      "head_hash": "84709ff887e984faed73d2e22c37bdfa0150671b32864de345521edcab7ec67c"
+    },
+    {
+      "name": "precommitment does not prevent decommission",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "3a9hCRt25tBs1jWE7mmzJFCPpVKxWb0zg0YI6nZz7DunSEQrcOPkDVC2EUms_eq2wXv7uiYwxga_YymxUOuVCA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "K_YvsBT0aIQAxtrHjMlwIGhAq57LIdSzrv5nM1pE03kn9UmEk1rpUFXGar-0Yo_lOMMhGx0lmywx-IBrNi1RCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              },
+              "next_governance_commitment": "04a050ffe76efef703f5a3a527cbf64c8b3b14e2cecf5a2653dcc6c962bac16e"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "HFFRMFzwUB1yEBhQ4bOloi6bF77nTDL3YczFQ7CLGl6qg_tkVbqHIKXzkVzUcZg5y80O4n9Ky9MswvinGXMxBA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "reason": "retired"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "40be9f3eab66e06b4ae097e13c3953c0febef39b1dd2182f0467457cfcc236b7",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "agent.decommission"
+          }
+        }
+      ],
+      "head_hash": "55f4a918db0c7dfc68becb453687f70cd491bbfbe09b3cc6226a5ba7535d8296"
+    },
+    {
+      "name": "decommission is terminal",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "3a9hCRt25tBs1jWE7mmzJFCPpVKxWb0zg0YI6nZz7DunSEQrcOPkDVC2EUms_eq2wXv7uiYwxga_YymxUOuVCA"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "K_YvsBT0aIQAxtrHjMlwIGhAq57LIdSzrv5nM1pE03kn9UmEk1rpUFXGar-0Yo_lOMMhGx0lmywx-IBrNi1RCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              },
+              "next_governance_commitment": "04a050ffe76efef703f5a3a527cbf64c8b3b14e2cecf5a2653dcc6c962bac16e"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "HFFRMFzwUB1yEBhQ4bOloi6bF77nTDL3YczFQ7CLGl6qg_tkVbqHIKXzkVzUcZg5y80O4n9Ky9MswvinGXMxBA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "reason": "retired"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "40be9f3eab66e06b4ae097e13c3953c0febef39b1dd2182f0467457cfcc236b7",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "agent.decommission"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "jB5w4zD46nrxoBa8lB_xlwU5kvtOPwcEWXj28jFnghIBsal7VqHKVJVw4dW1rrrRV3P94mk5BVeSIlLfAC0oBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {},
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "55f4a918db0c7dfc68becb453687f70cd491bbfbe09b3cc6226a5ba7535d8296",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "liveness.update"
+          }
+        }
+      ],
+      "head_hash": "2b9ffa0d1067faa0340d828e6cea0f230433168eb4abeb25c0d3ef1c03fc4d7c"
+    },
+    {
+      "name": "operational delegation and revocation",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "P1_ibWsoU5wawikv7YPaET_WNr_4Qnz9baxXb76UH2JHk4GeZX-vLMHYeZ323ykUNMsirATNKkWZ_qDTih_0BA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "expires_at": "2026-09-08T12:00:00Z",
+              "kid": "c5b940ed3f65c391965de8295fc5d25f",
+              "scope": "messaging"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "opkey.delegate"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "djLlp4S06VQqs1ncl9iYYnCzheu1I0RVUmEu38H1GeVqjA6SmJ796Y3UJsMo7ssOtRABMPVPZssRbittn8S5BQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "kid": "c5b940ed3f65c391965de8295fc5d25f"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "b5073eb8c4c815fa132d07b6409ddad0dc94268ac674d33eed7f3f7fb9fbbe52",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "opkey.revoke"
+          }
+        }
+      ],
+      "head_hash": "c5bfc65bc18f098e3758c2773fbac112e7178e055ef8e5dd0a49055b3810c195"
+    },
+    {
+      "name": "operational key has no registry authority",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "P1_ibWsoU5wawikv7YPaET_WNr_4Qnz9baxXb76UH2JHk4GeZX-vLMHYeZ323ykUNMsirATNKkWZ_qDTih_0BA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "expires_at": "2026-09-08T12:00:00Z",
+              "kid": "c5b940ed3f65c391965de8295fc5d25f",
+              "scope": "messaging"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "opkey.delegate"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "c5b940ed3f65c391965de8295fc5d25f",
+              "sig": "nwAhkDf2T9yoKXDBvvTRPefCGIbSNGHFnb-7yTaRcfBa7vhP77NVZAaZKdTkKDgcm5Mzx3_Sw3xn1XLOU0V-DA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": null,
+              "namespace": "test"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "b5073eb8c4c815fa132d07b6409ddad0dc94268ac674d33eed7f3f7fb9fbbe52",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "63c3ef28a26aa15f77e5408d6a6dfac76eb2da0a81cafeab7e5c747ce13e761b"
+    },
+    {
+      "name": "cannot revoke unknown operational key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "-uOAGmBUfMQJnwAunaWK_qU-hKZTDgjVrJvITakW_-VMX_kEAmdDQHPQgQ3QQhtKmIExSGBk0A6--0nCrIb1CQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "kid": "c5b940ed3f65c391965de8295fc5d25f"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "opkey.revoke"
+          }
+        }
+      ],
+      "head_hash": "0e4dcad27ab109a00035c977c4ef35ef5fda09c278f34c1b146d23d637fcd631"
+    },
+    {
+      "name": "successor statement",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "krtmxzDvdR-FKdM4UFIoo2p6d2YjLRl6xKZhJ2A4LMcRQiXXwFmEnCdisBrDPh3zHWDTYVUBVo4EU3VnzC7XCQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_id": "b62e867fa2f33afe62d5d6b1642e1621"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "agent.successor"
+          }
+        }
+      ],
+      "head_hash": "9bb1c341ae2b138fcf603ace0c92a8253bcb6fcd78df16fffe7fb977f8f4684f"
+    },
+    {
+      "name": "self succession rejected",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "9sxp_hg06nSIept2nLZQvQmGFaUxjk4tR0gTWerfhbIkV-Ip0j3Yb0_z3jvs1F-rpTqU7eZy02R2oRnw7Av4CQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_id": "34750f98bd59fcfc946da45aaabe933b"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "agent.successor"
+          }
+        }
+      ],
+      "head_hash": "01751cb85de5803874bf4b85653ac1301c2603dc044eef4927f79e837f227b39"
+    },
+    {
+      "name": "timestamps do not order history",
+      "valid": true,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "18-SktMqPuNYy0TKNsmj6dDJ1oXnztJvcOlo4KfNac3wcJAM2UIIu5hvb4Lt1t2iLGVGwuJ9aBfzbK4er2FpAA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "status": "here"
+            },
+            "issued_at": "2020-01-01T00:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "liveness.update"
+          }
+        }
+      ],
+      "head_hash": "4c6c0daea119f23e20138e9dc6b965514422d8daa7706e32c98a143e45a2ed0c"
+    },
+    {
+      "name": "sequence gap",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "eS7dMD98kIgw3hPiQfzG9v2Urbw3kRpepVcUB7VVqRo3fyTW2Sy-FiibE0G4ORloo3ZGQ2Q9OptXYeEMEI68Bw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {
+                "agent_rights": [
+                  "governance.rotate"
+                ],
+                "creative": [
+                  null,
+                  42,
+                  "🎨"
+                ],
+                "governance": {
+                  "keys": [
+                    {
+                      "kid": "34750f98bd59fcfc946da45aaabe933b",
+                      "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                    }
+                  ],
+                  "threshold": 1
+                }
+              },
+              "namespace": "anything/new",
+              "schema": "urn:example:v1"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 2,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "fe7271d5a7b9dc374fc177154db864a41f42447828375f58241d4af99a8a748d"
+    },
+    {
+      "name": "previous hash mismatch",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "-siHJUyl-T2R5Gy-u9HO13_luegljVKH9plwlfNijdBd1M6ETqT9uBaMkMM8DP6nYOPQ8cwxfz_H-UIM7zggAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {
+                "agent_rights": [
+                  "governance.rotate"
+                ],
+                "creative": [
+                  null,
+                  42,
+                  "🎨"
+                ],
+                "governance": {
+                  "keys": [
+                    {
+                      "kid": "34750f98bd59fcfc946da45aaabe933b",
+                      "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                    }
+                  ],
+                  "threshold": 1
+                }
+              },
+              "namespace": "anything/new",
+              "schema": "urn:example:v1"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "statement"
+          }
+        }
+      ],
+      "head_hash": "efca3e15f860d5d3865a67270f8a82a0dd0f1d081a84b4324433fbef0d9b37b4"
+    },
+    {
+      "name": "charter cannot be replaced",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5S9fovN_yg7DmaypfItIgpyEiAfWy_hVUv9QoBJic3D6eHLef8usSfPuDf23cLLGZt83qZ4aiDLhJ28hZAsuAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496"
+    },
+    {
+      "name": "unknown core type fails closed",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "5D8jk4tk0Mfb8THAk2hF13HMnBKQbV3H3saUTPHinTr17stPL7axJFdB4o-p7EnbU7V61pwvP7BICi3jEp1-Bg"
+            },
+            {
+              "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+              "sig": "d39YN3zYt2yt_DHKM97lr2bbdvfhzbl6Qos_P3DEwzxZuIY3Ms5-SEnTDmcHUwUqICpLM5vtssf1TcaKCHHwBw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "statement",
+                "liveness.update"
+              ],
+              "extensions": {
+                "__proto__": {},
+                "studio.example": {
+                  "art": [
+                    "music",
+                    null,
+                    {
+                      "2": "two",
+                      "10": "ten"
+                    }
+                  ]
+                }
+              },
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "6a3803d5f059902a1c6dafbc9ba47292",
+                    "pubkey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        },
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "PAkeylJdmpN31z6W-9faB9FwUbdi5tMcXSjQyy2Qo9yGrpvIWlyoEEUnM9GRuXMajLwUq4xh9joXO0Vdw5hHBg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "data": {
+                "agent_rights": [
+                  "governance.rotate"
+                ],
+                "creative": [
+                  null,
+                  42,
+                  "🎨"
+                ],
+                "governance": {
+                  "keys": [
+                    {
+                      "kid": "34750f98bd59fcfc946da45aaabe933b",
+                      "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                    }
+                  ],
+                  "threshold": 1
+                }
+              },
+              "namespace": "anything/new",
+              "schema": "urn:example:v1"
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "ecca717c5aa83192a7f58a4ea5f3812ee43a4f97d021fafb4ef7b222ebc63997",
+            "registry": "test.registry",
+            "seq": 1,
+            "type": "custom.authority"
+          }
+        }
+      ],
+      "head_hash": "d3a6e1bd180776143b8d04a64727e46ae742f98bf503c6c664e25e5b7a5f2d7b"
+    },
+    {
+      "name": "invalid calendar date",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "odkfa5Vti7M_9nR0m_4DZ3fWueUo1Fx1nRS7VnAOerYnBK5_Tlp7mEZ9UhocIeO1KakpoJI8_ipnKptFW5RYAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-02-30T00:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "502b6a8fd7258e7da08934e0dd656b291afc959385def6a9f895c3c05a3d0d9c"
+    },
+    {
+      "name": "null sequence",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "h5YZNJkOFZInPp6icra2fMHFp_a6Tyv7vJzlDjAEw5w25wEimA-qGNBvt-n_-vT53jMyHo2DZr8VW9X9fFEHAw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": null,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "e7fb19948659c36741f640768dab088a7111df3a48076c4b334948095ae4b18d"
+    },
+    {
+      "name": "missing sequence",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "QEG9CN5k2VdpWEEb1m-s0nH2F3zpmA8wZ4goZylTWuLyWG934amH7vMkn5rJCdO0P2X18AHriwB26JzLnhYMDg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "8b1da640b34bb484915a338473e124ef4893bd33c0f694381b762286a1828305"
+    },
+    {
+      "name": "unsafe sequence",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "nKg2PYdgsxZ9pcx-2ibSozdD-JJ6Bhvf4BxB3KJMLuEne5cY-9Q3V2ifvVqOoTZD0ZRaOD3Ajwsy4j9Mx0PSAg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 9007199254740992,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "87d0a36846a4a8fffbdaafbc43826ee9770e4ee4de898294a692a9304ca381ae"
+    },
+    {
+      "name": "duplicate governor",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "SMtkC_kgmu-Nyf87JY5IvetRiAsXRkoHjqOygCZ9SowsV_ma3gXa7hUmaEGaiPIHtfQ-NjPb3fMcUG_dvemiBg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  },
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "ac4d5069da1bb4c78b55a05ebf185682809b41d49d8c81991f54cdc29005cf17"
+    },
+    {
+      "name": "invalid agent right",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "xwsG8TFz1YpnFiNtCfsY8ITpbXOVP4HNajLIDmQCJG-PdodMMt8FchTNcG3UX8VUuAEW-u7oY_zhlmJXrz5GBA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [
+                "governance.rotate"
+              ],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "a6947a3037276318de4b8f29adea6d1b937a1c98b8ed7fcd6e4fa6e1daa7bd29"
+    },
+    {
+      "name": "wrong agent public key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "8TgaTuiGXGoQI-y4IqwOh9PeKomGmdUAbs2BOC4_9v0cEnCwZedU4sn0_Y3tLIjWRvOyaNX6CkV0OY2DnluICQ"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "9d303c8ce8be536f9eaecae0da7843ef37778f6a4347eb0154d9db70f1da06f7"
+    },
+    {
+      "name": "zero quorum",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "pbqhcfucJRLDXPzj0eT355zQyqTXwWN00F_4TFQ6GHU4WLzbPoY0fRykDgW7Q-JX4rR7kqQAEwsVhlFPJlh2BA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 0
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "3aa98bad26fb1f317241ffe0615d0a0e06d22bb9486f06277ac5f92a713e6668"
+    },
+    {
+      "name": "reject identity governance key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "qecieaAT9JmDOe4Cd5FSGZDkmjXtz1HWI_y41D7bV5IPRr3rCIx20amleg_EHi7f7keh_G_rWyGnDumsMstXBg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  },
+                  {
+                    "kid": "01d0fabd251fcbbe2b93b4b927b26ad2",
+                    "pubkey": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "7c4a618952e32c06659a0727afb37eaf74138ee0bb0f92355a3fffff5f5c08b7"
+    },
+    {
+      "name": "reject small-order governance key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "7eHPvvS0pzkrLm88g3FoBrmFNCPpyuNl-QQ9diwam2329iMiJ-NNVhmouIaJWle9ccJOTb0IUNr_E9TpkzM1BA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  },
+                  {
+                    "kid": "66687aadf862bd776c8fc18b8e9f8e20",
+                    "pubkey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "b48911fc0ff90e962491df28c65c888cb779480b495c242f80c2214fb4c1779a"
+    },
+    {
+      "name": "reject mixed torsion governance key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "FSbtbtQrdBoxUfWIwCwfurfvk2MFzyoSedhMD9Y8rDBRqOGy-YUwjV4ZP02sxyUo03VE89tRCV9p_sG-H1zfCw"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  },
+                  {
+                    "kid": "8bc86bc4421410e010d497cf86613557",
+                    "pubkey": "UlLMCn8ggTO2IKy9RTfroqQSO_CowuT5gMOzG7aXZeo"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "fa39984da00d647e9a36e5436dc3ed94e45997652a55a36842f6183247d75191"
+    },
+    {
+      "name": "reject noncanonical governance key",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "pDruFZ1QzL3mjCZwYL26_n6jdhMYh8rHi3Vq1qaodgaiBoqEuNWp3y9TGaDycdCH7sp8infGvSs1c9kBd3HJDg"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  },
+                  {
+                    "kid": "ebcaabd64b0947b64d68135119c54f2d",
+                    "pubkey": "7v_______________________________________38"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "c2c50d48e50510949ea78865adf1eb0970c34a07065c55f17bdef0067e05b661"
+    },
+    {
+      "name": "reject cofactored-only signature",
+      "valid": false,
+      "registry": "test.registry",
+      "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+      "chain": [
+        {
+          "signatures": [
+            {
+              "kid": "34750f98bd59fcfc946da45aaabe933b",
+              "sig": "UlLMCn8ggTO2IKy9RTfroqQSO_CowuT5gMOzG7aXZeop4nwazBXXGJE40-xdOgTVmgOFLGxB4_90ESXzPDkoCA"
+            }
+          ],
+          "signed": {
+            "agent_id": "34750f98bd59fcfc946da45aaabe933b",
+            "body": {
+              "agent_pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+              "agent_rights": [],
+              "governance": {
+                "keys": [
+                  {
+                    "kid": "34750f98bd59fcfc946da45aaabe933b",
+                    "pubkey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+                  }
+                ],
+                "threshold": 1
+              }
+            },
+            "issued_at": "2026-09-08T12:00:00Z",
+            "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "registry": "test.registry",
+            "seq": 0,
+            "type": "charter"
+          }
+        }
+      ],
+      "head_hash": "355ecb3720cfd0e37afe1b1b5aeec0452c4392b1d275f44c1eee3cf80d558496"
+    }
+  ],
+  "json": [
+    {
+      "name": "scalar nesting 128",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "canonical": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+    },
+    {
+      "name": "scalar nesting 129",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "canonical": null
+    },
+    {
+      "name": "empty nesting 129",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "canonical": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+    },
+    {
+      "name": "empty nesting 130",
+      "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "canonical": null
+    },
+    {
+      "name": "UTF-16 and integer key order",
+      "input": "{\"2\":2,\"10\":10,\"\\ue000\":1,\"😀\":2}",
+      "canonical": "{\"10\":10,\"2\":2,\"😀\":2,\"\":1}"
+    },
+    {
+      "name": "ECMAScript numbers",
+      "input": "[333333333.33333329,1E30,4.50,2e-3,1e-27,-0,1e-6,1e-7]",
+      "canonical": "[333333333.3333333,1e+30,4.5,0.002,1e-27,0,0.000001,1e-7]"
+    },
+    {
+      "name": "Unicode escape and null",
+      "input": "{\"a\":\"\\u0061\\ud83d\\ude00\",\"b\":null}",
+      "canonical": "{\"a\":\"a😀\",\"b\":null}"
+    },
+    {
+      "name": "invalid JSON 0",
+      "input": "{\"a\":1,\"a\":2}",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 1",
+      "input": "{\"a\":1,\"\\u0061\":2}",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 2",
+      "input": "\"\\ud800\"",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 3",
+      "input": "\"\\udc00\"",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 4",
+      "input": "\"\\ud800\\u0041\"",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 5",
+      "input": "\"\\udc00\\ud800\"",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 6",
+      "input": "[1e999]",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 7",
+      "input": "[1,]",
+      "canonical": null
+    },
+    {
+      "name": "invalid JSON 8",
+      "input": "{\"a\":undefined}",
+      "canonical": null
+    }
+  ]
+}
