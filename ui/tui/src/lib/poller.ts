@@ -5,7 +5,7 @@
 import {
   DropboxClient,
   buildSignedReceipt,
-  decryptMessage,
+  receiveConversationEvent,
   deserializeEnvelope,
   serializeEnvelope,
   createMessage,
@@ -43,43 +43,42 @@ export async function applyIncomingEnvelope(
   identity: Identity,
   convId: string,
   envelopeBytes: Uint8Array,
+  seq?: number,
 ): Promise<StoredMessage | null> {
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return null;
+  if (seq !== undefined && (!Number.isSafeInteger(seq) || seq < 1)) throw new Error('Invalid receive sequence');
+  if (seq !== undefined && seq <= store.loadCursor(convId)) return null;
 
   let envelope;
   try {
     envelope = deserializeEnvelope(envelopeBytes);
   } catch {
+    if (seq !== undefined) store.saveCursor(convId, seq);
     return null;
   }
 
-  let decrypted;
+  const session = store.gatewaySession(convId, identity);
+  let event;
   try {
-    decrypted = decryptMessage(envelope, convCrypto);
+    event = receiveConversationEvent(envelope, convCrypto, identity, session);
   } catch {
+    // Invalid protocol input is ignored. Persistence failures below must escape
+    // so the subscription retries without moving past an uncommitted rekey.
+    if (seq !== undefined) store.saveCursor(convId, seq);
     return null;
   }
-
-  const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase();
-  const bodyText = new TextDecoder().decode(new Uint8Array(decrypted.inner.body));
-  const bodyType = decrypted.inner.body_type || 'text';
-  const createdAt = new Date(envelope.created_ts * 1000).toISOString();
-
-  const isSelf = senderKidHex === bytesToHex(identity.keyID).toLowerCase();
-  if (isSelf) {
-    const history = store.loadHistory(convId);
-    const hasRecent = history.some(
-      (message) =>
-        message.direction === 'outgoing' &&
-        message.bodyType === bodyType &&
-        message.text === bodyText &&
-        Math.abs(Date.parse(message.createdAt) - Date.parse(createdAt)) < 60000,
-    );
-    if (hasRecent) {
-      return null;
-    }
+  if (event.duplicate) {
+    if (seq !== undefined) store.saveCursor(convId, seq);
+    return null;
   }
+  const decrypted = event.message;
+  const senderKidHex = bytesToHex(decrypted.inner.sender_kid).toLowerCase();
+  const bodyText = event.text;
+  const bodyType = decrypted.inner.body_type;
+  const createdAt = new Date(envelope.created_ts * 1000).toISOString();
+  const isSelf = senderKidHex === bytesToHex(identity.keyID).toLowerCase();
+  const alreadyDisplayed = store.loadHistory(convId).some(message => message.id === bytesToHex(envelope.msg_id));
 
   const message: StoredMessage = {
     id: bytesToHex(envelope.msg_id),
@@ -90,9 +89,10 @@ export async function applyIncomingEnvelope(
     bodyType,
     text: bodyText,
     createdAt,
+    gatewayVerified: !!event.gatewayEvent,
   };
 
-  store.appendHistory(convId, message);
+  store.commitReceived(convId, event, message, seq);
   submitReceiptBestEffort(
     dropbox,
     identity,
@@ -100,7 +100,7 @@ export async function applyIncomingEnvelope(
     envelope.msg_id,
     Math.max(MIN_RECEIPT_ACKS, convCrypto.participants.length),
   );
-  return message;
+  return alreadyDisplayed ? null : message;
 }
 
 export async function pollConversation(
@@ -141,6 +141,7 @@ export async function sendMessage(
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return null;
 
+  if (store.gatewaySession(convId, identity).removed) throw new Error('You have been removed from this conversation');
   const bodyBytes = new TextEncoder().encode(text);
   const envelope = createMessage(identity, convCrypto, bodyType, bodyBytes, undefined, defaultTTL());
   const serialized = serializeEnvelope(envelope);
@@ -159,7 +160,7 @@ export async function sendMessage(
     conversationId: convId,
     direction: 'outgoing',
     sender: 'You',
-    senderKey: '',
+    senderKey: bytesToHex(identity.keyID),
     bodyType,
     text,
     createdAt: new Date(envelope.created_ts * 1000).toISOString(),

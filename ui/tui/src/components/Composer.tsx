@@ -8,9 +8,10 @@ interface ComposerProps {
   onSend: (text: string) => void;
   onCommand: (cmd: string, args: string) => void;
   activeConversation: string | null;
+  onEditingChanged?: (editing: boolean) => void;
 }
 
-export default function Composer({ onSend, onCommand, activeConversation }: ComposerProps) {
+export default function Composer({ onSend, onCommand, activeConversation, onEditingChanged }: ComposerProps) {
   const [value, setValue] = useState('');
 
   const handleSubmit = (text: string) => {
@@ -32,6 +33,7 @@ export default function Composer({ onSend, onCommand, activeConversation }: Comp
     }
 
     setValue('');
+    onEditingChanged?.(false);
   };
 
   // Compute slash-command hints when the input starts with "/"
@@ -44,7 +46,7 @@ export default function Composer({ onSend, onCommand, activeConversation }: Comp
       {showHints && hints.length > 0 && (
         <Box paddingX={2}>
           <Text dimColor>
-            {hints.map((c) => `${c.usage} — ${c.brief}`).join('  |  ')}
+            {hints.slice(0, 2).map((c) => c.usage).join('  |  ') + (hints.length > 2 ? ' | /help for all commands' : '')}
           </Text>
         </Box>
       )}
@@ -52,7 +54,7 @@ export default function Composer({ onSend, onCommand, activeConversation }: Comp
         <Text color={theme.borderComposer}>{'\u276f'} </Text>
         <TextInput
           value={value}
-          onChange={setValue}
+          onChange={(next) => { setValue(next); onEditingChanged?.(next.length > 0); }}
           onSubmit={handleSubmit}
           focus={true}
           placeholder={activeConversation ? 'Type a message or /help' : '/help for commands'}

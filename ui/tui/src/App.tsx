@@ -8,6 +8,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { DropboxClient } from '@corpollc/qntm';
+import wrapAnsi from 'wrap-ansi';
+import { createRequire } from 'node:module';
+const { version: packageVersion } = createRequire(import.meta.url)('../package.json') as { version: string };
+import { GatewayActions, terminalText, type GatewayReview } from './lib/gateway.js';
 
 import { Store, bytesToHex, type StoredConversation, type StoredMessage } from './lib/store.js';
 import { applyIncomingEnvelope, sendMessage } from './lib/poller.js';
@@ -27,6 +31,8 @@ import { theme } from './lib/theme.js';
 interface SystemMessage {
   text: string;
   color: string;
+  createdAt: string;
+  afterId?: string;
 }
 
 interface AppProps {
@@ -67,15 +73,32 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const activeConvIdRef = useRef<string | null>(null);
 
   const terminalHeight = stdout?.rows ?? 24;
+  const terminalWidth = stdout?.columns ?? 80;
+  const actions = useMemo(() => identity ? new GatewayActions(store, dropbox, identity) : null, [identity, store, dropbox]);
+  const [review, setReview] = useState<(GatewayReview & { confirmable: boolean }) | null>(null);
+  const [reviewPage, setReviewPage] = useState(0);
+  const [reviewNotice, setReviewNotice] = useState('');
+  const [gatewayBusy, setGatewayBusy] = useState(false);
+  const gatewayBusyRef = useRef(false);
+  const reviewedPages = useRef(new Set<number>());
+  const composerEditing = useRef(false);
+  const reviewLines = useMemo(() => review ? wrapAnsi(review.details, Math.max(20, terminalWidth - 6), { hard: true, trim: false }).split('\n') : [], [review, terminalWidth]);
+  const pageSize = Math.max(3, terminalHeight - 13);
+  const pageCount = Math.max(1, Math.ceil(reviewLines.length / pageSize));
+  useEffect(() => { reviewedPages.current = new Set([0]); setReviewPage(0); }, [terminalWidth, terminalHeight]);
+  const showReview = (value: GatewayReview, confirmable: boolean) => {
+    reviewedPages.current = new Set([0]); setReviewPage(0); setReviewNotice(''); setReview({ ...value, confirmable });
+  };
 
   // ── System message helper ──────────────────────────────────────────
 
   const addSystemMessage = useCallback((text: string, color: string = theme.system) => {
+    const afterId = activeConvIdRef.current ? store.loadHistory(activeConvIdRef.current).at(-1)?.id : undefined;
     setSystemMessages((prev) => {
-      const next = [...prev, { text, color }];
+      const next = [...prev, { text: terminalText(text), color, createdAt: new Date().toISOString(), afterId }];
       return next.length > 50 ? next.slice(-50) : next;
     });
-  }, []);
+  }, [store]);
 
   // ── Initialisation ─────────────────────────────────────────────────
 
@@ -95,6 +118,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
     if (convs.length > 0) {
       const first = convs[0];
       setActiveConvId(first.id);
+      activeConvIdRef.current = first.id;
       setMessages(store.loadHistory(first.id));
     }
 
@@ -139,10 +163,8 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           setConnected(connectedConversationsRef.current.size > 0);
         },
         onMessage: async ({ seq, envelope }) => {
-          const message = await applyIncomingEnvelope(store, dropbox, identity, conv.id, envelope);
-          if (seq > store.loadCursor(conv.id)) {
-            store.saveCursor(conv.id, seq);
-          }
+          const message = await applyIncomingEnvelope(store, dropbox, identity, conv.id, envelope, seq);
+          setConversations(store.loadConversations());
           if (!message) {
             return;
           }
@@ -206,6 +228,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   // ── Keyboard navigation ────────────────────────────────────────────
 
   useInput((input, key) => {
+    if (composerEditing.current || review) return;
     // Tab toggles sidebar
     if (key.tab) {
       setSidebarVisible((v) => !v);
@@ -274,6 +297,44 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   // ── Slash commands ─────────────────────────────────────────────────
 
   const handleCommand = useCallback((cmd: string, args: string) => {
+    const gatewayCommands = ['gate', 'request', 'secret', 'propose', 'approve', 'disapprove', 'gov-approve', 'gov-disapprove', 'review', 'confirm', 'cancel'];
+    if (gatewayCommands.includes(cmd.toLowerCase())) {
+      void (async () => {
+        if (gatewayBusyRef.current) { setReviewNotice('Gateway action is still running.'); return; }
+        gatewayBusyRef.current = true; setGatewayBusy(true);
+        try {
+          if (!actions || !activeConvId) throw new Error('Select a conversation first.');
+          const command = cmd.toLowerCase();
+          if (command === 'cancel') {
+            actions.cancel(); setReview(null); setReviewNotice('');
+            addSystemMessage('Review closed. No action sent.', theme.info);
+          } else if (command === 'review') {
+            if (!review) throw new Error('No review open. Prepare an action or use /gate.');
+            const page = args.trim() ? Number(args.trim()) - 1 : reviewPage;
+            if (!Number.isInteger(page) || page < 0 || page >= pageCount) throw new Error(`Use /review <page> between 1 and ${pageCount}.`);
+            reviewedPages.current.add(page); setReviewPage(page); setReviewNotice('');
+          } else if (command === 'confirm') {
+            if (!review?.confirmable) throw new Error('No action awaiting confirmation.');
+            if (reviewedPages.current.size !== pageCount) throw new Error(`Review all ${pageCount} pages with /review <page> before confirming.`);
+            setReview(null);
+            const result = await actions.confirm(activeConvId);
+            setConversations(store.loadConversations()); setMessages(store.loadHistory(activeConvId));
+            addSystemMessage(result, theme.success);
+          } else if (command === 'gate' && !args.trim()) {
+            actions.cancel(); showReview({ title: 'Verified gateway state', details: terminalText(actions.status(activeConvId)) }, false);
+          } else if (command === 'gate' && args.trim() === 'retry') {
+            actions.cancel(); setReview(null); addSystemMessage(await actions.retry(activeConvId), theme.info);
+          } else {
+            const prepared = await actions.prepare(activeConvId, command, args);
+            showReview(prepared, true);
+          }
+        } catch (error) {
+          const message = terminalText(error instanceof Error ? error.message : 'Gateway action failed');
+          setReviewNotice(message); addSystemMessage(message, theme.error);
+        } finally { gatewayBusyRef.current = false; setGatewayBusy(false); }
+      })();
+      return;
+    }
     switch (cmd.toLowerCase()) {
       case 'quit':
       case 'q':
@@ -307,7 +368,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
           addSystemMessage(`Key ID: ${kidHex}`, theme.info);
           addSystemMessage(`Public key: ${bytesToHex(identity.publicKey)}`, theme.info);
           addSystemMessage(`Config: ${configDir}`, theme.info);
-          addSystemMessage('Version: v0.2.0', 'cyan');
+          addSystemMessage(`Version: v${packageVersion}`, theme.info);
         }
         break;
 
@@ -525,16 +586,6 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         addSystemMessage(`  Display name: ${displayName || '(not set)'}`, theme.info);
         break;
 
-      case 'approve': {
-        const reqId = args.trim();
-        if (!reqId) {
-          addSystemMessage('Usage: /approve <request-id-prefix>', theme.error);
-          break;
-        }
-        addSystemMessage(`API Gateway approval for ${reqId} — not yet implemented in TUI`, theme.warning);
-        break;
-      }
-
       case '_no_conv':
         addSystemMessage('No active conversation. Use /invite or /join first.', theme.warning);
         break;
@@ -559,7 +610,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         break;
       }
     }
-  }, [identity, kidHex, activeConvId, configDir, dropboxUrl, bellEnabled, displayName, conversations, store, addSystemMessage, exit, selectConversationByIndex]);
+  }, [identity, kidHex, activeConvId, configDir, dropboxUrl, bellEnabled, displayName, conversations, store, addSystemMessage, exit, selectConversationByIndex, actions, review, reviewPage, pageCount]);
 
   // ── Last message per conversation ─────────────────────────────────
 
@@ -584,20 +635,18 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
 
   // ── Merged message list (chat + system) ────────────────────────────
 
-  // We show system messages as part of the chat pane by converting them
-  const allMessages: StoredMessage[] = [
-    ...messages,
-    ...systemMessages.map((sm, i) => ({
-      id: `sys-${i}`,
-      conversationId: activeConvId || '',
-      direction: 'incoming' as const,
-      sender: 'system',
-      senderKey: '',
-      bodyType: 'system',
-      text: sm.text,
-      createdAt: new Date().toISOString(),
-    })),
-  ];
+  // Insert local notices after the message visible when they were issued;
+  // preserve relay order instead of sorting by sender-controlled timestamps.
+  const notices = systemMessages.map((sm, i) => ({
+    afterId: sm.afterId,
+    message: { id: `sys-${i}`, conversationId: activeConvId || '', direction: 'incoming' as const,
+      sender: 'system', senderKey: '', bodyType: 'system', text: sm.text, createdAt: sm.createdAt },
+  }));
+  const ids = new Set(messages.map(message => message.id));
+  const allMessages: StoredMessage[] = notices.filter(notice => !notice.afterId || !ids.has(notice.afterId)).map(notice => notice.message);
+  for (const message of messages) {
+    allMessages.push(message, ...notices.filter(notice => notice.afterId === message.id).map(notice => notice.message));
+  }
 
   // ── Render ─────────────────────────────────────────────────────────
 
@@ -626,7 +675,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
 
       {/* Main content: sidebar + chat */}
       <Box flexDirection="row" flexGrow={1}>
-        {sidebarVisible && (
+        {sidebarVisible && !review && (
           <Box width={30} flexShrink={0}>
             <Sidebar
               conversations={conversations}
@@ -646,13 +695,22 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         )}
 
         <Box flexDirection="column" flexGrow={1}>
-          <ChatPane
+          {review ? (
+            <Box borderStyle="single" borderColor={theme.warning} flexDirection="column" paddingX={1} flexGrow={1}>
+              <Text bold color={theme.warning}>{review.title} — page {reviewPage + 1}/{pageCount}</Text>
+              <Text>{reviewLines.slice(reviewPage * pageSize, (reviewPage + 1) * pageSize).join('\n')}</Text>
+              <Box flexGrow={1} />
+              <Text color={theme.warning}>{reviewNotice || (review.confirmable ? 'Read every page, then /confirm to send. /cancel closes without sending.' : '/cancel closes this view.')}</Text>
+              <Text dimColor>/review &lt;page&gt; | {reviewedPages.current.size}/{pageCount} pages viewed{gatewayBusy ? ' | working…' : ''}</Text>
+            </Box>
+          ) : <ChatPane
             messages={allMessages}
             conversationName={activeConvName}
             scrollOffset={scrollOffset}
             terminalHeight={terminalHeight}
+            sidebarVisible={sidebarVisible}
             resolveContact={(kid) => store.resolveContact(kid)}
-          />
+          />}
         </Box>
       </Box>
 
@@ -671,6 +729,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         onSend={handleSend}
         onCommand={handleCommand}
         activeConversation={activeConvId}
+        onEditingChanged={(editing) => { composerEditing.current = editing; }}
       />
     </Box>
   );

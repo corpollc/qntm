@@ -182,11 +182,11 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 |---------|:---------:|:----------------------:|:------------------------:|:-----------------------:|-------|
 | **Python CLI** | ✅ | ✅ | ✅ | ✅ | Full gateway command surface, including `gate-run`, `gate-approve`, `gate-disapprove`, `gate-promote`, and `gate-secret`. |
 | **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
-| **Terminal UI** | ✅ | ✅ | Partial | ❌ | Renders some gateway cards, but `/approve` is still a placeholder and gateway actions are not implemented. |
+| **Terminal UI** | ✅ | ✅ | ✅ | ✅ | Unreleased: signed gateway admission; paged request, approval, withdrawal, credential and governance reviews; authenticated rekey/restart state. [Terminal help](ui/tui/README.md). |
 | **TypeScript lib** | ✅ | ✅ | ✅ | ✅ | Typed gateway/governance builders, authenticated-message verification, encrypted-message helpers, and history summaries. Hosts own review, persistence, subscriptions, and retries; see the [workflow guide](docs/typescript-gateway.md). |
 | **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
 
-Remaining gateway interface work is tracked in beads: TUI actions (`qntm-u1hq`) and structured OpenClaw actions (`qntm-dhqb`). Each requires real cross-client acceptance tests before its row changes to complete. The OpenClaw plugin currently provides chat transport.
+Terminal gateway actions are covered by real PTY journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. Structured OpenClaw actions remain tracked in `qntm-dhqb`; that plugin currently provides chat transport. The table describes this checkout; entries marked unreleased are not yet in published 0.6.1 packages.
 
 ## Experimental charter registry
 

@@ -14,6 +14,7 @@
 import React from 'react';
 import { render } from 'ink';
 import App from './App.js';
+import { COMMANDS } from './lib/commands.js';
 
 // ── Arg parsing ──────────────────────────────────────────────────────────
 
@@ -55,17 +56,7 @@ Options:
   --help, -h             Show this help message
 
 Slash commands (in chat):
-  /help                  Show available commands
-  /invite [name]         Create a new conversation and get an invite token
-  /join <link-or-token>  Join via invite link or token
-  /name <name>           Set conversation name
-  /nick <name>           Set your display name
-  /alias <kid> <name>    Set a contact alias
-  /identity              Show your identity info
-  /settings              Show current configuration (alias: /config)
-  /conversations         List all conversations
-  /approve <reqid>       Approve an API Gateway request
-  /quit                  Exit the client
+${COMMANDS.map(command => `  ${command.usage.padEnd(44)} ${command.brief}`).join('\n')}
 
 Navigation:
   Tab                    Toggle conversation sidebar

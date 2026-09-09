@@ -70,4 +70,12 @@ Tests exercise encrypted envelope roundtrips, altered signatures, forged termina
 
 The gateway service processes subscription envelopes only in its current epoch. It skips older replay records without retaining prior decryption keys, skips future epochs, and advances its durable relay cursor. Already-consumed sequences are ignored after restart. This does not turn the gateway into a historical decryption service or reauthorize pre-rekey requests; clients retain their own history.
 
-The terminal UI and OpenClaw plugin still need their own gateway action interfaces. These helpers provide a shared implementation for that work; they do not install host-specific tools or grant an agent permission to invoke them.
+The terminal UI now provides reviewed gateway actions (see [terminal help](../ui/tui/README.md)); OpenClaw structured actions remain in progress. These helpers do not install host-specific tools or grant an agent permission to invoke them.
+
+## Maintain a local authenticated session (unreleased)
+
+`createGatewaySession(conversation, knownPublicKeys)` seeds a portable state reducer from the invite and known local participants. `receiveConversationEvent(envelope, conversation, identity, state)` authenticates each envelope and returns the next conversation keys, participant roster, verified gateway event, display text, and session state. Pass envelopes in relay order. Persist its returned conversation and state together with your receive cursor before acknowledging or dispatching the event. Invalid input throws without changing the previous state; hosts must distinguish protocol rejection from persistence failure.
+
+The reducer verifies signed gateway invitation/acceptance, request and vote signatures, gateway-only terminal records, and gateway-authored membership/rekey controls once accepted. Before admission, ordinary signed chat can discover participants; group controls require a known participant. An exact previously verified envelope returns `duplicate: true` with no actionable event, including replay of a rekey after a crash. Conflicting message IDs and wrong epochs are rejected. Live expiry checks remain enabled.
+
+`sessionGatewayContext(state)` returns a validated accepted context and rejects removed identities. Hosts still own explicit review and permission decisions. State is a trusted **local checkpoint**, not a network attestation or a replacement for envelope verification. Protect saved keys, derived events and roster against modification. The reducer retains at most 4,096 gateway events and 8,192 replay digests; a lost subject cannot authorize a later vote. No old keys or automatic expired-history bypass are retained. It does not solve joining from an obsolete invite after earlier rekeys.

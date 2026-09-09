@@ -12,6 +12,6 @@ describe('commands', () => {
   it('matches prefixes against command names and aliases', () => {
     expect(matchCommands('in').map((command) => command.name)).toEqual(['invite']);
     expect(matchCommands('gr').map((command) => command.name)).toEqual(['search']);
-    expect(matchCommands('co').map((command) => command.name)).toEqual(['conversations', 'settings']);
+    expect(matchCommands('co').map((command) => command.name)).toEqual(['confirm', 'conversations', 'settings']);
   });
 });
