@@ -184,7 +184,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
 | **Terminal UI** | ✅ | ✅ | ✅ | ✅ | Unreleased: signed gateway admission; paged request, approval, withdrawal, credential and governance reviews; authenticated rekey/restart state. [Terminal help](ui/tui/README.md). |
 | **TypeScript lib** | ✅ | ✅ | ✅ | ✅ | Typed gateway/governance builders, authenticated-message verification, encrypted-message helpers, and history summaries. Hosts own review, persistence, subscriptions, and retries; see the [workflow guide](docs/typescript-gateway.md). |
-| **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Packaged install, encrypted direct/group replies and restart replay are tested on OpenClaw 2026.9.3 (unreleased adapter update). Non-text bodies remain untyped context; outbound sends are text-only. |
+| **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Real OpenClaw 2026.9.3 tests cover packaged installation, encrypted replies, rekeys, removal and recovery after failed host admission plus a process crash (unreleased adapter update). Verified non-text events remain untrusted context; outbound sends are text-only. |
 
 Terminal gateway actions are covered by real PTY journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. Structured OpenClaw actions remain tracked in `qntm-dhqb`; that plugin currently provides chat transport. The table describes this checkout; entries marked unreleased are not yet in published 0.6.1 packages.
 

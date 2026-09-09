@@ -4,10 +4,11 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import {
   generateIdentity, createInvite, inviteToToken, createConversation, deriveConversationKeys,
   createMessage, serializeEnvelope, deserializeEnvelope, decryptMessage, serializeIdentity,
-  base64UrlEncode, DropboxClient,
+  base64UrlEncode, DropboxClient, createGroupRekeyBody, createGroupRemoveBody, QSP1Suite,
 } from '@corpollc/qntm';
 import { createHostRelay } from '../tests/support/host-relay.mjs';
 import { stagePlugin } from './package.mjs';
@@ -29,6 +30,7 @@ for (const key of Object.keys(env)) {
   if (/(API_KEY|ACCESS_TOKEN|AUTH_TOKEN|OPENCLAW_GATEWAY_TOKEN|OPENCLAW_GATEWAY_PASSWORD)$/.test(key)) delete env[key];
 }
 let gateway;
+let sessionLock;
 let gatewayLog = '';
 const relay = await createHostRelay();
 function terminate(child, signal) {
@@ -60,10 +62,10 @@ async function waitFor(predicate, description, timeout = 30_000) {
   }
   throw new Error(`Timed out: ${description}\n${gatewayLog}`);
 }
-async function stopHost() {
+async function stopHost(signal = 'SIGTERM') {
   if (!gateway || gateway.exitCode != null || gateway.signalCode != null) return;
   const exited = new Promise((resolve) => gateway.once('exit', resolve));
-  terminate(gateway, 'SIGTERM');
+  terminate(gateway, signal);
   const timeout = setTimeout(() => terminate(gateway, 'SIGKILL'), 10_000);
   await exited;
   clearTimeout(timeout);
@@ -107,7 +109,7 @@ try {
   await writeFile(config, JSON.stringify({
     gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token: 'disposable-qntm-smoke-test-token' } },
     agents: { defaults: { workspace: join(temporary, 'workspace') } },
-    session: { dmScope: 'per-account-channel-peer' },
+    session: { dmScope: 'per-account-channel-peer', store: join(state, 'smoke-sessions.json') },
     plugins: { enabled: true, allow: ['qntm', 'qntm-smoke-fixture'] },
   }), { mode: 0o600 });
   const [artifact] = JSON.parse(await command('npm', ['pack', '--json', '--pack-destination', temporary], stage));
@@ -120,7 +122,8 @@ try {
   cfg.channels = { qntm: {
     identity: base64UrlEncode(serializeIdentity(identity)), relayUrl: relay.url,
     conversations: Object.fromEntries(conversations.map(({ invite }, index) => [
-      `chat${index}`, { invite: inviteToToken(invite), name: `Smoke ${index}` },
+      `chat${index}`, { invite: inviteToToken(invite), name: `Smoke ${index}`,
+        ...(index === 1 ? { trigger: 'mention', triggerNames: ['wire-smoke'] } : {}) },
     ])),
   } };
   await writeFile(config, JSON.stringify(cfg));
@@ -130,17 +133,35 @@ try {
   const client = new DropboxClient(relay.url);
   const hex = (bytes) => Buffer.from(bytes).toString('hex');
   await waitFor(() => conversations.every(({ conversation }) => relay.conversations.get(hex(conversation.id))?.sockets.size), 'both OpenClaw subscriptions');
-  async function sendAndExpect(conversation, text) {
-    const envelope = createMessage(peer, conversation, 'text', new TextEncoder().encode(text));
-    await client.postMessage(conversation.id, serializeEnvelope(envelope));
+  async function expectReply(conversation, text) {
     await waitFor(() => relay.conversations.get(hex(conversation.id)).messages.some((record) => {
-      const message = decryptMessage(deserializeEnvelope(Buffer.from(record.envelope_b64, 'base64')), conversation);
+      const envelope = deserializeEnvelope(Buffer.from(record.envelope_b64, 'base64'));
+      if (envelope.conv_epoch !== conversation.currentEpoch) return false;
+      const message = decryptMessage(envelope, conversation);
       return hex(message.inner.sender_kid) === hex(identity.keyID)
         && new TextDecoder().decode(message.inner.body).includes(`host-reply: ${text}`);
     }), `host reply to ${text}`);
   }
+  async function sendAndExpect(conversation, text) {
+    const envelope = createMessage(peer, conversation, 'text', new TextEncoder().encode(text));
+    await client.postMessage(conversation.id, serializeEnvelope(envelope));
+    await expectReply(conversation, text);
+  }
+  const checkpoint = async conversation => {
+    try { return JSON.parse(await readFile(join(state, 'plugins/qntm/accounts/default/conversations', `${hex(conversation.id)}.json`), 'utf8')); }
+    catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+  };
   await sendAndExpect(conversations[0].conversation, 'direct-wire-smoke');
   await sendAndExpect(conversations[1].conversation, 'group-wire-smoke');
+  const group = conversations[1].conversation;
+  const root = new Uint8Array(32).fill(42);
+  const rekey = serializeEnvelope(createMessage(peer, group, 'group_rekey', createGroupRekeyBody(root, 1,
+    [peer, identity].map(value => ({ kid: value.keyID, publicKey: value.publicKey })), group.id)));
+  await client.postMessage(group.id, rekey);
+  await waitFor(async () => (await checkpoint(group))?.conversation.currentEpoch === 1, 'durable rekey without agent wakeup');
+  const epochKeys = new QSP1Suite().deriveEpochKeys(root, group.id, 1);
+  group.keys = { root, aeadKey: epochKeys.aeadKey, nonceKey: epochKeys.nonceKey };
+  group.currentEpoch = 1;
   await stopHost();
   const counts = conversations.map(({ conversation }) => relay.conversations.get(hex(conversation.id)).messages.length);
   startHost();
@@ -148,11 +169,47 @@ try {
   await sendAndExpect(conversations[0].conversation, 'restart-wire-smoke');
   assert.equal(relay.conversations.get(hex(conversations[0].conversation.id)).messages.length, counts[0] + 2);
   assert.equal(relay.conversations.get(hex(conversations[1].conversation.id)).messages.length, counts[1]);
-  console.log('PASS: real OpenClaw install/discovery, two encrypted conversations, host replies, restart and replay suppression.');
+  await client.postMessage(group.id, rekey); // Exact replay of the prior epoch needs no retained old key.
+  await sendAndExpect(group, 'rekey-restart-wire-smoke');
+  assert.equal(relay.conversations.get(hex(group.id)).messages.length, counts[1] + 3);
+
+  const direct = conversations[0].conversation;
+  // Force SQLite contention at host session admission, before ownership
+  // transfers. Only the disposable host's synthetic session store is locked.
+  sessionLock = new DatabaseSync(join(state, 'smoke-sessions.sqlite'));
+  sessionLock.exec('BEGIN IMMEDIATE');
+  const crashEnvelope = createMessage(peer, direct, 'text', new TextEncoder().encode('crash-wire-smoke'));
+  await client.postMessage(direct.id, serializeEnvelope(crashEnvelope));
+  const database = new DatabaseSync(join(state, 'plugins/qntm/accounts/default/ingress.sqlite'), { readOnly: true });
+  const crashId = `${hex(direct.id)}:${hex(crashEnvelope.msg_id)}`;
+  try {
+    await waitFor(() => {
+      const row = database.prepare('SELECT status,attempts FROM ingress WHERE id=?').get(crashId);
+      return row?.status === 'pending' && row.attempts >= 1;
+    }, 'failed host session admission retained for retry');
+  } finally { database.close(); }
+  await stopHost('SIGKILL'); // Kill the host after its relay cursor has already committed.
+  assert.ok((await checkpoint(direct)).cursor >= relay.conversations.get(hex(direct.id)).messages.length);
+  sessionLock.exec('ROLLBACK'); sessionLock.close(); sessionLock = undefined;
+  startHost();
+  await waitFor(() => conversations.every(({ conversation }) => relay.conversations.get(hex(conversation.id))?.sockets.size), 'subscriptions after process crash');
+  await expectReply(direct, 'crash-wire-smoke'); // No resend or new relay message is needed.
+
+  await client.postMessage(group.id, serializeEnvelope(createMessage(peer, group, 'group_remove', createGroupRemoveBody([identity.keyID]))));
+  await waitFor(async () => (await checkpoint(group))?.session.removed, 'durable local removal');
+  await stopHost(); startHost();
+  await waitFor(() => relay.conversations.get(hex(group.id))?.sockets.size, 'removed subscription after restart');
+  const beforeRemovalProbe = relay.conversations.get(hex(group.id)).messages.length;
+  await client.postMessage(group.id, serializeEnvelope(createMessage(peer, group, 'text', new TextEncoder().encode('removed-wire-smoke'))));
+  await waitFor(async () => (await checkpoint(group))?.cursor >= beforeRemovalProbe + 1, 'removed message consumed without wakeup');
+  await sendAndExpect(direct, 'still-connected-wire-smoke');
+  assert.equal(relay.conversations.get(hex(group.id)).messages.length, beforeRemovalProbe + 1);
+  console.log('PASS: real OpenClaw install/discovery, encrypted direct/group replies, rekey/replay, SIGKILL recovery before adoption, removal across restart.');
 } catch (error) {
   console.error(gatewayLog);
   throw error;
 } finally {
+  if (sessionLock) { sessionLock.exec('ROLLBACK'); sessionLock.close(); }
   await stopHost();
   await relay.close();
   if (process.env.QNTM_KEEP_HOST_SMOKE === '1') console.log(`Disposable evidence retained: ${temporary}`);

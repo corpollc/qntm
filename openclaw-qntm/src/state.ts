@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readBoundedFile, writePrivateJSON } from "./storage.js";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 
 function resolveOpenClawStateDir(env: NodeJS.ProcessEnv): string {
@@ -13,7 +13,9 @@ export type ConversationCursorStore = {
 };
 
 function normalizeConversationId(conversationId: string): string {
-  return conversationId.trim().toLowerCase();
+  const id = conversationId.trim().toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("invalid qntm conversation id");
+  return id;
 }
 
 export function resolveQntmStateRoot(options?: { stateDir?: string }): string {
@@ -40,28 +42,18 @@ export function readConversationCursor(params: {
   stateDir?: string;
 }): number {
   const cursorPath = resolveConversationCursorPath(params);
-  if (!existsSync(cursorPath)) {
-    return 0;
+  let raw: Buffer;
+  try { raw = readBoundedFile(cursorPath, 4096); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
   }
   try {
-    const parsed = JSON.parse(readFileSync(cursorPath, "utf-8")) as {
-      seq?: unknown;
-    } | number;
-    if (typeof parsed === "number" && Number.isFinite(parsed)) {
-      return parsed;
-    }
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof parsed.seq === "number" &&
-      Number.isFinite(parsed.seq)
-    ) {
-      return parsed.seq;
-    }
-  } catch {
-    return 0;
-  }
-  return 0;
+    const parsed: unknown = JSON.parse(raw.toString("utf8"));
+    const sequence = typeof parsed === "number" ? parsed : (parsed as { seq?: unknown } | null)?.seq;
+    if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 0) throw new Error();
+    return sequence;
+  } catch { throw new Error("invalid qntm legacy cursor file"); }
 }
 
 export function writeConversationCursor(params: {
@@ -72,18 +64,8 @@ export function writeConversationCursor(params: {
   updatedAt?: number;
 }): void {
   const cursorPath = resolveConversationCursorPath(params);
-  mkdirSync(path.dirname(cursorPath), { recursive: true });
-  writeFileSync(
-    cursorPath,
-    `${JSON.stringify(
-      {
-        seq: params.sequence,
-        updatedAt: params.updatedAt ?? Date.now(),
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  if (!Number.isSafeInteger(params.sequence) || params.sequence < 0) throw new Error("invalid qntm cursor sequence");
+  writePrivateJSON(cursorPath, { seq: params.sequence, updatedAt: params.updatedAt ?? Date.now() }, 4096);
 }
 
 export function createFileCursorStore(options?: {

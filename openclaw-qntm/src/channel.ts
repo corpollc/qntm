@@ -16,6 +16,7 @@ import {
 import { normalizeQntmMessagingTarget, resolveQntmAccount, resolveQntmBinding } from "./accounts.js";
 import { monitorQntmAccount } from "./monitor.js";
 import { flattenQntmReplyPayload, sendQntmText } from "./qntm.js";
+import { QntmCheckpointStore } from "./checkpoint.js";
 import { getQntmRuntime, patchQntmRuntimeStatus } from "./runtime.js";
 import { qntmSetupAdapter } from "./setup-core.js";
 import type { QntmRootConfig, ResolvedQntmAccount } from "./types.js";
@@ -49,10 +50,12 @@ async function sendOutbound(params: {
       meta: { target: binding.target },
     };
   }
+  const latest = new QntmCheckpointStore(account).load(binding);
+  if (latest.session.removed) throw new Error("qntm identity has been removed from this conversation");
   const result = await sendQntmText({
     client: new DropboxClient(account.relayUrl),
     identity: account.identity,
-    conversation: binding.conversation,
+    conversation: latest.conversation,
     text,
   });
   patchQntmRuntimeStatus(account.accountId, {
@@ -275,7 +278,7 @@ export const qntmPlugin = {
         try {
           await waitForAbort(ctx.abortSignal);
         } finally {
-          monitor.stop();
+          await monitor.stop();
         }
         return;
       } catch (error) {

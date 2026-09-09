@@ -8,8 +8,9 @@ import {
   deserializeIdentity,
   inviteFromURL,
   serializeEnvelope,
+  validateIdentity,
 } from "@corpollc/qntm";
-import { readFileSync } from "node:fs";
+import { readBoundedFile } from "./storage.js";
 import { join } from "node:path";
 import type { Conversation, DropboxClient, Identity } from "@corpollc/qntm";
 
@@ -50,7 +51,7 @@ function decodeIdentityBytes(value: unknown, field: string): Uint8Array {
   if (value instanceof Uint8Array) {
     return value;
   }
-  if (Array.isArray(value) && value.every((entry) => typeof entry === "number")) {
+  if (Array.isArray(value) && value.every((entry) => typeof entry === "number" && Number.isInteger(entry) && entry >= 0 && entry <= 255)) {
     return Uint8Array.from(value);
   }
   if (typeof value !== "string") {
@@ -67,16 +68,24 @@ function decodeIdentityBytes(value: unknown, field: string): Uint8Array {
 }
 
 function parseIdentityJsonText(raw: string): Identity {
-  const value = JSON.parse(raw) as Record<string, unknown>;
-  return {
+  let value: Record<string, unknown>;
+  try { value = JSON.parse(raw); } catch { throw new Error("invalid qntm identity JSON"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid qntm identity object");
+  return checkedIdentity({
     privateKey: decodeIdentityBytes(value.private_key ?? value.privateKey, "private_key"),
     publicKey: decodeIdentityBytes(value.public_key ?? value.publicKey, "public_key"),
     keyID: decodeIdentityBytes(value.key_id ?? value.keyID ?? value.kid, "key_id"),
-  };
+  });
+}
+
+function checkedIdentity(identity: Identity): Identity {
+  validateIdentity(identity);
+  return identity;
 }
 
 export function loadQntmIdentityFromString(raw: string): Identity {
   const trimmed = raw.trim();
+  if (Buffer.byteLength(trimmed) > 65536) throw new Error("qntm identity exceeds its size limit");
   if (!trimmed) {
     throw new Error("empty qntm identity");
   }
@@ -84,19 +93,19 @@ export function loadQntmIdentityFromString(raw: string): Identity {
     return parseIdentityJsonText(trimmed);
   }
   try {
-    return deserializeIdentity(base64UrlDecode(trimmed));
+    return checkedIdentity(deserializeIdentity(base64UrlDecode(trimmed)));
   } catch {
     if (/^[0-9a-f]+$/i.test(trimmed) && trimmed.length % 2 === 0) {
-      return deserializeIdentity(fromHex(trimmed));
+      return checkedIdentity(deserializeIdentity(fromHex(trimmed)));
     }
   }
   throw new Error("invalid qntm identity payload");
 }
 
 export function loadQntmIdentityFromFile(identityFile: string): Identity {
-  const raw = readFileSync(identityFile);
+  const raw = readBoundedFile(identityFile, 65536);
   try {
-    return deserializeIdentity(new Uint8Array(raw));
+    return checkedIdentity(deserializeIdentity(new Uint8Array(raw)));
   } catch {
     const text = raw.toString("utf-8").trim();
     if (!text) {
@@ -145,20 +154,15 @@ function parseStoredConversationType(value: unknown): Conversation["type"] {
   if (value === "direct" || value === "group" || value === "announce") {
     return value;
   }
-  throw new Error(`invalid qntm conversation type: ${String(value)}`);
+  throw new Error("invalid qntm conversation type");
 }
 
 function parseStoredConversationEpoch(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.max(0, Math.trunc(value));
+  if (value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new Error("invalid qntm conversation epoch");
   }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isFinite(parsed)) {
-      return Math.max(0, parsed);
-    }
-  }
-  return 0;
+  return value;
 }
 
 function parseStoredConversationDate(value: unknown): Date {
@@ -175,17 +179,21 @@ function parseStoredConversationDate(value: unknown): Date {
 }
 
 function loadStoredConversationRecords(identityDir: string): StoredConversationRecord[] {
-  const raw = JSON.parse(readFileSync(join(identityDir, "conversations.json"), "utf-8")) as unknown;
+  let raw: unknown;
+  try { raw = JSON.parse(readBoundedFile(join(identityDir, "conversations.json"), 16 * 1024 * 1024).toString("utf8")); }
+  catch { throw new Error("invalid qntm conversations file"); }
   if (!Array.isArray(raw)) {
     throw new Error(`invalid qntm conversations file: ${join(identityDir, "conversations.json")}`);
   }
   return raw as StoredConversationRecord[];
 }
 
-function parseStoredConversationRecord(record: StoredConversationRecord): Conversation {
+export function parseStoredConversationRecord(record: StoredConversationRecord): Conversation {
+  if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error("invalid qntm conversation record");
   if (!record.keys || typeof record.keys !== "object") {
     throw new Error("missing qntm conversation keys");
   }
+  if (record.participants !== undefined && !Array.isArray(record.participants)) throw new Error("invalid qntm conversation participants");
   const participants = Array.isArray(record.participants)
     ? record.participants.map((entry, index) => decodeIdentityBytes(entry, `participant ${index}`))
     : [];
@@ -196,7 +204,7 @@ function parseStoredConversationRecord(record: StoredConversationRecord): Conver
       : typeof record.inviteToken === "string"
         ? record.inviteToken.trim()
         : "";
-  return {
+  const conversation: Conversation = {
     id: decodeIdentityBytes(record.id, "conversation id"),
     name: name || undefined,
     type: parseStoredConversationType(record.type ?? "direct"),
@@ -216,6 +224,12 @@ function parseStoredConversationRecord(record: StoredConversationRecord): Conver
     currentEpoch: parseStoredConversationEpoch(record.currentEpoch ?? record.current_epoch),
     inviteToken: inviteToken || undefined,
   };
+  if (conversation.id.length !== 16 || Object.values(conversation.keys).some(key => key.length !== 32)
+    || conversation.participants.length > 1000 || conversation.participants.some(key => key.length !== 16)
+    || new Set(conversation.participants.map(toHex)).size !== conversation.participants.length) {
+    throw new Error("invalid qntm conversation keys or participants");
+  }
+  return conversation;
 }
 
 export function loadQntmConversationFromDir(identityDir: string, convId: string): Conversation {

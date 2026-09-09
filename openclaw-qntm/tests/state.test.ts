@@ -28,24 +28,24 @@ describe("cursor state", () => {
 
     await store.setCursor({
       accountId: "default",
-      conversationId: "abcd1234",
+      conversationId: "abcd1234abcd1234abcd1234abcd1234",
       sequence: 9,
     });
 
     expect(
       readConversationCursor({
         accountId: "default",
-        conversationId: "abcd1234",
+        conversationId: "abcd1234abcd1234abcd1234abcd1234",
         stateDir,
       }),
     ).toBe(9);
     expect(
       resolveConversationCursorPath({
         accountId: "default",
-        conversationId: "abcd1234",
+        conversationId: "abcd1234abcd1234abcd1234abcd1234",
         stateDir,
       }),
-    ).toContain(path.join("accounts", "default", "cursors", "abcd1234.json"));
+    ).toContain(path.join("accounts", "default", "cursors", "abcd1234abcd1234abcd1234abcd1234.json"));
   });
 
   test("defaults cursor state under the user home OpenClaw directory", () => {

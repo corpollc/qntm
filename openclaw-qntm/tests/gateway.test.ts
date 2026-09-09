@@ -37,7 +37,7 @@ describe("qntm gateway lifecycle", () => {
     const abortController = new AbortController();
 
     vi.mocked(monitorQntmAccount).mockImplementation(async ({ statusSink }) => ({
-      stop: () => {
+      stop: async () => {
         stop();
         statusSink?.({
           running: false,
