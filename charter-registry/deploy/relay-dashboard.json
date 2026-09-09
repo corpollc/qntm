@@ -42,7 +42,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_messages{traffic=\"application\",window=\"24h\"} and on() (time() - qntm_relay_stats_last_success_timestamp_seconds < 180) and on() (qntm_relay_stats_scrape_success == 1)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -87,7 +89,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_active_conversations{traffic=\"application\",window=\"7d\"} and on() (time() - qntm_relay_stats_last_success_timestamp_seconds < 180) and on() (qntm_relay_stats_scrape_success == 1)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -132,7 +136,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_messages{traffic=\"application\",window=\"7d\"} and on() (time() - qntm_relay_stats_last_success_timestamp_seconds < 180) and on() (qntm_relay_stats_scrape_success == 1)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -177,7 +183,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_messages_total{traffic=\"application\"} and on() (time() - qntm_relay_stats_last_success_timestamp_seconds < 180) and on() (qntm_relay_stats_scrape_success == 1)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -222,7 +230,9 @@
         {
           "refId": "A",
           "expr": "probe_success{job=\"relay_https\"}",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -231,7 +241,7 @@
           "decimals": 0,
           "noValue": "Unavailable",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -292,8 +302,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(qntm_relay_probe_success * (time() - qntm_relay_probe_last_attempt_timestamp_seconds < bool 540)) or vector(0)",
-          "legendFormat": "{{instance}}"
+          "expr": "(qntm_relay_probe_success * (time() - qntm_relay_probe_last_attempt_timestamp_seconds < bool 540)) or on() vector(0)",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -302,7 +314,7 @@
           "decimals": 0,
           "noValue": "Unavailable",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -364,7 +376,9 @@
         {
           "refId": "A",
           "expr": "(probe_ssl_earliest_cert_expiry{job=\"relay_https\"} - time()) / 86400",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -373,7 +387,7 @@
           "decimals": 1,
           "noValue": "Unavailable",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -425,8 +439,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "((qntm_relay_stats_scrape_success == bool 1) * (time() - qntm_relay_monitor_last_run_timestamp_seconds < bool 180)) or vector(0)",
-          "legendFormat": "{{instance}}"
+          "expr": "((qntm_relay_stats_scrape_success == bool 1) * (time() - qntm_relay_monitor_last_run_timestamp_seconds < bool 180)) or on() vector(0)",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -435,7 +451,7 @@
           "decimals": 0,
           "noValue": "Unavailable",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -497,7 +513,9 @@
         {
           "refId": "A",
           "expr": "sum by(traffic) (rate(qntm_relay_messages_total[5m])) * 60",
-          "legendFormat": "{{traffic}}"
+          "legendFormat": "{{traffic}}",
+          "instant": false,
+          "range": true
         }
       ],
       "fieldConfig": {
@@ -540,7 +558,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_active_conversations{traffic=\"application\"}",
-          "legendFormat": "{{window}}"
+          "legendFormat": "{{window}}",
+          "instant": false,
+          "range": true
         }
       ],
       "fieldConfig": {
@@ -583,7 +603,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_measurement_started_timestamp_seconds * 1000 and on() (time() - qntm_relay_stats_last_success_timestamp_seconds < 180) and on() (qntm_relay_stats_scrape_success == 1)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -628,7 +650,9 @@
         {
           "refId": "A",
           "expr": "qntm_relay_probe_duration_seconds",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -673,7 +697,9 @@
         {
           "refId": "A",
           "expr": "count(ALERTS{alertstate=\"firing\",alertname=~\"Relay.*\"}) or vector(0)",
-          "legendFormat": "{{instance}}"
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -682,7 +708,7 @@
           "decimals": 0,
           "noValue": "Unavailable",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -724,7 +750,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Counts come from aggregate counters inside the Cloudflare relay. **Conversations include groups and direct chats**; the relay sees encrypted envelopes, not group membership or message contents. Application counts exclude the dedicated synthetic probe. Counters start at the time shown above; 24-hour and seven-day windows are partial until then.\n\nThe collector runs on exe.dev, independently of Cloudflare. Prometheus retains 30 days of samples. Alert rules are active here; **email/paging delivery is not configured yet**. [Operations guide](https://github.com/corpollc/qntm/blob/main/docs/relay-monitoring.md)."
+        "content": "Counts come from aggregate counters inside the Cloudflare relay. **Conversations include groups and direct chats**; post counters do not reveal complete membership or message contents. Receipt/authentication metadata can expose participant keys; see the inventory below. Application counts exclude the dedicated synthetic probe. Counters start at the time shown above; 24-hour and seven-day windows are partial until then.\n\nThe collector runs on exe.dev, independently of Cloudflare. Prometheus retains 30 days of samples. Alert rules are active here; **email/paging delivery is not configured yet**. [Operations guide](https://github.com/corpollc/qntm/blob/main/docs/relay-monitoring.md). [Exact metadata inventory](https://github.com/corpollc/qntm/blob/main/docs/metadata-privacy.md)."
       }
     }
   ]

@@ -1,5 +1,7 @@
 # qntm NanoClaw Channel MVP
 
+**Not actively supported.** Current qntm agent integration work targets OpenClaw. This experimental source is retained for reference; further NanoClaw installation and host verification are deferred.
+
 `nanoclaw-qntm` is the source-of-truth scaffold for the first qntm NanoClaw integration shipped through an external-remote install path.
 
 It is intentionally shaped like NanoClaw:

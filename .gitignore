@@ -41,3 +41,6 @@ __pycache__/
 
 # Worker dry-run bundles
 /echo-worker/dist/
+
+# Local monitoring dashboard verification artifacts
+/monitoring/proofshot-artifacts/

@@ -13,7 +13,7 @@ Read the [field-by-field metadata visibility and retention inventory](metadata-p
 | Posts since monitoring began | Durable aggregate counter beginning at the displayed start time. No historical backfill. |
 | Probe traffic | The dedicated synthetic conversation, excluded from application counts and shown separately in the rate chart. |
 
-Conversations are created locally. The relay cannot count groups that have never posted, identify participants, or distinguish a group from a direct chat. The dashboard therefore does not claim a lifetime count of all created groups. Windows remain partial for the first 24 hours or seven days after deployment. The old shared KV activity record could lose concurrent updates and is not used to seed the new counters.
+Conversations are created locally. Post counts cannot count groups that have never posted, determine complete membership, or distinguish a group from a direct chat. Other relay paths can reveal participant keys, as detailed in the metadata inventory. The dashboard therefore does not claim a lifetime count of all created groups. Windows remain partial for the first 24 hours or seven days after deployment. The old shared KV activity record could lose concurrent updates and is not used to seed the new counters.
 
 Counts represent accepted relay storage events, not verified inner messages or confirmed deliveries. Invalid opaque submissions, resent copies, tests and bots can contribute to application traffic.
 
@@ -59,3 +59,5 @@ The exporter listens only on `127.0.0.1:9191`. Its config is `/etc/qntm-relay-mo
 For a bounded manual collection, run the service's Python interpreter and `relay_monitor.py --once` as its service user. It prints aggregate Prometheus metrics. Repeated runs within the probe interval do not post another message. Rotate the read token in both the Worker and the private collector config, then restart the collector. Reinstalling retains the synthetic profile and cursor.
 
 Tests cover concurrent posts against a real local Worker, private/public route boundaries, transaction rollback, lost telemetry acknowledgements, expiry/restart, stale collector state, and the complete encrypted probe against the local relay. Manual-deploy CI runs the full client acceptance gate before production rollout.
+
+The September 9, 2026 deployment passed that full gate. The installed exe.dev collector then verified authenticated live delivery and persisted replay against the public relay. Counting begins at the timestamp displayed in Grafana; earlier traffic is not reconstructed.

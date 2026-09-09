@@ -14,8 +14,6 @@ Think of it as **Gnosis Safe, but for any API** — not just on-chain transactio
 
 **🛡️ For teams:** The API Gateway requires explicit m-of-n approvals before an agent can call external APIs. Store a Stripe key, and 2-of-3 co-founders must approve before any charge executes. All encrypted, all auditable.
 
-**Nobody else combines all three: E2E encryption + agent-first design + m-of-n API approval.**
-
 ## Quick Start
 
 ### Install
