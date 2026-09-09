@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added a hostname-scoped Cloudflare configuration rule so Browser Integrity Check accepts normal Python relay/gateway clients. Documented the separate Durable Object runtime-quota outage, the gateway's idle connection costs, and why encrypted probes are necessary even when HTTP health passes. This is an account configuration change, not a package fix.
+- Added a hostname-scoped Cloudflare configuration rule so Browser Integrity Check accepts normal Python relay/gateway clients. Restored messaging after the separate Durable Object runtime-quota outage by activating Workers Paid; independent authenticated delivery/replay and telemetry verified recovery. Documented the gateway's idle connection costs and the need for account usage monitoring. These are account configuration changes, not package fixes.
 
 - Terminal acceptance tests now wait for rendered composer state before pressing Return, and the PTY bridge drains complete JSON frames without buffered-input stalls. A regression pauses the real terminal process to catch command/Return coalescing under load.
 - CI now disables the runner's unused Chrome APT source before installing Ubuntu test dependencies, so a broken Chrome package index cannot block terminal/browser tests. Package signature and checksum verification remains enabled; browser tests still use Playwright's pinned Chromium.
