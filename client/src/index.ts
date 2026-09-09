@@ -76,6 +76,17 @@ export * from './types.js';
 export * from './constants.js';
 
 export * from './gate/handshake.js';
+export * from './gate/workflow-types.js';
+export { parseGatewayBody, GatewayValidationError, validateGatewayContext } from './gate/workflow-parse.js';
+export { createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
+  createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
+  gateRequestSignable, gatewayProposalSignable, gatewayRequestThreshold, gatewayGovernanceQuorum,
+  assertGateRequest, assertGatewayProposal } from './gate/workflow-build.js';
+export type { CreateGateRequestOptions, CreateGateSecretOptions, CreateGatewayProposalOptions } from './gate/workflow-build.js';
+export { createGatewayMessage, verifyGatewayMessage } from './gate/workflow-message.js';
+export type { GatewayReferences, VerifiedGatewayEvent } from './gate/workflow-message.js';
+export { findGateRequest, findGatewayProposal, scanGateRequest, scanGatewayProposal } from './gate/workflow-history.js';
+export type { GatewayWorkflowStatus, GatewayWorkflowState } from './gate/workflow-history.js';
 
 export { createReceiveEvent } from './receive/index.js';
 export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/index.js';
