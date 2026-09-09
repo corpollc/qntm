@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as qntm from '../src/index.js';
 import { generateIdentity, base64UrlEncode as b64, base64UrlDecode as bytes, openSecret, verifyApproval,
   hashRequest, signRequest, signProposal, verifyGovApproval, hashProposal,
   createInvite, createConversation, deriveConversationKeys, createMessage, decryptMessage, serializeEnvelope, deserializeEnvelope,
-  createGatewayMessage, verifyGatewayMessage, scanGateRequest, scanGatewayProposal } from '../src/index.js';
+  createGatewayMessage, decryptGatewayMessage, verifyGatewayMessage, scanGateRequest, scanGatewayProposal } from '../src/index.js';
 import { createGateRequestBody, createGateApprovalBody, createGateSecretBody, createGateDisapprovalBody,
   createGatewayProposalBody, createGatewayProposalApprovalBody, gateRequestSignable, gatewayProposalSignable,
   assertGateRequest, assertGatewayProposal } from '../src/gate/workflow-build.js';
@@ -24,6 +26,27 @@ conversation.id = Uint8Array.from(Buffer.from(context.conversationId, 'hex'));
 conversation.currentEpoch = context.epoch;
 
 describe('gateway workflow payloads', () => {
+  const governanceFields = JSON.parse(readFileSync(new URL('../../specs/test-vectors/governance-optional-fields.json', import.meta.url), 'utf8')) as Array<{ name: string; body: GatewayProposalBody; hash_hex: string }>;
+  it.each(governanceFields)('shares the Python governance hash for $name', vector => {
+    expect(Buffer.from(hashProposal(gatewayProposalSignable(vector.body))).toString('hex')).toBe(vector.hash_hex);
+  });
+  it('runs the documented TypeScript send fragment and verifies its encrypted request', async () => {
+    const guide = readFileSync(new URL('../../docs/typescript-gateway.md', import.meta.url), 'utf8');
+    const code = guide.match(/```ts\n([\s\S]*?)\n```/)![1].replace(
+      /import \{([^}]+)\} from '@corpollc\/qntm'/,
+      'const {$1} = qntm',
+    );
+    let received: unknown;
+    const relay = { async postMessage(id: Uint8Array, wire: Uint8Array) {
+      expect(id).toEqual(conversation.id);
+      received = decryptGatewayMessage(deserializeEnvelope(wire), conversation, context).body;
+      return 1;
+    } };
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+    await new AsyncFunction('identity', 'conversation', 'context', 'relay', 'qntm', code)(alice, conversation, context, relay, qntm);
+    expect(received).toMatchObject({ type: 'gate.request', target_url: 'https://httpbin.org/post',
+      payload: { data: 'Hello from TypeScript' }, required_approvals: 2 });
+  });
   it('derives a complete current roster and binds the gateway, target and JSON payload', () => {
     const req = request();
     expect(req.required_approvals).toBe(2);
@@ -86,6 +109,13 @@ describe('gateway workflow payloads', () => {
     expect(() => createGatewayProposalApprovalBody(bob, context, parsed)).not.toThrow();
     expect(() => assertGatewayProposal({ ...parsed, proposed_rules: undefined }, context)).toThrow('signature');
   });
+  it('accepts Python requests with null recipe arguments without rewriting their payload', () => {
+    const req = { ...request(), arguments: null, payload: null };
+    req.signature = b64(signRequest(alice.privateKey, gateRequestSignable(req)));
+    const parsed = parseGatewayBody('gate.request', JSON.stringify(req));
+    expect(parsed).toEqual(req);
+    expect(() => createGateApprovalBody(bob, context, req)).not.toThrow();
+  });
   it('rejects mismatched body types, unsupported config mutations and noncanonical IDs', () => {
     expect(() => parseGatewayBody('gate.approval', JSON.stringify(request()))).toThrow('type mismatch');
     expect(() => parseGatewayBody('gate.config', '{"type":"gate.config","rules":[]}')).toThrow('Unsupported');
@@ -97,6 +127,8 @@ describe('gateway workflow payloads', () => {
     const envelope = createGatewayMessage(alice, conversation, req, context);
     const restored = decryptMessage(deserializeEnvelope(serializeEnvelope(envelope)), conversation);
     expect(verifyGatewayMessage(restored, context).body).toEqual(req);
+    expect(decryptGatewayMessage(envelope, conversation, context).body).toEqual(req);
+    expect(() => decryptGatewayMessage({ ...envelope, conv_epoch: 4 }, { ...conversation, currentEpoch: 4 }, { ...context, epoch: 4 })).toThrow();
     expect(() => verifyGatewayMessage(restored, { ...context, epoch: 4 })).toThrow('epoch');
     const terminal = { type: 'gate.executed' as const, request_id: req.request_id,
       executed_at: new Date().toISOString(), execution_status_code: 200 };

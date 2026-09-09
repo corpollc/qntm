@@ -40,6 +40,7 @@ from .governance import (
     GOV_MESSAGE_PROPOSE,
     create_proposal_body,
     hash_proposal,
+    hash_proposal_body,
     sign_gov_approval,
 )
 from .invite import (
@@ -79,6 +80,8 @@ from .gate import (
     GateClient, GateError,
     Recipe,
     RecipeParam,
+    ThresholdRule,
+    lookup_threshold,
     compute_payload_hash,
     hash_request,
     resolve_recipe,
@@ -1959,6 +1962,42 @@ def _load_starter_catalog():
     return recipes
 
 
+def _gate_request_threshold(conv_record, history_entries, recipe, endpoint):
+    """Apply policy only from the configured gateway's authenticated history."""
+    gateway = conv_record.get("gateway") or {}
+    gateway_kid = gateway.get("keyId")
+    if not gateway_kid:
+        return max(1, recipe.threshold)
+
+    def positive(value):
+        if type(value) is not int or value < 1:
+            raise ValueError("invalid gateway threshold policy")
+        return value
+
+    floor = positive(gateway.get("floor", 1))
+    rules = [ThresholdRule(service="*", endpoint="*", verb="*", m=floor)]
+    gateway_hex = kid_from_wire(gateway_kid).hex()
+    for entry in history_entries:
+        if entry.get("body_type") != "gov.applied" or entry.get("sender_kid") != gateway_hex or entry.get("verified") is not True:
+            continue
+        body = json.loads(entry.get("unsafe_body", ""))
+        if body.get("type") != "gov.applied":
+            raise ValueError("invalid gateway policy event")
+        if body.get("proposal_type") == "floor_change":
+            floor = positive(body.get("applied_floor"))
+        elif body.get("proposal_type") == "rules_change":
+            raw_rules = body.get("applied_rules")
+            if not isinstance(raw_rules, list):
+                raise ValueError("invalid gateway rules")
+            rules = []
+            for raw in raw_rules:
+                if not isinstance(raw, dict) or not all(isinstance(raw.get(field), str) for field in ("service", "endpoint", "verb")):
+                    raise ValueError("invalid gateway rule")
+                rules.append(ThresholdRule(service=raw["service"], endpoint=raw["endpoint"], verb=raw["verb"], m=positive(raw.get("m"))))
+    rule = lookup_threshold(rules, recipe.service, endpoint, recipe.verb)
+    return max(positive(recipe.threshold), floor, rule.m if rule else 1)
+
+
 def _build_gate_request_message(identity, recipe, conv_id, args,
                                 eligible_signer_kids=None,
                                 required_approvals=None, gateway_kid=None):
@@ -2238,9 +2277,11 @@ def cmd_gate_run(args):
         kid_wire = kid_to_wire(bytes.fromhex(participant_kid_hex))
         if kid_wire not in eligible_signer_kids:
             eligible_signer_kids.append(kid_wire)
-    required_approvals = recipe.threshold
-
     try:
+        endpoint = resolve_recipe(recipe, recipe_args or None)[0]
+        required_approvals = _gate_request_threshold(conv_record, _load_history(config_dir, conv_id_hex), recipe, endpoint)
+        if required_approvals > len(eligible_signer_kids):
+            raise ValueError(f"gateway policy requires {required_approvals} approvals but only {len(eligible_signer_kids)} participants are known")
         msg, request_id = _build_gate_request_message(
             identity=identity,
             recipe=recipe,
@@ -2757,19 +2798,7 @@ def cmd_gov_approve(args):
     except ValueError as e:
         _error(str(e))
 
-    proposal_hash = hash_proposal(
-        gateway_kid=proposal.get("gateway_kid"),
-        conv_id=proposal["conv_id"],
-        proposal_id=proposal["proposal_id"],
-        proposal_type=proposal["proposal_type"],
-        proposed_floor=proposal.get("proposed_floor"),
-        proposed_rules=proposal.get("proposed_rules"),
-        proposed_members=proposal.get("proposed_members"),
-        removed_member_kids=proposal.get("removed_member_kids"),
-        eligible_signer_kids=proposal.get("eligible_signer_kids") or [],
-        required_approvals=proposal.get("required_approvals") or 1,
-        expires_at_unix=int(datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00")).timestamp()),
-    )
+    proposal_hash = hash_proposal_body(proposal)
     payload = {
         "type": GOV_MESSAGE_APPROVE,
         "conv_id": proposal["conv_id"],

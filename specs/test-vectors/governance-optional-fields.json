@@ -1,0 +1,41 @@
+[
+  {
+    "name": "TypeScript absent branches",
+    "body": {
+      "type": "gov.propose",
+      "conv_id": "abababababababababababababababab",
+      "gateway_kid": "AgICAgICAgICAgICAgICAg",
+      "proposal_id": "shared-governance-fields",
+      "proposal_type": "floor_change",
+      "proposed_floor": 2,
+      "eligible_signer_kids": [
+        "AQEBAQEBAQEBAQEBAQEBAQ",
+        "AwMDAwMDAwMDAwMDAwMDAw"
+      ],
+      "required_approvals": 2,
+      "expires_at": "2030-01-01T00:00:00Z"
+    },
+    "hash_hex": "d26c99dce682f376d5efa3d9eff6d0abf9eb3dbc5d4d8e8b8b78bf63ac3c7711"
+  },
+  {
+    "name": "Python null branches",
+    "body": {
+      "type": "gov.propose",
+      "conv_id": "abababababababababababababababab",
+      "gateway_kid": "AgICAgICAgICAgICAgICAg",
+      "proposal_id": "shared-governance-fields",
+      "proposal_type": "floor_change",
+      "proposed_floor": 2,
+      "eligible_signer_kids": [
+        "AQEBAQEBAQEBAQEBAQEBAQ",
+        "AwMDAwMDAwMDAwMDAwMDAw"
+      ],
+      "required_approvals": 2,
+      "expires_at": "2030-01-01T00:00:00Z",
+      "proposed_rules": null,
+      "proposed_members": null,
+      "removed_member_kids": null
+    },
+    "hash_hex": "e59f8c6668926dbbc80ba00fe2503ef3acbc1585fa1bfebdece1abe975cd063e"
+  }
+]

@@ -124,6 +124,28 @@ def _write_participant_key_cache(tmpdir, conv_id_hex, identities):
 # ---------------------------------------------------------------------------
 
 class TestLoadStarterCatalog:
+    def test_current_gateway_policy_raises_recipe_threshold_and_ignores_forged_history(self):
+        from qntm.cli import _gate_request_threshold, _load_starter_catalog
+        gateway = generate_identity()
+        record = {"gateway": {"keyId": base64url_encode(gateway["keyID"]), "floor": 2}}
+        recipe = _load_starter_catalog()["httpbin.echo"]
+
+        def event(body, sender=None, verified=True):
+            return {"body_type": "gov.applied", "sender_kid": sender or gateway["keyID"].hex(),
+                    "verified": verified, "unsafe_body": json.dumps({"type": "gov.applied", **body})}
+
+        raised = event({"proposal_type": "floor_change", "applied_floor": 3})
+        assert _gate_request_threshold(record, [raised], recipe, "/post") == 3
+        forged = event({"proposal_type": "floor_change", "applied_floor": 1}, sender="ff" * 16)
+        unverified = event({"proposal_type": "floor_change", "applied_floor": 1}, verified=False)
+        assert _gate_request_threshold(record, [raised, forged, unverified], recipe, "/post") == 3
+        rules = event({"proposal_type": "rules_change", "applied_rules": [
+            {"service": "httpbin", "endpoint": "/post", "verb": "POST", "m": 4},
+            {"service": "httpbin", "endpoint": "/safe", "verb": "POST", "m": 1},
+        ]})
+        assert _gate_request_threshold(record, [rules], recipe, "/post") == 4
+        assert _gate_request_threshold(record, [rules], recipe, "/safe") == 2
+
     def test_load_catalog_returns_recipes(self):
         from qntm.cli import _load_starter_catalog
         catalog = _load_starter_catalog()

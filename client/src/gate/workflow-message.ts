@@ -27,7 +27,9 @@ export interface VerifiedGatewayEvent {
   createdAt: number;
 }
 
-/** Validates envelope identity, context and nested request/vote signatures.
+/** Takes an unmodified result of decryptMessage; validates envelope identity,
+ * context and nested request/vote signatures. For untrusted ciphertext use
+ * decryptGatewayMessage, which authenticates the AEAD envelope itself.
  * This does not grant permission to execute a request or install a policy. */
 export function verifyGatewayMessage(message: Message, context: GatewayContext, references: GatewayReferences = {}): VerifiedGatewayEvent {
   validateGatewayContext(context);
@@ -83,6 +85,14 @@ export function verifyGatewayMessage(message: Message, context: GatewayContext, 
   }
   return { body, senderKid, conversationId: context.conversationId, epoch: context.epoch,
     messageId: hex(message.envelope.msg_id), createdAt: message.envelope.created_ts * 1000 };
+}
+
+/** Preferred entry point for received wire envelopes. Authenticates ciphertext
+ * and its AAD (including epoch) before applying gateway-specific verification. */
+export function decryptGatewayMessage(envelope: OuterEnvelope, conversation: Conversation,
+  context: GatewayContext, references: GatewayReferences = {}): VerifiedGatewayEvent {
+  requireGateway(hex(conversation.id) === context.conversationId && conversation.currentEpoch === context.epoch, 'Conversation state differs from gateway context');
+  return verifyGatewayMessage(decryptMessage(envelope, conversation), context, references);
 }
 
 /** Encrypt a validated body using its own body_type. Queue/persist the exact

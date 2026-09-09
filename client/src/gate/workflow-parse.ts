@@ -131,7 +131,7 @@ export function parseGatewayBody(bodyType: string, data: string | Uint8Array): G
       try { url = new URL(target); } catch { throw new GatewayValidationError('Invalid target URL'); }
       requireGateway(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && !url.hash, 'Invalid target URL');
       if (body.recipe_name !== undefined) gatewayText(body.recipe_name, 'recipe name');
-      if (body.arguments !== undefined) {
+      if (body.arguments !== undefined && body.arguments !== null) {
         for (const arg of Object.values(gatewayRecord(body.arguments, 'arguments'))) requireGateway(typeof arg === 'string', 'Invalid argument');
       }
       break;

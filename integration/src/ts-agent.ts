@@ -28,8 +28,12 @@ import {
   signRequest,
   signGovApproval,
   GroupState,
+  createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
+  createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
+  parseGatewayBody, validateGatewayContext, verifyGatewayMessage,
 } from '@corpollc/qntm';
-import type { Conversation, Identity } from '@corpollc/qntm';
+import type { Conversation, Identity, GatewayContext, ThresholdRule, GateRequestBody, GatewayProposalBody,
+  CreateGateRequestOptions, CreateGateSecretOptions, CreateGatewayProposalOptions, VerifiedGatewayEvent, Message } from '@corpollc/qntm';
 
 export interface JsonResult {
   ok: boolean;
@@ -49,6 +53,10 @@ interface HistoryEntry {
 
 interface ConversationState {
   gatewayKid?: string;
+  gatewayPublicKey?: string;
+  gatewayFloor?: number;
+  gatewayRules?: ThresholdRule[];
+  gatewayEvents?: VerifiedGatewayEvent[];
   id: string;
   name: string;
   conv: Conversation;
@@ -201,6 +209,42 @@ export class TslibAgent {
 
   readHistory(convId: string): Array<Record<string, unknown>> {
     return this.getConversation(convId).history.map((entry) => ({ ...entry }));
+  }
+
+  readGatewayEvents(convId: string): VerifiedGatewayEvent[] {
+    return [...(this.getConversation(convId).gatewayEvents ?? [])];
+  }
+
+  gatewayContext(convId: string): GatewayContext {
+    const state = this.getConversation(convId);
+    if (!state.gatewayKid || !state.gatewayPublicKey) throw new Error('Gateway acceptance required');
+    const participants: Record<string, string> = {};
+    for (const value of state.participantPublicKeys) {
+      const pk = hexToBytes(value), kid = base64UrlEncode(keyIDFromPublicKey(pk));
+      if (kid !== state.gatewayKid) participants[kid] = base64UrlEncode(pk);
+    }
+    const context: GatewayContext = { conversationId: convId, epoch: state.conv.currentEpoch,
+      gateway: { kid: state.gatewayKid, publicKey: state.gatewayPublicKey }, participants,
+      floor: state.gatewayFloor ?? 1, rules: state.gatewayRules ?? [] };
+    validateGatewayContext(context);
+    return context;
+  }
+
+  async sendGatewayRequest(convId: string, options: CreateGateRequestOptions): Promise<string> {
+    const body = createGateRequestBody(this.requireIdentity(), this.gatewayContext(convId), options);
+    await this.sendRaw(convId, body.type, JSON.stringify(body));
+    return body.request_id;
+  }
+
+  async sendGatewaySecret(convId: string, options: CreateGateSecretOptions): Promise<void> {
+    const body = createGateSecretBody(this.requireIdentity(), this.gatewayContext(convId), options);
+    await this.sendRaw(convId, body.type, JSON.stringify(body));
+  }
+
+  async sendGatewayProposal(convId: string, options: CreateGatewayProposalOptions): Promise<string> {
+    const body = createGatewayProposalBody(this.requireIdentity(), this.gatewayContext(convId), options);
+    await this.sendRaw(convId, body.type, JSON.stringify(body));
+    return body.proposal_id;
   }
 
   async sendGateRequestClaimingConversation(
@@ -393,6 +437,29 @@ export class TslibAgent {
     };
   }
 
+  private recordGatewayEvent(state: ConversationState, message: Message): void {
+    const bodyType = message.inner.body_type;
+    const bodyText = new TextDecoder().decode(message.inner.body);
+    if (state.gatewayKid && (bodyType.startsWith('gate.') || bodyType.startsWith('gov.'))) {
+        try {
+          const body = parseGatewayBody(bodyType, bodyText);
+          const request = ('request_id' in body && (bodyType === 'gate.approval' || bodyType === 'gate.disapproval'))
+            ? parseGatewayBody('gate.request', JSON.stringify(this.findGateRequest(state, body.request_id))) as GateRequestBody : undefined;
+          const proposal = ('proposal_id' in body && (bodyType === 'gov.approve' || bodyType === 'gov.disapprove'))
+            ? parseGatewayBody('gov.propose', JSON.stringify(this.findGovProposal(state, body.proposal_id))) as GatewayProposalBody : undefined;
+          const invitation = bodyType === 'gate.accept' ? state.history.find(m => m.message_id === (body as { invitation_msg_id: string }).invitation_msg_id) : undefined;
+          const event = verifyGatewayMessage(message, this.gatewayContext(state.id), { request, proposal,
+            invitation: invitation ? { messageId: invitation.message_id, text: invitation.unsafe_body } : undefined });
+          (state.gatewayEvents ??= []).push(event);
+          if (body.type === 'gov.applied') {
+            if (body.applied_floor != null) state.gatewayFloor = body.applied_floor;
+            if (body.applied_rules != null) state.gatewayRules = body.applied_rules;
+          }
+        } catch { /* Keep untrusted transcript for negative tests; never add it to verified gateway events. */ }
+      }
+
+  }
+
   private async sendRaw(convId: string, bodyType: string, bodyText: string): Promise<JsonResult> {
     const identity = this.requireIdentity();
     const state = this.getConversation(convId);
@@ -400,6 +467,7 @@ export class TslibAgent {
     const bodyBytes = new TextEncoder().encode(bodyText);
     const envelope = createMessage(identity, state.conv, bodyType, bodyBytes, undefined, defaultTTL());
     await this.dropbox.postMessage(state.conv.id, serializeEnvelope(envelope));
+    this.recordGatewayEvent(state, decryptMessage(envelope, state.conv));
     this.addHistoryEntry(state, {
       message_id: bytesToHex(envelope.msg_id),
       body_type: bodyType,
@@ -460,7 +528,13 @@ export class TslibAgent {
         if (!invitation || !matchesGatewayAcceptance(acceptance, senderKidB64, invitation.message_id, invitation.unsafe_body)) continue;
         if (state.gatewayKid && state.gatewayKid !== senderKidB64) continue;
         state.gatewayKid = senderKidB64;
+        state.gatewayPublicKey = acceptance.gateway_public_key;
+        const invited = JSON.parse(invitation.unsafe_body);
+        state.gatewayFloor = invited.floor;
+        state.gatewayRules = invited.rules;
       }
+
+      this.recordGatewayEvent(state, decrypted);
 
       this.applyGroupEvent(state, bodyType, bodyBytes);
       if (!bodyType.startsWith('gate.') && !bodyType.startsWith('gov.') && !bodyType.startsWith('group_')) this.mergeParticipant(state, new Uint8Array(decrypted.inner.sender_ik_pk));
@@ -519,99 +593,26 @@ export class TslibAgent {
   }
 
   private async gateApprove(requestId: string, convId: string): Promise<JsonResult> {
-    const identity = this.requireIdentity();
-    const state = this.getConversation(convId);
-    const request = this.findGateRequest(state, requestId);
-    const signable = {
-      ...(typeof request.gateway_kid === 'string' ? { gateway_kid: request.gateway_kid } : {}),
-      conv_id: String(request.conv_id),
-      request_id: requestId,
-      verb: String(request.verb),
-      target_endpoint: String(request.target_endpoint),
-      target_service: String(request.target_service),
-      target_url: String(request.target_url),
-      expires_at_unix: Math.floor(new Date(String(request.expires_at)).getTime() / 1000),
-      payload_hash: computePayloadHash((request.payload as unknown) ?? null),
-      eligible_signer_kids: Array.isArray(request.eligible_signer_kids)
-        ? request.eligible_signer_kids as string[]
-        : [],
-      required_approvals: Number(request.required_approvals ?? 1),
-    };
-    const approval = {
-      conv_id: String(request.conv_id),
-      request_id: requestId,
-      request_hash: hashRequest(signable),
-    };
-    const body = {
-      type: 'gate.approval',
-      conv_id: String(request.conv_id),
-      request_id: requestId,
-      signer_kid: base64UrlEncode(identity.keyID),
-      signature: base64UrlEncode(signApproval(identity.privateKey, approval)),
-    };
-    return this.sendRaw(convId, 'gate.approval', JSON.stringify(body));
+    const request = parseGatewayBody('gate.request', JSON.stringify(this.findGateRequest(this.getConversation(convId), requestId))) as GateRequestBody;
+    const body = createGateApprovalBody(this.requireIdentity(), this.gatewayContext(convId), request);
+    return this.sendRaw(convId, body.type, JSON.stringify(body));
   }
 
   private async gateDisapprove(requestId: string, convId: string): Promise<JsonResult> {
-    const identity = this.requireIdentity();
-    const state = this.getConversation(convId);
-    const request = this.findGateRequest(state, requestId);
-    const body = {
-      type: 'gate.disapproval',
-      conv_id: String(request.conv_id),
-      request_id: requestId,
-      signer_kid: base64UrlEncode(identity.keyID),
-    };
-    return this.sendRaw(convId, 'gate.disapproval', JSON.stringify(body));
+    const request = parseGatewayBody('gate.request', JSON.stringify(this.findGateRequest(this.getConversation(convId), requestId))) as GateRequestBody;
+    const body = createGateDisapprovalBody(this.requireIdentity(), this.gatewayContext(convId), request);
+    return this.sendRaw(convId, body.type, JSON.stringify(body));
   }
 
   private async govApprove(proposalId: string, convId: string): Promise<JsonResult> {
-    const identity = this.requireIdentity();
-    const state = this.getConversation(convId);
-    const proposal = this.findGovProposal(state, proposalId);
-    const signable = {
-      ...(typeof proposal.gateway_kid === 'string' ? { gateway_kid: proposal.gateway_kid } : {}),
-      conv_id: String(proposal.conv_id),
-      proposal_id: proposalId,
-      proposal_type: String(proposal.proposal_type) as 'floor_change' | 'rules_change' | 'member_add' | 'member_remove',
-      // Preserve nullable proposal fields exactly as they were serialized.
-      // Python CLI proposals currently encode absent branches as `null`, and
-      // the worker hashes those raw values when verifying gov.approve.
-      proposed_floor: proposal.proposed_floor,
-      proposed_rules: proposal.proposed_rules,
-      proposed_members: proposal.proposed_members,
-      removed_member_kids: proposal.removed_member_kids,
-      eligible_signer_kids: Array.isArray(proposal.eligible_signer_kids)
-        ? proposal.eligible_signer_kids as string[]
-        : [],
-      required_approvals: Number(proposal.required_approvals ?? 1),
-      expires_at_unix: Math.floor(new Date(String(proposal.expires_at)).getTime() / 1000),
-    } as Parameters<typeof hashProposal>[0];
-    const approval = {
-      conv_id: String(proposal.conv_id),
-      proposal_id: proposalId,
-      proposal_hash: hashProposal(signable),
-    };
-    const body = {
-      type: 'gov.approve',
-      conv_id: String(proposal.conv_id),
-      proposal_id: proposalId,
-      signer_kid: base64UrlEncode(identity.keyID),
-      signature: base64UrlEncode(signGovApproval(identity.privateKey, approval)),
-    };
-    return this.sendRaw(convId, 'gov.approve', JSON.stringify(body));
+    const proposal = parseGatewayBody('gov.propose', JSON.stringify(this.findGovProposal(this.getConversation(convId), proposalId))) as GatewayProposalBody;
+    const body = createGatewayProposalApprovalBody(this.requireIdentity(), this.gatewayContext(convId), proposal);
+    return this.sendRaw(convId, body.type, JSON.stringify(body));
   }
 
   private async govDisapprove(proposalId: string, convId: string): Promise<JsonResult> {
-    const identity = this.requireIdentity();
-    const state = this.getConversation(convId);
-    const proposal = this.findGovProposal(state, proposalId);
-    const body = {
-      type: 'gov.disapprove',
-      conv_id: String(proposal.conv_id),
-      proposal_id: proposalId,
-      signer_kid: base64UrlEncode(identity.keyID),
-    };
-    return this.sendRaw(convId, 'gov.disapprove', JSON.stringify(body));
+    const proposal = parseGatewayBody('gov.propose', JSON.stringify(this.findGovProposal(this.getConversation(convId), proposalId))) as GatewayProposalBody;
+    const body = createGatewayProposalDisapprovalBody(this.requireIdentity(), this.gatewayContext(convId), proposal);
+    return this.sendRaw(convId, body.type, JSON.stringify(body));
   }
 }

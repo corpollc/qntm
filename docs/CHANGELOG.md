@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.1 (2026-09-09)
+
+[Full release notes](releases/v0.6.1.md)
+
+- Added typed TypeScript gateway and governance builders, authenticated-message verification, encrypted-message construction, and history summaries. Builders derive signer rosters and approval requirements from verified current state; vote and terminal-event handling validates authorship and context.
+- Adopted the shared helpers in accepted-gateway browser flows and the TypeScript integration client, with real Python/browser/gateway interoperability coverage.
+- Bundled the default recipe catalog in Python wheels and source distributions. Fresh installations can use `gate-run` without a source checkout; explicit catalog overrides remain supported.
+- Python `gate-run` now raises its recipe threshold to the accepted gateway's current floor and matching rules, and refuses unattainable approval counts before sending. Forged or unverified policy history cannot lower the requirement.
+- Python governance approvals preserve absent versus null proposal fields, fixing signature rejection when approving TypeScript-authored proposals. Shared vectors cover both wire encodings.
+- Added an isolated installed-wheel release check for CLI startup, bundled resources, and signed request construction, plus a parity check against the canonical recipe catalog.
+
 ## v0.6.0 (2026-09-09)
 
 [Full release notes](releases/v0.6.0.md)

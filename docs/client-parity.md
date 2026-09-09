@@ -8,7 +8,7 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | Persistent relay subscription | `recv --watch` owns reconnect and durable profile state | `DropboxClient.subscribeMessages` owns reconnect; application owns durable state | No maintained messaging client |
 | Portable receive event | `ReceiveEvent`, `create_receive_event` | `ReceiveEvent`, `createReceiveEvent` | Not implemented |
 | Webhook or executable delivery | CLI hook runner with independent retries | Application-owned; the Claude channel has a durable MCP outbox | Not implemented |
-| Gateway and governance | Full CLI workflows | Protocol/signing helpers and browser workflows; no equivalent all-in-one library controller | Gateway is TypeScript |
+| Gateway and governance | Full CLI workflows | Typed builders, authenticated parsers, envelope helpers, history summaries and browser workflows; host owns orchestration | Gateway is TypeScript |
 | Guidance contacts | CLI and MCP local configuration/review/send | Browser local configuration/review/send | Not implemented |
 | Experimental charter v0.2 | Not implemented | Opt-in `@corpollc/qntm/charter` library | Durable reference registrar in `charter-registry/` |
 

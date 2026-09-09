@@ -15,6 +15,7 @@ npm install @corpollc/qntm
 - Encrypted message create/decrypt helpers
 - Group membership and rekey helpers
 - Gate request, approval, and secret helpers
+- Typed gateway/governance builders, authenticated-message verification, and history summaries
 - Dropbox relay client for browser or Node runtimes
 - Continuous subscriptions and portable `ReceiveEvent` / `createReceiveEvent` helpers
 
@@ -35,6 +36,15 @@ replay before later messages can advance progress. `createReceiveEvent` converts
 verified decrypted message into the same versioned event exposed by the Python
 library and CLI hooks. Storage, hook delivery, and turn scheduling remain owned by
 the application. See [receive hooks and language boundaries](https://github.com/corpollc/qntm/blob/main/docs/receive-hooks.md).
+
+## Gateway workflows
+
+Use `createGateRequestBody`, `createGateApprovalBody`, `createGateSecretBody`, and
+`createGatewayProposalBody` with a verified `GatewayContext`. `createGatewayMessage`
+encrypts the matching body type; `verifyGatewayMessage` checks authenticated senders
+and signatures. History helpers summarize unique votes and gateway terminal events.
+See the [TypeScript gateway guide](https://github.com/corpollc/qntm/blob/main/docs/typescript-gateway.md)
+for admission, disapproval, governance, legacy compatibility, and host responsibilities.
 
 ## Experimental charter support
 

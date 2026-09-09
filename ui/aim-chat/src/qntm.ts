@@ -37,8 +37,11 @@ import {
   parseGroupRemoveBody,
   parseGroupRekeyBody,
   QSP1Suite,
+  createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
+  createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
+  parseGatewayBody, validateGatewayContext,
 } from '@corpollc/qntm'
-import type { DropboxSubscription } from '@corpollc/qntm'
+import type { DropboxSubscription, GatewayContext, GateRequestBody, GatewayProposalBody } from '@corpollc/qntm'
 
 import * as store from './store'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
@@ -844,6 +847,35 @@ export function subscribeToConversation(
 
 // ---- Gate operations ----
 
+/** Existing unbound conversations retain their legacy path. Accepted gateways
+ * use the shared library with current keys and gateway-authored policy history. */
+function browserGatewayContext(profileId: string, conversationId: string, identity: IdentityKeys): GatewayContext | undefined {
+  const conv = store.findConversation(profileId, conversationId)
+  const gateway = conv?.gateway
+  if (gateway?.status === 'pending') throw new Error('Waiting for the gateway to accept in this conversation')
+  if (!conv || !gateway?.keyId || !gateway.publicKey) return undefined
+  const participants: Record<string, string> = {}
+  for (const pk of listKnownParticipantPublicKeys(conv, identity)) {
+    const kid = base64UrlEncode(keyIDFromPublicKey(pk))
+    if (kid !== gateway.keyId) participants[kid] = base64UrlEncode(pk)
+  }
+  let floor = gateway.floor ?? 1
+  let rules = [{ service: '*', endpoint: '*', verb: '*', m: floor }]
+  const gatewayHex = bytesToHex(base64UrlDecode(gateway.keyId))
+  for (const message of store.getHistory(profileId, conversationId)) {
+    if (message.bodyType !== 'gov.applied' || message.direction !== 'incoming' || message.senderKey !== gatewayHex) continue
+    const applied = parseGatewayBody(message.bodyType, message.text)
+    if (applied.type !== 'gov.applied') continue
+    if (applied.proposal_type === 'floor_change' && applied.applied_floor != null) floor = applied.applied_floor
+    if (applied.proposal_type === 'rules_change' && applied.applied_rules != null) rules = applied.applied_rules
+  }
+  const context: GatewayContext = { conversationId, epoch: conv.currentEpoch,
+    gateway: { kid: gateway.keyId, publicKey: gateway.publicKey }, participants, floor, rules,
+    allowLegacyUnbound: !gateway.invitationId }
+  validateGatewayContext(context)
+  return context
+}
+
 export async function gateRunRequest(
   profileId: string, profileName: string, conversationId: string,
   recipe: GateRecipe,
@@ -860,6 +892,15 @@ export async function gateRunRequest(
     requestBody = JSON.parse(new TextDecoder().decode(resolved.body))
   } else if (args._body) {
     try { requestBody = JSON.parse(args._body) } catch { requestBody = args._body }
+  }
+
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGateRequestBody(identity, context, { service: recipe.service, endpoint: resolved.endpoint,
+      verb: recipe.verb, targetUrl: resolved.target_url, payload: requestBody ?? undefined,
+      recipeName, arguments: Object.keys(args).length ? args : undefined,
+      requiredApprovals: Math.max(recipe.threshold ?? 1, minimumApprovals) })
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
   }
 
   const requestId = crypto.randomUUID()
@@ -933,6 +974,13 @@ export async function gateApproveRequest(
 
   if (!reqMsg) throw new Error(`Gate request ${requestId} not found in conversation history`)
 
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const request = parseGatewayBody('gate.request', JSON.stringify(reqMsg)) as GateRequestBody
+    const body = createGateApprovalBody(identity, context, request)
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
+
   const kidB64 = base64UrlEncode(identity.keyID)
   const payloadHash = computePayloadHash(reqMsg.payload ?? null)
 
@@ -979,6 +1027,18 @@ export async function gateDisapproveRequest(
   if (!identity) throw new Error('No identity found')
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
+
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const message = store.getHistory(profileId, conversationId).find(message => {
+      if (message.bodyType !== 'gate.request') return false
+      try { return JSON.parse(message.text).request_id === requestId } catch { return false }
+    })
+    if (!message) throw new Error(`Gate request ${requestId} not found in conversation history`)
+    const request = parseGatewayBody('gate.request', message.text) as GateRequestBody
+    const body = createGateDisapprovalBody(identity, context, request)
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
 
   const kidB64 = base64UrlEncode(identity.keyID)
 
@@ -1060,6 +1120,13 @@ export async function gateSecretRequest(
     throw new Error('Gateway public key does not match the configured gateway identity')
   }
 
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGateSecretBody(identity, context, { service, value,
+      headerName: headerName || 'Authorization', headerTemplate: headerTemplate || 'Bearer {value}' })
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
+
   const secretId = crypto.randomUUID()
   const plaintext = new TextEncoder().encode(value)
   const sealed = sealSecret(identity.privateKey, gwPubKeyBytes, plaintext)
@@ -1091,6 +1158,12 @@ export async function govProposeFloorChange(
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
   if (proposedFloor < 1) throw new Error('Proposed floor must be at least 1')
+
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGatewayProposalBody(identity, context, { proposalType: 'floor_change', proposedFloor, requiredApprovals })
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
 
   const conv = store.findConversation(profileId, conversationId)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
@@ -1125,6 +1198,12 @@ export async function govProposeMemberAdd(
 
   const conv = store.findConversation(profileId, conversationId)
   const publicKey = decodeIdentityPublicKey(memberPublicKey)
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGatewayProposalBody(identity, context, { proposalType: 'member_add', requiredApprovals,
+      proposedMembers: [{ kid: base64UrlEncode(keyIDFromPublicKey(publicKey)), publicKey: base64UrlEncode(publicKey) }] })
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
   const proposal = createProposalBody(identity, {
     gatewayKid: gatewayTarget(profileId, conversationId).gateway_kid,
@@ -1157,6 +1236,13 @@ export async function govProposeMemberRemove(
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
+
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGatewayProposalBody(identity, context, { proposalType: 'member_remove', requiredApprovals,
+      removedMemberKids: [base64UrlEncode(decodeIdentityKeyID(memberKeyId))] })
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
 
   const conv = store.findConversation(profileId, conversationId)
   const eligibleSignerKids = listEligibleSignerKids(conv, identity)
@@ -1192,6 +1278,11 @@ export async function govApproveProposal(
   if (!identity) throw new Error('No identity found')
 
   const proposal = findGovernanceProposalInHistory(profileId, conversationId, proposalId)
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const body = createGatewayProposalApprovalBody(identity, context, parseGatewayBody('gov.propose', JSON.stringify(proposal)) as GatewayProposalBody)
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
   const proposalHash = hashProposal({
     ...(typeof proposal.gateway_kid === 'string' ? { gateway_kid: proposal.gateway_kid } : {}),
     conv_id: proposal.conv_id as string,
@@ -1235,6 +1326,13 @@ export async function govDisapproveProposal(
 ): Promise<ChatMessage> {
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
+
+  const context = browserGatewayContext(profileId, conversationId, identity)
+  if (context) {
+    const proposal = findGovernanceProposalInHistory(profileId, conversationId, proposalId)
+    const body = createGatewayProposalDisapprovalBody(identity, context, parseGatewayBody('gov.propose', JSON.stringify(proposal)) as GatewayProposalBody)
+    return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
+  }
 
   const disapproval = {
     type: 'gov.disapprove',

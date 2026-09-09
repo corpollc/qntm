@@ -83,7 +83,7 @@ export { createGateRequestBody, createGateApprovalBody, createGateDisapprovalBod
   gateRequestSignable, gatewayProposalSignable, gatewayRequestThreshold, gatewayGovernanceQuorum,
   assertGateRequest, assertGatewayProposal } from './gate/workflow-build.js';
 export type { CreateGateRequestOptions, CreateGateSecretOptions, CreateGatewayProposalOptions } from './gate/workflow-build.js';
-export { createGatewayMessage, verifyGatewayMessage } from './gate/workflow-message.js';
+export { createGatewayMessage, decryptGatewayMessage, verifyGatewayMessage } from './gate/workflow-message.js';
 export type { GatewayReferences, VerifiedGatewayEvent } from './gate/workflow-message.js';
 export { findGateRequest, findGatewayProposal, scanGateRequest, scanGatewayProposal } from './gate/workflow-history.js';
 export type { GatewayWorkflowStatus, GatewayWorkflowState } from './gate/workflow-history.js';

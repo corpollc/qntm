@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { scanGateRequest, scanGatewayProposal } from '@corpollc/qntm';
 import type { LongHarness } from './src/runtime.js';
 import { assertNoCliHistory, createLongHarness } from './src/runtime.js';
 import {
@@ -98,6 +99,40 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
       await printDiagnostics(harness, convId);
       throw error;
     }
+  }, LONG_TIMEOUT);
+
+  it('uses shared TypeScript builders for credentials, requests and governed policy with a Python voter', async () => {
+    try {
+      harness.resetCounterExecutions();
+      await harness.charlie.run(['recv', convId]);
+      await harness.charlie.sendGatewaySecret(convId, { service: 'fun', value: 'typescript-fixture-credential', headerName: 'X-Test', headerTemplate: '{value}' });
+      const requestId = await harness.charlie.sendGatewayRequest(convId, { service: 'fun', endpoint: '/counter', verb: 'POST',
+        targetUrl: `${harness.fixture.baseUrl}/counter` });
+      await waitForCliHistory(harness.alice, convId, historyMatchesRequest('gate.request', requestId), 'TypeScript request at Python');
+      const before = scanGateRequest(harness.charlie.readGatewayEvents(convId), harness.charlie.gatewayContext(convId), requestId);
+      expect(before).toMatchObject({ status: 'pending', approvals: 1, threshold: 2 });
+      await harness.alice.run(['gate-approve', requestId, '-c', convId]);
+      const result = await waitForCliHistory(harness.charlie, convId, historyMatchesRequest('gate.result', requestId), 'TypeScript verified gateway result');
+      assertCounterResultPayload(parseUnsafeBody(result), 1);
+      expect(scanGateRequest(harness.charlie.readGatewayEvents(convId), harness.charlie.gatewayContext(convId), requestId)).toMatchObject({ status: 'executed', result: { status_code: 200 } });
+
+      const proposalId = await harness.charlie.sendGatewayProposal(convId, { proposalType: 'floor_change', proposedFloor: 3, requiredApprovals: 1 });
+      const proposal = await waitForCliHistory(harness.alice, convId, historyMatchesProposal('gov.propose', proposalId), 'TypeScript governance proposal at Python');
+      expect(parseUnsafeBody(proposal).required_approvals).toBe(2);
+      await harness.alice.run(['gov', 'approve', proposalId, '-c', convId]);
+      await waitForCliHistory(harness.charlie, convId, historyMatchesProposal('gov.applied', proposalId), 'verified TypeScript governance application');
+      expect(scanGatewayProposal(harness.charlie.readGatewayEvents(convId), harness.charlie.gatewayContext(convId), proposalId)?.status).toBe('applied');
+      await waitForCliHistory(harness.alice, convId, historyMatchesProposal('gov.applied', proposalId), 'raised policy at Python');
+      const strict = await harness.alice.run(['gate-run', 'counter.bump', '-c', convId]);
+      const strictId = String(strict.data?.request_id);
+      const strictMessage = await waitForCliHistory(harness.charlie, convId, historyMatchesRequest('gate.request', strictId), 'Python request under raised policy');
+      expect(parseUnsafeBody(strictMessage).required_approvals).toBe(3);
+      const restoreId = await harness.charlie.sendGatewayProposal(convId, { proposalType: 'floor_change', proposedFloor: 2 });
+      await waitForCliHistory(harness.alice, convId, historyMatchesProposal('gov.propose', restoreId), 'restore policy at Python');
+      await harness.alice.run(['gov', 'approve', restoreId, '-c', convId]);
+      await waitForCliHistory(harness.charlie, convId, historyMatchesProposal('gov.applied', restoreId), 'restored policy');
+      await waitForCliHistory(harness.alice, convId, historyMatchesRequest('gate.invalidated', strictId), 'accepted strict request invalidation');
+    } catch (error) { await printDiagnostics(harness, convId); throw error; }
   }, LONG_TIMEOUT);
 
   it('rejects below-quorum governance and cross-conversation traffic without poisoning valid work', async () => {

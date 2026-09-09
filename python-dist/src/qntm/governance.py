@@ -2,6 +2,8 @@
 
 import time
 import uuid as _uuid
+from datetime import datetime
+import cbor2
 
 from .cbor import marshal_canonical
 from .crypto import QSP1Suite
@@ -103,6 +105,24 @@ def hash_proposal(
         gateway_kid=gateway_kid,
     )
     return _suite.hash(marshal_canonical(signable))
+
+
+def hash_proposal_body(body: dict) -> bytes:
+    """Hash a received JSON proposal without changing absent fields into null.
+
+    Existing TypeScript signables encode absent optional branches as CBOR
+    undefined, while Python's emitted null branches encode as CBOR null.
+    """
+    return hash_proposal(
+        gateway_kid=body.get("gateway_kid"),
+        conv_id=body["conv_id"], proposal_id=body["proposal_id"], proposal_type=body["proposal_type"],
+        proposed_floor=body.get("proposed_floor", cbor2.undefined),
+        proposed_rules=body.get("proposed_rules", cbor2.undefined),
+        proposed_members=body.get("proposed_members", cbor2.undefined),
+        removed_member_kids=body.get("removed_member_kids", cbor2.undefined),
+        eligible_signer_kids=body["eligible_signer_kids"], required_approvals=body["required_approvals"],
+        expires_at_unix=int(datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00")).timestamp()),
+    )
 
 
 def sign_gov_approval(

@@ -32,7 +32,7 @@ export interface GateRequestBody {
   required_approvals: number;
   payload?: unknown;
   recipe_name?: string;
-  arguments?: Record<string, string>;
+  arguments?: Record<string, string> | null;
 }
 
 export interface GateApprovalBody {
