@@ -140,6 +140,31 @@ describe('local service readiness', () => {
     await expect(worker.waitForLocalUrl('worker', '/', 200)).rejects.toThrow('Timed out waiting for the bound local listener');
   });
 
+  it.skipIf(process.platform === 'win32')('stops an owned descendant listener after its wrapper exits', async () => {
+    const script = listenerScript('worker');
+    const wrapper = child(`const {spawn} = require('node:child_process');
+      const nested = spawn(process.execPath, ['-e', ${JSON.stringify(script)}, '--', '--port', '0'], {stdio: 'inherit'});
+      console.log('descendant-pid:' + nested.pid);
+      setInterval(() => {}, 1000);`);
+    let descendant: number | undefined;
+    try {
+      const url = await wrapper.waitForLocalUrl('worker', '/', 3_000);
+      descendant = Number(/descendant-pid:(\d+)/.exec(wrapper.stdout)![1]);
+      // Simulate npm exiting without forwarding termination to its child.
+      const exited = new Promise<void>(resolve => wrapper.child.once('exit', () => resolve()));
+      wrapper.child.kill('SIGTERM');
+      await exited;
+      expect((await fetch(url)).status).toBe(200);
+      await wrapper.stop();
+      await expect(fetch(url)).rejects.toThrow();
+    } finally {
+      if (descendant) {
+        try { process.kill(descendant, 'SIGTERM'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      }
+    }
+  }, 10_000);
+
   it('uses the fixture server bound address without releasing a guessed port', async () => {
     const first = await FixtureServer.start(), second = await FixtureServer.start();
     servers.push(first.server, second.server);

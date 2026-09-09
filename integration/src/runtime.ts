@@ -129,6 +129,7 @@ export class ManagedProcess {
   private stdoutStart = 0;
   private stderrStart = 0;
   private spawnError: Error | undefined;
+  private stops = new WeakMap<ReturnType<typeof spawn>, Promise<void>>();
 
   constructor(name: string, command: string[], cwd: string, env: NodeJS.ProcessEnv) {
     this.name = name;
@@ -147,6 +148,7 @@ export class ManagedProcess {
       cwd: this.cwd,
       env: this.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
     child.stdout.on('data', (chunk) => {
       this.stdout += chunk.toString();
@@ -160,6 +162,29 @@ export class ManagedProcess {
 
   async stop(): Promise<void> {
     const child = this.child;
+    const existing = this.stops.get(child);
+    if (existing) return existing;
+    const stopping = this.stopChild(child);
+    this.stops.set(child, stopping);
+    return stopping;
+  }
+
+  private async stopChild(child: ReturnType<typeof spawn>): Promise<void> {
+    // npm/npx can exit while their Worker/server descendants remain alive.
+    // Each POSIX child owns a private group; never signal unrelated dev servers.
+    if (process.platform !== 'win32' && child.pid) {
+      const group = -child.pid;
+      const signal = (value: NodeJS.Signals | 0): boolean => {
+        try { process.kill(group, value); return true; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+      };
+      signal('SIGTERM');
+      const deadline = performance.now() + 5_000;
+      while (signal(0) && performance.now() < deadline) await delay(25);
+      if (signal(0)) signal('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) await new Promise<void>(resolveExit => child.once('exit', () => resolveExit()));
+      return;
+    }
     if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
     await new Promise<void>(resolveExit => {
       // Bind cleanup to this process and cancel it on exit. A lingering timer
@@ -217,10 +242,6 @@ export class ManagedProcess {
       throw new Error(`${this.name} failed readiness: ${String(error)}\nstdout:\n${this.stdout.slice(-8_192)}\nstderr:\n${this.stderr.slice(-8_192)}`, { cause: error });
     }
   }
-}
-
-function npmCommand(): string {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
 function npxCommand(): string {
@@ -876,7 +897,7 @@ export async function createLongHarness(options: LongHarnessOptions = {}): Promi
     if (withUi) {
       const uiProcess = new ManagedProcess(
           'aim-ui',
-          [npmCommand(), 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '0', '--strictPort'],
+          [process.execPath, join(repoRoot, 'ui/aim-chat/scripts/serve-tests.mjs'), '--port', '0'],
           join(repoRoot, 'ui/aim-chat'),
           { ...process.env },
         );
