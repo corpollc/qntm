@@ -14,14 +14,17 @@ export function createMessage(
   conversation: Conversation,
   bodyType: string,
   body: Uint8Array,
-  refs: unknown[] | undefined,
-  ttlSeconds: number,
+  refs: unknown[] | undefined = undefined,
+  ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): OuterEnvelope {
   validateIdentity(senderIdentity);
 
   const msgID = generateMessageID();
   const now = Math.floor(Date.now() / 1000);
   const expiryTS = now + ttlSeconds;
+  if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds <= 0 || !Number.isSafeInteger(expiryTS)) {
+    throw new Error('message TTL must be a positive safe integer within the timestamp range');
+  }
 
   // Create body structure for hashing
   const bodyStruct: Record<string, unknown> = {
@@ -96,14 +99,20 @@ export function createMessage(
   };
 }
 
+export interface DecryptMessageOptions {
+  /** Verify saved history after expiry. Never use for live receive or action authorization. */
+  allowExpired?: boolean;
+}
+
 export function decryptMessage(
   envelope: OuterEnvelope,
   conversation: Conversation,
+  options: DecryptMessageOptions = {},
 ): Message {
   validateEnvelope(envelope);
 
   // Check expiry
-  if (Math.floor(Date.now() / 1000) > envelope.expiry_ts) {
+  if (options.allowExpired !== true && checkExpiry(envelope)) {
     throw new Error('message has expired');
   }
 
@@ -199,10 +208,10 @@ export function validateEnvelope(envelope: OuterEnvelope): void {
   if (envelope.suite !== DEFAULT_SUITE) {
     throw new Error(`unsupported crypto suite: ${envelope.suite}`);
   }
-  if (envelope.created_ts <= 0) {
+  if (!Number.isSafeInteger(envelope.created_ts) || envelope.created_ts <= 0) {
     throw new Error(`invalid created timestamp: ${envelope.created_ts}`);
   }
-  if (envelope.expiry_ts <= envelope.created_ts) {
+  if (!Number.isSafeInteger(envelope.expiry_ts) || envelope.expiry_ts <= envelope.created_ts) {
     throw new Error('expiry timestamp must be after created timestamp');
   }
   if (envelope.ciphertext.length === 0) {

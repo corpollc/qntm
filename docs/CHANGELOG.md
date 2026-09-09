@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Aligned Python and TypeScript message expiry: normal decryption rejects expired messages, both enforce the same timestamp and future-skew bounds, and saved-history verification requires an explicit option. Shared encrypted fixtures cover exact expiry boundaries and tampering in both modes. TypeScript message creation now has Python's default TTL.
 - Added a private relay dashboard with Cloudflare-backed message-post totals, rolling active-conversation counts, certificate health and external encrypted messaging probes. Counts begin at deployment, distinguish synthetic traffic, and include both direct chats and groups.
 - Replaced the shared KV activity update with durable aggregate telemetry. Metadata is queued atomically with an envelope, delivered in bounded batches, deduplicated on retry and expired after seven days. A dedicated read-only token protects detailed totals.
 - Added an exe.dev monitor that tests live WebSocket delivery and reconnect/replay using two synthetic identities. Stale collection and failed probes are visible in Grafana; outbound notification recipients remain unconfigured.

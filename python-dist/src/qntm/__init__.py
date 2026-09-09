@@ -49,6 +49,7 @@ from .invite import (
     validate_invite,
 )
 from .message import (
+    check_expiry,
     create_message,
     decrypt_message,
     default_handshake_ttl,

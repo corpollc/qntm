@@ -1,0 +1,7 @@
+[
+  {"name":"one second before expiry","relative_to":"expiry_ts","offset":-1,"expired":false,"live":true,"history":true},
+  {"name":"expiry second is inclusive","relative_to":"expiry_ts","offset":0,"expired":false,"live":true,"history":true},
+  {"name":"one second after expiry","relative_to":"expiry_ts","offset":1,"expired":true,"live":false,"history":true},
+  {"name":"maximum future skew","relative_to":"created_ts","offset":-600,"expired":false,"live":true,"history":true},
+  {"name":"excess future skew","relative_to":"created_ts","offset":-601,"expired":false,"live":false,"history":false}
+]

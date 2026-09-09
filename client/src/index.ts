@@ -29,6 +29,7 @@ export {
   serializeEnvelope, deserializeEnvelope,
   checkExpiry, defaultTTL, defaultHandshakeTTL,
 } from './message/index.js';
+export type { DecryptMessageOptions } from './message/index.js';
 
 export {
   signRequest, verifyRequest, signApproval, verifyApproval,

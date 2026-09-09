@@ -10,6 +10,11 @@ conversation = {'id': bytes.fromhex(vectors['conversation_id']), 'currentEpoch':
                 'keys': {'aeadKey': bytes.fromhex(vectors['aead_key']), 'nonceKey': bytes.fromhex(vectors['nonce_key'])}}
 
 
+@pytest.fixture(autouse=True)
+def fixture_clock(monkeypatch):
+    monkeypatch.setattr('qntm.message.time.time', lambda: 1773122903)
+
+
 def message(vector=None):
     vector = vector or vectors['vectors'][0]
     return decrypt_message(deserialize_envelope(bytes.fromhex(vector['envelope_cbor'])), conversation)

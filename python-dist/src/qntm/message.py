@@ -30,6 +30,8 @@ def create_message(
 
     msg_id = generate_message_id()
     now = int(time.time())
+    if not _safe_timestamp(ttl_seconds) or ttl_seconds <= 0 or not _safe_timestamp(now + ttl_seconds):
+        raise ValueError("message TTL must be a positive safe integer within the timestamp range")
     expiry_ts = now + ttl_seconds
 
     # Build body structure for hashing
@@ -109,9 +111,16 @@ def create_message(
     return envelope
 
 
-def decrypt_message(envelope: dict, conversation: dict) -> dict:
-    """Decrypt an envelope, verify signature, return message dict."""
+def decrypt_message(envelope: dict, conversation: dict, *, allow_expired: bool = False) -> dict:
+    """Decrypt and authenticate an envelope, rejecting expired messages by default.
+
+    ``allow_expired=True`` is for verifying saved history only, never live receive
+    or action authorization. Encryption, signature and timestamp validation remain
+    mandatory in either mode.
+    """
     validate_envelope(envelope)
+    if allow_expired is not True and check_expiry(envelope):
+        raise ValueError("message has expired")
 
     conv_id = bytes(envelope["conv_id"])
     expected_conv_id = bytes(conversation["id"])
@@ -202,15 +211,27 @@ def validate_envelope(envelope: dict) -> None:
         raise ValueError(f"unsupported protocol version: {envelope['v']}")
     if envelope["suite"] != DEFAULT_SUITE:
         raise ValueError(f"unsupported crypto suite: {envelope['suite']}")
-    if envelope["created_ts"] <= 0:
+    if not _safe_timestamp(envelope["created_ts"]) or envelope["created_ts"] <= 0:
         raise ValueError(f"invalid created timestamp: {envelope['created_ts']}")
-    if envelope["expiry_ts"] <= envelope["created_ts"]:
+    if not _safe_timestamp(envelope["expiry_ts"]) or envelope["expiry_ts"] <= envelope["created_ts"]:
         raise ValueError("expiry timestamp must be after created timestamp")
     ct = envelope["ciphertext"]
     if isinstance(ct, memoryview):
         ct = bytes(ct)
     if len(ct) == 0:
         raise ValueError("ciphertext is empty")
+    if envelope["created_ts"] > int(time.time()) + 600:
+        raise ValueError("message created timestamp is too far in the future")
+
+
+def _safe_timestamp(value: object) -> bool:
+    # Match JavaScript's exact integer domain; bool is not a wire timestamp.
+    return type(value) is int and abs(value) <= 2**53 - 1
+
+
+def check_expiry(envelope: dict) -> bool:
+    """True once the current Unix second exceeds the signed expiry timestamp."""
+    return int(time.time()) > envelope["expiry_ts"]
 
 
 def validate_inner_payload(inner: dict) -> None:

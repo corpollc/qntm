@@ -189,8 +189,8 @@ def test_e2e_decrypt():
     envelope_bytes = bytes.fromhex(e2e["envelope_cbor"])
     envelope = unmarshal(envelope_bytes)
 
-    # Decrypt - need to skip expiry check for test vectors
-    msg = decrypt_message(envelope, conversation)
+    # Historical fixture verification is explicitly opt-in.
+    msg = decrypt_message(envelope, conversation, allow_expired=True)
 
     assert msg["verified"]
     inner = msg["inner"]
