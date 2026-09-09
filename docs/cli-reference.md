@@ -186,7 +186,7 @@ positional arguments:
   {create,join,invite,list,name}
     create              Create conversation and invite
     join                Join conversation from invite token
-    invite              Get invite token for existing conversation
+    invite              Get token and fragment link for existing conversation
     list                List conversations
     name                Set a local name for a conversation
 
