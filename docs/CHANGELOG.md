@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- OpenClaw now targets the public 2026.9.3 SDK, with a self-contained plugin archive, generated configuration metadata, and a real-host CI smoke test for encrypted direct/group replies and restart replay. Removed the local SDK shims that could hide host API drift. This adapter revision requires a compatible Node 24 or 26 host; structured gateway actions remain unfinished.
 - Normalize wrapped fragment-style invite links before URL parsing so pasted spaces do not corrupt the invite token.
 - Remove historical operator identities, conversation state and the Beads credential key from tracked files; ignore local runtime state and refresh Beads hook scaffolding. Existing Git history still contains the old material; rotation assessment is tracked separately.
 

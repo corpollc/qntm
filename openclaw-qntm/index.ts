@@ -1,5 +1,5 @@
-import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 import { qntmPlugin } from "./src/channel.js";
 import { setQntmRuntime } from "./src/runtime.js";
 

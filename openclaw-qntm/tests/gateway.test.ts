@@ -93,7 +93,7 @@ describe("qntm gateway lifecycle", () => {
     );
   });
 
-  test("fails clearly when neither the start context nor the registered runtime exposes channelRuntime", async () => {
+  test("fails clearly when the plugin runtime has not been registered", async () => {
     const identity = createIdentityFixture();
     const direct = createConversationFixture("direct");
     const cfg = createConfig({

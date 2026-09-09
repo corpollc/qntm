@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { resolveQntmAccount, resolveQntmBinding } from "../src/accounts.js";
+import { inspectQntmAccount, resolveQntmAccount, resolveQntmBinding } from "../src/accounts.js";
 import {
   createConfig,
   createConversationFixture,
@@ -8,6 +8,18 @@ import {
 } from "./helpers.js";
 
 describe("resolveQntmAccount", () => {
+  test("inspects disabled and configured accounts without reading private material", () => {
+    const cfg = createConfig({ identityDir: "/does-not-exist/qntm-secret-profile", conversations: {
+      room: { convId: "aa".repeat(16) },
+    } });
+    cfg.channels!.qntm!.enabled = false;
+    const result = inspectQntmAccount(cfg);
+    expect(result).toEqual({ accountId: "default", name: undefined, enabled: false, configured: true });
+    expect(JSON.stringify(result)).not.toContain("qntm-secret-profile");
+    cfg.channels!.qntm!.conversations!.room!.enabled = false;
+    expect(inspectQntmAccount(cfg).configured).toBe(false);
+  });
+
   test("parses identity and multiple conversation bindings", () => {
     const identity = createIdentityFixture();
     const direct = createConversationFixture("direct");

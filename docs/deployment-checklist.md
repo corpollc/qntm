@@ -23,7 +23,7 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
 | Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, restart, and signed invitation/acceptance journeys |
-| Adapters | OpenClaw, NanoClaw, and Claude channel tests/typecheck; real MCP channel transport; runtime dependency audits |
+| Adapters | OpenClaw, retained NanoClaw, and Claude channel tests/typecheck; OpenClaw 2026.9.3 compiled-package install and real host text/restart smoke on Node 24; real MCP channel transport; runtime dependency audits |
 | Integration and packaging | Protocol model suite; browser/CLI/MCP guidance; TypeScript-to-CLI webhook/executable delivery and restart; lost HTTP acknowledgement recovery; real echo Worker cron delivery and README-extracted quick-start/Python/gateway commands; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
 
 The cross-surface suite uses local Workers and browser instances; some API recipe journeys call public services. Test failures there must be diagnosed rather than silently skipped. Adapter contract tests do not replace smoke tests in each external host release. The public charter service remains experimental and unwitnessed; its resource limits, TLS, backup restoration and private telemetry require deployment checks in addition to CI.

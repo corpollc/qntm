@@ -197,8 +197,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: npm ci && npm run build
         working-directory: client
+      - uses: actions/setup-node@v6
+        if: matrix.package == 'openclaw-qntm'
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - run: npm ci && npm test && npm run typecheck && npm audit --omit=dev --audit-level=high
+        if: matrix.package != 'openclaw-qntm'
         working-directory: ${{ matrix.package }}
+      - run: npm ci --ignore-scripts && npm test && npm run typecheck && npm audit --omit=dev --audit-level=high
+        if: matrix.package == 'openclaw-qntm'
+        working-directory: openclaw-qntm
+      - name: Validate OpenClaw metadata and real host delivery
+        if: matrix.package == 'openclaw-qntm'
+        run: npm run check:manifest && npm run test:host
+        working-directory: openclaw-qntm
 
   test-integration-model:
     runs-on: ubuntu-latest

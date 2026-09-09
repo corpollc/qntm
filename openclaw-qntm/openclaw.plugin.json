@@ -1,9 +1,171 @@
 {
   "id": "qntm",
-  "channels": ["qntm"],
+  "channels": [
+    "qntm"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {}
+  },
+  "channelConfigs": {
+    "qntm": {
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "relayUrl": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "string"
+          },
+          "identityFile": {
+            "type": "string"
+          },
+          "identityDir": {
+            "type": "string"
+          },
+          "defaultTo": {
+            "type": "string"
+          },
+          "conversations": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "invite": {
+                  "type": "string"
+                },
+                "convId": {
+                  "type": "string"
+                },
+                "trigger": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "mention"
+                  ]
+                },
+                "triggerNames": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "accounts": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "relayUrl": {
+                  "type": "string"
+                },
+                "identity": {
+                  "type": "string"
+                },
+                "identityFile": {
+                  "type": "string"
+                },
+                "identityDir": {
+                  "type": "string"
+                },
+                "defaultTo": {
+                  "type": "string"
+                },
+                "conversations": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "invite": {
+                        "type": "string"
+                      },
+                      "convId": {
+                        "type": "string"
+                      },
+                      "trigger": {
+                        "type": "string",
+                        "enum": [
+                          "all",
+                          "mention"
+                        ]
+                      },
+                      "triggerNames": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "defaultAccount": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "uiHints": {
+        "identity": {
+          "sensitive": true,
+          "help": "Private signing identity. Prefer identityFile or identityDir."
+        },
+        "conversations.*.invite": {
+          "sensitive": true,
+          "help": "Contains conversation encryption keys."
+        },
+        "accounts.*.identity": {
+          "sensitive": true,
+          "help": "Private signing identity. Prefer identityFile or identityDir."
+        },
+        "accounts.*.conversations.*.invite": {
+          "sensitive": true,
+          "help": "Contains conversation encryption keys."
+        }
+      }
+    }
   }
 }

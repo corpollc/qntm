@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { normalizeAccountId } from "openclaw/plugin-sdk";
+import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 
 function resolveOpenClawStateDir(env: NodeJS.ProcessEnv): string {
   return env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw", "state");

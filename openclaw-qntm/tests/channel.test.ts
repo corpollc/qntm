@@ -21,8 +21,8 @@ describe("qntmPlugin directory and resolver", () => {
       },
     });
 
-    const peers = await qntmPlugin.directory?.listPeers?.({ cfg });
-    const groups = await qntmPlugin.directory?.listGroups?.({ cfg });
+    const peers = await qntmPlugin.directory?.listPeers?.({ cfg, runtime: {} as never });
+    const groups = await qntmPlugin.directory?.listGroups?.({ cfg, runtime: {} as never });
 
     expect(peers).toEqual([
       expect.objectContaining({
@@ -62,16 +62,19 @@ describe("qntmPlugin directory and resolver", () => {
 
     const resolved = await qntmPlugin.resolver?.resolveTargets?.({
       cfg,
+      runtime: {} as never,
       inputs: ["alice", "ops", "missing"],
       kind: "user",
     });
     const directTarget = await qntmPlugin.messaging?.targetResolver?.resolveTarget?.({
       cfg,
+      input: "alice",
       normalized: "alice",
       preferredKind: "user",
     });
     const wrongKind = await qntmPlugin.messaging?.targetResolver?.resolveTarget?.({
       cfg,
+      input: "ops",
       normalized: "ops",
       preferredKind: "user",
     });

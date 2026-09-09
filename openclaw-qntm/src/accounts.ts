@@ -2,7 +2,7 @@ import {
   createAccountListHelpers,
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/account-core";
 import type {
   QntmAccountConfig,
   QntmRootConfig,
@@ -60,6 +60,27 @@ function mergeAccountConfig(cfg: QntmRootConfig, accountId: string): QntmAccount
       ...(account.conversations ?? {}),
     },
   };
+}
+
+/** Status-only discovery must not open identity files or decrypt invitations. */
+export function inspectQntmAccount(cfg: QntmRootConfig, accountId?: string | null) {
+  const inspect = (id: string) => {
+    const config = mergeAccountConfig(cfg, id);
+    const identityConfigured = Boolean(config.identity?.trim() || config.identityFile?.trim() || config.identityDir?.trim());
+    const hasBinding = Object.values(config.conversations ?? {}).some((binding) =>
+      binding && binding.enabled !== false && (binding.invite?.trim() || (binding.convId?.trim() && config.identityDir?.trim())),
+    );
+    return {
+      accountId: id,
+      name: config.name,
+      enabled: cfg.channels?.qntm?.enabled !== false && config.enabled !== false,
+      configured: identityConfigured && hasBinding,
+    };
+  };
+  const primary = inspect(normalizeAccountId(accountId));
+  if (accountId?.trim() || primary.configured) return primary;
+  const fallback = inspect(resolveDefaultQntmAccountId(cfg));
+  return fallback.configured ? fallback : primary;
 }
 
 function normalizeTargetToken(raw: string): string | undefined {

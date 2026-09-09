@@ -1,12 +1,14 @@
+import type { ChannelPlugin } from "openclaw/plugin-sdk/channel-core";
+import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-core";
 import {
-  buildChannelConfigSchema,
   deleteAccountFromConfigSection,
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
   setAccountEnabledInConfigSection,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/channel-plugin-common";
 import {
   listQntmAccountIds,
+  inspectQntmAccount,
   normalizeQntmMessagingTarget,
   resolveDefaultQntmAccountId,
   resolveQntmAccount,
@@ -35,11 +37,11 @@ export const QNTM_META = {
   systemImage: "lock.message",
 } as const;
 
-export const QNTM_CAPABILITIES = {
+export const QNTM_CAPABILITIES: ChannelPlugin<ResolvedQntmAccount>["capabilities"] = {
   chatTypes: ["direct", "group"],
   media: false,
   blockStreaming: true,
-} as const;
+};
 
 const clearBaseFields = [
   "name",
@@ -133,6 +135,7 @@ export function buildQntmAccountSnapshot(params: {
 }
 
 export const qntmConfigAdapter = {
+  inspectAccount: inspectQntmAccount,
   listAccountIds: (cfg: QntmRootConfig) => listQntmAccountIds(cfg),
   resolveAccount: (cfg: QntmRootConfig, accountId?: string | null) =>
     resolveQntmAccount({ cfg, accountId }),
@@ -172,7 +175,7 @@ export const qntmConfigAdapter = {
     resolveQntmAccount({ cfg, accountId }).defaultTo,
 };
 
-export function createQntmPluginBase(params: { setup: unknown }) {
+export function createQntmPluginBase(params: { setup: ChannelPlugin<ResolvedQntmAccount>["setup"] }) {
   return {
     id: CHANNEL_ID,
     meta: { ...QNTM_META },

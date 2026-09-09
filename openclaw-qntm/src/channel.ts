@@ -1,15 +1,13 @@
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
 import { DropboxClient } from "@corpollc/qntm";
 import {
-  DEFAULT_ACCOUNT_ID,
   type ChannelPlugin,
   type OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/channel-core";
 import {
   listQntmDirectoryEntries,
   looksLikeQntmTargetId,
-  parseQntmExplicitTarget,
   buildQntmAccountSnapshot,
-  buildQntmSessionKey,
   CHANNEL_ID,
   createQntmPluginBase,
   qntmConfigAdapter,
@@ -71,18 +69,6 @@ async function sendOutbound(params: {
   };
 }
 
-function inferChatType(params: {
-  cfg: OpenClawConfig;
-  accountId?: string | null;
-  to: string;
-}): "direct" | "group" | undefined {
-  const account = resolveQntmAccount({
-    cfg: params.cfg as QntmRootConfig,
-    accountId: params.accountId,
-  });
-  return resolveQntmBinding(account, params.to)?.chatType;
-}
-
 async function waitForAbort(signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return;
@@ -92,7 +78,7 @@ async function waitForAbort(signal: AbortSignal): Promise<void> {
   });
 }
 
-export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
+export const qntmPlugin = {
   ...createQntmPluginBase({ setup: qntmSetupAdapter }),
   agentPrompt: {
     messageToolHints: () => [
@@ -101,9 +87,8 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
     ],
   },
   messaging: {
+    targetPrefixes: ["qntm"],
     normalizeTarget: normalizeQntmMessagingTarget,
-    parseExplicitTarget: parseQntmExplicitTarget,
-    inferTargetChatType: ({ to, accountId, cfg }) => inferChatType({ cfg, accountId, to }),
     targetResolver: {
       looksLikeId: looksLikeQntmTargetId,
       hint: "<binding-id|conv-id>",
@@ -272,10 +257,10 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
         lastError: null,
       });
       try {
-        const channelRuntime = ctx.channelRuntime ?? getQntmRuntime()?.channel;
+        const channelRuntime = getQntmRuntime()?.channel;
         if (!channelRuntime) {
           throw new Error(
-            "qntm channel runtime is unavailable; use OpenClaw Plugin SDK channelRuntime or register the plugin before starting accounts",
+            "qntm channel runtime is unavailable; register the plugin before starting accounts",
           );
         }
 
@@ -303,4 +288,4 @@ export const qntmPlugin: ChannelPlugin<ResolvedQntmAccount> = {
       }
     },
   },
-};
+} satisfies ChannelPlugin<ResolvedQntmAccount>;

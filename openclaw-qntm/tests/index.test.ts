@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 import plugin from "../index.ts";
 
 describe("qntm plugin registration", () => {
@@ -11,7 +12,7 @@ describe("qntm plugin registration", () => {
         channel: {} as never,
       },
       registerChannel,
-    });
+    } as unknown as OpenClawPluginApi);
 
     expect(info).toHaveBeenCalledWith("qntm: registered (relay websocket monitor)");
     expect(registerChannel).toHaveBeenCalledWith({

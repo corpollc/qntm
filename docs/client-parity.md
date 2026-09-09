@@ -15,7 +15,7 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 
 The CLI's hook runner is client behavior: it needs no new relay endpoint. Muse and other hosts can consume the continuous JSONL subscription directly. Codex, Claude, Grok, or another harness can consume the same event through a local adapter; qntm does not ship or claim tested native insertion adapters for every harness. The Claude channel is the included MCP bridge. OpenClaw is the maintained agent integration target. The existing NanoClaw transport source is retained, but further installation and host-verification work is deferred and it is not an actively supported client.
 
-Tests cover shared encrypted receive fixtures, Python 3.10/3.12, TypeScript crypto and subscriptions, the Go/TypeScript charter boundary, browser/CLI/gateway journeys, terminal PTY input, and adapter contracts. Adapter tests do not establish compatibility with every independently updated agent host. See [release checks](deployment-checklist.md) and [receive hooks](receive-hooks.md).
+Tests cover shared encrypted receive fixtures, Python 3.10/3.12, TypeScript crypto and subscriptions, the Go/TypeScript charter boundary, browser/CLI/gateway journeys, terminal PTY input, and adapter contracts. The OpenClaw adapter also tests a compiled package installed in the real 2026.9.3 host, encrypted direct/group replies through a local relay fixture, and restart replay. That test uses a deterministic reply hook and establishes host transport compatibility, not agent judgment or universal harness support. See [release checks](deployment-checklist.md) and [receive hooks](receive-hooks.md).
 
 ## Message expiry
 

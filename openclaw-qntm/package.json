@@ -10,13 +10,21 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
+    "openclaw": "2026.9.3",
     "typescript": "^5.7.0",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "ws": "8.21.3"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:manifest": "node scripts/build-manifest.mjs",
+    "check:manifest": "node scripts/build-manifest.mjs --check",
+    "test:host": "node scripts/host-smoke.mjs",
+    "pack:plugin": "npm run check:manifest && node scripts/package.mjs"
   },
   "openclaw": {
     "extensions": [
@@ -32,5 +40,8 @@
       "blurb": "encrypted qntm conversations over the relay websocket with multi-conversation routing.",
       "systemImage": "lock.message"
     }
+  },
+  "engines": {
+    "node": ">=24.16.0 <25 || >=26.1.0"
   }
 }

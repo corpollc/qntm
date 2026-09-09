@@ -1,10 +1,8 @@
 import { DropboxClient, base64UrlDecode, decryptMessage, deserializeEnvelope } from "@corpollc/qntm";
-import {
-  type ChannelRuntime,
-  createNormalizedOutboundDeliverer,
-  createReplyPrefixOptions,
-  type OpenClawConfig,
-} from "openclaw/plugin-sdk";
+import type { PluginRuntime, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import { createNormalizedOutboundDeliverer } from "openclaw/plugin-sdk/reply-payload";
+import { createReplyPrefixOptions } from "openclaw/plugin-sdk/channel-outbound";
+type ChannelRuntime = PluginRuntime["channel"];
 import { CHANNEL_ID } from "./shared.js";
 import { createFileCursorStore, type ConversationCursorStore } from "./state.js";
 import { decodeQntmBody, flattenQntmReplyPayload, sendQntmText, toHex, type QntmClientLike } from "./qntm.js";

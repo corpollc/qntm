@@ -11,10 +11,6 @@ export default defineConfig({
         find: "@corpollc/qntm",
         replacement: path.resolve(__dirname, "../client/src/index.ts"),
       },
-      {
-        find: "openclaw/plugin-sdk",
-        replacement: path.resolve(__dirname, "./sdk-shims/index.ts"),
-      },
     ],
   },
   test: {
