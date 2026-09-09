@@ -17,6 +17,8 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
       - run: echo "All release checks passed for $GITHUB_SHA"
 
   release:
