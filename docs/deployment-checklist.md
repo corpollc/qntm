@@ -18,13 +18,13 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | --- | --- |
 | TypeScript library | Crypto/protocol/event/subscription tests, build, package contents |
 | Python | Full suite with MCP extras on Python 3.10 and 3.12; minimum WebSocket dependency on 3.10; generated help |
-| Charter | Go race tests and vet; real Go/TypeScript HTTP/restart tests; deterministic shared vectors |
+| Charter | Go race tests, vet, and vulnerability scan; real Go/TypeScript HTTP/restart tests; deterministic shared vectors |
 | Browser | Unit/component tests, production build, Playwright conversation journeys, runtime dependency audit |
 | Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
 | Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, and restart journeys |
 | Adapters | OpenClaw, NanoClaw, and Claude channel tests/typecheck; real MCP channel transport; runtime dependency audits |
-| Integration and packaging | Protocol model suite; echo-worker typecheck; source/lockfile version checks; Python build and twine validation |
+| Integration and packaging | Protocol model suite; echo-worker typecheck; source/lockfile version checks; Python runtime/MCP lock vulnerability audit, build, and twine validation |
 
 The cross-surface suite uses local Workers and browser instances; some API recipe journeys call public services. Test failures there must be diagnosed rather than silently skipped. Adapter contract tests do not replace smoke tests in each external host release. Go charter support is a reference implementation, not a public service.
 

@@ -11,10 +11,11 @@ license = "BUSL-1.1"
 requires-python = ">=3.10"
 dependencies = [
     "PyNaCl>=1.5.0",
-    "cryptography>=42.0",
-    "cbor2>=5.6",
+    "cryptography>=50.0",
+    "cbor2>=5.9",
     "certifi>=2024.0",
     "httpx>=0.27",
+    "idna>=3.15",  # Security floor for the HTTP client dependency.
     "websockets>=13.0",
 ]
 authors = [
@@ -37,7 +38,7 @@ Homepage = "https://qntm.corpo.llc"
 Repository = "https://github.com/corpollc/qntm"
 
 [project.optional-dependencies]
-mcp = ["mcp[cli]>=1.0.0,<2"]
+mcp = ["mcp[cli]>=1.28.1,<2"]
 
 [project.scripts]
 qntm = "qntm.cli:main"

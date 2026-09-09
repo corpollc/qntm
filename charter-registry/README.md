@@ -4,7 +4,7 @@ This Go server implements the experimental [v0.2 draft](../specs/working-group/c
 
 ## Run locally
 
-Requires Go 1.25 or newer:
+Requires Go 1.27.1 or newer (the module pins a patched standard library):
 
 ```sh
 cd charter-registry

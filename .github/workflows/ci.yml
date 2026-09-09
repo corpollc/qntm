@@ -47,7 +47,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: client/package-lock.json
-      - run: go test -race ./... && go vet ./...
+      - run: go test -race ./... && go vet ./... && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
         working-directory: charter-registry
       - run: npm ci && npm run build && npm run test:charter-server
         working-directory: client
@@ -215,5 +215,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv lock --check
         working-directory: python-dist
+      - name: Audit locked Python runtime and MCP dependencies
+        working-directory: python-dist
+        run: |
+          uv export --locked --extra mcp --format requirements-txt --no-dev --no-emit-project --no-hashes > /tmp/qntm-runtime-requirements.txt
+          uvx pip-audit --no-deps --disable-pip -r /tmp/qntm-runtime-requirements.txt
       - run: pip install build twine
       - run: python -m build python-dist && twine check python-dist/dist/*

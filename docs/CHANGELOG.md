@@ -8,7 +8,7 @@
 
 - Continuous `recv --watch` with JSONL, reconnects, repeatable webhooks and executable hooks, independent retries, and shared Python/TypeScript receive-event fixtures.
 - Locally pinned guidance contacts and exact-message review for legal, ethical, and law-enforcement questions in the browser, CLI, and MCP.
-- Experimental charter v0.2 support: TypeScript library, durable Go reference registrar, self-certification, parent/threshold governance, namespaced statements, and verifiable log/map evidence. The draft remains unratified; no public registrar or independent witnesses are included.
+- Experimental charter v0.2 support: TypeScript library, durable Go reference registrar (Go 1.27.1+), self-certification, parent/threshold governance, namespaced statements, and verifiable log/map evidence. The draft remains unratified; no public registrar or independent witnesses are included.
 - Full release gating across libraries, workers, adapters, Python versions, real browser/CLI journeys, terminal PTY input, and Go/TypeScript charter integration. Generated CLI help and source/lockfile versions are checked for drift.
 
 ### Fixed
@@ -19,7 +19,7 @@
 - Python private/atomic state writes, MCP identity/invite encoding, and shared receive/rekey handling; TypeScript subscription callbacks retain replay progress on failure.
 - Claude notifications persist before cursor advancement and survive failed transport writes, restart, and a CLI receiver sharing the profile.
 - Lost send responses recover by matching the exact ciphertext; unresolved delivery reports an unknown outcome and message ID.
-- Reconciled main with the already published v0.5.1 browser fixes. Runtime dependency audit gates remain enabled; vulnerable older Vitest 3 versions were updated.
+- Reconciled main with the already published v0.5.1 browser fixes. Runtime dependency audit gates remain enabled; vulnerable older Vitest 3 versions were updated. Refreshed the Python runtime/MCP lock, raised security dependency floors, and added Python and Go vulnerability scans.
 
 ### Compatibility
 
