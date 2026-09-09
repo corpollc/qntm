@@ -67,6 +67,9 @@ export function inviteToToken(invite: InvitePayload): string {
 export function inviteToURL(invite: InvitePayload, baseURL: string): string {
   const token = inviteToToken(invite);
   const url = new URL(baseURL);
+  // A reused legacy invite URL can contain a bootstrap secret in its query.
+  // Emit only the new fragment; never carry old query parameters forward.
+  url.search = '';
   url.hash = token;
   return url.toString();
 }

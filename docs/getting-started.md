@@ -58,6 +58,10 @@ qntm convo join <invite-token>
 
 Invite tokens are the bootstrap secret for a conversation. Share them out of band.
 
+Current checkout: `qntm convo invite <conversation-id>` returns a re-share token and a `#TOKEN` link. The terminal's `/invite` command uses the same fragment format. With version 0.6.1, share the bare `invite_token` value: the older Python re-share and terminal commands put the token in an HTTP query. See the [invite-link privacy notes](metadata-privacy.md#browser-invite-links).
+
+For library callers, TypeScript's `inviteToURL(invite, baseURL)` and Python's `invite_to_url(invite, base_url)` construct fragment links and discard old query parameters. The Python helper is unreleased. These links work with the browser, Python and TypeScript invite parsers.
+
 ### Send and receive messages
 
 ```bash

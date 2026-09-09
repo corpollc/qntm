@@ -49,6 +49,7 @@ from .invite import (
     create_invite,
     derive_conversation_keys,
     invite_from_url,
+    invite_to_url,
     invite_to_token,
 )
 from .message import (
@@ -1012,8 +1013,7 @@ def cmd_convo_invite(args):
     if not token:
         _error("no invite token stored for this conversation (created before token persistence was added)")
 
-    import urllib.parse
-    link = f"https://chat.corpo.llc?invite={urllib.parse.quote(token, safe='')}"
+    link = invite_to_url(invite_from_url(token), "https://chat.corpo.llc")
     _output("convo.invite", {
         "conversation_id": conv["id"],
         "name": conv.get("name", ""),
@@ -3097,7 +3097,7 @@ claude code channel:
     join_p.add_argument("token", help="Invite token")
     join_p.add_argument("--name", default="", help="Conversation name")
 
-    invite_p = convo_sub.add_parser("invite", help="Get invite token for existing conversation")
+    invite_p = convo_sub.add_parser("invite", help="Get token and fragment link for existing conversation")
     invite_p.add_argument("conv", help="Conversation ID or prefix")
 
     convo_sub.add_parser("list", help="List conversations")

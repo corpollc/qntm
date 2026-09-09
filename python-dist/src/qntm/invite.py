@@ -1,6 +1,7 @@
 """Invite creation, parsing, and conversation bootstrapping."""
 
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 from .cbor import marshal_canonical, unmarshal
 from .constants import DEFAULT_SUITE, PROTOCOL_VERSION
@@ -73,6 +74,15 @@ def validate_invite(invite: dict) -> None:
 def invite_to_token(invite: dict) -> str:
     data = serialize_invite(invite)
     return base64url_encode(data)
+
+
+def invite_to_url(invite: dict, base_url: str) -> str:
+    """Put an invite in the URL fragment, discarding any previous query/fragment."""
+    parts = urlsplit(base_url)
+    if not parts.scheme or (parts.scheme in ("http", "https") and not parts.netloc):
+        raise ValueError("invite base URL must be absolute")
+    path = parts.path or ("/" if parts.scheme in ("http", "https") else "")
+    return urlunsplit((parts.scheme, parts.netloc, path, "", invite_to_token(invite)))
 
 
 def invite_from_url(invite_url: str) -> dict:

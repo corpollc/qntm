@@ -558,6 +558,15 @@ describe('Invites', () => {
     expect(new Uint8Array(restored.conv_id)).toEqual(new Uint8Array(invite.conv_id));
   });
 
+  it('drops legacy query secrets and old fragments when building an invite URL', () => {
+    const invite = createInvite(generateIdentity(), 'direct');
+    const url = new URL(inviteToURL(invite, 'https://chat.corpo.llc/invite?invite=OLD_SECRET&tracking=value#old'));
+    expect(url.pathname).toBe('/invite');
+    expect(url.search).toBe('');
+    expect(url.hash).toBe(`#${inviteToToken(invite)}`);
+    expect(inviteFromURL(url.href)).toEqual(invite);
+  });
+
   it('stored token lets a second user derive the same conversation keys', () => {
     const alice = generateIdentity();
     const invite = createInvite(alice, 'direct');

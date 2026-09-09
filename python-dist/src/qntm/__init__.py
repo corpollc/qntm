@@ -46,6 +46,7 @@ from .invite import (
     derive_conversation_keys,
     invite_from_url,
     invite_to_token,
+    invite_to_url,
     validate_invite,
 )
 from .message import (

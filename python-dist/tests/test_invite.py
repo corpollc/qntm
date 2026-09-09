@@ -4,6 +4,7 @@ from qntm import (
     generate_identity,
     create_invite,
     invite_to_token,
+    invite_to_url,
     invite_from_url,
     derive_conversation_keys,
     create_conversation,
@@ -39,6 +40,44 @@ def test_invite_url_fragment():
     url = f"https://qntm.corpo.llc/invite#{token}"
     restored = invite_from_url(url)
     assert bytes(restored["conv_id"]) == invite["conv_id"]
+
+
+def test_invite_url_discards_legacy_query_and_fragment():
+    from urllib.parse import urlsplit
+
+    invite = create_invite(generate_identity())
+    link = invite_to_url(invite, "https://chat.corpo.llc/invite?invite=OLD_SECRET&tracking=value#old")
+    parsed = urlsplit(link)
+    assert parsed.path == "/invite"
+    assert parsed.query == ""
+    assert parsed.fragment == invite_to_token(invite)
+    assert invite_from_url(link) == invite
+
+
+def test_cli_reshare_emits_a_fragment_link_without_changing_the_token(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from urllib.parse import urlsplit
+
+    def command(*args):
+        result = subprocess.run(
+            [sys.executable, "-m", "qntm", "--config-dir", str(tmp_path), *args],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        response = json.loads(result.stdout)
+        assert response["ok"]
+        return response["data"]
+
+    command("identity", "generate")
+    created = command("convo", "create", "--name", "Private invite")
+    shared = command("convo", "invite", created["conversation_id"])
+    parsed = urlsplit(shared["invite_link"])
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "chat.corpo.llc"
+    assert parsed.query == ""
+    assert parsed.fragment == created["invite_token"] == shared["invite_token"]
+    assert invite_from_url(shared["invite_link"])["conv_id"].hex() == created["conversation_id"]
 
 
 def test_group_invite():

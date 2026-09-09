@@ -51,6 +51,19 @@ describe.sequential('commands extracted from the README against real clients', (
     expect((received.data!.messages as any[]).some(m => m.unsafe_body === 'task complete: 3 files processed')).toBe(true);
     for (const match of block('## Examples', 'bash').matchAll(/^python (examples\/[\w_]+\.py)/gm)) await execute(python, [join(repo, match[1])], { timeout: 10_000 });
   }, 45_000);
+  it('joins a Python re-share link from TypeScript and delivers an encrypted message', async () => {
+    const created = await harness.alice.run(['convo', 'create', '--name', 'Re-share interoperability']);
+    const id = String(created.data!.conversation_id);
+    const shared = await harness.alice.run(['convo', 'invite', id]);
+    const link = new URL(String(shared.data!.invite_link));
+    expect(link.search).toBe('');
+    expect(link.hash).toBe(`#${created.data!.invite_token}`);
+    await harness.charlie.run(['identity', 'generate']);
+    await harness.charlie.run(['group', 'join', '--', link.href]);
+    await harness.charlie.run(['send', id, 'TypeScript joined the fragment link']);
+    const received = await harness.alice.run(['recv', id]);
+    expect((received.data!.messages as any[]).some(message => message.unsafe_body === 'TypeScript joined the fragment link')).toBe(true);
+  }, 30_000);
   it('runs the gateway example and receives the exact approved echo payload', async () => {
     const lines = block('## API Gateway', 'bash').split('\n').filter(line => line.startsWith('qntm '));
     for (const line of lines.filter(line => !line.includes('--watch'))) await runLine(line);

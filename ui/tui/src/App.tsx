@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import { DropboxClient } from '@corpollc/qntm';
+import { DropboxClient, inviteFromURL, inviteToURL } from '@corpollc/qntm';
 import wrapAnsi from 'wrap-ansi';
 import { createRequire } from 'node:module';
 const { version: packageVersion } = createRequire(import.meta.url)('../package.json') as { version: string };
@@ -388,7 +388,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         setMessages([]);
         setScrollOffset(0);
         addSystemMessage('Invite created! Share this link:', theme.success);
-        addSystemMessage(`https://chat.corpo.llc?invite=${encodeURIComponent(token)}`, theme.text);
+        addSystemMessage(inviteToURL(inviteFromURL(token), 'https://chat.corpo.llc'), theme.text);
         addSystemMessage('They can also join with the CLI: uvx qntm convo join <token>', theme.textDim);
         break;
       }

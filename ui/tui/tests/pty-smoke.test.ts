@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DropboxClient } from '@corpollc/qntm';
+import { DropboxClient, inviteFromURL, inviteToToken, inviteToURL } from '@corpollc/qntm';
 import { pollConversation, sendMessage } from '../src/lib/poller.js';
 import { Store } from '../src/lib/store.js';
 import { TestRelayServer } from './support/relay.js';
@@ -120,6 +120,48 @@ describe('TUI PTY smoke', () => {
 
     expect(identity).not.toBeNull();
     expect(identity!.keyID).toHaveLength(16);
+  });
+
+  it('prints a fragment-only invite link from the real /invite command', { timeout: 30_000 }, async () => {
+    const configDir = makeTempDir('qntm-tui-pty-invite-link-');
+    dirs.push(configDir);
+    const script = `
+      set timeout 15
+      lassign $argv node entry configDir relayUrl
+      set stty_init "rows 40 columns 1000"
+      spawn env CI=false TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
+      expect {
+        "Keypair loaded:" { }
+        timeout { error "TUI identity did not initialize" }
+      }
+      send -- "/invite Private link"
+      expect {
+        "/invite Private link" { }
+        timeout { error "Invite command not rendered" }
+      }
+      send -- "\\r"
+      expect {
+        "https://chat.corpo.llc/#" { }
+        timeout { error "Fragment invite link not rendered" }
+      }
+      send -- "/quit"
+      expect {
+        "/quit" { }
+        timeout { error "Quit command not rendered" }
+      }
+      send -- "\\r"
+      expect {
+        eof { }
+        timeout { error "TUI did not quit" }
+      }
+    `;
+    const result = await runExpectSession(script, [process.execPath, BUILT_ENTRY, configDir, relay.url]);
+    const conversation = new Store(configDir, relay.url).loadConversations()[0];
+    const link = inviteToURL(inviteFromURL(conversation.inviteToken!), 'https://chat.corpo.llc');
+    expect(result.stdout).toContain(link);
+    expect(result.stdout).not.toContain('https://chat.corpo.llc?invite=');
+    expect(new URL(link).search).toBe('');
+    expect(inviteToToken(inviteFromURL(link))).toBe(conversation.inviteToken);
   });
 
   it('submits join, message, and quit through the real interactive composer', { timeout: 60000 }, async () => {
