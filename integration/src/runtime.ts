@@ -159,16 +159,18 @@ export class ManagedProcess {
   }
 
   async stop(): Promise<void> {
-    if (this.child.exitCode !== null) return;
-    this.child.kill('SIGTERM');
-    await Promise.race([
-      new Promise<void>((resolveExit) => {
-        this.child.once('exit', () => resolveExit());
-      }),
-      delay(5_000).then(() => {
-        if (this.child.exitCode === null) this.child.kill('SIGKILL');
-      }),
-    ]);
+    const child = this.child;
+    if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+    await new Promise<void>(resolveExit => {
+      // Bind cleanup to this process and cancel it on exit. A lingering timer
+      // referencing this.child could otherwise kill a subsequent restart.
+      const timer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolveExit();
+      });
+      child.kill('SIGTERM');
+    });
   }
 
   async restart(): Promise<void> {

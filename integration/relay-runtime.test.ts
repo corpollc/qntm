@@ -126,7 +126,10 @@ describe('local service readiness', () => {
     const original = await worker.waitForLocalUrl('worker', '/healthz', 3_000);
     await worker.restart();
     expect(await worker.waitForLocalUrl('worker', '/healthz', 3_000)).toBe(original);
-  });
+    // The previous process's forced-stop deadline must not kill its replacement.
+    await new Promise(resolve => setTimeout(resolve, 5_200));
+    expect((await fetch(`${original}/healthz`)).status).toBe(200);
+  }, 10_000);
 
   it('ignores an earlier process announcement after restart', async () => {
     const url = await listen((_request, response) => response.end('ready'));
