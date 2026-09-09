@@ -19,6 +19,14 @@ import (
 
 var ErrConflict = errors.New("sequence already exists, is missing, or forks current head")
 var ErrSnapshot = errors.New("snapshot size or index is out of range")
+var ErrCapacity = errors.New("registry capacity reached; contact the operator")
+
+type Limits struct {
+	MaxEntries  uint64 `json:"max_entries"`
+	MaxLogBytes uint64 `json:"max_log_bytes"`
+}
+
+func DefaultLimits() Limits { return Limits{MaxEntries: 2000, MaxLogBytes: 16 << 20} }
 
 type ValidationError struct{ Cause error }
 
@@ -97,9 +105,19 @@ type Store struct {
 	Registry  string
 	key       ed25519.PrivateKey
 	createdAt string
+	limits    Limits
 }
 
 func Open(path, registry string) (*Store, error) {
+	return OpenWithLimits(path, registry, DefaultLimits())
+}
+
+// OpenWithLimits bounds accepted history. Existing entries remain readable if an
+// operator lowers the limits; only further appends are rejected.
+func OpenWithLimits(path, registry string, limits Limits) (*Store, error) {
+	if limits.MaxEntries == 0 || limits.MaxLogBytes == 0 {
+		return nil, errors.New("registry capacity limits must be positive")
+	}
 	if registry == "" {
 		return nil, errors.New("registry identifier is required")
 	}
@@ -110,7 +128,7 @@ func Open(path, registry string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, Registry: registry}
+	s := &Store{db: db, Registry: registry, limits: limits}
 	err = db.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists(metadataBucket)
 		if err != nil {
@@ -242,6 +260,10 @@ func (s *Store) Submit(input Statement) (Receipt, error) {
 		encoded, err := canonicalValue(entry)
 		if err != nil {
 			return err
+		}
+		stats := storageStats(tx)
+		if stats.Entries >= s.limits.MaxEntries || uint64(len(encoded)) > s.limits.MaxLogBytes || stats.LogBytes > s.limits.MaxLogBytes-uint64(len(encoded)) {
+			return ErrCapacity
 		}
 		if err := tx.Bucket(entriesBucket).Put(indexKey(uint64(len(entries))), encoded); err != nil {
 			return err

@@ -26,7 +26,7 @@ Here is the step-by-step flow for making a group-approved API call:
 
 1. **Enable the API Gateway.** A conversation admin enables the gateway on a conversation and sets the number of required approvals. All current participants become signers. A confirmation message appears in the chat.
 
-2. **Add API Keys (if needed).** If the target API requires authentication, a signer provisions an API key. The key is encrypted to the gateway and stored securely. Only the gateway can decrypt it.
+2. **Configure the service.** A signer provisions its API key, encrypted to the gateway. The current executor requires a service entry even for public APIs; use a harmless demonstration value and a custom header such as `X-Qntm-Demo` for those. A missing or expired entry leaves approved requests waiting.
 
 3. **Select an API Template and fill in parameters.** Open the API Gateway panel and choose a template from the dropdown. If the template has parameters (for example, an item ID or search query), fill them in. You will see a live preview of the resolved URL before submitting.
 
@@ -66,7 +66,7 @@ If you want to operate your own trust boundary, qntm ships the full Cloudflare W
 
 In the TUI, gate messages are rendered as formatted cards in the conversation view:
 
-- **API Request cards** show the HTTP method, URL, service, arguments, and expiration time. If the request is incoming and not expired, you will see instructions to press `a` to approve or use the `/approve` command followed by the request ID.
+- **API Request cards** show the HTTP method, URL, service, arguments, and expiration time. TUI approval actions are not implemented in 0.6.0; use `qntm gate-approve` with the same profile or the web UI.
 - **Approval cards** show which signer approved which request.
 - **Executed cards** show the HTTP status code after the gateway makes the call.
 - **Response cards** show the API response body.

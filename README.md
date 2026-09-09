@@ -52,8 +52,9 @@ Talk to our live echo bot to see E2E encryption in action:
 qntm identity generate
 qntm convo join "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUEgFVlTbS7D2TsYwibcOG_RraW52aXRlX3NhbHRYIFzWXq0HBDoqiG69PubwksJ2KYD9PfmSjiN7uDx7WJphbWludml0ZV9zZWNyZXRYIOoxcOzsn50VZ-E6F1kLwxHcrTK40f4BoU60McQCY4lJbWludml0ZXJfaWtfcGtYIKStglMb1FebJrKMxFfr90mWtlfhCKMYF4oYyy9HO1Z_"
 qntm send 48055654db4bb0f64ec63089b70e1bf4 "Hello, echo bot!"
-qntm recv 48055654db4bb0f64ec63089b70e1bf4
-# → 🔒 echo: Hello, echo bot!
+qntm recv 48055654db4bb0f64ec63089b70e1bf4 --watch
+# Within about a minute, unsafe_body contains: 🔒 echo: Hello, echo bot!
+# Press Ctrl+C to stop watching.
 ```
 
 Every message is encrypted end-to-end. This demo invitation is public: anyone with the token can read messages in the shared conversation. Do not send private data to the demo.
@@ -115,19 +116,27 @@ As AI agents gain broader access to the internet, they need more than permission
 The gateway lets any conversation pull up and approve / reject API calls. Any participant can propose an API call. Other participants review it in-chat and approve or reject. Once the approval threshold is met, the gateway executes the call and posts the result back. Secrets are kept securely by the gateway itself. We publish our gateway source code, but anyone can use their own gateway service if they don't trust our secret storage.
 
 ```bash
-# Promote a conversation to require 2-of-3 approval
-qntm gate-promote -c <conv-id> --gateway-url https://gateway.corpo.llc --threshold 2
+# Continue with the two profiles above; both have exchanged messages.
+qntm --config-dir /tmp/alice gate-promote -c <conv-id> --gateway-url https://gateway.corpo.llc --threshold 2
+qntm --config-dir /tmp/alice recv <conv-id>
+
+# After gate.accept, use gateway_public_key from the promotion output.
+# The current executor requires a service entry even for public APIs.
+# This demonstration header is deliberately not a real credential.
+qntm --config-dir /tmp/alice gate-secret -c <conv-id> --service httpbin --gateway-pubkey <gateway-public-key> --value demo --header-name X-Qntm-Demo --header-template '{value}'
 
 # Propose a call using a bundled recipe
-qntm gate-run httpbin.echo -c <conv-id> --arg message="Hello"
+qntm --config-dir /tmp/alice gate-run httpbin.echo -c <conv-id> --arg data="Hello"
 
 # Another participant approves
-qntm gate-approve <request-id> -c <conv-id>
+qntm --config-dir /tmp/bob recv <conv-id>
+qntm --config-dir /tmp/bob gate-approve <request-id> -c <conv-id>
+qntm --config-dir /tmp/alice recv <conv-id> --watch
 ```
 
 ### How the Gateway Works
 
-The gateway is an open-source Cloudflare Worker ([`gateway-worker/`](gateway-worker/)). When a conversation is promoted:
+The gateway is a source-available Cloudflare Worker ([`gateway-worker/`](gateway-worker/)). When a conversation is promoted:
 
 1. A participant requests a gateway invitation, posts it signed in chat, and sends sealed access material out of band. The gateway verifies that invitation and posts its own signed acceptance, completing setup. See [gateway invitations](docs/gateway-invitations.md).
 2. API credentials are encrypted directly to the gateway's public key using NaCl sealed boxes — no participant or the relay can read them
@@ -177,13 +186,13 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **TypeScript lib** | ✅ | ✅ | Partial | Partial | Exposes protocol types, crypto, relay subscriptions, and gateway signing / helper APIs, but custom integrations still need to assemble and drive the full `gate.*` workflow. |
 | **OpenClaw plugin** | ✅ | ✅ | Partial | ❌ | Multi-conversation relay transport is implemented, but non-text `body_type`s are passed through as untyped context and outbound sends are text-only today. |
 
-The OpenClaw plugin should be treated as chat transport for now, not as a qntm API Gateway controller.
+The remaining gateway parity work is tracked in beads: canonical TypeScript workflows (`qntm-wu1s`), TUI actions (`qntm-u1hq`), and structured OpenClaw actions (`qntm-dhqb`). Each requires real cross-client acceptance tests before its row changes to complete. The OpenClaw plugin currently provides chat transport.
 
 ## Experimental charter registry
 
 v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.
 
-The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. The server is separate from messaging and is not deployed as a public registry. Python charter APIs and independent registrar witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
+The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. A public experimental registry is deployed at **https://charter.qntm.corpo.llc**, separately from messaging, with HTTPS, bounded storage, private monitoring and daily snapshots. Use the [published registrar pin and operations guide](docs/charter-operations.md). Python charter APIs and independent witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
 
 ## Security & Threat Model
 
@@ -217,7 +226,7 @@ Runnable Python examples — no server needed:
 
 ```bash
 python examples/two_agents.py        # E2E encrypted messaging between two agents
-python examples/gateway_approval.py  # M-of-N API approval (Stripe charge, 2-of-3 signers)
+python examples/gateway_approval.py  # Offline approval-signature walkthrough (no API call)
 ```
 
 See [`examples/`](examples/) for details.
@@ -265,8 +274,8 @@ pip install 'qntm[mcp]'
 ## Building
 
 ```bash
-cd client && npm install && npm run build    # TypeScript library
-cd ui/aim-chat && npm install && npm run build  # Web UI
+(cd client && npm install && npm run build)    # TypeScript library
+(cd ui/aim-chat && npm install && npm run build)  # Web UI
 uv build python-dist/                        # Python package
 ```
 

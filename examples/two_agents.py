@@ -71,7 +71,6 @@ def main():
 
     print(f"\n✅ Full E2E encryption roundtrip verified!")
     print(f"   - Ed25519 identity keys")
-    print(f"   - X25519 key agreement")
     print(f"   - AEAD encryption (XChaCha20-Poly1305)")
     print(f"   - Relay sees only ciphertext — zero knowledge of content")
     print(f"\nTo use with a live relay: qntm send <conv_id> 'message'")

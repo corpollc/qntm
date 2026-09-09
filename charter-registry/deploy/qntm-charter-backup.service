@@ -1,0 +1,14 @@
+[Unit]
+Description=Consistent private qntm charter snapshot
+After=qntm-charter.service
+Requires=qntm-charter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/qntm-charter/backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/qntm-charter /var/lib/qntm-charter-metrics

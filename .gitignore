@@ -38,3 +38,6 @@ ui/tui/test-results/
 # Python tool caches
 __pycache__/
 *.py[cod]
+
+# Worker dry-run bundles
+/echo-worker/dist/

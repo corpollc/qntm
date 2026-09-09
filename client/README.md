@@ -41,6 +41,4 @@ the application. See [receive hooks and language boundaries](https://github.com/
 Import `@corpollc/qntm/charter` for self-charters, parent/threshold governance,
 namespace statements, signed transitions, and verification of registrar log/map
 proofs. The [Go reference server and runnable example](https://github.com/corpollc/qntm/blob/main/charter-registry/README.md)
-exercise the same v0.2 draft. This draft is unratified; no public registry or
-independent witnesses are included. The ordinary client import does not opt into
-charter APIs.
+exercise the same unratified v0.2 draft. The [public experimental registry and trusted pin](https://github.com/corpollc/qntm/blob/main/docs/charter-operations.md) are available at `https://charter.qntm.corpo.llc`. Independent witnesses remain unimplemented. The ordinary client import does not opt into charter APIs.

@@ -1,6 +1,6 @@
 # Charter Registry reference server
 
-This Go server implements the experimental [v0.2 draft](../specs/working-group/charter-registry.md): self-charters, agent-governed subagents, threshold governance, namespaced experiments, durable append-only storage, and verifiable log/map proofs. It is separate from the qntm relay and gateway. The draft is unratified; this reference implementation has no independent witnesses or production deployment.
+This Go server implements the experimental [v0.2 draft](../specs/working-group/charter-registry.md): self-charters, agent-governed subagents, threshold governance, namespaced experiments, durable append-only storage, and verifiable log/map proofs. It is separate from the qntm relay and gateway. The draft is unratified and independent witnesses are not implemented. A public experimental deployment runs at **https://charter.qntm.corpo.llc**; see its [trusted pin, limits, monitoring and operations guide](../docs/charter-operations.md).
 
 ## Run locally
 
@@ -15,7 +15,7 @@ The startup JSON prints the bound address, registry audience, and registrar publ
 
 The database contains the registrar's private signing seed and all accepted statements. The server creates its directory with mode 0700 and database with mode 0600, holds an exclusive process lock, and commits/fsyncs each statement before returning a receipt. Restarting preserves its identity and historical signed heads. Startup replays the stored history and rejects corruption or a different registry audience.
 
-For a consistent backup, stop the process, copy `data/registry.db` to protected storage, then restart. Preserve the entire file, including metadata. Losing it loses both history and the registrar key. Do not replace a lost database with a new empty one under an existing trusted identity. Restoring an old backup can lose previously acknowledged writes; compare retained external checkpoints before serving it.
+For a consistent backup, use the loopback-only admin listener (`--admin-listen 127.0.0.1:9085`) and fetch `/backup`, or stop the process before copying `data/registry.db`. The admin response includes the private signing key; never expose it publicly. Preserve the entire file, including metadata. Losing it loses both history and the registrar key. Do not replace a lost database with a new empty one under an existing trusted identity. Restoring an old backup can lose previously acknowledged writes; compare retained external checkpoints before serving it.
 
 ## TypeScript client
 
@@ -81,7 +81,7 @@ Inclusion paths list sibling hashes from leaf to root. A range proof carries the
 
 ## Limits and deployment
 
-This is a small reference registrar: it replays history and rebuilds trees in memory. It has request size/time limits but no quotas, rate limiting, tree cache, multi-process replication, CORS configuration, witness service, or automated registrar key rotation. A public deployment needs resource controls, TLS termination, durable storage and backup operation, monitoring, and a checkpoint publication policy. Keep the default loopback binding for local experiments. No dependency on the qntm gateway is required.
+This is a small reference registrar: it replays history and rebuilds trees in memory. Defaults limit accepted history to 2,000 entries and 16 MiB, with a 1 MiB request body limit and four concurrent HTTP requests. The hosted deployment adds Nginx throttling, exe.dev TLS, private Prometheus/Grafana monitoring, and daily consistent snapshots. See [operations](../docs/charter-operations.md) before changing these limits. Tree caching, multi-process replication, configurable CORS, independent witnesses, and automated registrar key rotation remain unimplemented. Keep loopback binding for local experiments. No dependency on the qntm gateway is required.
 
 ## Verification
 

@@ -53,7 +53,7 @@ export async function waitForHttp(url: string, init?: RequestInit, timeoutMs = 3
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-async function getFreePort(): Promise<number> {
+export async function getFreePort(): Promise<number> {
   return await new Promise<number>((resolvePort, reject) => {
     const server = createServer();
     server.listen(0, '127.0.0.1', () => {
@@ -561,6 +561,13 @@ async function handleFixtureRequest(
     const text = parsed.text || '';
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ leet: text.replace(/a/gi, '4').replace(/e/gi, '3').replace(/o/gi, '0') }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/post') {
+    let body = ''; for await (const chunk of req) body += chunk.toString();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ json: JSON.parse(body || '{}') }));
     return;
   }
 

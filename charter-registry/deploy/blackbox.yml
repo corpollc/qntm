@@ -1,0 +1,8 @@
+modules:
+  https_ok:
+    prober: http
+    timeout: 10s
+    http:
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4

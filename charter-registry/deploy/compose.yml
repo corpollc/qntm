@@ -1,0 +1,67 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    network_mode: host
+    restart: unless-stopped
+    command: ['--config.file=/etc/prometheus/prometheus.yml', '--storage.tsdb.path=/prometheus', '--storage.tsdb.retention.time=30d', '--storage.tsdb.retention.size=2GB', '--web.listen-address=127.0.0.1:9090']
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus:/prometheus
+    mem_limit: 768m
+    cpus: 0.5
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  grafana:
+    image: grafana/grafana:13.2.1
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: https://qntm-charter.exe.xyz:3000/
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_AUTH_BASIC_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_COOKIE_SECURE: 'true'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/charter.json
+    secrets: [grafana_admin_password]
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/default.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
+      - ./charter-dashboard.json:/etc/grafana/dashboards/charter.json:ro
+    mem_limit: 512m
+    cpus: 0.5
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+    command: ['--path.rootfs=/host', '--web.listen-address=127.0.0.1:9100', '--collector.textfile.directory=/textfile']
+    volumes:
+      - /:/host:ro,rslave
+      - /var/lib/qntm-charter-metrics:/textfile:ro
+    mem_limit: 128m
+    cpus: 0.2
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  blackbox:
+    image: prom/blackbox-exporter:v0.28.0
+    network_mode: host
+    restart: unless-stopped
+    command: ['--config.file=/etc/blackbox/config.yml', '--web.listen-address=127.0.0.1:9115']
+    volumes:
+      - ./blackbox.yml:/etc/blackbox/config.yml:ro
+    mem_limit: 128m
+    cpus: 0.2
+    logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+volumes:
+  prometheus:
+  grafana:
+secrets:
+  grafana_admin_password:
+    file: /etc/qntm-charter/grafana-admin-password

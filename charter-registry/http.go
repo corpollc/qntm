@@ -16,7 +16,7 @@ func (s *Store) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, 200, map[string]any{"registry": s.Registry, "draft_version": DraftVersion, "registrar": s.PublicKey(), "max_statement_bytes": MaxStatementBytes, "witnessed": false})
+		respond(w, 200, map[string]any{"registry": s.Registry, "draft_version": DraftVersion, "registrar": s.PublicKey(), "max_statement_bytes": MaxStatementBytes, "capacity": s.limits, "witnessed": false})
 	})
 	mux.HandleFunc("POST /v1/statements", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MaxStatementBytes)
@@ -39,6 +39,8 @@ func (s *Store) Handler() http.Handler {
 		if err != nil {
 			var invalid *ValidationError
 			switch {
+			case errors.Is(err, ErrCapacity):
+				reject(w, 503, "registry_capacity_reached", err)
 			case errors.Is(err, ErrConflict):
 				reject(w, 409, "sequence_conflict", err)
 			case errors.As(err, &invalid):

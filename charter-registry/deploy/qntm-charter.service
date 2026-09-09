@@ -1,0 +1,30 @@
+[Unit]
+Description=qntm charter registry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=qntm-charter
+Group=qntm-charter
+ExecStart=/usr/local/bin/qntm-charter -listen 127.0.0.1:8085 -admin-listen 127.0.0.1:9085 -data-dir /var/lib/qntm-charter -registry charter.qntm.corpo.llc -max-entries 2000 -max-log-bytes 16777216 -max-concurrent 4
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+StateDirectory=qntm-charter
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=1G
+CPUQuota=150%
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

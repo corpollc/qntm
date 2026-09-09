@@ -20,7 +20,7 @@ python examples/two_agents.py
 
 ### `gateway_approval.py` — M-of-N API Approval
 
-Three signers set up a 2-of-3 approval threshold for a Stripe API call. Demonstrates the API Gateway — no single agent can execute a consequential API call alone.
+Three signers set up a 2-of-3 approval threshold for a Stripe API call. Demonstrates request and approval signatures locally. It does not start a gateway, provision credentials, or execute a Stripe API call. See the gateway cross-client tests for actual threshold enforcement.
 
 ```bash
 python examples/gateway_approval.py
@@ -34,8 +34,8 @@ python examples/gateway_approval.py
 | E2E encrypted messaging | `two_agents.py` |
 | AEAD envelope serialization | `two_agents.py` |
 | M-of-N approval signatures | `gateway_approval.py` |
-| Threshold rule enforcement | `gateway_approval.py` |
-| Cryptographic audit trail | `gateway_approval.py` |
+| Offline threshold illustration | `gateway_approval.py` |
+| Request and approval signature verification | `gateway_approval.py` |
 
 ## Next Steps
 

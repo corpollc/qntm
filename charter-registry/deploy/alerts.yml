@@ -1,0 +1,28 @@
+groups:
+  - name: charter
+    rules:
+      - alert: CharterUnavailable
+        expr: up{job="charter"} == 0 or probe_success{job="public_https"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Charter service or public HTTPS health check is failing'}
+      - alert: CharterCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="public_https"} - time() < 14 * 86400
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Charter TLS certificate expires in fewer than 14 days'}
+      - alert: CharterCapacity
+        expr: qntm_charter_entries / qntm_charter_capacity_entries > 0.8 or qntm_charter_log_bytes / qntm_charter_capacity_log_bytes > 0.8
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Charter log is above 80 percent capacity'}
+      - alert: CharterDiskSpace
+        expr: node_filesystem_avail_bytes{mountpoint="/",fstype!="rootfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!="rootfs"} < 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Charter VM has less than 20 percent disk space free'}
+      - alert: CharterBackupStale
+        expr: time() - qntm_charter_backup_timestamp_seconds > 30 * 3600 or absent(qntm_charter_backup_timestamp_seconds)
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Charter local snapshot is missing or older than 30 hours'}
