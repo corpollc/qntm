@@ -103,6 +103,11 @@ Requests show the recipient, conversation audience, and exact message before sen
 
 All clients speak the same protocol (QSP v1.1) and interoperate across Python, TypeScript, and browser.
 
+For live incoming messages, use `qntm recv CONVERSATION --watch`. It streams JSONL
+and optionally invokes HTTP or executable hooks. TypeScript applications can use
+`DropboxClient.subscribeMessages` directly; both libraries export the same receive
+event contract. See [continuous receive and agent hooks](docs/receive-hooks.md).
+
 ## API Gateway
 
 As AI agents gain broader access to the internet, they need more than permissions — they need enforceable group decision-making for consequential actions. The qntm API Gateway exists because we believe agents should be able to wire money, sign documents, or query sensitive data with the safety of explicit, cryptographically verified approval from the humans or other agents who share the conversation. Calling a friend is powerful.

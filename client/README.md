@@ -16,6 +16,7 @@ npm install @corpollc/qntm
 - Group membership and rekey helpers
 - Gate request, approval, and secret helpers
 - Dropbox relay client for browser or Node runtimes
+- Continuous subscriptions and portable `ReceiveEvent` / `createReceiveEvent` helpers
 
 ## Basic usage
 
@@ -27,3 +28,10 @@ const dropbox = new DropboxClient('https://inbox.qntm.corpo.llc')
 ```
 
 For the protocol specification, see `docs/QSP-v1.1.md` in the main repository.
+
+`DropboxClient.subscribeMessages` delivers replay and live envelopes with automatic
+reconnects. Persist each event before resolving `onMessage`; a rejection causes
+replay before later messages can advance progress. `createReceiveEvent` converts a
+verified decrypted message into the same versioned event exposed by the Python
+library and CLI hooks. Storage, hook delivery, and turn scheduling remain owned by
+the application. See [receive hooks and language boundaries](../docs/receive-hooks.md).

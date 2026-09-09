@@ -210,6 +210,101 @@ describe('DropboxClient', () => {
   });
 
   describe('subscribeMessages', () => {
+    it('replays a failed callback before processing later queued messages', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const received: number[] = [];
+      const onError = vi.fn();
+      let failOnce = true;
+      const subscription = client.subscribeMessages(fakeConvID(), 0, {
+        onMessage: async ({ seq }) => {
+          received.push(seq);
+          if (failOnce) {
+            failOnce = false;
+            throw new Error('durable inbox unavailable');
+          }
+        },
+        onError,
+      });
+      const emit = (socket: FakeWebSocket, seq: number) => socket.message(JSON.stringify({
+        type: 'message', seq, envelope_b64: 'YQ==',
+      }));
+      const first = FakeWebSocket.instances[0]!;
+      first.open();
+      emit(first, 1);
+      emit(first, 2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([1]);
+      expect(onError).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1000);
+      const second = FakeWebSocket.instances[1]!;
+      expect(second.url).toContain('from_seq=0');
+      second.open();
+      emit(second, 1);
+      emit(second, 2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([1, 1, 2]);
+      subscription.close();
+      await subscription.closed;
+    });
+
+    it('waits for an in-flight durable write before reading the reconnect cursor', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      let finish!: () => void;
+      const pending = new Promise<void>(resolve => { finish = resolve; });
+      let cursor = 0;
+      const subscription = client.subscribeMessages(fakeConvID(), 0, {
+        getCursor: () => cursor,
+        onMessage: async ({ seq }) => { await pending; cursor = seq; },
+      });
+      await Promise.resolve();
+      const first = FakeWebSocket.instances[0]!;
+      first.message('{"type":"message","seq":1,"envelope_b64":"YQ=="}');
+      await vi.advanceTimersByTimeAsync(0);
+      first.close(1012, 'restart');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(FakeWebSocket.instances[1]!.url).toContain('from_seq=1');
+      subscription.close();
+      await subscription.closed;
+    });
+
+    it('retries a rejected cursor read on reconnect', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const getCursor = vi.fn().mockResolvedValueOnce(0)
+        .mockRejectedValueOnce(new Error('temporary storage failure')).mockResolvedValue(4);
+      const onError = vi.fn();
+      const subscription = client.subscribeMessages(fakeConvID(), 0, {
+        getCursor, onMessage: vi.fn(), onError,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      FakeWebSocket.instances[0]!.close(1012);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(onError).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(FakeWebSocket.instances[1]!.url).toContain('from_seq=4');
+      subscription.close();
+      await subscription.closed;
+    });
+
+    it('does not open a socket after closing during an asynchronous cursor read', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      let finish!: (value: number) => void;
+      const cursor = new Promise<number>(resolve => { finish = resolve; });
+      const subscription = client.subscribeMessages(fakeConvID(), 0, {
+        getCursor: () => cursor, onMessage: vi.fn(),
+      });
+      subscription.close();
+      finish(0);
+      await subscription.closed;
+      await Promise.resolve();
+      expect(FakeWebSocket.instances).toHaveLength(0);
+    });
+
     it('opens a websocket subscription and decodes streamed envelopes', async () => {
       vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
 

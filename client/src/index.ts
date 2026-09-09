@@ -76,3 +76,6 @@ export * from './types.js';
 export * from './constants.js';
 
 export * from './gate/handshake.js';
+
+export { createReceiveEvent } from './receive/index.js';
+export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/index.js';

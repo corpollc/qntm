@@ -59,6 +59,7 @@ from .message import (
     verify_message_signature,
 )
 from .cbor import marshal_canonical, unmarshal
+from .receive import ReceiveEvent, ReceivedMessage, create_receive_event
 from .group import (
     GroupState,
     apply_rekey,

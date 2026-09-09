@@ -399,7 +399,12 @@ export class DropboxClient {
       handlers.onReconnect?.(reconnectAttempt, delayMs);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        void connect();
+        // A socket can close while durable application processing is pending.
+        // Finish that work before selecting the next replay cursor.
+        void messageQueue.then(connect).catch((error) => {
+          reportError(error);
+          scheduleReconnect();
+        });
       }, delayMs);
     };
 
@@ -411,10 +416,12 @@ export class DropboxClient {
       const resumeSequence = handlers.getCursor
         ? await Promise.resolve(handlers.getCursor())
         : currentSequence;
+      if (closedByCaller) return;
       currentSequence = resumeSequence;
 
       const ws = new WebSocket(toWebSocketUrl(this.baseUrl, conversationIdHex, resumeSequence));
       socket = ws;
+      let failed = false;
 
       ws.addEventListener('open', () => {
         if (socket !== ws || closedByCaller) {
@@ -425,12 +432,17 @@ export class DropboxClient {
       });
 
       ws.addEventListener('message', (event) => {
+        if (socket !== ws || closedByCaller || failed) return;
         messageQueue = messageQueue
           .then(async () => {
+            if (closedByCaller || failed) return;
             const payload = await webSocketDataToText(event.data);
             const frame = JSON.parse(payload) as SubscribeFrame;
             if (frame.type !== 'message') {
               return;
+            }
+            if (!Number.isSafeInteger(frame.seq) || frame.seq <= 0) {
+              throw new Error('invalid subscription sequence');
             }
 
             await handlers.onMessage({
@@ -440,7 +452,13 @@ export class DropboxClient {
             currentSequence = Math.max(currentSequence, frame.seq);
           })
           .catch((error) => {
+            // Never let a later callback acknowledge past this failed event.
+            // Replay from the last successful callback / durable app cursor.
+            failed = true;
             reportError(error);
+            if (socket === ws && !closedByCaller) {
+              ws.close(1011, 'receive callback failed');
+            }
           });
       });
 

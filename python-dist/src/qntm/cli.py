@@ -57,6 +57,7 @@ from .message import (
     deserialize_envelope,
     serialize_envelope,
 )
+from .receive import create_receive_event
 from .announce import (
     create_channel,
     derive_announce_keys,
@@ -104,7 +105,7 @@ from .identity import (
     key_id_from_public_key,
 )
 from .naming import NamingStore
-from .storage import load_json as _private_load_json, save_json as _private_save_json, private_directory
+from .storage import load_json as _private_load_json, save_json as _private_save_json, private_directory, private_lock
 
 AGENT_RULES = {
     "engagement_policy_scope": "local_only",
@@ -338,7 +339,25 @@ def _load_history(config_dir, conv_id_hex):
 
 
 def _save_history(config_dir, conv_id_hex, entries):
-    _save_json(_history_path(config_dir, conv_id_hex), entries)
+    # A send can finish while a watch is receiving. Merge under a process lock
+    # so a stale append cannot erase a durably received event or its metadata.
+    path = _history_path(config_dir, conv_id_hex)
+    with private_lock(path + ".lock"):
+        merged = _load_json(path, [])
+        positions = {item["msg_id"]: i for i, item in enumerate(merged) if "msg_id" in item}
+        for entry in entries:
+            position = positions.get(entry.get("msg_id"))
+            if position is None:
+                if "msg_id" in entry:
+                    positions[entry["msg_id"]] = len(merged)
+                merged.append(entry)
+            else:
+                previous = merged[position]
+                if previous.get("sequence") is not None and entry.get("sequence") is None:
+                    merged[position] = {**entry, **previous}
+                else:
+                    merged[position] = {**previous, **entry}
+        _save_json(path, merged)
 
 
 def _group_state_path(config_dir, conv_id_hex):
@@ -1077,6 +1096,17 @@ def cmd_send(args):
 
 
 def _process_received_messages(config_dir, identity, conversations, conv_record, raw_messages, up_to_seq):
+    # Serialize receive-state changes across CLI/MCP/watch and reload keys after
+    # waiting: another receiver may have applied a rekey while we were online.
+    with private_lock(os.path.join(config_dir, "receive.lock")):
+        current = _load_conversations(config_dir)
+        record = _resolve_conversation(current, conv_record["id"])
+        if record is None:
+            raise ValueError("conversation was removed while receiving")
+        return _process_received_messages_locked(config_dir, identity, current, record, raw_messages, up_to_seq)
+
+
+def _process_received_messages_locked(config_dir, identity, conversations, conv_record, raw_messages, up_to_seq):
     """Decrypt and persist a batch for both CLI and MCP, applying rekeys in order."""
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
@@ -1150,6 +1180,8 @@ def _process_received_messages(config_dir, identity, conversations, conv_record,
             "body_type": body_type,
             "verified": msg.get("verified", False),
         }
+        if type(raw_msg.get("seq")) is int and raw_msg["seq"] > 0:
+            entry["sequence"] = raw_msg["seq"]
 
         # Determine body encoding — decode group CBOR events to JSON
         group_json = _decode_group_body(body_type, body_bytes)
@@ -1174,7 +1206,13 @@ def _process_received_messages(config_dir, identity, conversations, conv_record,
             "sender_kid": sender_kid_hex,
             "body_type": body_type,
             "created_ts": envelope["created_ts"],
+            "verified": entry["verified"],
         }
+        if "sequence" in entry:
+            hist_entry["sequence"] = entry["sequence"]
+            hist_entry["receive_event"] = create_receive_event(msg, entry["sequence"])
+        if "system_message" in entry:
+            hist_entry["system_message"] = entry["system_message"]
         if group_json is not None:
             hist_entry["unsafe_body"] = group_json
         else:
@@ -1199,6 +1237,17 @@ def _process_received_messages(config_dir, identity, conversations, conv_record,
 
 
 def cmd_recv(args):
+    if getattr(args, "watch", False):
+        from .watch import WatchError, watch
+        try:
+            watch(args)
+        except (WatchError, OSError, ValueError) as error:
+            # Hook destinations and command arguments can contain credentials.
+            message = str(error) if isinstance(error, WatchError) else f"Watch stopped ({type(error).__name__}); check local state and configuration."
+            _error(message, code="watch_error")
+        return
+    if getattr(args, "webhook", None) or getattr(args, "on_receive", None) or getattr(args, "include_self", False):
+        _error("receive hooks and --include-self require --watch", code="invalid_arguments")
     config_dir = _get_config_dir(args)
     dropbox_url = _get_dropbox_url(args)
 
@@ -3032,6 +3081,15 @@ claude code channel:
     # recv
     recv_p = subparsers.add_parser("recv", help="Receive messages")
     recv_p.add_argument("conversation", help="Conversation ID or prefix")
+    recv_p.add_argument("--watch", action="store_true", help="Keep the WebSocket open; emit one JSON line per message")
+    recv_p.add_argument("--webhook", action="append", default=[], metavar="URL",
+                        help="POST receive events to this HTTP(S) URL (repeatable; requires --watch)")
+    recv_p.add_argument("--on-receive", action="append", default=[], metavar="COMMAND",
+                        help="Run an adapter with event JSON on stdin, without a shell (repeatable; requires --watch)")
+    recv_p.add_argument("--hook-timeout", type=float, default=10, metavar="SECONDS",
+                        help="Timeout for each hook attempt (default: 10 seconds)")
+    recv_p.add_argument("--include-self", action="store_true",
+                        help="Also deliver your own messages to hooks (stdout always includes them)")
 
     # inbox
     subparsers.add_parser("inbox", help="Show inbox summary")

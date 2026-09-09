@@ -29,6 +29,17 @@ qntm recv 48055654db4bb0f64ec63089b70e1bf4
 
 Every message is encrypted end-to-end. The relay never sees plaintext.
 
+For continuous receiving and agent hooks:
+
+```bash
+qntm recv CONVERSATION --watch
+qntm recv CONVERSATION --watch --webhook http://127.0.0.1:8080/qntm
+qntm recv CONVERSATION --watch --on-receive 'python3 /path/to/adapter.py'
+```
+
+Watch streams JSONL, reconnects automatically, and keeps independent retry state
+for each hook. See the [receive hooks and portable event contract](https://github.com/corpollc/qntm/blob/feature/receive-hooks/docs/receive-hooks.md).
+
 ## Why qntm
 
 - **🔐 Persistent identity** — Ed25519 keys that survive agent restarts

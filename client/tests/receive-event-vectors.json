@@ -1,0 +1,113 @@
+{
+  "description": "Synthetic signed/encrypted receive events for TypeScript/Python parity. Test keys only.",
+  "conversation_id": "303132333435363738393a3b3c3d3e3f",
+  "aead_key": "04dcadd664e70207c266bcf70d3b77f7bf630ac4aef9e585893aa2fc14456def",
+  "nonce_key": "283743455788f89b02671c31813b09ffc313bd6631f8735de5bea1f71b23fd47",
+  "vectors": [
+    {
+      "name": "unicode",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a167636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f686173685820032b4ecc87aa96defd0ec7843728d28eaa3202b0128e3d55e37a4493398df48a696578706972795f74731a69d742566a6369706865727465787458e86eb9d3aed9ad71c5ff7d58965ba48b203acfdfb374d515a2414fe9fba04a5c608ea92cf06716e17b3a3bac755f4f31bedbecd2392e6e12e25baa81d27736e86c622d68b10568539e35dd987bb0a014e92b5a664b680911c1e8f072ad98036834886db693e0b491dfaf1402bde78653cc43816ec92c0d4f3ab81972732586738b664032b8568ee2c915cd65b1d451e96eac8ffeb3e4792cee190bbb1cdc4208db95659cadac26a0a73794bdec18cc09737970c0c10e9c1b1742eaa43bebb628aa4b9304ff832d8d65ce9bab58d988611f8194de6cdea902b4d2fb5f0775cd30009685c0be750e33a76a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 1,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 1,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "text",
+          "verified": true,
+          "sequence": 1,
+          "unsafe_body": "Hello, Muse! 👋\nLine two"
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a267636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f6861736858200a849bc108a7d14d9a9441bafb06d091a44a2268987c7db2c8277d1adc1675d9696578706972795f74731a69d742566a6369706865727465787458cdbb059a751ad89fc7c31826a0bc028e9f315fea61bc34951eaed76f09f9fad52387337c69782cb4ed3d8ce7cc4c6f05fbce7a1ad3c4464f5a6f1de502eab3d5636ad7e64274f975038e91c39c5da7e4b8fd5cab68e93b8dfa2cd21fbfa915e76d69ca13eba09bf4654bc71d18432837c193eeb95a54e22624184d4ccec3da2b382b63f9479763b8d6a9c63ff3e8a1ce796f03ef3f81788672c837d8fd62de4348eeb8b03d80da0474419022c6e32cb024b88f32cbe66ea3d0ad81b094475aae630f94e32ada43f202bf2ea8a2066a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 2,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 2,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "text",
+          "verified": true,
+          "sequence": 2,
+          "unsafe_body": ""
+        }
+      }
+    },
+    {
+      "name": "binary",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a367636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f6861736858207b85fafa77cdecf77a8bc155e5a6da1cc9c2ba8d9d54a98a8b909ae1653af29f696578706972795f74731a69d742566a6369706865727465787458d6c3acf8845a60d40811efd7f745e007e32e79af7b9e7c98c0bc3539868ef26c09cdcf90c20aae29a34213cfde558d0d80124ee158c8caee3d40434fc25cecd894639b6e0106b027535838c7b15901d790144fd4324168eb5dc3f1b2382a4eb62797d888edcb49b4c62912746117ee608608544fcf998f9c4bbfa501d4710986e74fc9ececdf7077b58dc8aae12ed5f73fa5943d745c5b51978e6fbbbb4a817eb997559ee788ca08458ffd419e4420f4c61aa2ff53f7c2831f47ff57585dbe5a237178d3ca78684428cc142c2bb1fa8de147ce564dc5bf6a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 3,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 3,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "attachment",
+          "verified": true,
+          "sequence": 3,
+          "unsafe_body_b64": "/wD+"
+        }
+      }
+    },
+    {
+      "name": "bom",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a467636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f686173685820931eea09d8d1ffd20e0ab46145e24b2d84e13ed57e055bb1f5100d6859a715ec696578706972795f74731a69d742566a6369706865727465787458d87dca1446557489e8133b9d485430dc1184ba2b4bf747e87c13af41a1b216d40646e0ae9a0a31d4c4aa94c7b15ad8e725c2713d99e4824124bff628ffb5beceb1a41689dad0218ca55d4ff71c3791b246e83d97bd21c48927aec626aea8429fcf9b48a9242094a76c086801e5e784ef4c3cffe773b3ef759bb9a3e369152b328583010f6ec876f268930011b260c5e3840b12cd4be06f58b8d8aadefc514786022cbd131fab3994464d3ca92457eecab9fe33c870d338db78d78a6605c9e9c6f173306631215ad20bda4c9daabc03533cd120365f924b0ee56a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 4,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 4,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "text",
+          "verified": true,
+          "sequence": 4,
+          "unsafe_body": "﻿keep BOM"
+        }
+      }
+    },
+    {
+      "name": "group_cbor",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a567636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f68617368582047688160549b7c49caa703cdbd73aaf614796dad6022d72e7c0ebe7acf172bc5696578706972795f74731a69d742566a636970686572746578745901028bdf74b7500be622bc97f5e8089bd9b55cb347ca4592fe387a78a4c0d88d6cb56cdaeed77ba1da27548b4fd7b7e3420cf30e5b790b832f52ccdda7f48cf34941cd8313ef4e22b4d9dba8e90d9a590251692e4710e4f25b5b1b77ad2ec1ec84065890a1f1f13f975b5f460aa02314af37e44b1d869bfb2f871d72769adcc996d8c333cc0cb456b73852153b8819f68c37ce5719def26b62f2dc3d7285795b1afd235c3fb7d053e47c30f5541248e484bf101af4547f212a993249862f2a41ab97779518c4ee5ed3a83ab6e04ddda202eb1631c9f2c4799f554be057fcb558fdbf8db2918a12a7b9fd8b06bd73372973c90b160ab70a1530a2c8d706280ab131189ff26a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 5,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 5,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "group_remove",
+          "verified": true,
+          "sequence": 5,
+          "unsafe_body_b64": "omZyZWFzb25kbGVmdGxyZW1vdmVkX2tpZHOBUGW2BnPW7YhL8BwsIi2CraA="
+        }
+      }
+    }
+  ]
+}

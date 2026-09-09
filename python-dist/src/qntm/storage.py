@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+from contextlib import contextmanager
 
 
 def _check_owner(info, path):
@@ -93,3 +94,28 @@ def save_json(path, data):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+@contextmanager
+def private_lock(path, *, blocking=True):
+    """Process lock on a private, persistent file (never unlink a live lock)."""
+    path = Path(path)
+    private_directory(path.parent)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    fd = _private_file(path)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        yield
+    finally:
+        # Closing the descriptor releases the lock, including on exceptions.
+        os.close(fd)
