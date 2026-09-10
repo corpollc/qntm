@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import type { DropboxSubscription } from '@corpollc/qntm'
+import { parseGroupLink, type DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import { shortId, APP_VERSION, buildInviteLink, extractToken } from './utils'
@@ -825,7 +825,11 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const label = name.trim() || `${activeProfile?.name || 'Conversation'} Link`
+      let label = name.trim()
+      if (!label) {
+        try { parseGroupLink(token) } // Preserve the saved or signed group name.
+        catch { label = `${activeProfile?.name || 'Conversation'} Link` }
+      }
       const response = await api.acceptInvite(activeProfileId, token, label)
       setConversations(response.conversations)
 

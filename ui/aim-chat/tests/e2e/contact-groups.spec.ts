@@ -196,7 +196,7 @@ test('browser welcomes a fresh Python CLI peer, exchanges messages, refreshes an
 })
 
 
-test('browser pauses on retained-history loss and recovers only with its new signed challenge', async ({ page }) => {
+test('browser recovers retained-history loss with its signed challenge and preserves its name when reopening', async ({ page }) => {
   test.skip(!!process.env.QNTM_BROWSER_RELAY_URL, 'Deterministic retained-row omission is exercised by the relay fixture')
   await page.goto('/'); await contacts(page)
   const peer = generateIdentity()
@@ -223,7 +223,9 @@ test('browser pauses on retained-history loss and recovers only with its new sig
   await browserOpen(page, link)
   await expect(page.getByPlaceholder('Type a message')).toBeEnabled()
   await expect(page.getByText('Group recovery required', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.chat-header-title strong')).toHaveText('Recovery room')
   await page.reload(); await expect(page.getByPlaceholder('Type a message')).toBeEnabled()
+  await expect(page.locator('.chat-header-title strong')).toHaveText('Recovery room')
 })
 
 
