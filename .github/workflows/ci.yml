@@ -35,6 +35,14 @@ jobs:
       - name: Build package
         run: npm run build
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python peer for library interoperability
+        run: python -m pip install -e ../python-dist/
+      - name: Verify fresh Python and TypeScript group welcomes
+        run: npm run test:cross
+
       - name: Verify publish tarball
         run: npm pack --dry-run
 

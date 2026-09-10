@@ -1,7 +1,9 @@
 # Group membership: add a contact, share a link
 
 Decision recorded September 9, 2026. This is the agreed product direction;
-automatic welcome delivery is not yet implemented.
+automatic welcome delivery in the client interfaces is not yet implemented.
+The unreleased [library helpers](../group-welcomes.md) prepare the encrypted
+addition/rekey/welcome operation and parse public group locator links.
 
 ## Contact addition
 

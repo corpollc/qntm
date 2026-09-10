@@ -8,6 +8,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildSignedReceipt, generateIdentity, base64UrlEncode, keyIDFromPublicKey, QSP1Suite } from '@corpollc/qntm';
+import { GroupState, createInvite, createConversation, deriveConversationKeys, createGroupGenesisBody,
+  parseGroupGenesisBody, createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
+  prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink, isGroupWelcomeEnvelope,
+  DropboxClient } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
 interface RelayFrame {
@@ -273,6 +277,38 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       sig: sign(`qntm-announce-v1|rotate|${conv_id}|${new_posting_pk}`),
     })).status).toBe(400);
   });
+
+  it('delivers a recipient-encrypted welcome through the ordinary group stream', async () => {
+    const owner = generateIdentity(), contact = generateIdentity(), outsider = generateIdentity();
+    const invite = createInvite(owner, 'group');
+    const source = createConversation(invite, deriveConversationKeys(invite));
+    const state = new GroupState();
+    state.applyGenesis(parseGroupGenesisBody(createGroupGenesisBody('Relay contact addition', '', owner, [])));
+    source.participants = state.listMembers();
+    const relay = new DropboxClient(relayUrl);
+    const before = createMessage(owner, source, 'text', new TextEncoder().encode('before contact addition'));
+    const added = prepareGroupAddition(owner, source, state, [contact.publicKey]);
+    await relay.postMessage(source.id, marshalCanonical(before));
+    await relay.postMessage(source.id, marshalCanonical(added.addition));
+    await relay.postMessage(source.id, marshalCanonical(added.rekey));
+    const welcomeSequence = await relay.postMessage(source.id, marshalCanonical(added.welcomes[0]));
+    expect(welcomeSequence).toBe(4);
+    const link = createGroupLink({ conversationId: source.id, inviterPublicKey: owner.publicKey, relayUrl });
+    const locator = parseGroupLink(link);
+    const replay = await new DropboxClient(locator.relayUrl).receiveMessages(locator.conversationId);
+    const welcomeWire = replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!;
+    expect(Buffer.from(welcomeWire).toString('hex')).toBe(Buffer.from(marshalCanonical(added.welcomes[0])).toString('hex'));
+    const joined = openGroupWelcome(contact, welcomeWire, locator);
+    expect(() => openGroupWelcome(outsider, welcomeWire, locator)).toThrow();
+    expect(() => decryptMessage(deserializeEnvelope(replay.messages[0]), joined.conversation)).toThrow();
+    const reply = createMessage(contact, joined.conversation, 'text', new TextEncoder().encode('joined from group link'));
+    await relay.postMessage(joined.conversation.id, marshalCanonical(reply));
+    const received = await relay.receiveMessages(source.id, replay.sequence);
+    expect(received.messages).toHaveLength(1);
+    const clear = decryptMessage(deserializeEnvelope(received.messages[0]), added.conversation);
+    expect(new TextDecoder().decode(clear.inner.body)).toBe('joined from group link');
+    expect(clear.inner.sender_ik_pk).toEqual(contact.publicKey);
+  }, 30_000);
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
     const msgId = 'cd'.repeat(16);

@@ -323,6 +323,30 @@ export class GroupState {
     return [...this._admins].map((key) => this._members.get(key)!.keyId);
   }
 
+  /** Detached, creator-first snapshot of trusted local group state. */
+  snapshot(): GroupGenesisBody {
+    const members = [...this._members.values()].sort((a, b) => {
+      if (this._kidKey(a.keyId) === this._creator) return -1;
+      if (this._kidKey(b.keyId) === this._creator) return 1;
+      for (let i = 0; i < a.keyId.length; i++) {
+        if (a.keyId[i] !== b.keyId[i]) return a.keyId[i] - b.keyId[i];
+      }
+      return 0;
+    });
+    return {
+      group_name: this.groupName,
+      description: this.description,
+      created_at: this.createdAt,
+      founding_members: members.map(member => ({
+        key_id: new Uint8Array(member.keyId),
+        public_key: new Uint8Array(member.publicKey),
+        role: member.role,
+        added_at: member.addedAt,
+        added_by: new Uint8Array(member.addedBy),
+      })),
+    };
+  }
+
   /** Return member info list suitable for createGroupRekeyBody. */
   membersForRekey(): Array<{ kid: Uint8Array; publicKey: Uint8Array }> {
     return [...this._members.values()].map((m) => ({

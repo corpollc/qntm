@@ -88,6 +88,14 @@ from .gate import (
     verify_approval,
     verify_request,
 )
+from .group_welcome import (
+    prepare_group_addition,
+    open_group_welcome,
+    is_group_welcome_envelope,
+    MAX_GROUP_WELCOME_BYTES,
+    GROUP_WELCOME_TTL,
+)
+from .group_link import create_group_link, parse_group_link, MAX_GROUP_LINK_BYTES
 from .governance import (
     GOV_MESSAGE_APPLIED,
     GOV_MESSAGE_APPROVE,

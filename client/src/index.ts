@@ -95,3 +95,9 @@ export type { GatewayWorkflowStatus, GatewayWorkflowState } from './gate/workflo
 
 export { createReceiveEvent } from './receive/index.js';
 export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/index.js';
+
+export { prepareGroupAddition, openGroupWelcome, isGroupWelcomeEnvelope,
+  MAX_GROUP_WELCOME_BYTES, GROUP_WELCOME_TTL } from './group/welcome.js';
+export type { GroupAddition, GroupWelcome, GroupWelcomeEnvelope } from './group/welcome.js';
+export { createGroupLink, parseGroupLink, MAX_GROUP_LINK_BYTES } from './group/link.js';
+export type { GroupLocator } from './group/link.js';
