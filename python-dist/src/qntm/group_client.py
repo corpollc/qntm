@@ -324,6 +324,8 @@ class GroupClient:
         with self._lock():
             records, record = self._load(conversation_id)
             if not record.get('group_session'):
+                from .legacy_group import assert_creation_complete
+                assert_creation_complete(self.config_dir, record['id'])
                 group = cli._load_group_state(self.config_dir, record['id'])
                 state = create_group_session(self.identity, cli._conv_to_crypto(record), group, signed_epoch=False)
                 record['group_history'] = cli._load_history(self.config_dir, record['id'])
@@ -442,6 +444,10 @@ class GroupClient:
             return self._resume(record['id'])
 
     def retry(self, conversation_id):
+        from .legacy_group import has_creation, retry
+        record = cli._resolve_conversation(cli._load_conversations(self.config_dir), conversation_id)
+        if record and record.get('type') == 'group' and not record.get('group_session') and has_creation(self.config_dir, record['id']):
+            return retry(self.config_dir, self.identity, self.relay_url, record['id'])
         _, record = self._load(conversation_id)
         with self._operation_lock(record['id']):
             return self._resume(record['id'])
