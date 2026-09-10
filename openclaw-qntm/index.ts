@@ -1,3 +1,4 @@
+import { QntmGroupActions, createQntmGroupTool } from "./src/group-tool.js";
 import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 import { qntmPlugin } from "./src/channel.js";
@@ -17,6 +18,8 @@ const plugin = {
     setQntmRuntime(api.runtime);
     console.info("qntm: registered (relay websocket monitor)");
     api.registerChannel({ plugin: qntmPlugin as ChannelPlugin });
+    const groupActions = new QntmGroupActions();
+    api.registerTool(ctx => createQntmGroupTool(ctx, api.config, groupActions), { name: 'qntm_group', optional: true });
     const gatewayActions = new QntmGatewayActions();
     api.registerTool(ctx => createQntmGatewayTool(ctx, api.config, gatewayActions), { name: 'qntm_gateway', optional: true });
   },

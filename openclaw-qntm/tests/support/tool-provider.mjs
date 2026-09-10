@@ -17,7 +17,8 @@ export async function createToolProvider() {
       assert.ok(marker, 'native inbound test marker must reach the model: ' + JSON.stringify(body.messages.filter(message => message.role === 'user').map(message => text(message.content).slice(0, 512))));
       const plan = JSON.parse(Buffer.from(marker[1], 'base64url').toString());
       const names = body.tools?.map(tool => tool.function?.name) ?? [];
-      assert.ok(names.includes('qntm_gateway'), `optional native tool absent: ${names.join(',')}`);
+      const tool = plan.tool ?? 'qntm_gateway';
+      assert.ok(names.includes(tool), `optional native tool absent: ${names.join(',')}`);
       const results = body.messages.slice(index + 1).filter(message => message.role === 'tool').map(message => JSON.parse(text(message.content)));
       let args;
       if (plan.single) {
@@ -41,7 +42,7 @@ export async function createToolProvider() {
         outcomes.set(plan.id, results);
       }
       const delta = args ? { role: 'assistant', tool_calls: [{ index: 0, id: `call_${plan.id}_${results.length}`, type: 'function',
-        function: { name: 'qntm_gateway', arguments: JSON.stringify(args) } }] }
+        function: { name: tool, arguments: JSON.stringify(args) } }] }
         : { role: 'assistant', content: `gateway-tool-complete:${plan.id}` };
       const chunk = { id: `chatcmpl-${plan.id}`, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'fixture',
         choices: [{ index: 0, delta, finish_reason: null }] };

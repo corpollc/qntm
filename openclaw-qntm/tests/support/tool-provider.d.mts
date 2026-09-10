@@ -1,5 +1,6 @@
 export interface ToolPlan {
   id: string;
+  tool?: 'qntm_gateway' | 'qntm_group';
   action?: string;
   options?: Record<string, unknown>;
   initialStatus?: string;
