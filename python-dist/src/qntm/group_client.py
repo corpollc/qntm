@@ -38,7 +38,7 @@ MAX_PENDING_BYTES = 4 * 1024 * 1024
 MAX_OPERATION_REVISIONS = 256
 MAX_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024
 RELEASE_REASONS = frozenset(['expired', 'superseded', 'wrong_branch', 'target_absent', 'inapplicable',
-                             'incarnation_changed', 'legacy_same_epoch_admission', 'proof_invalidated'])
+                             'incarnation_changed', 'legacy_same_epoch_admission'])
 
 
 def _recovery_challenge(value):
@@ -478,12 +478,11 @@ class GroupClient:
                                                 'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None})
             return self._resume(record['id'])
 
-    def prepare_change(self, record, member=None, reason='', ttl=None, removal_ttl=None):
+    def prepare_change(self, record, member=None, reason='', ttl=None):
         """Build the exact remove/rekey journal from a synced record; save before POST.
 
         A removal journal pins its target's full member record and admission
         incarnation so an exact retry can never remove a later readmission.
-        ttl bounds the rotation; removal_ttl bounds the removal control itself.
         """
         state = record['group_session']
         if member is not None:
@@ -492,7 +491,7 @@ class GroupClient:
         controls, target = [], None
         if member is not None:
             kid = bytes.fromhex(member) if re.fullmatch('[0-9a-fA-F]{32}', member) else key_id_from_public_key(resolve_contact(self.config_dir, member))
-            envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason), removal_ttl)
+            envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason))
             applied = receive_group_event(self.identity, envelope, state)
             target = _removal_target(state, kid)
             group = applied['group']
@@ -557,11 +556,11 @@ class GroupClient:
         with self._operation_lock(record['id']):
             return self._resume(record['id'], reconcile=True)
 
-    def _stale_removal_reason(self, state, intent, kind):
+    def _stale_removal_reason(self, state, intent):
         """Classify why the saved removal can no longer be retried exactly.
 
         Raises when the exact bytes still apply at this epoch to their pinned
-        incarnation: plain retry owns that case. Nothing here infers acceptance.
+        incarnation, whatever journal kind holds them. Nothing infers acceptance.
         """
         wire = base64.b64decode(intent['controls'][0], validate=True)
         removal = deserialize_envelope(wire)
@@ -581,10 +580,6 @@ class GroupClient:
             _assert_removal_target_current(state, intent, unmarshal(applied['message']['inner']['body'])['removed_members'])
         except ValueError as error:
             return 'legacy_same_epoch_admission' if 'later admission' in str(error) else 'incarnation_changed'
-        if kind == 'removal_rekey':
-            # Its original proof was invalidated by a later verified replacement;
-            # plain retry never republishes an origin removal without that proof.
-            return 'proof_invalidated'
         raise ValueError('Saved removal is still exact-retryable; use group retry')
 
     def _release_unproven_removal(self, conversation_id):
@@ -611,7 +606,7 @@ class GroupClient:
             if accepted:
                 raise ValueError('Removal is verified in current history; use group retry')
             intent = operation['origin'] if operation['kind'] == 'removal_rekey' else operation
-            reason = self._stale_removal_reason(state, intent, operation['kind'])
+            reason = self._stale_removal_reason(state, intent)
             archive = _validate_released_operations(record.get('released_group_operations'))
             row = {key: copy.deepcopy(operation[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent')}
             row.update({key: copy.deepcopy(operation[key]) for key in ('target', 'origin', 'superseded_operations') if key in operation})

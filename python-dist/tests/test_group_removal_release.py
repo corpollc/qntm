@@ -3,11 +3,33 @@ import copy
 
 import pytest
 
-from qntm import (cli, create_group_add_body, create_group_remove_body, deserialize_envelope, generate_identity,
-                  marshal_canonical, prepare_group_session_rekey, require_group_recovery, serialize_envelope)
-from qntm.group_client import GroupClient, _control_accepted, join, set_contact
+import base64
+
+from qntm import (cli, create_group_add_body, create_group_control_message, create_group_remove_body, create_rekey,
+                  deserialize_envelope, generate_identity, group_session_conversation, marshal_canonical,
+                  prepare_group_session_rekey, receive_group_event, require_group_recovery, serialize_envelope)
+from qntm.group_client import GroupClient, RELEASE_REASONS, _control_accepted, _group, _removal_target, join, resolve_contact, set_contact
+from qntm.identity import key_id_from_public_key
 from test_group_client import setup
 from test_group_removal_recovery import add_member, craft, encoded_wire, expire_rekey, stage_removal
+
+
+def short_lived_removal_journal(identity, state, kid, ttl):
+    """Build the production remove journal shape with short-lived controls.
+
+    Only the lifetime is a fixture choice: the controls, reducer trial and
+    target pin are the same production factories prepare_change uses.
+    """
+    conversation = group_session_conversation(state)
+    removal = create_group_control_message(identity, conversation, 'group_remove', create_group_remove_body([kid], 'unposted removal'), ttl)
+    applied = receive_group_event(identity, removal, state)
+    body, _ = create_rekey(identity, conversation, applied['group'], conversation['id'])
+    rekey = create_group_control_message(identity, conversation, 'group_rekey', body, ttl)
+    trial = state
+    for envelope in (removal, rekey):
+        trial = receive_group_event(identity, envelope, trial)['state']
+    return {'kind': 'remove', 'controls': [base64.b64encode(serialize_envelope(e)).decode() for e in (removal, rekey)],
+            'welcomes': [], 'welcomes_sent': 0, 'expected': trial, 'target': _removal_target(state, kid)}
 
 
 def stage_unposted_removal(f, owner, *, ttl=60, target='Colleague', config_dir=None):
@@ -15,7 +37,9 @@ def stage_unposted_removal(f, owner, *, ttl=60, target='Colleague', config_dir=N
     config_dir = config_dir or f.owner_dir
     with owner._operation_lock(f.cid):
         record = owner.sync(f.cid)
-        owner._save_operation(f.cid, owner.prepare_change(record, target, 'unposted removal', ttl=ttl, removal_ttl=ttl))
+        kid = bytes.fromhex(target) if len(target) == 32 else key_id_from_public_key(resolve_contact(config_dir, target))
+        assert _group(record['group_session']).is_member(kid)
+        owner._save_operation(f.cid, short_lived_removal_journal(owner.identity, record['group_session'], kid, ttl))
     return copy.deepcopy(cli._load_conversations(config_dir)[0]['group_operation'])
 
 
@@ -93,6 +117,13 @@ def test_release_refuses_a_still_exact_removal(setup, monkeypatch):
     with pytest.raises(ValueError, match='still exact-retryable'):
         owner.retry(f.cid, release_unproven=True)
     assert len(f.attempted) == count and cli._load_conversations(f.owner_dir)[0]['group_operation'] == original
+    # The classifier has no journal-kind escape: the same still-applying bytes
+    # carried as a repair origin are refused too, without any acceptance claim.
+    state = cli._load_conversations(f.owner_dir)[0]['group_session']
+    origin = {**{key: original[key] for key in ('kind', 'controls', 'welcomes', 'welcomes_sent', 'target')}, 'delivery': 'unknown'}
+    with pytest.raises(ValueError, match='still exact-retryable'):
+        owner._stale_removal_reason(state, origin)
+    assert 'proof_invalidated' not in RELEASE_REASONS
     # Plain retry publishes the exact bytes.
     assert owner.retry(f.cid)['current_epoch'] == 2
     assert f.attempted[count:] == [encoded_wire(original, 0), encoded_wire(original, 1)]
