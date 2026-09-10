@@ -1423,68 +1423,9 @@ def cmd_group_create(args):
             args.name, getattr(args, 'description', '') or ''))
         return
 
-    group_name = args.name
-
-    # Create group invite and conversation
-    invite = create_invite(identity, "group")
-    token = invite_to_token(invite)
-    keys = derive_conversation_keys(invite)
-    conv = create_conversation(invite, keys)
-    add_participant(conv, identity["publicKey"])
-
-    conv_id_hex = conv["id"].hex()
-
-    # Save conversation
-    conversations = _load_conversations(config_dir)
-    conv_record = {
-        "id": conv_id_hex,
-        "name": group_name,
-        "type": "group",
-        "keys": {
-            "root": keys["root"].hex(),
-            "aead_key": keys["aeadKey"].hex(),
-            "nonce_key": keys["nonceKey"].hex(),
-        },
-        "participants": [p.hex() for p in conv["participants"]],
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "current_epoch": 0,
-        "invite_token": token,
-    }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
-    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
-
-    # Create and send genesis message
-    body_bytes = create_group_genesis_body(
-        group_name=group_name,
-        description=getattr(args, "description", "") or "",
-        creator_identity=identity,
-        founding_member_keys=[],
-    )
-    conv_crypto = _conv_to_crypto(conv_record)
-    envelope = create_message(
-        identity, conv_crypto, "group_genesis", body_bytes, None, default_ttl()
-    )
-    envelope_bytes = serialize_envelope(envelope)
-
-    try:
-        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
-    except Exception:
-        pass  # Group created locally even if dropbox unreachable
-
-    # Initialize and save group state
-    from .group import parse_group_genesis_body
-    state = GroupState()
-    state.apply_genesis(parse_group_genesis_body(body_bytes))
-    _save_group_state(config_dir, conv_id_hex, state)
-
-    _output("group.create", {
-        "conversation_id": conv_id_hex,
-        "type": "group",
-        "name": group_name,
-        "invite_token": token,
-        "members": state.member_count(),
-    })
+    from .legacy_group import create
+    _group_output('group.create', lambda: create(
+        config_dir, identity, dropbox_url, args.name, getattr(args, 'description', '') or ''))
 
 
 def cmd_group_join(args):
@@ -1550,8 +1491,11 @@ def cmd_group_join(args):
 
 def _group_output(kind, operation):
     from nacl.exceptions import CryptoError
+    from .legacy_group import LegacyCreationError
     try:
         _output(kind, operation())
+    except LegacyCreationError as error:
+        _error(str(error), code='legacy_group_creation_incomplete', data=error.data)
     except ValueError as error:
         _error(str(error), code='group_state_error')
     except CryptoError:
@@ -3168,7 +3112,7 @@ claude code channel:
     group_rekey_p = group_sub.add_parser("rekey", help="Rekey group (new epoch)")
     group_rekey_p.add_argument("conversation", help="Conversation ID or prefix")
 
-    group_retry_p = group_sub.add_parser('retry', help='Resume the saved group operation using its exact encrypted messages')
+    group_retry_p = group_sub.add_parser('retry', help='Retry a saved contact-group operation or legacy genesis using its original encrypted messages')
     group_retry_p.add_argument('conversation', help='Conversation ID or prefix')
     group_refresh_p = group_sub.add_parser('refresh', help='Resend current keys to an existing member without changing membership')
     group_refresh_p.add_argument('conversation', help='Conversation ID or prefix')
