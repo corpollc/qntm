@@ -144,6 +144,18 @@ describe('OpenClaw durable ordinary groups', () => {
     expect(late.load().session!.epoch).toBe(2);
     expect(late.load().session!.root).toBe(toHex(rotation.conversation.keys.root));
   });
+  it('detects an omitted rekey between the signed replay anchor and delayed welcome', async () => {
+    const f = fixture(), member = f.store(f.member), operation = member.prepare('add', { contact: 'Late' });
+    for (const wire of operation.controls) await f.client.postMessage(f.conversation.id, new Uint8Array(Buffer.from(wire, 'base64url')));
+    await member.exclusive(() => member.sync());
+    const rotation = prepareGroupSessionRekey(f.member, member.load().session!);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(rotation.rekey));
+    await f.client.postMessage(f.conversation.id, new Uint8Array(Buffer.from(operation.welcomes[0], 'base64url')));
+    f.rows.splice(2, 1); // The relay omits the transition posted before welcome delivery.
+    const late = f.store(f.late, undefined, member.link()); await late.exclusive(() => late.open());
+    expect(late.load().session!.recovery).toMatchObject({ reason: 'missing_history', afterSequence: 3 });
+    await expect(late.send('unsafe stale key send')).rejects.toThrow();
+  });
   it('blocks an expired authenticated removal posted before welcome delivery', async () => {
     const f = fixture(), member = f.store(f.member), operation = member.prepare('add', { contact: 'Late' });
     for (const wire of operation.controls) await f.client.postMessage(f.conversation.id, new Uint8Array(Buffer.from(wire, 'base64url')));
@@ -163,6 +175,16 @@ describe('OpenClaw durable ordinary groups', () => {
     await f.client.postMessage(f.conversation.id, serializeEnvelope(rotation.rekey));
     await expect(member.exclusive(() => member.resume())).rejects.toThrow();
     expect(f.rows).toHaveLength(1); expect(member.load().operation?.sentControls).toBe(0);
+  });
+  it('reports the exact send receipt rather than a later captured relay head', async () => {
+    const f = fixture(), member = f.store(f.member), post = f.client.postMessage.bind(f.client);
+    f.client.postMessage = async (id, bytes) => {
+      const receipt = await post(id, bytes);
+      await post(id, serializeEnvelope(createMessage(f.owner, f.conversation, 'text', new TextEncoder().encode('concurrent reply'))));
+      return receipt;
+    };
+    expect((await member.send('outgoing')).sequence).toBe(1);
+    expect(member.load().cursor).toBe(2);
   });
   it('serializes simultaneous local writers and refuses stale checkpoint commits', async () => {
     const f = fixture(), one = f.store(f.member), two = f.store(f.member), stale = two.load();

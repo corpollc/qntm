@@ -33,7 +33,7 @@ The generated manifest exposes the channel schema before runtime loading and mar
 
 ## Configuration
 
-Add the plugin to an OpenClaw extensions install and configure `channels.qntm` with either invite tokens or an OpenClaw-owned qntm profile directory. Inbound delivery is relay-websocket based; this plugin does not expose a webhook receiver.
+Add the plugin to an OpenClaw extensions install and configure `channels.qntm` with a pinned public group link, a legacy invite token, or an OpenClaw-owned qntm profile directory. See [contact groups](#contact-groups-unreleased) for the key-free link flow. Inbound delivery is relay-websocket based; this plugin does not expose a webhook receiver.
 
 ```json
 {
@@ -83,6 +83,7 @@ Add the plugin to an OpenClaw extensions install and configure `channels.qntm` w
 | Rekey, removal and replay | ✅ | Shared authenticated reducer; current keys and removal survive restart. Replies use the latest keys and refuse a removed local identity. |
 | Non-text `body_type` ingest | ✅ | Gateway events are verified by the shared reducer, then delivered as untrusted contextual text like `[gate.request] ...`. The optional gateway tool reads verified workflow state. |
 | qntm API Gateway `gate.*` actions | ✅ | Unreleased opt-in `qntm_gateway` supports reviewed admission, requests, votes, credentials and governance. Real host journeys with Python/browser/TypeScript peers verify actual gateway execution, rejection and rekey/restart. |
+| Contact addition and public links | ✅ | Unreleased ordinary-group add/open/remove/refresh/rekey/retry, known contact pins and challenge-bound recovery; actual native-host/Python/TypeScript journeys. Governed group admission and full competing-operation reconciliation remain separate. |
 | Media attachments | Partial | OpenClaw media sends are flattened into attachment URLs inside a text message. |
 
 ## Local Verification
@@ -153,6 +154,7 @@ The base directory is `OPENCLAW_STATE_DIR`, or `~/.openclaw` when unset. qntm ow
 | --- | --- |
 | `conversations/<conv_id>.json` | Current conversation keys/epoch, creation date/type, participant IDs and known public keys, signed gateway invitation/context, verified gateway workflow history, removal status, relay/legacy cursors, initial configuration hash, identity key ID, exact replay IDs/digests, and up to 64 pending plaintext deliveries. Current state remains until the operator removes it. No prior epoch keys are retained. Replay history is capped at 8,192 IDs; workflow history at 4,096 events and approximately 8 MiB. The complete file is capped at 16 MiB. |
 | `conversations/<conv_id>.json.gateway-bootstrap` | At most 96 KiB: sealed bootstrap ciphertext, identity/conversation/invitation/message IDs, epoch, relay/gateway URLs, gateway public key, relay sequence and expiry. Contains no plaintext conversation keys. Removed after verified acceptance on a received event; failed cleanup retries on later events. Otherwise remains until overwritten by later admission or removed by the operator, including after expiry. Expired or mismatched bootstrap cannot be retried. |
+| `groups/<conv_id>.json` | Ordinary-group identity/configuration hash and revision, current root and full roster, source replay/bootstrap cursors, saved removal sequence, recovery boundary/reason/challenge, up to 8,192 authenticated IDs/digests, up to 64 prior source-key/roster checkpoints, up to 256 pending ciphertext entries/4 MiB, up to 64 pending plaintext deliveries, own welcome sequence receipts, and an exact unfinished operation including expected keys. Prior roots authenticate competing rekeys only; eligibility lasts at most 24 hours; expired archive entries are pruned on successful receive writes. Whole file capped at 16 MiB; backups can retain earlier keys. A temporary `.lock` file contains the writer PID. |
 | `ingress.sqlite` and SQLite sidecars | Pending/claimed/failed plaintext deliveries: conversation and message IDs, sender key ID/public key, epoch, creation time, body type/text and gateway-verification flag; queue account/channel, lane, arrival/update/attempt timestamps, attempt counts and claim token/owner/heartbeat. Host exceptions are replaced by fixed failure strings. At most 1,024 pending/claimed events are admitted; full storage retains the checkpoint outbox and applies backpressure. Pending work has no time-based expiry. |
 | Completed/failed queue records | A completed row drops its plaintext payload when OpenClaw durably adopts the turn, or when a synchronous dispatch completes. Completed IDs are retained for seven days, capped at 8,192; failed records retain their payload for seven days, capped at 1,024. Pruning runs at startup and approximately hourly while the monitor runs. The SQLite main file has a 65,536-page limit (256 MiB with its default page size); sidecars and checkpoint files are additional storage. |
 
@@ -209,8 +211,10 @@ Configuring the public link explicitly authorizes fetching its encrypted welcome
 The link's inviter must match a configured contact, and its relay must exactly
 match `relayUrl`. The adapter uses its existing identity, finishes relay replay
 and persists the verified checkpoint before permitting messages or agent wakeups.
-It also replays available decryptable controls posted before welcome delivery,
-so a concurrently posted rekey is not skipped merely because the welcome arrived later.
+Each welcome signs the sender’s fully processed replay cursor. The recipient
+checks coverage from that anchor and replays available decryptable controls,
+including those posted before welcome delivery. An omitted intervening rekey
+therefore requires recovery instead of silently enabling stale keys.
 Contact pins are local configuration; inbound text cannot add or replace one.
 Changing a pin also invalidates any outstanding action review.
 
@@ -256,7 +260,10 @@ bounded pending ciphertext, exact unfinished outgoing operation, and **plaintext
 messages awaiting host dispatch**. Files are mode `0600` in private directories;
 this is filesystem protection, not password encryption. Host transcripts and the
 existing durable ingress queue can retain plaintext after dispatch. These records,
-contact names and recovery challenges are not uploaded or added to relay metrics.
+contact names and recovery challenges are not uploaded to the relay or added to its metrics.
+Tool status and reviews expose their displayed contact/member metadata to the host
+transcript and configured model provider. Prepared encryption keys stay in private
+plugin state and are omitted from tool review output.
 See [metadata boundaries](../docs/group-welcomes.md#metadata-and-security-boundaries).
 
 Local writers serialize with a per-group lock and revision check. Pending
