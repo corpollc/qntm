@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- TypeScript relay replay now exposes each envelope's sequence and the captured head. Subscriptions provide a serialized, awaitable `onReady` callback so clients can validate complete backlog before acting. Failed ready callbacks replay the uncommitted backlog; asynchronous frame decoding preserves relay order.
+
 - Added matching Python/TypeScript safeguards for missing group history. Clients preserve a recovery requirement across restart, block sends and hooks while state is incomplete, and require a fresh welcome bound to the receiving client's random challenge. Replaying an old welcome at a newer relay sequence cannot clear the requirement. CLI/MCP addition and refresh accept that challenge without changing admission policy. Tests cover expired controls, exclusion, both language directions and recovery after actual relay retention. Conflicting or expired pending operations still need reconciliation before release.
 
 - Added matching Python/TypeScript current-key welcome refresh helpers and CLI/MCP `group refresh`. An existing member who missed the welcome delivery window can receive current keys without another admission or key rotation. Signed refreshes are distinct from admission welcomes and cannot undo saved removal. A remaining member can also finish an interrupted rotation before refreshing the new contact. Tests cover expiry, exact retries, noncreator recovery and fresh cross-language exchanges.

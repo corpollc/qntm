@@ -57,7 +57,7 @@ class FakeWebSocket {
     this.emit('open');
   }
 
-  message(data: string): void {
+  message(data: unknown): void {
     this.emit('message', { data });
   }
 
@@ -189,6 +189,7 @@ describe('DropboxClient', () => {
       expect(result.messages).toHaveLength(2);
       expect(result.messages[0]).toEqual(env1);
       expect(result.messages[1]).toEqual(env2);
+      expect(result.entries).toEqual([{ seq: 3, envelope: env1 }, { seq: 5, envelope: env2 }]);
     });
 
     it('returns immediately when ready reports no new messages', async () => {
@@ -205,11 +206,90 @@ describe('DropboxClient', () => {
 
       const result = await resultPromise;
       expect(result.messages).toEqual([]);
+      expect(result.entries).toEqual([]);
       expect(result.sequence).toBe(0);
+    });
+
+    it('preserves asynchronous frame order and ignores live frames after the captured head', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const resultPromise = client.receiveMessages(fakeConvID(), 2);
+      const socket = FakeWebSocket.instances[0]!;
+      socket.message(new Blob(['{"type":"message","seq":3,"envelope_b64":"YQ=="}']));
+      socket.message('{"type":"ready","head_seq":4}');
+      socket.message('{"type":"message","seq":5,"envelope_b64":"Yg=="}');
+      const result = await resultPromise;
+      await Promise.resolve();
+      expect(result.sequence).toBe(4);
+      expect(result.entries).toEqual([{ seq: 3, envelope: new Uint8Array([97]) }]);
+    });
+
+    it.each([-1, 1.5, 2, null])('rejects a malformed or regressed captured head %s', async head => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const result = client.receiveMessages(fakeConvID(), 3);
+      const rejection = expect(result).rejects.toThrow('head');
+      FakeWebSocket.instances[0]!.message(JSON.stringify({ type: 'ready', head_seq: head }));
+      await rejection;
+    });
+
+    it('waits for an already queued ready frame before treating a close as incomplete', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const result = client.receiveMessages(fakeConvID(), 2);
+      FakeWebSocket.instances[0]!.message(new Blob(['{"type":"ready","head_seq":5}']));
+      FakeWebSocket.instances[0]!.close();
+      expect(await result).toEqual({ messages: [], entries: [], sequence: 5 });
     });
   });
 
   describe('subscribeMessages', () => {
+    it('serializes asynchronous ready processing between replay and live messages', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const order: string[] = [];
+      let release!: () => void;
+      const pending = new Promise<void>(resolve => { release = resolve; });
+      const subscription = client.subscribeMessages(fakeConvID(), 0, {
+        onMessage: ({ seq }) => { order.push(`message:${seq}`); },
+        onReady: async head => { order.push(`head:${head}`); await pending; order.push('committed'); },
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      socket.message('{"type":"message","seq":1,"envelope_b64":"YQ=="}');
+      socket.message('{"type":"ready","head_seq":2}');
+      socket.message('{"type":"message","seq":3,"envelope_b64":"Yg=="}');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(['message:1', 'head:2']);
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(['message:1', 'head:2', 'committed', 'message:3']);
+      socket.close(1012);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(FakeWebSocket.instances[1]!.url).toContain('from_seq=3');
+      FakeWebSocket.instances[1]!.message('{"type":"ready","head_seq":3}');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order.slice(-2)).toEqual(['head:3', 'committed']);
+      subscription.close();
+      await subscription.closed;
+    });
+
+    it('replays the entire uncommitted backlog when its ready callback fails', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const messages: number[] = [], errors = vi.fn();
+      const subscription = client.subscribeMessages(fakeConvID(), 2, {
+        onMessage: ({ seq }) => { messages.push(seq); },
+        onReady: () => { throw new Error('cannot persist replay'); }, onError: errors,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      socket.message('{"type":"message","seq":3,"envelope_b64":"YQ=="}');
+      socket.message('{"type":"ready","head_seq":4}');
+      socket.message('{"type":"message","seq":5,"envelope_b64":"Yg=="}');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(messages).toEqual([3]);
+      expect(errors).toHaveBeenCalledOnce();
+      expect(FakeWebSocket.instances[1]!.url).toContain('from_seq=2');
+      subscription.close();
+      await subscription.closed;
+    });
+
     it('replays a failed callback before processing later queued messages', async () => {
       vi.useFakeTimers();
       vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);

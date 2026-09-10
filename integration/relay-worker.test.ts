@@ -73,6 +73,32 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   let relayUrl = '';
   let stateDir = '';
 
+  it('exposes sequenced replay and serialized ready callbacks through the TypeScript client', async () => {
+    const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);
+    const first = new Uint8Array([97]), second = new Uint8Array([98]);
+    const firstSeq = await relay.postMessage(cid, first);
+    const secondSeq = await relay.postMessage(cid, second);
+    const replay = await relay.receiveMessages(cid);
+    expect(replay.entries.map(({ seq, envelope }) => ({ seq, bytes: Array.from(envelope) })))
+      .toEqual([{ seq: firstSeq, bytes: [97] }, { seq: secondSeq, bytes: [98] }]);
+    expect(replay.sequence).toBe(secondSeq);
+    const frames: RelayFrame[] = [];
+    const subscription = relay.subscribeMessages(cid, firstSeq, {
+      onMessage: ({ seq }) => { frames.push({ type: 'message', seq }); },
+      onReady: head_seq => { frames.push({ type: 'ready', head_seq }); },
+    });
+    try {
+      await waitForFrame(frames, frame => frame.type === 'ready', 'shared ready callback');
+      expect(frames).toEqual([{ type: 'message', seq: secondSeq }, { type: 'ready', head_seq: secondSeq }]);
+      const liveSeq = await relay.postMessage(cid, new Uint8Array([99]));
+      await waitForFrame(frames, frame => frame.seq === liveSeq, 'shared live callback');
+      expect(frames.at(-1)).toEqual({ type: 'message', seq: liveSeq });
+    } finally {
+      subscription.close();
+      await subscription.closed;
+    }
+  });
+
   beforeAll(async () => {
     stateDir = mkdtempSync(join(tmpdir(), 'qntm-relay-acceptance-'));
     relayProcess = new ManagedProcess(
