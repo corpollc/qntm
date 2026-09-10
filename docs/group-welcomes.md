@@ -139,6 +139,31 @@ this resumes the saved ciphertext. Repeating `group add` cannot overwrite a
 pending operation. Sending ordinary messages is blocked while an operation is
 pending or while membership awaits key rotation.
 
+For a **completed** saved addition, CLI/MCP retry can also recover an expired
+welcome or a completing rekey superseded by a later canonical rotation. It checks
+the original add ID and exact ciphertext digest against current admission
+provenance before touching the old control queue. When the original welcome is
+still valid for current keys, retry retains its exact bytes, even after the
+original controls leave the replay cache. Otherwise it saves a new admission
+renewal using current keys and the fully processed current replay position.
+It preserves the original optional recovery challenge. No add or obsolete rekey
+is reposted during this recovery, and a removed or subsequently readmitted
+recipient cannot use the previous admission's operation.
+
+The renewal journal retains the original ciphertext, intended member and public
+key, add ID/digest, welcome acknowledgement count and unknown delivery status.
+It does not nest old checkpoints or duplicate their plaintext group roots. State,
+operation identity and expiry are checked again under the receive lock before
+each welcome POST. An uncertain renewal POST keeps the same bytes for retry;
+fully recorded welcome acknowledgements can complete cleanup after a crash
+without reposting old controls. All of this metadata remains in the private
+profile until the operation finishes. The relay receives only encrypted envelopes.
+
+Two narrower cases still remain blocked with their journals intact: an accepted
+add whose rotation never completed and whose saved rekey expired, and an already
+staged renewal that itself expires or is superseded again. Broader reconciliation
+for refresh/remove/rekey operations and other clients remains under `qntm-qp22`.
+
 `qntm group link GROUP_ID` retrieves the public locator pinned to **your**
 identity, for contacts whose welcomes you issued. It does not add anyone or
 deliver a replacement welcome. `contact list` and `contact remove NAME` manage
@@ -167,9 +192,9 @@ superseded by another rekey, or integrate gateway admission/governance.
 A refresh requires a sender whose saved membership and keys are current;
 completion of a relay subscription alone cannot establish that if needed
 controls have expired. A saved operation that no
-longer matches accepted state fails without releasing its welcome; `group retry`
-does not yet resolve that conflict automatically. These are release gaps, not
-additional admission steps.
+longer matches accepted state fails without releasing its welcome unless the
+completed-addition recovery described above proves the same current admission.
+The remaining cases are release gaps, not additional admission steps.
 
 ## CLI local storage
 
@@ -301,8 +326,10 @@ recipient-encrypted welcome with current keys; it neither adds a member nor
 rotates keys. `assertGroupAdmissionRenewalCurrent` /
 `assert_group_admission_renewal_current` rechecks the admission, roster, keys and
 expiry immediately before publication. Hosts still persist the exact operation
-and finish replay before release. CLI, browser, terminal and OpenClaw recovery
-commands do not yet invoke this helper; pending-operation reconciliation remains
+and finish replay before release. Python CLI/MCP `group retry` uses it for a
+completed saved addition whose original delivery is stale; the terminal delegates
+that retry to Python. Browser and OpenClaw receive renewals but do not yet issue
+them through their recovery actions. Full pending-operation reconciliation remains
 under `qntm-qp22`.
 
 Private checkpoints keep an `admissions` map keyed by current member ID. Each
