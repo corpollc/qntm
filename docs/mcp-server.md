@@ -86,12 +86,17 @@ Add to your `.cursor/mcp.json`:
 | `contact_add`, `contact_list`, `contact_remove` | Pin, inspect or remove local contact names and full public keys (unreleased) |
 | `group_create` | Create a durable ordinary contact group; verify exact genesis delivery and return a public link with no bearer invite (unreleased) |
 | `group_add_contact`, `group_remove_contact` | Change ordinary-group membership and rotate keys; addition delivers an encrypted welcome and returns a public group link (unreleased) |
-| `group_rekey`, `group_retry` | Rotate ordinary-group keys or resume the exact saved operation after uncertain delivery (unreleased) |
+| `group_rekey`, `group_retry` | Rotate ordinary-group keys or retry exact saved contact-group operations and legacy CLI genesis delivery (unreleased) |
 | `group_refresh` | Send a current-key welcome to an existing member without admission or rotation (unreleased) |
 | `group_link` | Retrieve the public locator for welcomes issued by this identity; no network access or membership change (unreleased) |
 
 The unreleased group tools share the CLI profile and require host authorization
-for membership changes and sends. When `receive_messages` reports
+for membership changes and sends. `group_retry` also recovers a legacy CLI
+`group create` failure from the same profile without changing its bearer-invite
+or gateway behavior. Its result labels relay acknowledgement separately from
+exact replay; neither confirms peer receipt. Retry remains pinned to the original
+relay and identity. MCP `conversation_create` still creates a direct conversation,
+and MCP `group_create` creates a contact group. When `receive_messages` reports
 `recovery_required`, its `recovery.challenge` can be supplied to `group_refresh`
 as the optional `challenge` argument by an up-to-date member. The same argument
 on `group_add_contact` supports explicit readmission. It grants no membership by
