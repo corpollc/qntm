@@ -10,7 +10,7 @@ import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
 import { normalizeAccountId } from 'openclaw/plugin-sdk/account-id';
 import {
   DropboxClient, GroupState, QSP1Suite, base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope,
-  restoreGroupSession, groupSessionConversation, checkGroupReplayCoverage, checkExpiredGroupControl,
+  restoreGroupSession, groupSessionConversation, checkGroupReplayCoverage, checkExpiredGroupControl, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch,
   receiveGroupEvent, requireGroupRecovery, openGroupWelcome, groupSessionFromWelcome, parseGroupLink, createGroupLink,
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
@@ -139,6 +139,14 @@ export class QntmGroupStore {
     if (!state.session) return;
     state.session = checkGroupReplayCoverage(state.session, state.cursor, head, [...rows.map(row => row.seq), ...state.receipts.filter(value => value > state.cursor && value <= head)]);
     const pending = new Map([...state.pending, ...rows.filter(row => replayBeforeCursor || row.seq > state.cursor)].map(row => [row.seq, row]));
+    // Inspect the entire batch before producing plaintext. New members cannot
+    // authenticate a delayed competing rekey using pre-admission source keys.
+    // Bootstrap uses the welcome-specific guard and its signed exact hashes.
+    if (!replayBeforeCursor) for (const row of pending.values()) {
+      let wire: OuterEnvelope;
+      try { wire = envelope(row.wire); } catch { continue; }
+      state.session = checkGroupUnverifiableEpoch(state.session, wire, row.seq);
+    }
     const now = Math.floor(Date.now() / 1000);
     let progress = true;
     while (progress && !state.session.recovery) {
@@ -208,6 +216,9 @@ export class QntmGroupStore {
         const opened = openGroupWelcome(this.account.identity!, base64UrlDecode(row.wire), { inviterPublicKey: locator.inviterPublicKey, conversationId: locator.conversationId });
         if (state.removedSequence && opened.purpose === 'addition' && row.seq <= state.removedSequence) continue;
         next = groupSessionFromWelcome(this.account.identity!, opened, row.seq, state.session ?? undefined);
+        // A complete sequence can still hide an old-source competing rekey
+        // that this new member has no pre-admission key to authenticate.
+        next = checkGroupWelcomeReplay(next, opened, result.sequence, result.entries);
         replayFromSequence = opened.replayFromSequence;
       } catch { continue; }
       state.session = next; state.cursor = replayFromSequence; state.bootstrap = replayFromSequence; state.pending = []; state.outbox = [];
@@ -258,11 +269,13 @@ export class QntmGroupStore {
       && base64UrlEncode(decodeContactKey(this.account.config.contacts[operation.contact])) === operation.publicKey, 'Pending operation contact pin changed; preserve it for reconciliation');
     for (; operation.sentControls < operation.controls.length;) {
       const wire = operation.controls[operation.sentControls], outer = envelope(wire);
-      requireValue(outer.expiry_ts >= Math.floor(Date.now() / 1000), 'Saved group operation expired; preserve it for reconciliation');
       await this.sync(); state = this.load();
       requireValue(state.session, 'Missing group checkpoint');
       // Validate the exact pending control against freshly replayed state before
       // publishing it. A verified ambiguous POST needs no second publication.
+      // Expiry prevents a new publication, not recognition of an accepted one.
+      requireValue(state.session.seen[toHex(outer.msg_id)] || outer.expiry_ts >= Math.floor(Date.now() / 1000),
+        'Saved group operation expired; preserve it for reconciliation');
       const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
       if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
       state = this.load(); operation = state.operation!; operation.sentControls++; this.save(state);
@@ -271,11 +284,14 @@ export class QntmGroupStore {
     requireValue(state.session, 'Missing group checkpoint');
     const expected = restoreGroupSession(this.account.identity!, operation.expected);
     assertGroupCanSend(this.account.identity!, state.session);
-    requireValue(state.session.root === expected.root && state.session.epoch === expected.epoch && state.session.snapshot === expected.snapshot, 'Pending group operation no longer matches accepted state; preserve it for reconciliation');
     for (const wire of operation.controls) {
       const outer = envelope(wire);
       requireValue(state.session.seen[toHex(outer.msg_id)]?.digest === toHex(new QSP1Suite().hash(base64UrlDecode(wire))), 'Exact saved control or send has not been accepted');
     }
+    // An exact accepted text is complete even if another member rotated later.
+    // Membership operations still require their expected accepted state.
+    requireValue(operation.action === 'send' || state.session.root === expected.root && state.session.epoch === expected.epoch && state.session.snapshot === expected.snapshot,
+      'Pending group operation no longer matches accepted state; preserve it for reconciliation');
     const base = { conversation: groupSessionConversation(expected), state: group(expected), welcomes: operation.welcomes.map(envelope) };
     if (operation.action === 'add') assertGroupAdditionAccepted(this.account.identity!, state.session,
       { ...base, addition: envelope(operation.controls[0]), rekey: envelope(operation.controls[1]) } as GroupAddition);

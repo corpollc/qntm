@@ -7,9 +7,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
 import {
-  DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink,
-  groupSessionFromWelcome, checkGroupReplayCoverage, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
-  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, type GroupSessionState,
+  DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
+  groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
+  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, prepareGroupSessionAddition, type GroupSessionState, type OuterEnvelope,
 } from '@corpollc/qntm';
 const TIMEOUT = 240_000;
 describe.sequential('native OpenClaw contact welcomes with Python and TypeScript peers', () => {
@@ -17,6 +17,12 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
   const tsPeer = generateIdentity();
   let tsSession: GroupSessionState;
   let tsCursor = 0;
+  let bootstrapWinnerRoot: string, bootstrapLosingRoot: string;
+  let delayedBootstrapWinner: OuterEnvelope, delayedBootstrapRoot: string;
+  const aliceIdentity = () => {
+    const raw = h.alice.readIdentity();
+    return { privateKey: new Uint8Array(Buffer.from(raw.private_key, 'hex')), publicKey: new Uint8Array(Buffer.from(raw.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(raw.key_id, 'hex')) };
+  };
   const checkpoint = () => JSON.parse(readFileSync(join(host.stateDir, 'plugins/qntm/accounts/default/groups', `${convId}.json`), 'utf8'));
   const action = async (id: string, action: string, options: Record<string, unknown> = {}) => host.journey(h.alice,
     { id, tool: 'qntm_group', action, options, initialStatus: 'ready' });
@@ -26,15 +32,64 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const created = await h.alice.run(['group', 'create', 'OpenClaw contact welcomes']); convId = String(created.data!.conversation_id);
     host = new OpenClawAgent(join(h.rootDir, 'openclaw'), convId);
     await h.alice.run(['contact', 'add', 'OpenClaw', base64UrlEncode(host.identity.publicKey)]);
-    const added = await h.alice.run(['group', 'add', convId, 'OpenClaw']);
+    // Exercise the supported legacy-to-contact upgrade without adding a member
+    // or rotating: the creator can refresh their own current admission.
+    await h.alice.run(['group', 'refresh', convId, h.alice.readIdentity().public_key]);
+    const identity = aliceIdentity(), record = h.alice.readConversation(convId);
+    const source = restoreGroupSession(identity, record.group_session);
+    let added = prepareGroupSessionAddition(identity, source, [host.identity.publicKey], undefined, undefined, Number(record.group_cursor));
+    while (added.rekey.msg_id[0] < 170) added = prepareGroupSessionAddition(identity, source, [host.identity.publicKey], undefined, undefined, Number(record.group_cursor));
+    const admitted = receiveGroupEvent(identity, added.addition, source).state;
+    let winner = prepareGroupSessionRekey(identity, admitted);
+    while (winner.rekey.msg_id[0] < 85 || winner.rekey.msg_id[0] >= 170) winner = prepareGroupSessionRekey(identity, admitted);
+    let delayed = prepareGroupSessionRekey(identity, admitted);
+    while (delayed.rekey.msg_id[0] >= 85) delayed = prepareGroupSessionRekey(identity, admitted);
+    delayedBootstrapWinner = delayed.rekey; delayedBootstrapRoot = Buffer.from(delayed.conversation.keys.root).toString('hex');
+    bootstrapWinnerRoot = Buffer.from(winner.conversation.keys.root).toString('hex');
+    bootstrapLosingRoot = Buffer.from(added.conversation.keys.root).toString('hex');
+    const losingPlan = { id: 'losing-bootstrap-branch', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    const losingText = createMessage(identity, added.conversation, 'text', new TextEncoder().encode('gateway-tool-smoke:' + Buffer.from(JSON.stringify(losingPlan)).toString('base64url')));
+    for (const envelope of [added.addition, added.rekey, winner.rekey, losingText, added.welcomes[0]]) await relay.postMessage(added.conversation.id, serializeEnvelope(envelope));
+    const groupLink = createGroupLink({ conversationId: added.conversation.id, inviterPublicKey: identity.publicKey, relayUrl: h.relayUrl });
     await host.configure(h.relayUrl, String(created.data!.invite_token));
     const cfg = JSON.parse(readFileSync(host.configPath, 'utf8'));
     cfg.tools.alsoAllow = ['qntm_group'];
     cfg.channels.qntm.contacts = { Alice: h.alice.readIdentity().public_key, Dave: h.dave.readIdentity().public_key, TypeScript: base64UrlEncode(tsPeer.publicKey) };
-    cfg.channels.qntm.conversations.test = { groupLink: added.data!.group_link, name: 'Native contact group', trigger: 'mention', triggerNames: ['gateway-tool-smoke:'],
+    cfg.channels.qntm.conversations.test = { groupLink, name: 'Native contact group', trigger: 'mention', triggerNames: ['gateway-tool-smoke:'],
       groupActions: ['add', 'remove', 'refresh', 'rekey', 'retry', 'open', 'send'] };
     writeFileSync(host.configPath, JSON.stringify(cfg), { mode: 0o600 });
-    await host.start(); await host.waitFor(() => { try { return checkpoint().session?.epoch === 1; } catch { return false; } }, 'native welcome installed');
+    await host.start(); await host.waitFor(() => { try { return Boolean(checkpoint().session?.recovery); } catch { return false; } }, 'native competing-bootstrap recovery persisted');
+  }, TIMEOUT);
+  it('blocks the competing bootstrap branch before agent dispatch and accepts a same-epoch challenged Python refresh', async () => {
+    expect(checkpoint().session.epoch).toBe(1); expect(checkpoint().session.root).toBe(bootstrapLosingRoot);
+    expect(checkpoint().outbox).toEqual([]);
+    const challenge = checkpoint().session.recovery.challenge;
+    await h.alice.run(['recv', convId]);
+    expect((h.alice.readConversation(convId).group_session as GroupSessionState).root).toBe(bootstrapWinnerRoot);
+    await h.alice.run(['group', 'refresh', convId, 'OpenClaw', '--challenge', challenge]);
+    await host.waitFor(() => !checkpoint().session?.recovery && checkpoint().session.root === bootstrapWinnerRoot, 'native same-epoch challenged replacement');
+    expect(checkpoint().session.epoch).toBe(1); expect(checkpoint().session.rekeys).toEqual([]); expect(checkpoint().outbox).toEqual([]);
+    await action('after-bootstrap-recovery', 'send', { text: 'native recovered the winning bootstrap key' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native recovered the winning bootstrap key', 'safe native bootstrap reply');
+  }, TIMEOUT);
+  it('also blocks an unverifiable older-source winner arriving after bootstrap, including preceding queued agent text', async () => {
+    await host.stop();
+    const identity = aliceIdentity(), state = restoreGroupSession(identity, h.alice.readConversation(convId).group_session);
+    const losingPlan = { id: 'losing-delayed-bootstrap-branch', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    const losingText = createMessage(identity, groupSessionConversation(state), 'text', new TextEncoder().encode('gateway-tool-smoke:' + Buffer.from(JSON.stringify(losingPlan)).toString('base64url')));
+    await relay.postMessage(delayedBootstrapWinner.conv_id, serializeEnvelope(losingText));
+    await relay.postMessage(delayedBootstrapWinner.conv_id, serializeEnvelope(delayedBootstrapWinner));
+    await host.start();
+    await host.waitFor(() => Boolean(checkpoint().session?.recovery), 'post-bootstrap old-source recovery before queued dispatch');
+    expect(checkpoint().outbox).toEqual([]); expect(checkpoint().session.epoch).toBe(1);
+    const challenge = checkpoint().session.recovery.challenge;
+    await h.alice.run(['recv', convId]);
+    expect((h.alice.readConversation(convId).group_session as GroupSessionState).root).toBe(delayedBootstrapRoot);
+    await h.alice.run(['group', 'refresh', convId, 'OpenClaw', '--challenge', challenge]);
+    await host.waitFor(() => !checkpoint().session?.recovery && checkpoint().session.root === delayedBootstrapRoot, 'native delayed-winner challenged replacement');
+    expect(checkpoint().outbox).toEqual([]); expect(checkpoint().session.rekeys).toEqual([]);
+    await action('after-delayed-bootstrap-recovery', 'send', { text: 'native recovered a delayed old-source winner' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native recovered a delayed old-source winner', 'safe native delayed-bootstrap reply');
   }, TIMEOUT);
   afterAll(async () => {
     if (h && host) { mkdirSync(h.artifactDir, { recursive: true }); writeFileSync(join(h.artifactDir, 'openclaw-contact.log'), host.log); }
@@ -48,11 +103,12 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const result = await relay.receiveMessages(locator.conversationId);
     for (const row of result.entries) {
       try {
-        const welcome = openGroupWelcome(tsPeer, row.envelope, locator); tsSession = groupSessionFromWelcome(tsPeer, welcome, row.seq); tsCursor = welcome.replayFromSequence;
+        const welcome = openGroupWelcome(tsPeer, row.envelope, locator);
+        tsSession = checkGroupWelcomeReplay(groupSessionFromWelcome(tsPeer, welcome, row.seq), welcome, result.sequence, result.entries);
+        tsCursor = welcome.replayFromSequence;
       } catch { /* Other recipients and ordinary messages. */ }
     }
     expect(tsSession!.epoch).toBe(3); expect(tsSession!.rekeys).toEqual([]);
-    tsSession = checkGroupReplayCoverage(tsSession, tsCursor, result.sequence, result.entries.map(row => row.seq));
     expect(tsSession.recovery).toBeNull();
     for (const row of result.entries.filter(row => row.seq > tsCursor)) {
       try { tsSession = receiveGroupEvent(tsPeer, deserializeEnvelope(row.envelope), tsSession).state; } catch {}
@@ -79,8 +135,7 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
   it('pauses on an expired authenticated rekey and automatically accepts a nonce-bound Python refresh', async () => {
     await host.stop();
     await h.alice.run(['recv', convId]);
-    const raw = h.alice.readIdentity();
-    const identity = { privateKey: new Uint8Array(Buffer.from(raw.private_key, 'hex')), publicKey: new Uint8Array(Buffer.from(raw.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(raw.key_id, 'hex')) };
+    const identity = aliceIdentity();
     const state = restoreGroupSession(identity, h.alice.readConversation(convId).group_session);
     const rekey = prepareGroupSessionRekey(identity, state, 20);
     await relay.postMessage(rekey.conversation.id, serializeEnvelope(rekey.rekey));
