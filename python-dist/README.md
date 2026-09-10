@@ -78,6 +78,12 @@ group link; their existing identity decrypts the welcome automatically. MCP adds
 `group_remove_contact`, `group_rekey`, `group_refresh`, `group_retry` and `group_link`.
 `qntm group refresh GROUP CONTACT` renews welcome delivery for an existing member
 using current keys; it does not change membership or rotate keys.
+If a saved generic refresh for a founding member expires or a later rotation
+changes its keys, `qntm group retry GROUP` can prepare a current delivery. Retry
+authenticates the original recipient and optional recovery challenge, retains
+the earlier ciphertext as bounded private evidence, and checks current membership
+before posting. Still-valid uncertain delivery keeps its exact bytes. A generic
+refresh remains generic and cannot undo saved removal.
 See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
