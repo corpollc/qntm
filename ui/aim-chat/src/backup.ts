@@ -1,6 +1,7 @@
 import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
 import { MAX_GROUP_CONTROL_RECEIPTS, type StoreData, type StoredConversation, type StoredGroupOperation } from './store'
-import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS } from './group-operation'
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS,
+  validateGroupRemovalTarget } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -153,13 +154,36 @@ export function validateBackup(json: string): StoreData {
           unique(identities, 'duplicate control receipt identity')
         }
         if (host.operation !== null) {
-          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded'])
-          if (!['addition', 'addition_rekey', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
+          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded', 'target'])
+          if (!['addition', 'addition_rekey', 'refresh', 'renewal', 'remove', 'removal_rekey', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
           const expected = restoreGroupSession(localIdentity, op.expected)
           if (expected.conversationId !== conv.id) fail('group operation conversation mismatch')
           const controls = list(op.controls, 'saved group controls', 2), welcomes = list(op.welcomes, 'saved group welcomes', 128)
-          const expectedControls = ({ addition: 2, addition_rekey: 1, remove: 2, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
+          const expectedControls = ({ addition: 2, addition_rekey: 1, remove: 2, removal_rekey: 1, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
           if (controls.length !== expectedControls || (['addition', 'refresh', 'renewal'].includes(op.kind) ? !welcomes.length : welcomes.length !== 0)) fail('group operation shape')
+          if (op.kind !== 'remove' && op.target !== undefined) fail('unexpected removal target field')
+          if (op.kind === 'remove' && op.target !== undefined) {
+            const target = object(op.target, 'removal target fields', ['keyId', 'publicKey', 'record', 'admission'])
+            try { validateGroupRemovalTarget(target as Parameters<typeof validateGroupRemovalTarget>[0]) } catch { fail('removal target binding') }
+            // The saved expected checkpoint already excludes the pinned incarnation.
+            if (parseGroupGenesisBody(base64UrlDecode(expected.snapshot)).founding_members.some(member => encodedHex(member.key_id) === target.keyId)) fail('removal target still present in expected roster')
+          }
+          if (op.kind === 'removal_rekey') {
+            if (op.recipient !== undefined || op.admission !== undefined || op.recoveryChallenge !== undefined) fail('unexpected removal repair fields')
+            const origin = object(op.origin, 'original removal fields', ['kind', 'controls', 'welcomes', 'delivered', 'target', 'delivery'])
+            if (origin.kind !== 'remove' || origin.delivery !== 'unknown') fail('original removal context')
+            const originalControls = list(origin.controls, 'original removal controls', 2), originalWelcomes = list(origin.welcomes, 'original removal welcomes', 0)
+            if (originalControls.length !== 2 || originalWelcomes.length !== 0 || integer(origin.delivered, 'original removal delivered count') !== 0) fail('original removal shape')
+            const repair = deserializeEnvelope(b64(controls[0], 'saved removal repair'))
+            const removal = deserializeEnvelope(b64(originalControls[0], 'original removal wire')), rekey = deserializeEnvelope(b64(originalControls[1], 'original completing rekey wire'))
+            for (const envelope of [repair, removal, rekey]) {
+              if (encodedHex(envelope.conv_id) !== conv.id || envelope.conv_epoch !== expected.epoch - 1) fail('removal repair epoch binding')
+            }
+            if (origin.target !== undefined) {
+              const target = object(origin.target, 'original removal target fields', ['keyId', 'publicKey', 'record', 'admission'])
+              try { validateGroupRemovalTarget(target as Parameters<typeof validateGroupRemovalTarget>[0]) } catch { fail('original removal target binding') }
+            }
+          }
           if (op.kind === 'renewal' || op.kind === 'addition_rekey') {
             const recipient = hex(op.recipient, 32, 'renewal recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
             const accepted = expected.admissions[kid]
@@ -199,8 +223,8 @@ export function validateBackup(json: string): StoreData {
                 expected, delivered: origin.delivered, recipient, recoveryChallenge: origin.recoveryChallenge })
             }
 
-          } else {
-            if (op.admission !== undefined || op.origin !== undefined || op.kind !== 'refresh' && op.superseded !== undefined) fail('unexpected renewal fields')
+          } else if (op.kind !== 'removal_rekey') {
+            if (op.admission !== undefined || op.origin !== undefined || !['refresh', 'rekey'].includes(op.kind) && op.superseded !== undefined) fail('unexpected renewal fields')
             if (op.kind === 'addition') {
               if (op.recipient !== undefined) {
                 const recipient = hex(op.recipient, 32, 'addition recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
@@ -217,13 +241,15 @@ export function validateBackup(json: string): StoreData {
               groupRefreshIntent(localIdentity, op as Extract<StoredGroupOperation, { kind: 'refresh' }>)
             } else if (op.recipient !== undefined || op.recoveryChallenge !== undefined) fail('unexpected addition fields')
           }
-          if (['renewal', 'addition_rekey', 'refresh'].includes(op.kind)) {
+          if (['renewal', 'addition_rekey', 'refresh', 'removal_rekey', 'rekey'].includes(op.kind)) {
             const superseded = op.superseded === undefined ? [] : list(op.superseded, 'superseded operations', MAX_GROUP_OPERATION_REVISIONS)
+            const kinds = ({ refresh: ['refresh'], removal_rekey: ['removal_rekey'], rekey: ['rekey'] } as Record<string, string[]>)[op.kind] ?? ['addition_rekey', 'renewal']
             for (const value of superseded) {
               const item = object(value, 'superseded operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
-              if (!(op.kind === 'refresh' ? ['refresh'] : ['addition_rekey', 'renewal']).includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
+              if (!kinds.includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
+              const rotation = ['addition_rekey', 'removal_rekey', 'rekey'].includes(item.kind)
               const oldControls = list(item.controls, 'superseded controls', 1), oldWelcomes = list(item.welcomes, 'superseded welcomes', 1)
-              if (oldControls.length !== (item.kind === 'addition_rekey' ? 1 : 0) || oldWelcomes.length !== (item.kind === 'addition_rekey' ? 0 : 1)) fail('superseded operation shape')
+              if (oldControls.length !== (rotation ? 1 : 0) || oldWelcomes.length !== (rotation ? 0 : 1)) fail('superseded operation shape')
               if (integer(item.delivered, 'superseded delivered count') > oldWelcomes.length) fail('superseded delivered count')
               for (const wire of [...oldControls, ...oldWelcomes]) {
                 if (encodedHex(deserializeEnvelope(b64(wire, 'superseded ciphertext')).conv_id) !== conv.id) fail('superseded operation conversation')

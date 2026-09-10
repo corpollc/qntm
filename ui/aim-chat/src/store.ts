@@ -48,10 +48,27 @@ export interface StoredGroupAdditionOrigin {
   delivery: 'unknown'
 }
 export interface StoredGroupOperationEvidence {
-  kind: 'addition_rekey' | 'renewal' | 'refresh'
+  kind: 'addition_rekey' | 'renewal' | 'refresh' | 'removal_rekey' | 'rekey'
   controls: string[]
   welcomes: string[]
   delivered: number
+  delivery: 'unknown'
+}
+/** The exact member incarnation a saved removal targets: full key, canonical
+ * roster record and admission provenance at intent time. A later readmission of
+ * the same identity never matches it. */
+export interface StoredGroupRemovalTarget {
+  keyId: string
+  publicKey: string
+  record: string
+  admission: GroupAdmission | null
+}
+export interface StoredGroupRemovalOrigin {
+  kind: 'remove'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  target?: StoredGroupRemovalTarget
   delivery: 'unknown'
 }
 export type StoredGroupOperation = {
@@ -59,11 +76,14 @@ export type StoredGroupOperation = {
   welcomes: string[]
   delivered: number
   expected: GroupSessionState
-} & ({ kind: 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
-  | { kind: 'refresh'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: StoredGroupOperationEvidence[] }
-  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: never }
-  | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never }
-  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never })
+} & ({ kind: 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never; target?: never }
+  | { kind: 'remove'; target?: StoredGroupRemovalTarget; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
+  | { kind: 'rekey'; superseded?: StoredGroupOperationEvidence[]; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; target?: never }
+  | { kind: 'removal_rekey'; origin: StoredGroupRemovalOrigin; superseded?: StoredGroupOperationEvidence[]; recipient?: never; admission?: never; recoveryChallenge?: never; target?: never }
+  | { kind: 'refresh'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: StoredGroupOperationEvidence[]; target?: never }
+  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: never; target?: never }
+  | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never; target?: never }
+  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never; target?: never })
 
 export type StoredGroupControlBody = 'group_genesis' | 'group_add' | 'group_remove' | 'group_rekey'
 export const MAX_GROUP_CONTROL_RECEIPTS = 64

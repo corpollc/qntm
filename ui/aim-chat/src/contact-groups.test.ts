@@ -257,7 +257,7 @@ describe('browser contact group host', () => {
     expect(rawBackup()).toBe(original)
   })
 
-  it('refuses to publish an unknown old-source standalone rekey even when receivers can validate it as a competing winner', async () => {
+  it('never publishes an unknown old-source standalone rekey; the verified later rotation fulfils the intent', async () => {
     const alice = profile('Alice'), id = await createContactGroup(alice.id, 'Stale producer'), source = session(alice.id, id)
     const proposals = [prepareGroupSessionRekey(alice.identity, source), prepareGroupSessionRekey(alice.identity, source)]
       .sort((a, b) => hex(a.rekey.msg_id).localeCompare(hex(b.rekey.msg_id)))
@@ -269,10 +269,13 @@ describe('browser contact group host', () => {
     const current = session(alice.id, id)
     expect(receiveGroupEvent(alice.identity, pending.rekey, current).rewound).toBe(true)
     vi.mocked(DropboxClient.prototype.postMessage).mockClear()
-    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/older group epoch/i)
+    // Receivers would accept the lower-ID proposal as a late competitor, but a
+    // producer that has verified a later epoch never republishes old-source
+    // controls; the verified rotation already fulfilled its rotation intent.
+    await retryContactGroup(alice.id, id)
     expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
     expect(session(alice.id, id)).toEqual(current)
-    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(operation)
+    expect(store.findConversation(alice.id, id)!.group!.operation).toBeNull()
   })
   it('retries a completed addition after seen eviction without reposting either accepted control', async () => {
     const alice = profile('Alice'), bob = profile('Bob'), { id, operation, link } = await savedAddition(alice, bob)
@@ -1158,10 +1161,13 @@ describe('browser contact group host', () => {
     expect(host(bob.id, id).operation).toEqual(operation)
     expect(host(bob.id, id).controlReceipts?.some(row => row.id === mid && row.valid === false)).toBe(true)
     expect(controlAccepted(host(bob.id, id), wire)).toBe(false)
+    expect(session(bob.id, id).epoch).toBeGreaterThan(deserializeEnvelope(base64UrlDecode(wire)).conv_epoch)
     vi.mocked(DropboxClient.prototype.postMessage).mockClear()
-    await expect(retryContactGroup(bob.id, id)).rejects.toThrow()
+    // The replaced checkpoint attests a later epoch: the rotation intent is
+    // fulfilled without claiming the invalidated control's own delivery.
+    await retryContactGroup(bob.id, id)
     expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
-    expect(host(bob.id, id).operation).toEqual(operation)
+    expect(host(bob.id, id).operation).toBeNull()
   })
 
   it.each(['missing', 'wrong_digest', 'wrong_epoch', 'future_sequence', 'invalidated'] as const)(
@@ -1180,9 +1186,13 @@ describe('browser contact group host', () => {
     store.updateConversation(alice.id, id, () => record)
     expect(controlAccepted(host(alice.id, id), wire)).toBe(false)
     vi.mocked(DropboxClient.prototype.postMessage).mockClear()
-    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/epoch|history/i)
+    // No delivery is invented and the exact bytes never enter an obsolete
+    // epoch; the verified later epoch alone fulfils a standalone rotation intent.
+    const before = session(alice.id, id)
+    await retryContactGroup(alice.id, id)
     expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
-    expect(host(alice.id, id).operation?.controls).toEqual(operation.controls)
+    expect(host(alice.id, id).operation).toBeNull()
+    expect(session(alice.id, id)).toEqual(before)
   }, 30_000)
 
   it('rejects malformed control receipts and accepts unknown legacy backups without them', async () => {

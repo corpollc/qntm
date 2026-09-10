@@ -1,12 +1,56 @@
 /** Inspect private saved intent without interpreting it as accepted membership. */
-import { base64UrlDecode, deserializeEnvelope, serializeEnvelope, restoreGroupSession, parseGroupGenesisBody,
+import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, restoreGroupSession, parseGroupGenesisBody,
   keyIDFromPublicKey, QSP1Suite, openSecret, marshalCanonical, unmarshalCanonical } from '@corpollc/qntm'
 import type { Identity } from '@corpollc/qntm'
-import type { StoredGroupOperation, StoredGroupAdditionOrigin, StoredGroupOperationEvidence } from './store'
+import type { GroupSessionState } from '@corpollc/qntm'
+import type { StoredGroupOperation, StoredGroupAdditionOrigin, StoredGroupRemovalOrigin, StoredGroupRemovalTarget, StoredGroupOperationEvidence } from './store'
 type Addition = Extract<StoredGroupOperation, { kind: 'addition' }>
 type Repair = Extract<StoredGroupOperation, { kind: 'addition_rekey' }>
 const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 const suite = new QSP1Suite()
+const fromHex = (value: string) => Uint8Array.from(value.match(/../g)!, byte => parseInt(byte, 16))
+
+/** Pin the exact member record and admission incarnation a removal targets.
+ * Reads the saved checkpoint only; it grants nothing and installs no keys. */
+export function groupRemovalTarget(session: GroupSessionState, keyId: string): StoredGroupRemovalTarget {
+  const member = parseGroupGenesisBody(base64UrlDecode(session.snapshot)).founding_members.find(row => hex(row.key_id) === keyId)
+  if (!member) throw new Error('Removal target is not a current member')
+  const admission = session.admissions[keyId]
+  return { keyId, publicKey: hex(member.public_key), record: base64UrlEncode(marshalCanonical(member)), admission: admission ? structuredClone(admission) : null }
+}
+/** Refuse to publish an old removal against a later admission of its target.
+ * Journals saved before target pinning still detect a readmission sourced at
+ * the current epoch: a removal is prepared only while no addition is pending,
+ * so any admission sourced at this epoch is newer than that intent. */
+export function assertGroupRemovalTargetCurrent(session: GroupSessionState, target: StoredGroupRemovalTarget | undefined, removed: string[]) {
+  if (!target) {
+    for (const keyId of removed) {
+      if (session.admissions[keyId]?.sourceEpoch === session.epoch) throw new Error('Saved removal predates a later admission of its target; its operation is preserved')
+    }
+    return
+  }
+  requireValue(removed.length === 1 && removed[0] === target.keyId, 'Saved removal differs from its pinned target; its operation is preserved')
+  requireValue(sameGroupOperationValue(groupRemovalTarget(session, target.keyId), target), 'Saved removal no longer targets its original admission; its operation is preserved')
+}
+/** Validate a pinned target against its own record without any current state. */
+export function validateGroupRemovalTarget(value: StoredGroupRemovalTarget) {
+  requireValue(/^[a-f0-9]{32}$/.test(value.keyId) && /^[a-f0-9]{64}$/.test(value.publicKey), 'Invalid removal target key')
+  const record = unmarshalCanonical<{ key_id: Uint8Array; public_key: Uint8Array }>(base64UrlDecode(value.record))
+  requireValue(record && typeof record === 'object' && sameGroupOperationValue(marshalCanonical(record), base64UrlDecode(value.record))
+    && base64UrlEncode(base64UrlDecode(value.record)) === value.record
+    && record.key_id instanceof Uint8Array && hex(record.key_id) === value.keyId
+    && record.public_key instanceof Uint8Array && hex(record.public_key) === value.publicKey
+    && hex(keyIDFromPublicKey(fromHex(value.publicKey))) === value.keyId, 'Invalid removal target record')
+  if (value.admission !== null) {
+    const admission = value.admission
+    requireValue(admission && typeof admission === 'object' && Object.keys(admission).sort().join(',') === 'addDigest,addId,completion,sourceEpoch'
+      && /^[a-f0-9]{32}$/.test(admission.addId) && /^[a-f0-9]{64}$/.test(admission.addDigest)
+      && Number.isSafeInteger(admission.sourceEpoch) && admission.sourceEpoch >= 0
+      && !!admission.completion && typeof admission.completion === 'object'
+      && Object.keys(admission.completion).sort().join(',') === 'rekeyDigest,rekeyId'
+      && /^[a-f0-9]{32}$/.test(admission.completion.rekeyId) && /^[a-f0-9]{64}$/.test(admission.completion.rekeyDigest), 'Invalid removal target admission')
+  }
+}
 export function sameGroupOperationValue(left: unknown, right: unknown) {
   const a = marshalCanonical(left), b = marshalCanonical(right)
   if (a.length !== b.length) return false
@@ -16,12 +60,12 @@ export function sameGroupOperationValue(left: unknown, right: unknown) {
 function requireValue(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message) }
 export const MAX_GROUP_OPERATION_REVISIONS = 256
 export const MAX_GROUP_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024
-export function assertGroupOperationEvidenceBudget(origin: StoredGroupAdditionOrigin | undefined, superseded: StoredGroupOperationEvidence[]) {
+export function assertGroupOperationEvidenceBudget(origin: StoredGroupAdditionOrigin | StoredGroupRemovalOrigin | undefined, superseded: StoredGroupOperationEvidence[]) {
   requireValue(Array.isArray(superseded) && superseded.length <= MAX_GROUP_OPERATION_REVISIONS, 'Saved recovery evidence reached its revision limit; operation preserved')
   requireValue(marshalCanonical({ ...(origin ? { origin } : {}), superseded }).length <= MAX_GROUP_OPERATION_EVIDENCE_BYTES,
     'Saved recovery evidence reached its byte limit; operation preserved')
 }
-export function appendGroupOperationEvidence(op: Extract<StoredGroupOperation, { kind: 'addition_rekey' | 'renewal' | 'refresh' }>) {
+export function appendGroupOperationEvidence(op: Extract<StoredGroupOperation, { kind: 'addition_rekey' | 'renewal' | 'refresh' | 'removal_rekey' | 'rekey' }>) {
   const evidence: StoredGroupOperationEvidence[] = [...structuredClone(op.superseded ?? []),
     { kind: op.kind, controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered, delivery: 'unknown' }]
   assertGroupOperationEvidenceBudget(op.origin, evidence)

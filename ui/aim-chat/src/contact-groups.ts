@@ -3,7 +3,7 @@ import {
   base64UrlDecode, base64UrlEncode, keyIDFromPublicKey, validateIdentity, QSP1Suite,
   createInvite, deriveConversationKeys, createConversation, addParticipant, createGroupGenesisBody,
   parseGroupGenesisBody, GroupState, createGroupSession, restoreGroupSession,
-  groupSessionConversation, createGroupControlMessage, createGroupRemoveBody,
+  groupSessionConversation, createGroupControlMessage, createGroupRemoveBody, parseGroupRemoveBody,
   prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupWelcomeRefresh, prepareGroupAdmissionRenewal,
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, assertGroupAdmissionRenewalCurrent, assertGroupCanSend,
   receiveGroupEvent, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl, requireGroupRecovery,
@@ -13,7 +13,7 @@ import {
 import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
 import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, sameGroupOperationValue,
-  appendGroupOperationEvidence, assertGroupOperationEvidenceBudget } from './group-operation'
+  appendGroupOperationEvidence, assertGroupOperationEvidenceBudget, groupRemovalTarget, assertGroupRemovalTargetCurrent } from './group-operation'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 export function bytes(value: string): Uint8Array {
@@ -83,8 +83,13 @@ const CONTROL_BODY_TYPES = new Set<store.StoredGroupControlBody>(['group_genesis
 function controlReceipts(group: store.StoredGroup) {
   return group.controlReceipts ??= []
 }
+/** Every control the saved journal still relies on: the current controls and,
+ * for a repair, the original accepted controls its proof is derived from. */
+function journalControls(group: store.StoredGroup) {
+  return [...(group.operation?.controls ?? []), ...(group.operation?.origin?.controls ?? [])]
+}
 function pendingControlIds(group: store.StoredGroup) {
-  return new Set((group.operation?.controls ?? []).map(wireId))
+  return new Set(journalControls(group).map(wireId))
 }
 function latchControlReceipt(group: store.StoredGroup, wire: string, receipt: store.StoredGroupControlReceipt) {
   const rows = controlReceipts(group)
@@ -94,7 +99,7 @@ function latchControlReceipt(group: store.StoredGroup, wire: string, receipt: st
     existing.epoch = receipt.epoch; existing.sequence = receipt.sequence; existing.bodyType = receipt.bodyType
     return
   }
-  if (!group.operation?.controls.includes(wire) && !rows.some(row => row.id === receipt.id)) return
+  if (!journalControls(group).includes(wire) && !rows.some(row => row.id === receipt.id)) return
   rows.push(receipt)
   const pinned = pendingControlIds(group)
   while (rows.length > store.MAX_GROUP_CONTROL_RECEIPTS) {
@@ -314,9 +319,94 @@ function reconcileRenewal(profile: string, id: string, op: Extract<store.StoredG
   record.group.operation = next; save(profile, record)
   return next
 }
-function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation {
+type RemovalOperation = Extract<store.StoredGroupOperation, { kind: 'remove' | 'removal_rekey' }>
+/** Prove the original removal only from exact authenticated receive evidence. */
+function removalProof(record: ReturnType<typeof load>, op: RemovalOperation) {
+  const intent = op.kind === 'removal_rekey' ? op.origin : op
+  if (intent.kind !== 'remove' || intent.controls.length !== 2 || intent.welcomes.length) throw new Error('Invalid saved removal shape')
+  const wire = base64UrlDecode(intent.controls[0]), removal = deserializeEnvelope(wire)
+  if (!sameGroupOperationValue(serializeEnvelope(removal), wire) || hex(removal.conv_id) !== record.id) throw new Error('Invalid saved removal context')
+  return { accepted: controlAccepted(record.group, intent.controls[0]), source: removal.conv_epoch, removal, wire }
+}
+/** An accepted removal is finished once any verified rotation left its source epoch. */
+function removalCompleted(record: ReturnType<typeof load>, op: RemovalOperation) {
+  const proof = removalProof(record, op)
+  return proof.accepted && record.group.session.epoch > proof.source
+}
+/** Exact saved rotation ciphertext stays exact only while it still applies. */
+function assertRotationCurrent(identity: Identity, state: GroupSessionState, wire: string, expected: GroupSessionState) {
+  const envelope = deserializeEnvelope(base64UrlDecode(wire))
+  if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('Saved rotation expired')
+  if (envelope.conv_epoch !== state.epoch) throw new Error('Saved control belongs to an older group epoch; its operation is preserved')
+  const trial = receiveGroupEvent(identity, envelope, state).state
+  if (trial.root !== expected.root || trial.snapshot !== expected.snapshot || trial.epoch !== expected.epoch) {
+    throw new Error('Saved rotation differs from the current roster; its operation is preserved')
+  }
+}
+function rotationJournal(identity: Identity, state: GroupSessionState) {
+  const rotation = prepareGroupSessionRekey(identity, state), trial = receiveGroupEvent(identity, rotation.rekey, state).state
+  return { controls: [base64UrlEncode(serializeEnvelope(rotation.rekey))], welcomes: [] as string[], delivered: 0,
+    expected: createGroupSession(identity, rotation.conversation, rotation.state, { signedEpoch: state.signedEpoch, admissions: trial.admissions }) }
+}
+/** Finish an accepted removal from current membership; never re-remove. Returns
+ * null once a verified rotation already left the removal's source epoch. */
+function reconcileRemoval(profile: string, id: string, op: RemovalOperation): store.StoredGroupOperation | null {
+  const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
+  const proof = removalProof(record, op)
+  if (!proof.accepted) {
+    // Absent targets, predicted roots and acknowledgements prove nothing. A
+    // same-epoch, unexpired removal keeps its exact bytes for retry.
+    if (op.kind === 'removal_rekey') throw new Error('Original removal is no longer verified in current history; its operation is preserved')
+    if (state.epoch !== proof.source) throw new Error('Saved removal was superseded before its acceptance was verified; its operation is preserved')
+    if (proof.removal.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('Saved removal expired before its acceptance was verified; its operation is preserved')
+    try { receiveGroupEvent(identity, proof.removal, state) } catch (error) {
+      if (error instanceof Error && /Stale|epoch|member|Invalid/.test(error.message)) throw error
+      throw new Error('Saved removal cannot be verified against the current branch; its operation is preserved')
+    }
+    return op
+  }
+  if (state.epoch > proof.source) return null
+  if (!state.needsRekey) throw new Error('Accepted removal is not awaiting its completing rotation; its operation is preserved')
+  assertGroupCanSend(identity, { ...state, needsRekey: false })
+  try { assertRotationCurrent(identity, state, op.controls[op.kind === 'remove' ? 1 : 0], op.expected); return op } catch { /* Expired, other branch or changed roster: stage a current rotation. */ }
+  const origin: store.StoredGroupRemovalOrigin = op.kind === 'removal_rekey' ? structuredClone(op.origin)
+    : { kind: 'remove', controls: [...op.controls], welcomes: [], delivered: op.delivered, ...(op.target ? { target: structuredClone(op.target) } : {}), delivery: 'unknown' }
+  const superseded = op.kind === 'removal_rekey' ? appendGroupOperationEvidence(op) : []
+  assertGroupOperationEvidenceBudget(origin, superseded)
+  const next: store.StoredGroupOperation = { kind: 'removal_rekey', ...rotationJournal(identity, state), origin, ...(superseded.length ? { superseded } : {}) }
+  record.group.operation = next; save(profile, record)
+  return next
+}
+/** Keep an exact rotation, finish a superseded one, or renew a still-current intent. */
+function reconcileRotation(profile: string, id: string, op: Extract<store.StoredGroupOperation, { kind: 'rekey' }>): store.StoredGroupOperation | null {
+  const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
+  if (op.controls.length !== 1 || op.welcomes.length) throw new Error('Invalid saved rotation shape')
+  const wire = base64UrlDecode(op.controls[0]), envelope = deserializeEnvelope(wire)
+  if (!sameGroupOperationValue(serializeEnvelope(envelope), wire) || hex(envelope.conv_id) !== record.id) throw new Error('Invalid saved rotation context')
+  if (controlAccepted(record.group, op.controls[0])) return op
+  assertGroupCanSend(identity, { ...state, needsRekey: false })
+  if (state.epoch > envelope.conv_epoch) return null // Any verified later rotation fulfils a standalone rotation intent.
+  try { assertRotationCurrent(identity, state, op.controls[0], op.expected); return op } catch { /* Expired, other branch or changed roster: stage a current rotation. */ }
+  const superseded = appendGroupOperationEvidence(op)
+  const next: store.StoredGroupOperation = { kind: 'rekey', ...rotationJournal(identity, state), superseded }
+  record.group.operation = next; save(profile, record)
+  return next
+}
+/** Called under the shared Web Lock immediately before a repair rotation POST. */
+function shouldPostRemovalRekey(identity: Identity, record: ReturnType<typeof load>, op: Extract<store.StoredGroupOperation, { kind: 'removal_rekey' }>) {
+  const state = record.group.session, proof = removalProof(record, op)
+  if (!proof.accepted) throw new Error('Original removal is no longer verified in current history; its operation is preserved')
+  if (state.epoch > proof.source) return false // Another member's verified rotation finished the removal.
+  if (state.epoch !== proof.source || !state.needsRekey) throw new Error('Accepted removal is not awaiting its completing rotation; its operation is preserved')
+  assertGroupCanSend(identity, { ...state, needsRekey: false })
+  assertRotationCurrent(identity, state, op.controls[0], op.expected)
+  return true
+}
+function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation | null {
   if (op.kind === 'refresh') return reconcileRefresh(profile, id, op)
   if (op.kind === 'renewal') return reconcileRenewal(profile, id, op)
+  if (op.kind === 'remove' || op.kind === 'removal_rekey') return reconcileRemoval(profile, id, op)
+  if (op.kind === 'rekey') return reconcileRotation(profile, id, op)
   if (op.kind !== 'addition' && op.kind !== 'addition_rekey') return op
   const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
   const intent = additionProof(identity, record, op)
@@ -376,7 +466,12 @@ function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, 
   if (!['addition', 'addition_rekey', 'create'].includes(op.kind) && envelope.conv_epoch !== state.epoch) {
     throw new Error('Saved control belongs to an older group epoch; its operation is preserved')
   }
-  if (op.kind !== 'create') receiveGroupEvent(identity, envelope, state)
+  if (op.kind !== 'create') {
+    const applied = receiveGroupEvent(identity, envelope, state)
+    if (op.kind === 'remove' && !applied.duplicate && applied.message.inner.body_type === 'group_remove') {
+      assertGroupRemovalTargetCurrent(state, op.target, parseGroupRemoveBody(applied.message.inner.body).removed_members.map(hex))
+    }
+  }
   return true
 }
 function finishOperation(profile: string, id: string, op: store.StoredGroupOperation) {
@@ -394,12 +489,18 @@ async function resumeUnlocked(profile: string, id: string, reconcile = false): P
   record = operationRecord(profile, id, op)
   if (record.group.session.recovery) throw new Error('Recover missing group history before retrying this operation')
   if (record.group.session.removed) throw new Error('You have been removed from this group')
-  if (reconcile) op = reconcileAddition(profile, id, op)
   const identity = identityFor(profile)
+  if (reconcile) {
+    const next = reconcileAddition(profile, id, op)
+    if (!next) return finishOperation(profile, id, op) // Verified later rotation already fulfilled this intent.
+    op = next
+  }
   const dropbox = new DropboxClient(record.group.relayUrl)
+  const removalFinished = (current: ReturnType<typeof load>, saved: store.StoredGroupOperation) =>
+    (saved.kind === 'remove' || saved.kind === 'removal_rekey') && removalCompleted(current, saved)
   for (const wire of op.controls) {
     record = operationRecord(profile, id, op)
-    if (!shouldPostControl(identity, record, op, wire)) continue
+    if (op.kind === 'removal_rekey' ? !shouldPostRemovalRekey(identity, record, op) : !shouldPostControl(identity, record, op, wire)) continue
     const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
     record = operationRecord(profile, id, op)
     if (op.kind === 'create') { record.group.receipts.push(seq); save(profile, record) }
@@ -408,12 +509,13 @@ async function resumeUnlocked(profile: string, id: string, reconcile = false): P
       const proof = additionProof(identity, record, op)
       if (proof.accepted && (op.kind === 'addition' && wire === op.controls[0] || proof.accepted.completion)) continue
     }
+    if (wire === op.controls.at(-1) && removalFinished(record, op)) continue // A helper's verified rotation may have finished the accepted removal.
     if (!controlAccepted(record.group, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
   }
-  if (reconcile) op = reconcileAddition(profile, id, op)
+  if (reconcile && (op.kind === 'addition' || op.kind === 'addition_rekey')) op = reconcileAddition(profile, id, op)!
   if (op.kind === 'addition_rekey') throw new Error('Completing rotation is not yet verified in relay replay; retry this operation')
   record = operationRecord(profile, id, op)
-  const controlsAccepted = op.controls.every(wire => controlAccepted(record.group, wire))
+  const controlsAccepted = op.controls.every(wire => controlAccepted(record.group, wire)) || removalFinished(record, op)
   if (!op.welcomes.length && !controlsAccepted && (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch)) {
     throw new Error('Saved operation no longer matches the accepted group state')
   }
@@ -454,7 +556,7 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     if (record.group.operation) throw new Error('Retry the saved group operation before starting another')
     const controls = [], welcomes = []
     let expected = session
-    let renewal: GroupAdmissionRenewal | undefined
+    let renewal: GroupAdmissionRenewal | undefined, target: store.StoredGroupRemovalTarget | undefined
     if (action === 'add') {
       const op = prepareGroupSessionAddition(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge), record.group.cursor)
       controls.push(op.addition, op.rekey); welcomes.push(...op.welcomes)
@@ -471,6 +573,7 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
       const remove = createGroupControlMessage(identity, groupSessionConversation(session), 'group_remove', createGroupRemoveBody([key], 'Removed by a group member'))
       controls.push(remove)
       expected = receiveGroupEvent(identity, remove, session).state
+      target = groupRemovalTarget(session, hex(key))
       controls.push(prepareGroupSessionRekey(identity, expected).rekey)
     } else controls.push(prepareGroupSessionRekey(identity, session).rekey)
     expected = session
@@ -480,7 +583,8 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
       ? { ...operation, kind: 'renewal', recipient: hex(renewal.recipient), admission: renewal.admission }
       : action === 'add' ? { ...operation, kind: 'addition', recipient: hex(contactKey(profile, contact!)), recoveryChallenge: challengeBytes(challenge) ? challenge!.trim().toLowerCase() : null }
       : action === 'refresh' ? { ...operation, kind: 'refresh', recipient: hex(contactKey(profile, contact!)), recoveryChallenge: challengeBytes(challenge) ? challenge!.trim().toLowerCase() : null }
-      : { ...operation, kind: action }
+      : action === 'remove' ? { ...operation, kind: 'remove', target }
+      : { ...operation, kind: 'rekey' }
     save(profile, record)
     return resumeUnlocked(profile, id)
   })
@@ -493,7 +597,10 @@ export async function openContactGroup(profile: string, link: string, name = '')
     if (existing?.gateway) throw new Error('Gateway groups must use their governance flow')
     if (existing?.group && existing.group.relayUrl !== locator.relayUrl) throw new Error('Group link changes the saved relay; verify the destination before migrating')
     const batch = await new DropboxClient(locator.relayUrl).receiveMessages(locator.conversationId, 0)
-    if (existing?.group) applyGroupBatch(profile, id, batch.entries, batch.sequence)
+    // Rows at or before the saved cursor were already covered by the replay that
+    // committed it; re-feeding them cannot add coverage and would re-run the
+    // unverifiable-epoch preflight on this member's own consumed admission rows.
+    if (existing?.group) applyGroupBatch(profile, id, batch.entries.filter(row => row.seq > existing.group!.cursor), batch.sequence)
     const previous = store.findConversation(profile, id)
     if (previous?.group && !previous.group.session.recovery && !previous.group.session.removed && !previous.group.session.needsRekey) return id
     const candidates = []
