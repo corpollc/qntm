@@ -4,13 +4,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
 import { stageGroupDelivery, stageAcceptedGroupSend } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
-  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, prepareGroupSessionAddition, type GroupSessionState, type OuterEnvelope,
+  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, prepareGroupSessionAddition, decryptMessage, type GroupSessionState, type OuterEnvelope,
 } from '@corpollc/qntm';
 const TIMEOUT = 240_000;
 describe.sequential('native OpenClaw contact welcomes with Python and TypeScript peers', () => {
@@ -20,6 +22,7 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
   let tsCursor = 0;
   let bootstrapWinnerRoot: string, bootstrapLosingRoot: string;
   let delayedBootstrapWinner: OuterEnvelope, delayedBootstrapRoot: string;
+  let bootstrapWelcome: OuterEnvelope;
   const aliceIdentity = () => {
     const raw = h.alice.readIdentity();
     return { privateKey: new Uint8Array(Buffer.from(raw.private_key, 'hex')), publicKey: new Uint8Array(Buffer.from(raw.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(raw.key_id, 'hex')) };
@@ -61,6 +64,7 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     delayedBootstrapWinner = delayed.rekey; delayedBootstrapRoot = Buffer.from(delayed.conversation.keys.root).toString('hex');
     bootstrapWinnerRoot = Buffer.from(winner.conversation.keys.root).toString('hex');
     bootstrapLosingRoot = Buffer.from(added.conversation.keys.root).toString('hex');
+    bootstrapWelcome = added.welcomes[0];
     const losingPlan = { id: 'losing-bootstrap-branch', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
     const losingText = createMessage(identity, added.conversation, 'text', new TextEncoder().encode('gateway-tool-smoke:' + Buffer.from(JSON.stringify(losingPlan)).toString('base64url')));
     for (const envelope of [added.addition, added.rekey, winner.rekey, losingText, added.welcomes[0]]) await relay.postMessage(added.conversation.id, serializeEnvelope(envelope));
@@ -189,5 +193,52 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     await h.dave.run(['send', convId, 'readmitted without exclusion keys']);
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'readmitted without exclusion keys', 'Python explicit readmission');
     expect((h.dave.readConversation(convId).group_session as GroupSessionState).epoch).toBe(7);
+  }, TIMEOUT);
+  it('accepts Python renewal of a later expired readmission without receiving exclusion keys', async () => {
+    await h.alice.run(['group', 'remove', convId, 'OpenClaw']);
+    await host.waitFor(() => checkpoint().session?.removed === true, 'native saved removal before offline readmission');
+    expect(checkpoint().session.removedAtEpoch).toBe(7);
+    await host.stop();
+    const identity = aliceIdentity();
+    let state = restoreGroupSession(identity, h.alice.readConversation(convId).group_session);
+    const excluded = createMessage(identity, groupSessionConversation(state), 'text', new TextEncoder().encode('private while native host was excluded'));
+    await relay.postMessage(excluded.conv_id, serializeEnvelope(excluded));
+    await h.alice.run(['recv', convId]);
+    const record = h.alice.readConversation(convId);
+    state = restoreGroupSession(identity, record.group_session);
+    const readmission = prepareGroupSessionAddition(identity, state, [host.identity.publicKey], 20, undefined, Number(record.group_cursor));
+    for (const envelope of [readmission.addition, readmission.rekey, readmission.welcomes[0]]) await relay.postMessage(envelope.conv_id, serializeEnvelope(envelope));
+    await h.alice.run(['recv', convId]);
+    expect((h.alice.readConversation(convId).group_session as GroupSessionState).epoch).toBe(9);
+    await delay(Math.max(0, (readmission.welcomes[0].expiry_ts + 2) * 1000 - Date.now()));
+    // Use the matching Python library in the fixture's installed CLI environment.
+    // No new CLI/agent renewal action is implied by this receiving-client test.
+    const script = `import sys
+from qntm import cli
+from qntm.group_client import GroupClient
+from qntm.group_session import prepare_group_admission_renewal, assert_group_admission_renewal_current
+from qntm.identity import key_id_from_public_key
+from qntm.message import serialize_envelope
+config, relay, cid, address = sys.argv[1:]
+identity = cli._load_identity(config)
+record = GroupClient(config, identity, relay).sync(cid)
+recipient = bytes.fromhex(address)
+admission = record['group_session']['admissions'][key_id_from_public_key(recipient).hex()]
+operation = prepare_group_admission_renewal(identity, record['group_session'], recipient,
+    {key: admission[key] for key in ('addId', 'addDigest')}, replay_from_sequence=record['group_cursor'])
+assert_group_admission_renewal_current(identity, record['group_session'], operation)
+cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
+`;
+    await promisify(execFile)(join(h.rootDir, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
+      ['-c', script, h.alice.configDir, h.relayUrl, convId, Buffer.from(host.identity.publicKey).toString('hex')], { timeout: 30_000 });
+    await relay.postMessage(bootstrapWelcome.conv_id, serializeEnvelope(bootstrapWelcome));
+    await host.start();
+    await host.waitFor(() => !checkpoint().session?.removed && !checkpoint().session?.recovery && checkpoint().session.epoch === 9, 'native Python renewal installed');
+    const installed = restoreGroupSession(host.identity, checkpoint().session);
+    expect(installed.rekeys).toEqual([]);
+    expect(installed.admissions[Buffer.from(host.identity.keyID).toString('hex')].sourceEpoch).toBe(8);
+    expect(() => decryptMessage(excluded, groupSessionConversation(installed))).toThrow();
+    await action('after-python-renewal', 'send', { text: 'native accepts renewed delivery of its later admission' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native accepts renewed delivery of its later admission', 'native reply after Python renewal');
   }, TIMEOUT);
 });
