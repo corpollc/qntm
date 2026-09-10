@@ -292,7 +292,13 @@ describe('DropboxClient', () => {
 
     it('replays a failed callback before processing later queued messages', async () => {
       vi.useFakeTimers();
-      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      class ClientWebSocket extends FakeWebSocket {
+        override close(code = 1000, reason = '') {
+          if (code !== 1000 && (code < 3000 || code > 4999)) throw new DOMException('Invalid client close code', 'InvalidAccessError');
+          super.close(code, reason);
+        }
+      }
+      vi.stubGlobal('WebSocket', ClientWebSocket as unknown as typeof WebSocket);
       const received: number[] = [];
       const onError = vi.fn();
       let failOnce = true;
