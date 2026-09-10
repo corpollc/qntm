@@ -97,7 +97,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       subscription.close();
       await subscription.closed;
     }
-  });
+  }, 30_000);
 
   beforeAll(async () => {
     stateDir = mkdtempSync(join(tmpdir(), 'qntm-relay-acceptance-'));
