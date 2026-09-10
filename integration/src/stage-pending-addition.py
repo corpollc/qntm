@@ -1,4 +1,4 @@
-"""Stop a real contact addition after accepted controls, before welcome delivery.
+"""Stop a real contact addition after selected controls, before welcome delivery.
 
 The fixture only chooses the crash window and a short delivery lifetime. It uses
 the production journal, encrypted envelopes, relay transport and replay reducer.
@@ -19,10 +19,13 @@ from qntm.identity import key_id_from_public_key
 from qntm.message import serialize_envelope
 
 
-config_dir, relay_url, conversation_id, recipient_hex, challenge_hex = sys.argv[1:]
+config_dir, relay_url, conversation_id, recipient_hex, challenge_hex, *options = sys.argv[1:]
+if options not in ([], ['add-only']):
+    raise ValueError('Expected optional add-only crash window')
+add_only = options == ['add-only']
 identity = cli._load_identity(config_dir)
 recipient = bytes.fromhex(recipient_hex)
-challenge = bytes.fromhex(challenge_hex)
+challenge = bytes.fromhex(challenge_hex) if challenge_hex else None
 client = GroupClient(config_dir, identity, relay_url)
 with client._operation_lock(conversation_id):
     record = client.sync(conversation_id)
@@ -39,12 +42,17 @@ with client._operation_lock(conversation_id):
         'kind': 'add', 'controls': [encode(envelope) for envelope in controls],
         'welcomes': [encode(envelope) for envelope in operation['welcomes']],
         'welcomes_sent': 0, 'expected': expected,
-        'member': key_id_from_public_key(recipient).hex(), 'recovery_challenge': challenge_hex,
+        'member': key_id_from_public_key(recipient).hex(),
+        **({'recovery_challenge': challenge_hex} if challenge else {}),
     })
-    for envelope in controls:
+    for envelope in controls[:1] if add_only else controls:
         cli._http_send(relay_url, conversation_id, serialize_envelope(envelope))
     accepted = client.sync(conversation_id)
-    assert_group_addition_accepted(identity, accepted['group_session'], operation)
+    if add_only:
+        assert accepted['group_session']['needsRekey'] is True
+        assert accepted['group_session']['admissions'][key_id_from_public_key(recipient).hex()]['completion'] is None
+    else:
+        assert_group_addition_accepted(identity, accepted['group_session'], operation)
     expiry = operation['welcomes'][0]['expiry_ts']
     assert int(time.time()) < expiry, 'Fixture controls were not accepted before welcome expiry'
     assert accepted['group_operation']['welcomes_sent'] == 0
@@ -52,5 +60,6 @@ with client._operation_lock(conversation_id):
         'expires_at': expiry, 'cursor': accepted['group_cursor'],
         'controls': [envelope['msg_id'].hex() for envelope in controls],
         'welcome_id': operation['welcomes'][0]['msg_id'].hex(),
+        'rekey_expires_at': operation['rekey']['expiry_ts'],
         'admission': accepted['group_session']['admissions'][key_id_from_public_key(recipient).hex()],
     }))
