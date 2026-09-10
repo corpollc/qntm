@@ -16,18 +16,34 @@ const input = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('cancel'), reviewToken: z.string().regex(/^[0-9a-f]{32}$/) }).strict(),
 ]);
 type Scope = { key: string; store: QntmGroupStore };
+/** The conversation comes only from runtime-provided context, never tool
+ * arguments. A native inbound turn carries the platform conversation id. An
+ * operator-initiated `openclaw agent --channel qntm --to <binding>` turn is
+ * routed by OpenClaw through this plugin's outbound session route and carries
+ * only that Gateway-resolved delivery route, with the run marked as owner
+ * initiated; both ids must agree when present. Host-scheduled turns without
+ * either signal stay outside the tool. */
+function routedConversation(ctx: OpenClawPluginToolContext): string | undefined {
+  const native = /^[a-f0-9]{32}$/i.test(ctx.nativeChannelId ?? '') ? ctx.nativeChannelId!.toLowerCase() : undefined;
+  const delivered = ctx.deliveryContext?.channel === 'qntm' && /^qntm:[a-f0-9]{32}$/i.test(ctx.deliveryContext.to ?? '')
+    ? ctx.deliveryContext.to!.slice('qntm:'.length).toLowerCase() : undefined;
+  if (native && delivered && native !== delivered) return undefined;
+  if (native) return native;
+  return ctx.messageChannel === 'qntm' && ctx.senderIsOwner === true ? delivered : undefined;
+}
 export function resolveGroupToolScope(ctx: OpenClawPluginToolContext, fallback: QntmRootConfig,
   options: { stateDir?: string; client?: GroupTransport } = {}): Scope {
   const channel = ctx.messageChannel ?? ctx.deliveryContext?.channel, id = ctx.agentAccountId ?? ctx.deliveryContext?.accountId;
+  const conversation = routedConversation(ctx);
   if ((ctx.messageChannel && ctx.deliveryContext?.channel && ctx.messageChannel !== ctx.deliveryContext.channel)
     || (ctx.agentAccountId && ctx.deliveryContext?.accountId && ctx.agentAccountId !== ctx.deliveryContext.accountId)
-    || channel !== 'qntm' || !id || !ctx.agentId || !ctx.sessionId || !/^[a-f0-9]{32}$/i.test(ctx.nativeChannelId ?? '')) {
+    || channel !== 'qntm' || !id || !ctx.agentId || !ctx.sessionId || !conversation) {
     throw new Error('Group tools require a native qntm route and host session');
   }
   const cfg = (ctx.getRuntimeConfig?.() ?? ctx.runtimeConfig ?? ctx.config ?? fallback) as QntmRootConfig;
   if (!listQntmAccountIds(cfg).includes(normalizeAccountId(id))) throw new Error('Native account is not configured');
   const account = resolveQntmAccount({ cfg, accountId: id });
-  const bindings = account.bindings.filter(binding => binding.enabled && binding.conversationId === ctx.nativeChannelId!.toLowerCase());
+  const bindings = account.bindings.filter(binding => binding.enabled && binding.conversationId === conversation);
   if (!account.enabled || !account.configured || bindings.length !== 1 || !bindings[0].ordinaryGroup || !bindings[0].groupActions?.length) {
     throw new Error('Ordinary group tools are not locally enabled for this route');
   }
