@@ -10,3 +10,7 @@ export function stageCompletedGroupAddition(config: unknown, stateDir: string, c
 export function stageGenericGroupRefresh(config: unknown, stateDir: string, contact: string, ttl?: number, challenge?: string): Promise<{
   expiry: number; original: { welcomes: string[] }; cursor: number; currentRoot: string;
 }>;
+
+export function stageAcceptedGroupRotation(config: unknown, stateDir: string): Promise<{
+  messageId: string; control: string; sequence: number; epoch: number; expectedRoot: string;
+}>;

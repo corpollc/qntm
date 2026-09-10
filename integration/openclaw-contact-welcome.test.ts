@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, CliAgent, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -378,6 +378,41 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(state.root).toBe(root!); expect(state.rekeys).toEqual([]); expect(state.recovery).toBeNull();
     await restored.run(['send', convId, 'Python restored founder from native generic refresh retry']);
     await waitForCliHistory(h.dave, convId, row => row.unsafe_body === 'Python restored founder from native generic refresh retry', 'Python peer reply after generic native refresh');
+  }, TIMEOUT);
+
+  it('finishes an accepted native rotation after real replay-cache eviction and a later Python rotation without any POST', async () => {
+    let staged: Awaited<ReturnType<typeof stageAcceptedGroupRotation>>, before: number;
+    const reviewed = await host.journey(h.alice,
+      { id: 'retry-accepted-native-rotation', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' }, async () => {
+        // The request already entered the real host before the operation barrier.
+        // Simulate a lost POST acknowledgement after the relay accepted the exact rotation.
+        staged = await stageAcceptedGroupRotation(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir);
+        expect(checkpoint().controlReceipts).toEqual([{ messageId: staged.messageId, digest: expect.any(String), epoch: staged.epoch - 1, sequence: staged.sequence, valid: true }]);
+        await h.alice.run(['recv', convId]);
+        for (const text of ['native cache pressure one', 'native cache pressure two']) await h.alice.run(['send', convId, text]);
+        await host.waitFor(() => !(staged.messageId in checkpoint().session.seen) && checkpoint().controlReceipts?.[0]?.valid === true,
+          'real host eviction of the accepted rotation marker');
+        await h.alice.run(['group', 'rekey', convId]);
+        await host.waitFor(() => checkpoint().session?.epoch === staged.epoch + 1, 'later canonical Python rotation');
+        expect(checkpoint().operation.controls).toEqual([staged.control]);
+        before = (await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0)).sequence;
+      });
+    expect(reviewed[1].review!.retryMode).toBe('accepted_cleanup'); expect(reviewed[1].review!.acceptedControls).toBe(1);
+    expect(reviewed[1].review!.effect).toContain('No messages will be posted'); expect(reviewed[2].status).toBe('submitted');
+    expect((reviewed[2] as { pendingOperation?: unknown }).pendingOperation).toBeNull();
+    // The host's own turn-completion text send finalizes its journal shortly after the reply lands.
+    await host.waitFor(() => !checkpoint().operation, 'host send journal finalized after accepted-control cleanup');
+    expect(checkpoint().controlReceipts).toEqual([]);
+    expect(checkpoint().session.epoch).toBe(staged!.epoch + 1); expect(checkpoint().session.root).not.toBe(staged!.expectedRoot);
+    const result = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0);
+    expect(result.entries.filter(row => Buffer.from(row.envelope).toString('base64url') === staged!.control)).toHaveLength(1);
+    // Only the host's turn-completion text follows the review; no control or welcome was reposted.
+    const after = result.entries.filter(row => row.seq > before!);
+    const alice = groupSessionConversation(restoreGroupSession(aliceIdentity(), h.alice.readConversation(convId).group_session));
+    expect(after.map(row => decryptMessage(deserializeEnvelope(row.envelope), alice).inner.body_type)).toEqual(['text']);
+    expect(new TextDecoder().decode(decryptMessage(deserializeEnvelope(after[0].envelope), alice).inner.body)).toContain('gateway-tool-complete:');
+    await action('after-accepted-cleanup', 'send', { text: 'native finished an accepted rotation without reposting it' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native finished an accepted rotation without reposting it', 'native reply after accepted-control cleanup');
   }, TIMEOUT);
 
 });
