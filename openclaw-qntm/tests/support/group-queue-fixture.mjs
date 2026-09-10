@@ -81,7 +81,13 @@ export async function stageAcceptedGroupRotation(config, stateDir) {
     if (!receipt?.valid || state.session.epoch !== expected.epoch || state.session.root !== expected.root) throw new Error('Staged rotation was not authenticated in replay');
     const seen = { [messageId]: state.session.seen[messageId] };
     for (const [id, marker] of Object.entries(state.session.seen)) if (id !== messageId) seen[id] = marker;
-    while (Object.keys(seen).length < 8192) seen[randomBytes(16).toString('hex')] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+    let entries = Object.keys(seen).length;
+    while (entries < 8192) {
+      const id = randomBytes(16).toString('hex');
+      if (id in seen) continue;
+      seen[id] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+      entries++;
+    }
     state.session.seen = seen;
     ordinary.save(state);
     return { messageId, control: operation.controls[0], sequence: receipt.sequence, epoch: state.session.epoch, expectedRoot: expected.root };

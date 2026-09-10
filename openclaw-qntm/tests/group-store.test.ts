@@ -353,7 +353,13 @@ describe('OpenClaw removal and rotation recovery', () => {
     const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), original = await stagedRemoval(f, owner, 'Member');
     await late.exclusive(() => late.sync()); const lateState = late.load().session!, removeId = toHex(wireOf(original.controls[0]).msg_id);
     const state = owner.load(), seen = state.session!.seen;
-    while (Object.keys(seen).length < MAX_SEEN) seen[randomBytes(16).toString('hex')] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+    let entries = Object.keys(seen).length;
+    while (entries < MAX_SEEN) {
+      const id = randomBytes(16).toString('hex');
+      if (id in seen) continue;
+      seen[id] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+      entries++;
+    }
     owner.save(state);
     // Real eviction: authenticated same-epoch controls from the helper fill the bounded cache.
     for (let index = 0; index < 8; index++) {
