@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Python group control sends now reload the saved operation and current authority under the receive lock immediately before publication. Removal, missing history, changed journals and superseded source epochs stop stale creation/removal/rekey POSTs; exact already-accepted ciphertext is recognized without reposting. Resident-receive race tests cover these checks.
+
 - Python CLI/MCP `group retry` can now finish an accepted add whose original key rotation expired or no longer matches the current roster. It saves a replacement rotation, verifies the canonical completion through relay replay, then renews current-key delivery. Restart keeps uncertain ciphertext and never repeats the add. Later expiry or supersession can be reconciled again for the same admission, with bounded private delivery evidence. Removal and missing history block release.
 
 - Browser, Python CLI/MCP, terminal and OpenClaw refresh actions now renew the recipient's proven current admission. A contact can recover an expired readmission welcome after later rotations without another add or access to excluded epochs. Founding members and checkpoints without admission proof retain generic refresh behavior; saved removal still requires proof of a later admission. Private journals and encrypted browser backups preserve the recipient, admission proof and exact retry ciphertext.
