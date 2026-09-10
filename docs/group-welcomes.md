@@ -197,8 +197,24 @@ and OpenClaw include the original intent in that byte budget; Python retains its
 fixed original intent and current repair separately. At either limit, retry preserves
 the journal and sends nothing; it never silently discards uncertain delivery.
 The entire operation journal is removed after completion. Broader reconciliation
-for generic refresh/remove/rekey operations remains under
+for remove/rekey operations remains under
 `qntm-qp22`.
+
+Saved **generic refreshes** for founding members or checkpoints without admission
+proof can also be retried after expiry or a later rotation. Maintained clients
+authenticate the original signed recipient box and optional recovery challenge,
+check that the full recipient key remains in the current roster, and retain the
+old ciphertext before preparing current delivery. Older single-recipient journals
+can recover their missing metadata from the authenticated box. A generic refresh
+keeps its purpose even if admission proof is now known; it cannot clear saved
+removal. OpenClaw reviews the concrete replacement before saving and posting it.
+
+The relay stores each accepted POST as a new sequence row. Explicit retry after
+an unknown acknowledgement can therefore store identical ciphertext twice.
+Receiver replay checks prevent duplicate message effects; this is distinct from
+server-side deduplication. The current clients do not recognize an already-stored
+welcome before retrying its exact POST. The real relay journeys verify both rows,
+unchanged membership and keys, and one delivered reply.
 
 `qntm group link GROUP_ID` retrieves the public locator pinned to **your**
 identity, for contacts whose welcomes you issued. It does not add anyone or

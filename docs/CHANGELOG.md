@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Browser, Python CLI/MCP, terminal and OpenClaw retry actions can replace a stale generic refresh for the same current member. They authenticate the original recipient and recovery challenge, preserve prior ciphertext within private evidence bounds, and deliver current keys without turning a generic refresh into readmission. Older single-recipient journals remain recoverable when their signed intent can be verified. Real CLI/MCP, browser and installed OpenClaw journeys cover expiry, later rotation and replies.
+
 - Python group control sends now reload the saved operation and current authority under the receive lock immediately before publication. Removal, missing history, changed journals and superseded source epochs stop stale creation/removal/rekey POSTs; exact already-accepted ciphertext is recognized without reposting. Resident-receive race tests cover these checks.
 
 - Browser, Python CLI/MCP, terminal and OpenClaw retry actions can now finish an accepted add whose original key rotation expired or no longer matches the current roster. They save a replacement rotation, verify canonical completion through relay replay, then renew current-key delivery. OpenClaw reviews the rotation and resulting welcome in two successive prepare/commit cycles. Restart keeps uncertain ciphertext and never repeats the add. Later expiry or supersession can be reconciled again for the same admission, with bounded private delivery evidence. Removal and missing history block release.
