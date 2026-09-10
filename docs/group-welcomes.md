@@ -1,12 +1,92 @@
 # Contact addition and encrypted group welcomes
 
-This extension implements the library layer of the
-[add-contact design](design/group-membership.md). It is unreleased. Python and
-TypeScript can prepare an addition, open a welcome and replay authenticated
-ordinary-group state; the complete client interface, durable delivery/recovery
-orchestration and gateway-governed flows remain tracked
-in `qntm-2g7v`. These APIs do not by themselves make the contact-add journey
-available in the browser, terminal, CLI or OpenClaw.
+This unreleased extension implements the [add-contact design](design/group-membership.md)
+in the Python CLI and MCP, with matching Python and TypeScript library operations.
+Browser, terminal and OpenClaw interfaces, gateway-governed welcomes and complete
+recovery across competing rekeys remain unfinished (`qntm-2g7v`). It is not part
+of the published 0.6.1 packages or hosted browser.
+
+The public link has no expiry, and contacts can open their links in a different
+order from their additions. An added contact is already a member: later rekeys
+include that identity, so their client can replay from its welcome to the current
+epoch. The welcome itself has a seven-day maximum lifetime; relay retention may
+also remove it or a needed rekey. Missing that delivery window does not end
+membership. Recovery requires a current member to send fresh, current keys to
+the still-admitted recipient; that refresh path is not yet implemented.
+
+## CLI and MCP
+
+Pin the contact's full Ed25519 public key after verifying its owner. A short key
+ID is insufficient to add someone. An existing contact name cannot silently
+change its pinned key.
+
+```bash
+qntm contact add Colleague FULL_PUBLIC_KEY
+qntm group add GROUP_ID Colleague
+# Share the group_link from this command's JSON result.
+
+# The added contact uses their existing identity:
+qntm group join PUBLIC_GROUP_LINK
+qntm send GROUP_ID "Hello"
+
+# Remove the contact and rotate the remaining members' keys:
+qntm group remove GROUP_ID Colleague
+```
+
+`group add` saves the exact encrypted operation before sending, verifies the
+addition and rekey from relay replay, then sends the recipient-encrypted welcome.
+If delivery is uncertain, keep the profile and use `qntm group retry GROUP_ID`;
+this resumes the saved ciphertext. Repeating `group add` cannot overwrite a
+pending operation. Sending ordinary messages is blocked while an operation is
+pending or while membership awaits key rotation.
+
+`qntm group link GROUP_ID` retrieves the public locator pinned to **your**
+identity, for contacts whose welcomes you issued. It does not add anyone or
+deliver a replacement welcome. `contact list` and `contact remove NAME` manage
+local pins; deleting a contact pin does not remove that person from any group.
+
+MCP exposes `contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
+`group_remove_contact`, `group_rekey`, `group_retry` and `group_link`.
+`conversation_join` opens the public link. These tools share the CLI profile,
+receiver and recovery state. Membership changes and sends require the host's
+existing authorization; incoming messages cannot supply that authorization.
+
+Opening a link trusts its inviter pin and relay destination, so use a link from
+the verified contact. CLI and MCP save the link's relay for later sends and
+receives. Wrong recipients, older epochs, conflicting keys and replayed welcomes
+that would undo saved removal are rejected. Re-adding a removed contact creates
+a fresh epoch; opening the resulting link preserves existing local history but
+does not grant keys for the interval when that identity was absent.
+
+This increment supports newly created ordinary groups and legacy profiles with
+a complete, trusted local roster. It does not reconstruct missing legacy roster
+history, refresh expired welcomes, recover an addition superseded by another
+rekey, or integrate gateway admission/governance. A saved operation that no
+longer matches accepted state fails without releasing its welcome; `group retry`
+does not yet resolve that conflict automatically. These are release gaps, not
+additional admission steps.
+
+## CLI local storage
+
+For groups using this receiver, private `conversations.json` stores the current
+keys and checkpoint, full roster, **decrypted message history**, relay cursor,
+pending ciphertext and exact unfinished outgoing operation in one atomic update.
+Contact names and public keys live in private `contacts.json`. File locks serialize
+receive writes and individual group operations; revision checks reject stale
+metadata writes that would erase receive progress.
+
+Pending undecryptable ciphertext is limited to 256 messages and 4 MiB of decoded
+wire data. Exceeding that bound fails the receive update without advancing its
+saved cursor. Late-decrypted messages keep their original public relay sequence;
+a private delivery order makes them available to hooks after catch-up.
+
+These files use restrictive local permissions, not password encryption. Local
+message history has no automatic expiry. Migrating a legacy group copies its
+history into the record and retains the old history file; backups can retain both.
+The outgoing operation contains encrypted controls and welcomes plus expected
+group keys until it completes. None of these private records, contact names or
+plaintext history is uploaded to the relay or added to telemetry. The pure
+library checkpoint described below contains no message plaintext.
 
 ## Library operation
 

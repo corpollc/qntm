@@ -10,7 +10,10 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import threading
 from contextlib import contextmanager
+
+_locks = threading.local()
 
 
 def _check_owner(info, path):
@@ -97,9 +100,20 @@ def save_json(path, data):
 
 
 @contextmanager
-def private_lock(path, *, blocking=True):
-    """Process lock on a private, persistent file (never unlink a live lock)."""
-    path = Path(path)
+def private_lock(path, *, blocking=True, reentrant=False):
+    """Process lock with explicit same-process/thread reentrancy when requested.
+
+    Persistent lock files are never unlinked. A forked child must acquire its
+    own lock, even when it inherits the parent's thread-local bookkeeping.
+    """
+    path = Path(path).absolute()
+    held = getattr(_locks, 'held', None)
+    if held is None:
+        held = _locks.held = set()
+    key = (os.getpid(), str(path))
+    if reentrant and key in held:
+        yield
+        return
     private_directory(path.parent)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -108,6 +122,7 @@ def private_lock(path, *, blocking=True):
     else:
         os.close(fd)
     fd = _private_file(path)
+    acquired = False
     try:
         if os.name == "nt":
             import msvcrt
@@ -115,7 +130,11 @@ def private_lock(path, *, blocking=True):
         else:
             import fcntl
             fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        held.add(key)
+        acquired = True
         yield
     finally:
+        if acquired:
+            held.discard(key)
         # Closing the descriptor releases the lock, including on exceptions.
         os.close(fd)

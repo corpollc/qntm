@@ -123,6 +123,13 @@ these events, so reading through them does not consume an existing hook's pendin
 delivery. Older clients and the separate TypeScript channel bridge do not write
 this inbox format; use separate profiles for those integrations.
 
+The unreleased ordinary-group receiver stores its history, checkpoint, pending
+ciphertext and relay cursor in one private conversation record. After rekey
+catch-up, a message can become decryptable later than its relay sequence would
+suggest. Hooks use a private delivery order to include that message while its
+public event keeps the original relay sequence and stable event ID. See the
+[group storage and recovery boundaries](group-welcomes.md#cli-local-storage).
+
 A newly configured destination starts after already saved history and receives
 unread relay backlog plus subsequent arrivals. Existing destinations retain their
 pending progress across watch restarts. Changing a URL, command, or `--include-self`

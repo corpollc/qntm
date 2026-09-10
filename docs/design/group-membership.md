@@ -1,10 +1,10 @@
 # Group membership: add a contact, share a link
 
-Decision recorded September 9, 2026. This is the agreed product direction;
-automatic welcome delivery in the client interfaces is not yet implemented.
-The unreleased [library helpers](../group-welcomes.md) prepare the encrypted
-addition/rekey/welcome operation, parse public group locator links, and replay
-ordinary-group membership through matching private Python/TypeScript checkpoints.
+Decision recorded September 9, 2026. The unreleased [implementation](../group-welcomes.md)
+now includes CLI/MCP contact addition, automatic encrypted welcome delivery and
+public link opening, backed by matching Python/TypeScript library checkpoints.
+Browser, terminal and OpenClaw interfaces, gateway governance and complete
+recovery across competing rekeys remain unfinished.
 
 ## Contact addition
 

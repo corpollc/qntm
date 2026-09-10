@@ -47,17 +47,22 @@ def status(state, **details):
 
 def events(config_dir, conversation_id):
     """Build the same versioned event for stdout and every hook from saved data."""
+    return [event for _, event in delivery_events(config_dir, conversation_id)]
+
+
+def delivery_events(config_dir, conversation_id):
+    """Private delivery order can advance when an older relay item decrypts late."""
     result = []
     for entry in cli._load_history(config_dir, conversation_id):
         event = entry.get("receive_event")
         if entry.get("direction") != "incoming" or event is None:
             continue
-        result.append({
+        result.append((entry.get('receive_order', event['sequence']), {
             "ok": True, "kind": "recv.message", "rules": cli.AGENT_RULES,
             "system_warning": cli.SYSTEM_WARNING,
             "data": event,
-        })
-    return sorted(result, key=lambda event: event["data"]["sequence"])
+        }))
+    return sorted(result, key=lambda pair: pair[0])
 
 
 @dataclass(frozen=True)
@@ -215,9 +220,9 @@ class Consumer(threading.Thread):
         delay = 1
         while not self.stop.is_set():
             self.wake.clear()
-            pending = [event for event in events(self.config_dir, self.conversation_id)
-                       if event["data"]["sequence"] > self.state.cursor(self.target)]
-            for event in pending:
+            pending = [(order, event) for order, event in delivery_events(self.config_dir, self.conversation_id)
+                       if order > self.state.cursor(self.target)]
+            for order, event in pending:
                 if self.stop.is_set():
                     return
                 try:
@@ -234,7 +239,7 @@ class Consumer(threading.Thread):
                     self.stop.wait(delay)
                     delay = min(delay * 2, 30)
                     break
-                self.state.acknowledge(self.target, event["data"]["sequence"])
+                self.state.acknowledge(self.target, order)
                 delay = 1
             else:
                 # Also notice receives committed by a one-shot CLI/MCP process.
@@ -327,14 +332,15 @@ def watch(args):
     if not record:
         raise WatchError("Conversation not found")
     conversation_id = record["id"]
+    relay = cli._conversation_relay(args, record)
     path = Path(config_dir) / "watch" / (conversation_id + ".json")
     stop = threading.Event()
     previous_handlers = {}
     consumers = []
     try:
         with private_lock(path.with_suffix(".lock"), blocking=False):
-            existing = events(config_dir, conversation_id)
-            baseline = max((event["data"]["sequence"] for event in existing), default=0)
+            existing = delivery_events(config_dir, conversation_id)
+            baseline = max((order for order, _ in existing), default=0)
             state = ConsumerState(path, relay.rstrip("/"), configured, baseline)
             consumers = [Consumer(target, state, config_dir, conversation_id, identity["keyID"].hex(),
                                   getattr(args, "hook_timeout", 10), stop) for target in configured]

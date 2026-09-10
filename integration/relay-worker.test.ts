@@ -344,6 +344,41 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(() => receiveGroupEvent(contact, deserializeEnvelope(future.messages[0]), contactState)).toThrow();
   }, 30_000);
 
+  it('runs contact addition through fresh Python CLI processes and a TypeScript peer', async () => {
+    const contact = generateIdentity();
+    const python = process.env.QNTM_MONITOR_PYTHON || 'python3';
+    const invoke = async (phase: string, extra: string) => {
+      const { stdout } = await promisify(execFile)(python, [join(REPO_ROOT, 'python-dist/tests/group_cli_peer.py'),
+        phase, relayUrl, stateDir, extra], { timeout: 45_000,
+        env: { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') } });
+      return JSON.parse(stdout);
+    };
+    const prepared = await invoke('prepare', Buffer.from(contact.publicKey).toString('hex'));
+    const locator = parseGroupLink(prepared.group_link);
+    const relay = new DropboxClient(locator.relayUrl);
+    const replay = await relay.receiveMessages(locator.conversationId);
+    const welcome = replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!;
+    const joined = openGroupWelcome(contact, welcome, locator);
+    let checkpoint = createGroupSession(contact, joined.conversation, joined.state);
+    expect(() => decryptMessage(deserializeEnvelope(replay.messages[1]), joined.conversation)).toThrow();
+    const reply = createMessage(contact, joined.conversation, 'text', new TextEncoder().encode('TypeScript contact reply'));
+    await relay.postMessage(locator.conversationId, marshalCanonical(reply));
+    const finished = await invoke('finish', prepared.conversation_id);
+    expect(finished).toMatchObject({ received_reply: true, epoch: 2 });
+    checkpoint = restoreGroupSession(contact, JSON.parse(JSON.stringify(checkpoint)));
+    const changes = await relay.receiveMessages(locator.conversationId, replay.sequence);
+    let sawExcludedMessage = false;
+    for (const wire of changes.messages) {
+      const envelope = deserializeEnvelope(wire);
+      if (Buffer.from(envelope.msg_id).toString('hex') === finished.future_message_id) {
+        expect(() => receiveGroupEvent(contact, envelope, checkpoint)).toThrow();
+        sawExcludedMessage = true;
+      } else checkpoint = receiveGroupEvent(contact, envelope, checkpoint).state;
+    }
+    expect(sawExcludedMessage).toBe(true);
+    expect(checkpoint.removed).toBe(true);
+  }, 90_000);
+
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
     const msgId = 'cd'.repeat(16);
     const sequence = await publish('idle-expiry', msgId);

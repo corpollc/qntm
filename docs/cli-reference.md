@@ -9,13 +9,13 @@ Global options precede the command. One-shot commands return JSON; `recv --watch
 ```text
 usage: qntm [-h] [--config-dir CONFIG_DIR] [--dropbox-url DROPBOX_URL] [--human]
             [--verbose] [-v]
-            {guidance,identity,convo,send,recv,inbox,history,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
+            {guidance,identity,convo,send,recv,inbox,history,contact,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
             ...
 
 qntm - agent-first secure messaging CLI
 
 positional arguments:
-  {guidance,identity,convo,send,recv,inbox,history,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
+  {guidance,identity,convo,send,recv,inbox,history,contact,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
     guidance            Ask locally pinned contacts for legal, ethical, or law-
                         enforcement guidance
     identity            Manage identity keys
@@ -24,6 +24,7 @@ positional arguments:
     recv                Receive messages
     inbox               Show inbox summary
     history             Show message history
+    contact             Manage locally pinned contact addresses
     group               Manage group conversations
     announce            Manage announce channels
     gate-run            Submit a gate authorization request
@@ -310,18 +311,70 @@ options:
   -h, --help    show this help message and exit
 ```
 
+## `qntm contact`
+
+```text
+usage: qntm contact [-h] {add,list,remove} ...
+
+positional arguments:
+  {add,list,remove}
+    add              Pin a full public key under a contact name
+    list             List local contact names and public keys
+    remove           Remove a local contact without changing group membership
+
+options:
+  -h, --help         show this help message and exit
+```
+
+## `qntm contact add`
+
+```text
+usage: qntm contact add [-h] name public_key
+
+positional arguments:
+  name
+  public_key  Full Ed25519 public key (hex or base64url)
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## `qntm contact list`
+
+```text
+usage: qntm contact list [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## `qntm contact remove`
+
+```text
+usage: qntm contact remove [-h] name
+
+positional arguments:
+  name
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## `qntm group`
 
 ```text
-usage: qntm group [-h] {create,join,add,remove,rekey,list} ...
+usage: qntm group [-h] {create,join,add,remove,rekey,retry,link,list} ...
 
 positional arguments:
-  {create,join,add,remove,rekey,list}
+  {create,join,add,remove,rekey,retry,link,list}
     create              Create a new group
-    join                Join a group via invite token
-    add                 Add member to group
+    join                Open a group link or legacy invite
+    add                 Add a contact, rotate keys and deliver their encrypted welcome
     remove              Remove member from group
     rekey               Rekey group (new epoch)
+    retry               Resume the saved group operation using its exact encrypted
+                        messages
+    link                Show a public group locator link containing no group keys
     list                List group conversations
 
 options:
@@ -348,7 +401,7 @@ options:
 usage: qntm group join [-h] [--name NAME] token
 
 positional arguments:
-  token        Invite token
+  token        Public group link for this identity, or a legacy invite token
 
 options:
   -h, --help   show this help message and exit
@@ -362,7 +415,7 @@ usage: qntm group add [-h] conversation public_key
 
 positional arguments:
   conversation  Conversation ID or prefix
-  public_key    Member public key (base64url or hex)
+  public_key    Local contact name or full public key (base64url or hex)
 
 options:
   -h, --help    show this help message and exit
@@ -375,7 +428,7 @@ usage: qntm group remove [-h] [--reason REASON] conversation key_id
 
 positional arguments:
   conversation     Conversation ID or prefix
-  key_id           Member key ID (hex)
+  key_id           Local contact name or member key ID (hex)
 
 options:
   -h, --help       show this help message and exit
@@ -386,6 +439,30 @@ options:
 
 ```text
 usage: qntm group rekey [-h] conversation
+
+positional arguments:
+  conversation  Conversation ID or prefix
+
+options:
+  -h, --help    show this help message and exit
+```
+
+## `qntm group retry`
+
+```text
+usage: qntm group retry [-h] conversation
+
+positional arguments:
+  conversation  Conversation ID or prefix
+
+options:
+  -h, --help    show this help message and exit
+```
+
+## `qntm group link`
+
+```text
+usage: qntm group link [-h] conversation
 
 positional arguments:
   conversation  Conversation ID or prefix

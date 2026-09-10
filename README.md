@@ -190,6 +190,13 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 
 Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes this checkout; entries marked unreleased are not yet in published 0.6.1 packages.
 
+Unreleased ordinary-group contact addition is available in the Python CLI and
+MCP, with matching TypeScript library helpers. Adding a verified contact rotates
+keys, delivers an encrypted welcome and returns a public group link. Browser,
+terminal and OpenClaw interfaces, gateway-governed welcomes and complete recovery
+across competing operations are unfinished. See [contact addition and storage
+details](docs/group-welcomes.md) and the [library parity table](docs/client-parity.md).
+
 ## Experimental charter registry
 
 v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.

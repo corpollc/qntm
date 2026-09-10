@@ -69,7 +69,14 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-**12 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`
+**Released tools:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`.
+
+This checkout also adds unreleased CLI and MCP contact-add workflows for ordinary
+groups. Pin a full public address, add the contact, and share the returned public
+group link; their existing identity decrypts the welcome automatically. MCP adds
+`contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
+`group_remove_contact`, `group_rekey`, `group_retry` and `group_link`.
+See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
 

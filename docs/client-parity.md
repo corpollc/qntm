@@ -5,8 +5,8 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | Capability | Python | TypeScript | Go |
 | --- | --- | --- | --- |
 | Identity, invite, signed encrypted messages | Library and CLI | Library, browser and Node | Old messaging implementation is archived in `attic/` |
-| Contact-add welcome preparation and opening | Unreleased library helpers | Unreleased library helpers | No maintained messaging client |
-| Ordinary-group receive checkpoints | Unreleased authenticated reducer with removal/rekey replay | Matching reducer and private JSON format | No maintained messaging client |
+| Contact-add welcomes and public group links | Unreleased CLI/MCP add, open, remove and exact-operation retry; shared library helpers | Matching unreleased library helpers; browser, terminal and OpenClaw interfaces unfinished | No maintained messaging client |
+| Ordinary-group receive checkpoints | Unreleased authenticated reducer with atomic CLI/MCP history, cursor and pending ciphertext | Matching reducer and private JSON format; host persistence required | No maintained messaging client |
 | Expiry and saved history | Reject expired live messages; explicit `allow_expired=True` for history | Same policy; explicit `{ allowExpired: true }` for history | No maintained messaging client |
 | Persistent relay subscription | `recv --watch` owns reconnect and durable profile state | `DropboxClient.subscribeMessages` owns reconnect; application owns durable state | No maintained messaging client |
 | Portable receive event | `ReceiveEvent`, `create_receive_event` | `ReceiveEvent`, `createReceiveEvent` | Not implemented |
