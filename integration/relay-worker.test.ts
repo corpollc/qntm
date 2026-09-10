@@ -468,7 +468,8 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const refreshReplay = await relay.receiveMessages(locator.conversationId, replay.sequence);
     expect(refreshReplay.messages).toHaveLength(1);
     const refreshedWelcome = openGroupWelcome(contact, refreshReplay.messages[0], locator);
-    expect(refreshedWelcome.purpose).toBe('refresh');
+    expect(refreshedWelcome.purpose).toBe('renewal');
+    expect(refreshedWelcome.admissions).toEqual(joined.admissions);
     expect(refreshedWelcome.conversation.keys).toEqual(joined.conversation.keys);
     const reply = createMessage(contact, joined.conversation, 'text', new TextEncoder().encode('TypeScript contact reply'));
     await relay.postMessage(locator.conversationId, marshalCanonical(reply));
@@ -483,7 +484,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       const envelope = deserializeEnvelope(wire);
       if (isGroupWelcomeEnvelope(envelope)) {
         // Recipient-box messages use the welcome parser, not group decryption.
-        expect(openGroupWelcome(contact, wire, locator).purpose).toBe('refresh');
+        expect(openGroupWelcome(contact, wire, locator).purpose).toBe('renewal');
         continue;
       }
       if (Buffer.from(envelope.msg_id).toString('hex') === finished.future_message_id) {
