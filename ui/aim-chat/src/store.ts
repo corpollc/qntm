@@ -81,6 +81,9 @@ export interface StoredMessage {
   bodyType: string
   text: string
   createdAt: string
+  /** Exact authenticated ordinary-group envelope. Invalid branch history is
+   * retained privately but cannot be displayed or dispatched as current. */
+  groupBinding?: { digest: string; epoch: number; valid: boolean }
 }
 
 export interface StoreData {
@@ -351,6 +354,13 @@ export function resolveContactAlias(profileId: string, senderKey: string): strin
 export function getHistory(profileId: string, conversationId: string): StoredMessage[] {
   const store = loadStore()
   return store.history?.[profileId]?.[conversationId] || []
+}
+
+export function getVisibleHistory(profileId: string, conversationId: string): StoredMessage[] {
+  const data = loadStore(), rows = data.history?.[profileId]?.[conversationId] || []
+  return data.conversations[profileId]?.find(conv => conv.id === conversationId)?.group
+    ? rows.filter(row => row.groupBinding?.valid === true)
+    : rows
 }
 
 export function addHistoryMessage(profileId: string, conversationId: string, message: StoredMessage): void {

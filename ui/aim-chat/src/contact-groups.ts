@@ -80,6 +80,18 @@ function wireId(wire: string) { return hex(deserializeEnvelope(base64UrlDecode(w
 function controlAccepted(session: GroupSessionState, wire: string) {
   return session.seen[wireId(wire)]?.digest === hex(suite.hash(base64UrlDecode(wire)))
 }
+function invalidateHistory(history: store.StoredMessage[], afterEpoch = -1) {
+  for (const message of history) {
+    if (message.groupBinding && message.groupBinding.epoch > afterEpoch) message.groupBinding.valid = false
+  }
+}
+/** Durable history is separate from the bounded cryptographic replay cache. */
+export function isCurrentGroupMessage(profile: string, id: string, message: store.StoredMessage): boolean {
+  const host = store.findConversation(profile, id)?.group, binding = message.groupBinding
+  return !!host && !host.session.recovery && !!binding?.valid && store.getHistory(profile, id).some(saved =>
+    saved.id === message.id && saved.groupBinding?.valid === true
+      && saved.groupBinding.digest === binding.digest && saved.groupBinding.epoch === binding.epoch)
+}
 
 /** Caller holds the group lock. All rows count for coverage, including other
  * recipients' welcomes and unreadable ciphertext; only verified bodies dispatch. */
@@ -127,6 +139,7 @@ export function applyGroupBatch(profile: string, id: string, entries: Subscripti
       try {
         const applied = receiveGroupEvent(identity, envelope, state)
         if (!state.removed && applied.state.removed) host.removedSequence = Math.max(host.removedSequence ?? 0, row.seq)
+        if (applied.rewound) invalidateHistory(history, envelope.conv_epoch)
         state = applied.rewound ? requireGroupRecovery(applied.state, Math.max(row.seq, head), 'missing_history') : applied.state
         pending.delete(key)
         progress = true
@@ -137,13 +150,21 @@ export function applyGroupBatch(profile: string, id: string, entries: Subscripti
             const msg: store.StoredMessage = { id: hex(envelope.msg_id), conversationId: id,
               direction: hex(inner.sender_kid) === hex(identity.keyID) ? 'outgoing' : 'incoming',
               sender: hex(inner.sender_kid), senderKey: hex(inner.sender_kid), bodyType: type,
-              text: new TextDecoder().decode(inner.body), createdAt: new Date(envelope.created_ts * 1000).toISOString() }
-            if (!history.some(existing => existing.id === msg.id)) { history.push(msg); delivered.push(msg) }
+              text: new TextDecoder().decode(inner.body), createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+              groupBinding: { digest: hex(suite.hash(base64UrlDecode(row.wire))), epoch: envelope.conv_epoch, valid: true } }
+            const same = history.find(existing => existing.id === msg.id && existing.groupBinding?.valid
+              && existing.groupBinding.digest === msg.groupBinding!.digest && existing.groupBinding.epoch === msg.groupBinding!.epoch)
+            if (!same) {
+              for (const existing of history) if (existing.id === msg.id && existing.groupBinding) existing.groupBinding.valid = false
+              history.push(msg); delivered.push(msg)
+            }
           }
         }
       } catch {
         // Future keys or a competing rekey may make this readable in another pass.
-        if (envelope.conv_epoch < state.epoch || state.removed) pending.delete(key)
+        const accepted = state.seen[hex(envelope.msg_id)]
+        if (envelope.conv_epoch < state.epoch || state.removed
+          || accepted && accepted.digest !== hex(suite.hash(base64UrlDecode(row.wire)))) pending.delete(key)
       }
     }
   }
@@ -274,7 +295,12 @@ export async function openContactGroup(profile: string, link: string, name = '')
           keys: { root: hex(conv.keys.root), aeadKey: hex(conv.keys.aeadKey), nonceKey: hex(conv.keys.nonceKey) },
           participants: conv.participants.map(hex), participantPublicKeys: welcome.state.snapshot().founding_members.map(m => hex(m.public_key)),
           currentEpoch: conv.currentEpoch, createdAt: previous?.createdAt || new Date().toISOString(), group }
-        store.commitGroup(profile, record, store.getHistory(profile, id), previous?.group?.revision)
+        const history = store.getHistory(profile, id)
+        // A replacement checkpoint authenticates current keys, not the lineage
+        // of archived plaintext. Keep that archive private without reviving its
+        // display/dispatch eligibility merely because an ID appears again.
+        invalidateHistory(history)
+        store.commitGroup(profile, record, history, previous?.group?.revision)
         applyGroupBatch(profile, id, batch.entries, batch.sequence, true)
         return id
       } catch (e) { error ??= e }
@@ -291,7 +317,8 @@ export async function sendContactGroupMessage(profile: string, id: string, text:
     if (bodyType.startsWith('gate.') || bodyType.startsWith('gov.') || bodyType.startsWith('group_')) throw new Error('Contact groups use their membership controls; gateway handoff is not available yet')
     const envelope = createMessage(identity, groupSessionConversation(record.group.session), bodyType, new TextEncoder().encode(text), undefined, defaultTTL())
     const seq = await new DropboxClient(record.group.relayUrl).postMessage(bytes(id), serializeEnvelope(envelope))
-    const message: store.StoredMessage = { id: hex(envelope.msg_id), conversationId: id, direction: 'outgoing', sender: hex(identity.keyID), senderKey: hex(identity.keyID), bodyType, text, createdAt: new Date(envelope.created_ts * 1000).toISOString() }
+    const message: store.StoredMessage = { id: hex(envelope.msg_id), conversationId: id, direction: 'outgoing', sender: hex(identity.keyID), senderKey: hex(identity.keyID), bodyType, text, createdAt: new Date(envelope.created_ts * 1000).toISOString(),
+      groupBinding: { digest: hex(suite.hash(serializeEnvelope(envelope))), epoch: envelope.conv_epoch, valid: true } }
     record.group.receipts.push(seq)
     save(profile, record, [...store.getHistory(profile, id), message])
     return message

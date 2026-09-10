@@ -105,7 +105,7 @@ export const api = {
   },
 
   getHistory(profileId: string, conversationId: string): { messages: ChatMessage[] } {
-    const raw = store.getHistory(profileId, conversationId)
+    const raw = store.getVisibleHistory(profileId, conversationId)
     return { messages: raw.map(msg => resolveMessage(profileId, msg)) }
   },
 

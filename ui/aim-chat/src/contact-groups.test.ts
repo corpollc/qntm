@@ -7,7 +7,7 @@ import { generateIdentity, DropboxClient, createMessage, groupSessionConversatio
 import type { SubscriptionMessage, Identity, GroupSessionState } from '@corpollc/qntm'
 import * as store from './store'
 import { validateBackup, rawBackup, exportEncryptedBackup, prepareBackup, restoreBackup } from './backup'
-import { createContactGroup, changeContactGroup, pinContact, openContactGroup, syncContactGroup, publicGroupLink, sendContactGroupMessage, hex, bytes, retryContactGroup } from './contact-groups'
+import { createContactGroup, changeContactGroup, pinContact, openContactGroup, syncContactGroup, publicGroupLink, sendContactGroupMessage, hex, bytes, retryContactGroup, isCurrentGroupMessage } from './contact-groups'
 
 const relay = new Map<string, SubscriptionMessage[]>()
 const heads = new Map<string, number>()
@@ -120,7 +120,7 @@ describe('browser contact group host', () => {
     await expect(sendContactGroupMessage(bob.id, id, 'must not send stale keys')).rejects.toThrow(/history/i)
   })
 
-  it.each(['before welcome', 'after opening', 'expired before welcome'])('blocks a lower-ID pre-admission rekey %s and accepts challenged same-epoch recovery', async timing => {
+  it.each(['before welcome', 'after opening', 'expired before welcome', 'accepted before race'])('blocks a lower-ID pre-admission rekey %s and accepts challenged same-epoch recovery', async timing => {
     const alice = profile('Alice'), bob = profile('Bob')
     const id = await createContactGroup(alice.id, 'Competing room'), source = session(alice.id, id)
     let addition = prepareGroupSessionAddition(alice.identity, source, [bob.identity.publicKey], undefined, undefined, heads.get(id)!)
@@ -137,18 +137,24 @@ describe('browser contact group host', () => {
       canonical = receiveGroupEvent(alice.identity, control, canonical).state
     }
     const link = publicGroupLink(alice.id, id)
-    if (timing === 'after opening') {
+    if (timing === 'after opening' || timing === 'accepted before race') {
       await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(addition.welcomes[0]))
       await openContactGroup(bob.id, link)
       expect(session(bob.id, id).recovery).toBeNull()
     }
     const losingText = createMessage(alice.identity, groupSessionConversation(canonical), 'text', new TextEncoder().encode('readable losing-branch text must stay hidden'))
     await post(id, losingText)
+    let oldDelivery: store.StoredMessage | undefined
+    if (timing === 'accepted before race') {
+      oldDelivery = (await syncContactGroup(bob.id, id))[0]
+      expect(oldDelivery.text).toBe('readable losing-branch text must stay hidden')
+      expect(isCurrentGroupMessage(bob.id, id, oldDelivery)).toBe(true)
+    }
     await post(id, competing.rekey)
     canonical = receiveGroupEvent(alice.identity, competing.rekey, canonical).state
     const winningRoot = canonical.root
     await post(id, createMessage(alice.identity, groupSessionConversation(canonical), 'text', new TextEncoder().encode('must not dispatch before recovery')))
-    if (timing !== 'after opening') {
+    if (timing !== 'after opening' && timing !== 'accepted before race') {
       await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(addition.welcomes[0]))
       if (competingTtl) vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000)
       await openContactGroup(bob.id, link)
@@ -156,7 +162,8 @@ describe('browser contact group host', () => {
     expect(session(bob.id, id).root).not.toBe(winningRoot)
     expect(session(bob.id, id).rekeys).toEqual([])
     expect(session(bob.id, id).recovery?.reason).toBe('missing_history')
-    expect(store.getHistory(bob.id, id)).toEqual([])
+    expect(store.getHistory(bob.id, id)).toHaveLength(oldDelivery ? 1 : 0)
+    if (oldDelivery) expect(isCurrentGroupMessage(bob.id, id, oldDelivery)).toBe(false)
     await expect(sendContactGroupMessage(bob.id, id, 'stale branch')).rejects.toThrow(/history/i)
     const saved = rawBackup(); localStorage.clear(); localStorage.setItem('aim-store', saved)
     const challenge = session(bob.id, id).recovery!.challenge
@@ -174,10 +181,54 @@ describe('browser contact group host', () => {
     expect(session(bob.id, id).root).toBe(winningRoot)
     expect(session(bob.id, id).epoch).toBe(1)
     expect(session(bob.id, id).rekeys).toEqual([])
+    if (oldDelivery) {
+      expect(store.getVisibleHistory(bob.id, id).map(message => message.text)).not.toContain(oldDelivery.text)
+      vi.spyOn(crypto, 'getRandomValues').mockImplementationOnce(value => { (value as Uint8Array).set(losingText.msg_id); return value })
+      const fresh = createMessage(alice.identity, groupSessionConversation(canonical), 'text', new TextEncoder().encode('fresh winning plaintext with reused ID'))
+      expect(hex(fresh.msg_id)).toBe(hex(losingText.msg_id))
+      const seq = heads.get(id)! + 1; heads.set(id, seq)
+      relay.get(id)!.push({ seq, envelope: serializeEnvelope(fresh) })
+      const delivered = await syncContactGroup(bob.id, id)
+      expect(delivered.map(message => message.text)).toEqual(['fresh winning plaintext with reused ID'])
+      expect(isCurrentGroupMessage(bob.id, id, oldDelivery)).toBe(false)
+      expect(isCurrentGroupMessage(bob.id, id, delivered[0])).toBe(true)
+      expect(store.getVisibleHistory(bob.id, id).filter(message => message.id === oldDelivery!.id).map(message => message.text)).toEqual(['fresh winning plaintext with reused ID'])
+      const archive = store.getHistory(bob.id, id)
+      const reused = archive.filter(message => message.id === oldDelivery!.id)
+      expect(reused).toHaveLength(2)
+      expect(reused[0].groupBinding?.valid).toBe(false)
+      expect(reused[0].groupBinding?.digest).not.toBe(reused[1].groupBinding?.digest)
+      const encrypted = await exportEncryptedBackup('synthetic archive password')
+      localStorage.clear(); restoreBackup(await prepareBackup(encrypted, 'synthetic archive password'))
+      expect(store.getHistory(bob.id, id)).toEqual(archive)
+      expect(store.getVisibleHistory(bob.id, id).filter(message => message.id === oldDelivery!.id).map(message => message.text)).toEqual(['fresh winning plaintext with reused ID'])
+    }
     const reply = await sendContactGroupMessage(bob.id, id, 'canonical reply')
     const wire = relay.get(id)!.find(row => hex(deserializeEnvelope(row.envelope).msg_id) === reply.id)!
     const received = receiveGroupEvent(alice.identity, deserializeEnvelope(wire.envelope), canonical)
     expect(!received.duplicate && new TextDecoder().decode(received.message.inner.body)).toBe('canonical reply')
+  })
+
+  it('keeps durable message validity after real replay-cache eviction and does not dispatch its replay twice', async () => {
+    const alice = profile('Alice'), id = await createContactGroup(alice.id, 'Replay cache')
+    const original = createMessage(alice.identity, groupSessionConversation(session(alice.id, id)), 'text', new TextEncoder().encode('durable accepted message'))
+    await post(id, original)
+    const accepted = (await syncContactGroup(alice.id, id))[0]
+    const data = JSON.parse(rawBackup()), checkpoint = data.conversations[alice.id][0].group.session
+    const entry = checkpoint.seen[accepted.id]
+    checkpoint.seen = { [accepted.id]: entry }
+    for (let index = 1; index < 8192; index++) checkpoint.seen[index.toString(16).padStart(32, '0')] = { digest: '00'.repeat(32), epoch: 0 }
+    localStorage.setItem('aim-store', JSON.stringify(data))
+    await post(id, createMessage(alice.identity, groupSessionConversation(session(alice.id, id)), 'text', new TextEncoder().encode('trigger actual eviction')))
+    await syncContactGroup(alice.id, id)
+    expect(session(alice.id, id).seen[accepted.id]).toBeUndefined()
+    expect(isCurrentGroupMessage(alice.id, id, accepted)).toBe(true)
+    expect(store.getVisibleHistory(alice.id, id).map(message => message.text)).toContain('durable accepted message')
+    const seq = heads.get(id)! + 1; heads.set(id, seq)
+    relay.get(id)!.push({ seq, envelope: serializeEnvelope(original) })
+    expect(await syncContactGroup(alice.id, id)).toEqual([])
+    expect(store.getVisibleHistory(alice.id, id)).toHaveLength(2)
+    expect(isCurrentGroupMessage(alice.id, id, accepted)).toBe(true)
   })
 
   it('pauses on an expired authenticated removal without applying its expired authority', async () => {

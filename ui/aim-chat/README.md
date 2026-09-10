@@ -117,6 +117,15 @@ member can answer the recipient's saved recovery challenge with a fresh welcome,
 including a corrected root at the same epoch.
 Later receive batches make the same check when the saved session has no eligible
 earlier key archive, and pause the whole batch before displaying its messages.
+Group history records the exact envelope digest, source epoch and persistent
+display validity independently of the bounded replay cache. A verified rewind
+invalidates descendant history; a replacement welcome invalidates all previous
+bindings because it does not establish their lineage. Invalidated plaintext is
+retained in private browser storage and encrypted backups, but hidden from the
+chat and excluded from receive callbacks. An exact newly verified replay may
+establish a new binding; reusing a message ID cannot restore different old text.
+Older draft group history without these bindings is likewise retained privately
+and hidden until verified again. Legacy conversation history is unchanged.
 
 Contact groups use a dedicated authenticated receive checkpoint. Legacy invite
 conversations and existing gateway conversations retain their existing flows;

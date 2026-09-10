@@ -802,7 +802,9 @@ export function subscribeToConversation(
     const dispatch = async (rows: typeof replay, head: number) => {
       const messages = await contactGroups.withGroupLock(profileId, conversationId, async () => contactGroups.applyGroupBatch(profileId, conversationId, rows, head))
       handlers.onState?.()
-      for (const message of messages) await handlers.onMessage?.(resolveMessageSender(profileId, message))
+      for (const message of messages) {
+        if (contactGroups.isCurrentGroupMessage(profileId, conversationId, message)) await handlers.onMessage?.(resolveMessageSender(profileId, message))
+      }
     }
     return new DropboxClient(contactGroup.relayUrl).subscribeMessages(contactGroups.bytes(conversationId), contactGroup.cursor, {
       getCursor: () => store.findConversation(profileId, conversationId)?.group?.cursor ?? 0,
