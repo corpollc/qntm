@@ -22,7 +22,7 @@ from .group_session import (
     create_group_session, restore_group_session, receive_group_event, group_session_conversation,
     prepare_group_session_addition, assert_group_addition_accepted, assert_group_can_send,
     prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
-    check_group_replay_coverage, check_expired_group_control, group_session_from_welcome,
+    check_group_replay_coverage, check_group_welcome_replay, check_group_unverifiable_epoch, check_expired_group_control, group_session_from_welcome,
     create_group_control_message,
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
@@ -155,7 +155,7 @@ def _creation_message(identity, record, envelope):
     return message
 
 
-def receive_batch(record, identity, raw_messages, head):
+def receive_batch(record, identity, raw_messages, head, *, bootstrap=False):
     """Stage a whole batch in a detached record, including recoverable ciphertext.
 
     Callers persist the returned record atomically before advancing transport or
@@ -180,22 +180,35 @@ def receive_batch(record, identity, raw_messages, head):
     order = max(result.get('group_order', 0), result.get('group_cursor', 0),
                 max((entry.get('receive_order', entry.get('sequence', 0)) for entry in history), default=0))
     pending = {}
+    retained_wires = {row['envelope_b64'] for row in result.get('group_pending', [])}
+    creation = result.get('group_operation') or {}
     for raw in [*result.get('group_pending', []), *raw_messages]:
         try:
             sequence = raw['seq']
             if type(sequence) is not int or sequence <= 0:
                 continue
             wire = base64.b64decode(raw['envelope_b64'], validate=True)
+            if (not bootstrap and sequence <= floor and raw['envelope_b64'] not in retained_wires
+                    and not (creation.get('kind') == 'create' and raw['envelope_b64'] in creation.get('controls', []))):
+                continue
             envelope = deserialize_envelope(wire)
             if (type(envelope.get('expiry_ts')) is not int or type(envelope.get('conv_epoch')) is not int
                     or not isinstance(envelope.get('msg_id'), bytes) or len(envelope['msg_id']) != 16):
                 continue
             if envelope['conv_id'].hex() != result['id'] or is_group_welcome_envelope(envelope):
                 continue
+            if bootstrap and envelope['conv_epoch'] < state['epoch']:
+                # The welcome preflight already checked exact signed hashes and
+                # the trusted anchor. Never retain pre-admission ciphertext as
+                # if fetching its older keys were a recovery strategy.
+                continue
             # Key by exact bytes: conflicting IDs must still reach the reducer.
             pending[_suite.hash(wire).hex()] = {'seq': sequence, 'envelope_b64': base64.b64encode(wire).decode()}
         except (ValueError, TypeError, KeyError):
             continue
+    if not bootstrap:
+        for raw in sorted(pending.values(), key=lambda row: row['seq']):
+            state = check_group_unverifiable_epoch(state, deserialize_envelope(base64.b64decode(raw['envelope_b64'])), raw['seq'])
     output = []
     remaining = sorted(pending.values(), key=lambda row: row['seq'])
     while remaining:
@@ -555,8 +568,11 @@ def join(config_dir, identity, link, name=''):
             record['group_revision'] = previous['group_revision']
         if previous and previous.get('group_operation'):
             record['group_operation'] = copy.deepcopy(previous['group_operation'])
-        _install(record, group_session_from_welcome(identity, welcome, welcome_sequence, saved))
-        record, _ = receive_batch(record, identity, raw, head)
+        state = group_session_from_welcome(identity, welcome, welcome_sequence, saved)
+        state = check_group_welcome_replay(state, welcome, head,
+            [{'seq': row['seq'], 'envelope': base64.b64decode(row['envelope_b64'])} for row in raw])
+        _install(record, state)
+        record, _ = receive_batch(record, identity, raw, head, bootstrap=True)
         if previous:
             records[records.index(previous)] = record
         else:

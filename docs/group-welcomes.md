@@ -1,9 +1,9 @@
 # Contact addition and encrypted group welcomes
 
 This unreleased extension implements the [add-contact design](design/group-membership.md)
-in the Python CLI and MCP, with matching Python and TypeScript library operations.
-Browser, terminal and OpenClaw interfaces, gateway-governed welcomes and complete
-recovery across competing rekeys remain unfinished (`qntm-2g7v`). It is not part
+in the browser, Python CLI/MCP, terminal and OpenClaw, with matching Python and
+TypeScript library operations. Gateway-governed welcomes, legacy migration and
+complete recovery across competing rekeys remain unfinished (`qntm-2g7v`). It is not part
 of the published 0.6.1 packages or hosted browser.
 
 The public link has no expiry, and contacts can open their links in a different
@@ -20,6 +20,32 @@ interval before the welcome was posted. A rotation can race into that interval;
 if retention has removed it, the recipient pauses and requests a fresh welcome
 instead of treating the older keys as current. History before the signed position
 is not required. The position stays inside the encrypted welcome.
+
+A newcomer cannot authenticate a competing rekey encrypted under an older source
+epoch without learning pre-admission keys. During bootstrap, an older-source
+envelope after the signed position therefore also pauses the client, except for
+the exact addition/rekey ciphertext hashes signed into its welcome. A current
+member can process the winning branch and issue a challenged refresh. That fresh
+response may replace a losing root at the same epoch; an unsolicited conflicting
+welcome still cannot replace saved state, and a refresh cannot undo saved removal.
+After bootstrap, older-source ciphertext also pauses a client that has neither a
+usable source-key archive nor an exact previously verified digest.
+
+## Client interfaces
+
+| Client | Entry point | Persistence and requirements |
+| --- | --- | --- |
+| Browser | Contacts panel; create/add/open/remove/refresh actions | Per-identity browser storage with Web Locks and encrypted backup support; [browser guide](../ui/aim-chat/README.md) |
+| Python CLI/MCP | Commands and tools below | Private, atomic profile shared with `recv --watch` |
+| Terminal | `/contact`, `/group`, `/join` | Matching Python package and private `contact-groups` profile; [terminal guide](../ui/tui/README.md) |
+| OpenClaw | Configured pins/group link or trusted checkpoint, optional `qntm_group` tool | Native host session, configured allowed actions and complete review; [adapter guide](../openclaw-qntm/README.md) |
+
+The browser, CLI and terminal can create a new ordinary group. OpenClaw binds to
+a configured group and manages membership through its locally enabled actions.
+Pin removal changes the local address book only; group removal is a separate
+membership operation. Each client's guide describes its stored keys, plaintext
+history or dispatch queue and recovery limits. These interfaces add no relay
+endpoint or metrics label.
 
 ## CLI and MCP
 
@@ -104,8 +130,9 @@ existing authorization; incoming messages cannot supply that authorization.
 
 Opening a link trusts its inviter pin and relay destination, so use a link from
 the verified contact. CLI and MCP save the link's relay for later sends and
-receives. Wrong recipients, older epochs, conflicting keys and replayed welcomes
-that would undo saved removal are rejected. Re-adding a removed contact creates
+receives. Wrong recipients, older epochs and replayed welcomes that would undo
+saved removal are rejected. Conflicting same-epoch keys require a persisted
+recovery barrier and an exactly matching signed challenge. Re-adding a removed contact creates
 a fresh epoch; opening the resulting link preserves existing local history but
 does not grant keys for the interval when that identity was absent.
 
@@ -259,6 +286,21 @@ actions, including controls posted before the welcome; a later gap blocks again.
 detected missing-history boundary. These checks use transport sequences to
 detect omissions, not to authenticate membership.
 
+On bootstrap, pass the installed state, opened welcome, captured head and raw
+`{seq, envelope}` entries to `checkGroupWelcomeReplay` /
+`check_group_welcome_replay` **before** applying messages or dispatching agent
+events. This checks coverage from the signed position and pauses for unknown
+older-source ciphertext, even if expired. It uses the original welcome epoch,
+not a later epoch reached during replay. Only exact signed addition/rekey hashes
+exempt the expected earlier controls; copied message IDs are insufficient.
+Older draft additions without those hashes may need a fresh current-member
+welcome. On later batches, preflight all new and pending envelopes with
+`checkGroupUnverifiableEpoch` / `check_group_unverifiable_epoch` before reducing
+any message, then run normal authentication and expiry checks. A usable archive
+or exact verified digest allows those checks to handle the older envelope.
+Recovery replacement starts with a clean branch archive and replay set; hosts
+must discard queued losing-branch plaintext before agent delivery.
+
 `prepareGroupSessionRekey` / `prepare_group_session_rekey` lets any remaining
 ordinary-group member finish an interrupted rotation. Unlike application sends,
 rotation is allowed while `needsRekey` is set. The CLI/MCP `group rekey` path uses
@@ -314,12 +356,14 @@ canonical CBOR of the complete payload:
 {proto: "qntm/group-welcome/v1", envelope: <all outer fields except ciphertext>,
  inviter_ik_pk: bytes(32), recipient_ik_pk: bytes(32), group_key: bytes(32),
  group_state: <creator-first GroupGenesisBody snapshot>, replay_from_seq: uint,
- addition_id: bytes(16), rekey_id: bytes(16)}
+ addition_id: bytes(16), rekey_id: bytes(16),
+ addition_hash: bytes(32), rekey_hash: bytes(32)}
 ```
 
 A refresh uses the same outer envelope and signature/box construction with
-`proto: "qntm/group-refresh/v1"`. Its exact payload omits `addition_id` and
-`rekey_id`; the signed domain identifies recovery of existing membership.
+`proto: "qntm/group-refresh/v1"`. Its exact payload omits the addition/rekey IDs
+and hashes; the signed domain identifies recovery of existing membership.
+The hashes cover the complete canonical serialized control envelopes.
 `openGroupWelcome` / `open_group_welcome` returns `purpose: "addition"` or
 `purpose: "refresh"`, and admission references exist only for an addition.
 Either payload may also contain `recovery_challenge: bytes(32)` inside its
@@ -350,6 +394,15 @@ from the welcome. This extension adds no metrics or recipient labels. A link
 holder can see its group locator and inviter pin. Keeping the locator in a URL
 fragment avoids including it in the normal HTTP request to the browser host;
 opening the group subsequently exposes its ID to the relay.
+
+Older-source headers are not independently authenticated to a newcomer. The
+conservative recovery pause can therefore also be triggered by ordinary
+in-flight older-epoch text or by ciphertext injected by someone who knows the
+public locator. A later sender-attested position can pass that traffic, but
+sustained injection can delay joining. This availability tradeoff grants no
+membership authority and does not justify sharing older roots. The relay can
+already withhold or fabricate a complete-looking replay; these checks do not
+establish global membership consensus against that behavior.
 
 Only newly generated admission keys enter welcomes. Older keys and invite
 secrets are excluded. Removing a member requires a new rekey without a wrapping

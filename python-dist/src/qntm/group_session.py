@@ -13,7 +13,7 @@ from .crypto import QSP1Suite
 from .group import GroupState, apply_rekey, create_rekey
 from .group_welcome import _validate_snapshot, prepare_group_addition, _seal_welcome, GROUP_WELCOME_TTL
 from .identity import base64url_decode, base64url_encode, validate_identity
-from .message import create_message, decrypt_message, serialize_envelope
+from .message import create_message, decrypt_message, serialize_envelope, deserialize_envelope
 
 _suite = QSP1Suite()
 _MAX_EPOCH = 0xffffffff
@@ -174,6 +174,46 @@ def check_expired_group_control(identity, previous, envelope, sequence):
     return previous
 
 
+def check_group_welcome_replay(previous, welcome, head, entries):
+    """Check bootstrap coverage and unknown old-source rows before dispatch.
+
+    Entries contain seq and raw envelope bytes. Older-source ciphertext may hide
+    a competing rekey; its unverified header only causes a conservative pause.
+    """
+    _require(previous['conversationId'] == welcome['conversation']['id'].hex(), 'Welcome belongs to a different group')
+    state = check_group_replay_coverage(previous, welcome['replay_from_sequence'], head, [row['seq'] for row in entries])
+    for row in entries:
+        if row['seq'] <= welcome['replay_from_sequence']:
+            continue
+        try:
+            envelope = deserialize_envelope(row['envelope'])
+        except Exception:
+            continue
+        if (envelope.get('conv_id') != welcome['conversation']['id'] or envelope.get('kind') == 'group_welcome'
+                or not _uint(envelope.get('conv_epoch')) or envelope['conv_epoch'] >= welcome['conversation']['currentEpoch']):
+            continue
+        digest = _suite.hash(row['envelope'])
+        if welcome['purpose'] == 'addition' and digest in (welcome.get('addition_hash'), welcome.get('rekey_hash')):
+            continue
+        state = require_group_recovery(state, row['seq'], 'missing_history')
+    return state
+
+
+def check_group_unverifiable_epoch(previous, envelope, sequence):
+    """Preflight ordinary batches before dispatch; bootstrap uses signed hashes."""
+    if (previous['removed'] or not _uint(envelope.get('conv_epoch')) or envelope['conv_epoch'] >= previous['epoch']
+            or not isinstance(envelope.get('conv_id'), bytes) or envelope['conv_id'].hex() != previous['conversationId']
+            or envelope.get('kind') == 'group_welcome'):
+        return previous
+    at = int(time.time())
+    if any(frame['epoch'] == envelope['conv_epoch'] and frame['expiresAt'] >= at for frame in previous['rekeys']):
+        return previous
+    if (isinstance(envelope.get('msg_id'), bytes)
+            and previous['seen'].get(envelope['msg_id'].hex(), {}).get('digest') == _suite.hash(serialize_envelope(envelope)).hex()):
+        return previous
+    return require_group_recovery(previous, sequence, 'missing_history')
+
+
 def group_session_from_welcome(identity, welcome, sequence, previous=None):
     """Install pinned welcome data; check coverage from its signed anchor before acting.
 
@@ -191,10 +231,11 @@ def group_session_from_welcome(identity, welcome, sequence, previous=None):
         _require(not saved['removed'] or welcome['purpose'] == 'addition', 'A welcome refresh cannot undo saved removal')
         _require(welcome['conversation']['currentEpoch'] >= saved['epoch'], 'Welcome is older than saved group state')
         if welcome['conversation']['currentEpoch'] == saved['epoch']:
-            _require(not saved['removed'] and not saved['needsRekey'] and welcome['conversation']['keys']['root'].hex() == saved['root'],
+            _require(not saved['removed'] and not saved['needsRekey'],
                      'Welcome cannot replace the saved epoch or removal')
-            _require(_encode_roster(welcome['state']) == saved['snapshot'], 'Welcome roster conflicts with the saved epoch')
             if not saved['recovery']:
+                _require(welcome['conversation']['keys']['root'].hex() == saved['root'], 'Welcome cannot replace the saved epoch or removal')
+                _require(_encode_roster(welcome['state']) == saved['snapshot'], 'Welcome roster conflicts with the saved epoch')
                 return saved
     return create_group_session(identity, welcome['conversation'], welcome['state'])
 

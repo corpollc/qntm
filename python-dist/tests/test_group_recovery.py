@@ -9,7 +9,7 @@ from qntm import (
     receive_group_event, prepare_group_welcome_refresh, open_group_welcome, marshal_canonical,
     check_group_replay_coverage, restore_group_session, group_session_from_welcome, assert_group_can_send,
     prepare_group_session_rekey, create_group_control_message, create_group_remove_body, create_message,
-    check_expired_group_control,
+    check_expired_group_control, check_group_welcome_replay, check_group_unverifiable_epoch, group_session_conversation,
 )
 
 
@@ -42,6 +42,30 @@ def test_coverage_detects_every_omission_and_persists_across_later_replay():
     for start, head, seqs in [(3, 2, []), (3, 4, [5]), (0, 1, [0]), (0, 1, [True])]:
         with pytest.raises(ValueError, match='coverage'):
             check_group_replay_coverage(initial, start, head, seqs)
+
+
+def test_unknown_old_source_ciphertext_is_not_exempted_by_copied_message_ids(monkeypatch):
+    owner, peer, state, _, pin, _ = setup()
+    source = copy.deepcopy(state)
+    frame = source['rekeys'][0]
+    source.update(epoch=0, root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+    new_peer = generate_identity()
+    addition = prepare_group_session_addition(owner, source, [new_peer['publicKey']])
+    welcome = open_group_welcome(new_peer, marshal_canonical(addition['welcomes'][0]), **pin)
+    initial = group_session_from_welcome(new_peer, welcome, 3)
+    rows = [{'seq': i + 1, 'envelope': marshal_canonical(envelope)} for i, envelope in enumerate(
+        [addition['addition'], addition['rekey'], addition['welcomes'][0]])]
+    assert check_group_welcome_replay(initial, welcome, 3, rows)['recovery'] is None
+    old_text = create_message(owner, group_session_conversation(source), 'text', b'racing old text', ttl_seconds=1)
+    extra = {'seq': 4, 'envelope': marshal_canonical(old_text)}
+    assert check_group_welcome_replay(initial, welcome, 4, [*rows, extra])['recovery']['afterSequence'] == 4
+    assert check_group_unverifiable_epoch(initial, old_text, 4)['recovery']['afterSequence'] == 4
+    assert check_group_unverifiable_epoch(state, old_text, 4)['recovery'] is None  # Has source-key archive.
+    monkeypatch.setattr('time.time', lambda: old_text['expiry_ts'] + 2)
+    assert check_group_welcome_replay(initial, welcome, 4, [*rows, extra])['recovery']
+    changed = {**addition['rekey'], 'ciphertext': bytes(len(addition['rekey']['ciphertext']))}
+    assert check_group_welcome_replay(initial, welcome, 3,
+        [rows[0], {'seq': 2, 'envelope': marshal_canonical(changed)}, rows[2]])['recovery']
 
 
 def test_gap_blocks_producers_and_events_until_a_later_welcome():

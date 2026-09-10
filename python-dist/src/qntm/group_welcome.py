@@ -129,7 +129,9 @@ def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_
     apply_rekey(next_conversation, new_key, conversation["currentEpoch"] + 1)
     next_conversation.pop("inviteToken", None)
     welcomes = [_seal_welcome(identity, next_conversation, next_state, recipient, addition["created_ts"], ttl,
-                             {"addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"]}, recovery_challenge, replay_from_sequence) for recipient in recipients]
+                             {"addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"],
+                              "addition_hash": _suite.hash(marshal_canonical(addition)), "rekey_hash": _suite.hash(marshal_canonical(rekey))},
+                             recovery_challenge, replay_from_sequence) for recipient in recipients]
     return {"conversation": next_conversation, "state": next_state,
             "addition": addition, "rekey": rekey, "welcomes": welcomes}
 
@@ -172,9 +174,11 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     anchor_fields = ',replay_from_seq' if isinstance(payload, dict) and 'replay_from_seq' in payload else ''
     common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state' + anchor_fields
     challenge_fields = ',recovery_challenge' if isinstance(payload, dict) and 'recovery_challenge' in payload else ''
-    addition = (_fields(payload, common + ',addition_id,rekey_id' + challenge_fields)
+    hash_fields = ',addition_hash,rekey_hash' if isinstance(payload, dict) and ('addition_hash' in payload or 'rekey_hash' in payload) else ''
+    addition = (_fields(payload, common + ',addition_id,rekey_id' + challenge_fields + hash_fields)
                 and payload["proto"] == _DOMAIN and _bytes(payload["addition_id"], 16)
-                and _bytes(payload["rekey_id"], 16) and value["conv_epoch"] > 0)
+                and _bytes(payload["rekey_id"], 16) and value["conv_epoch"] > 0
+                and (not hash_fields or _bytes(payload['addition_hash'], 32) and _bytes(payload['rekey_hash'], 32)))
     refresh = (_fields(payload, common + challenge_fields)
                and payload["proto"] == _REFRESH_DOMAIN)
     _require((addition or refresh) and _bytes(payload["inviter_ik_pk"], 32)
@@ -199,5 +203,6 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     return {"conversation": conversation, "state": state, "inviter_public_key": inviter_public_key,
             "purpose": "addition" if addition else "refresh", "message_id": value["msg_id"],
             'replay_from_sequence': payload['replay_from_seq'] if anchor_fields else 0,
+            **({'addition_hash': payload['addition_hash'], 'rekey_hash': payload['rekey_hash']} if addition and hash_fields else {}),
             **({'recovery_challenge': payload['recovery_challenge']} if challenge_fields else {}),
             **({"addition_id": payload["addition_id"], "rekey_id": payload["rekey_id"]} if addition else {})}

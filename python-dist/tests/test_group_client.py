@@ -702,3 +702,66 @@ def test_join_does_not_require_history_before_the_senders_signed_anchor(setup, m
     monkeypatch.setattr(cli, '_recv_once', retained)
     result = join(f.contact_dir, f.contact, link)
     assert not result['recovery_required'] and result['current_epoch'] == 1
+
+
+@pytest.mark.parametrize('timing', ['before', 'after'])
+def test_first_join_blocks_competing_source_rekey_and_recovers_same_epoch(setup, monkeypatch, timing):
+    from qntm import prepare_group_session_rekey, assert_group_can_send
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    injected = []
+
+    def race(url, cid, wire):
+        if deserialize_envelope(wire).get('kind') == 'group_welcome' and not injected:
+            record = cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
+            # The recipient was included in this authenticated source roster,
+            # but must never be given its pre-admission epoch0 root.
+            source = copy.deepcopy(record['group_session'])
+            frame = source['rekeys'][0]
+            source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+            with monkeypatch.context() as nested:
+                nested.setattr('qntm.message.generate_message_id', lambda: b'\x01' * 16)
+                competing = prepare_group_session_rekey(f.owner, source)['rekey']
+            assert competing['msg_id'].hex() < frame['messageId']
+            injected.append(competing)
+            if timing == 'before':
+                f.send(url, cid, serialize_envelope(competing))
+        return f.send(url, cid, wire)
+
+    monkeypatch.setattr(cli, '_http_send', race)
+    with monkeypatch.context() as fixed_ids:
+        ids = iter([b'\x80' * 16, b'\xf0' * 16])
+        fixed_ids.setattr('qntm.message.generate_message_id', lambda: next(ids))
+        link = owner.add(f.cid, 'Colleague')['group_link']
+
+    result = join(f.contact_dir, f.contact, link)
+    if timing == 'after':
+        assert not result['recovery_required']
+        sender = cli._find_conversation(cli._load_conversations(f.owner_dir), f.cid)['group_session']
+        f.send(f.relay, f.cid, serialize_envelope(create_message(f.owner, group_session_conversation(sender), 'text', b'losing branch trigger')))
+        f.send(f.relay, f.cid, serialize_envelope(injected[0]))
+        result = f.command(f.contact_dir, 'recv', f.cid)
+        assert not result['messages']
+        assert not any(row.get('unsafe_body') == 'losing branch trigger' for row in cli._load_history(f.contact_dir, f.cid))
+    initial = cli._find_conversation(cli._load_conversations(f.contact_dir), f.cid)['group_session']
+    winning = owner.sync(f.cid)['group_session']
+    assert initial['epoch'] == winning['epoch'] == 1
+    assert initial['root'] != winning['root']
+    assert initial['rekeys'] == []
+    # Coverage alone is insufficient: the newcomer cannot authenticate the older source.
+    assert result['recovery_required']
+    with pytest.raises(ValueError, match='history|recovery'):
+        assert_group_can_send(f.contact, initial)
+
+    # A current participant can attest the winning SAME epoch with a fresh
+    # challenge. The fix must permit this narrow root replacement while
+    # preserving removal and pre-admission-history exclusion.
+    owner.refresh(f.cid, 'Colleague', initial['recovery']['challenge'])
+    recovered = join(f.contact_dir, f.contact, link)
+    final = cli._find_conversation(cli._load_conversations(f.contact_dir), f.cid)['group_session']
+    assert not recovered['recovery_required']
+    assert final['epoch'] == 1 and final['root'] == winning['root']
+    assert final['rekeys'] == []
+    f.command(f.contact_dir, 'send', f.cid, 'recovered the winning branch')
+    assert any(row.get('unsafe_body') == 'recovered the winning branch'
+               for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
