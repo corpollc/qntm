@@ -1,6 +1,6 @@
 """qntm - secure messaging protocol client library and CLI."""
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 from .did import (
     DIDDocument,

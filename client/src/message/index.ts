@@ -26,6 +26,13 @@ export function createMessage(
     throw new Error('message TTL must be a positive safe integer within the timestamp range');
   }
 
+  // QSP v1.2 membership authority is bound inside the signed body, too.
+  // Legacy verifiers hash this additional field as part of the ordinary body.
+  if (conversation.type === 'group' && ['group_genesis','group_add','group_remove','group_rekey'].includes(bodyType)) {
+    const control = unmarshalCanonical<Record<string, unknown>>(body);
+    body = marshalCanonical({...control, group_epoch: conversation.currentEpoch});
+  }
+
   // Create body structure for hashing
   const bodyStruct: Record<string, unknown> = {
     body_type: bodyType,

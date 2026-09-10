@@ -118,6 +118,20 @@ function hexToBase64Url(hex: string): string {
   return Buffer.from(hex, 'hex').toString('base64url');
 }
 
+/** Classify only the process group this harness created after Darwin EPERM. */
+export function darwinOwnedGroupState(output: string, group: number): 'gone' | 'exiting' | 'live' {
+  const members = output.trim().split('\n').filter(Boolean).map(row => {
+    const match = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
+    if (!match) throw new Error('Cannot verify process-group shutdown');
+    return { group: Number(match[1]), state: match[2] };
+  }).filter(row => row.group === group);
+  if (members.every(row => row.state.startsWith('Z'))) return 'gone';
+  // Darwin briefly reports exiting processes as ?E before they become zombies.
+  // Keep polling that transition; a live or unrecognized state is still an error.
+  if (members.every(row => row.state.startsWith('Z') || row.state.startsWith('?E'))) return 'exiting';
+  return 'live';
+}
+
 export class ManagedProcess {
   readonly name: string;
   readonly command: string[];
@@ -181,17 +195,15 @@ export class ManagedProcess {
           if (code === 'ESRCH') return false;
           // Darwin killpg1 filters zombies and can return EPERM when no
           // signalable members remain. Verify the owned group is empty or
-          // zombie-only; never suppress a permissions error for a live process.
+          // zombie-only, or keep bounded polling while exiting; never suppress
+          // a permissions error for a live process.
           if (process.platform === 'darwin' && code === 'EPERM') {
             const rows = execFileSync('/bin/ps', ['-axo', 'pgid=,stat='], {
               encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024,
-            }).trim().split('\n').filter(Boolean);
-            const members = rows.map(row => {
-              const match = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
-              if (!match) throw new Error('Cannot verify process-group shutdown');
-              return { group: Number(match[1]), state: match[2] };
-            }).filter(row => row.group === child.pid);
-            if (members.every(row => row.state.startsWith('Z'))) return false;
+            });
+            const state = darwinOwnedGroupState(rows, -group);
+            if (state === 'gone') return false;
+            if (state === 'exiting' && value !== 'SIGKILL') return true;
           }
           throw error;
         }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.6.3
+
+- Add authenticated encrypted attachments in Python and TypeScript.
+- Add recipient-sealed current-epoch recovery for already authorized group members, without new admission rights or historical keys.
+- Preserve v0.6.2 strict signatures, legacy fragment links, gateway authority and cross-surface membership behavior.
+- Keep archived governance withdrawals effective and bound rekey convergence to source authorization.
+
 ## v0.6.2 (2026-09-10)
 
 [Full release notes](releases/v0.6.2.md)

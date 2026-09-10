@@ -8,7 +8,7 @@
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
-import { keyIDFromPublicKey, base64UrlEncode, uint8ArrayEquals } from '../identity/index.js';
+import { keyIDFromPublicKey, base64UrlEncode, base64UrlDecode, uint8ArrayEquals } from '../identity/index.js';
 import type { Identity, Conversation, KeyID } from '../types.js';
 
 const suite = new QSP1Suite();
@@ -321,6 +321,23 @@ export class GroupState {
 
   listAdmins(): Uint8Array[] {
     return [...this._admins].map((key) => this._members.get(key)!.keyId);
+  }
+
+  /** The existing creator remains immutable across roster snapshots. */
+  creatorKeyID(): Uint8Array | null {
+    return this._creator === null ? null : base64UrlDecode(this._creator);
+  }
+
+  /** Creator-first deterministic snapshot; authorization belongs to its signed transport. */
+  snapshot(): GroupGenesisBody {
+    const members = [...this._members.values()].sort((a,b) => {
+      if (this._kidKey(a.keyId) === this._creator) return -1;
+      if (this._kidKey(b.keyId) === this._creator) return 1;
+      for (let i=0;i<a.keyId.length;i++) if (a.keyId[i] !== b.keyId[i]) return a.keyId[i]-b.keyId[i];
+      return 0;
+    });
+    return {group_name:this.groupName,description:this.description,created_at:this.createdAt,
+      founding_members:members.map(m=>({key_id:m.keyId,public_key:m.publicKey,role:m.role,added_at:m.addedAt,added_by:m.addedBy}))};
   }
 
   /** Return member info list suitable for createGroupRekeyBody. */
