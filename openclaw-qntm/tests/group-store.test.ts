@@ -99,7 +99,13 @@ async function acceptedPending(f: ReturnType<typeof fixture>, store: QntmGroupSt
  * traffic run the production eviction over the oldest markers. */
 async function evictWithAuthenticatedTraffic(f: ReturnType<typeof fixture>, store: QntmGroupStore, sender: Identity, messages = 6) {
   const state = store.load(), seen = state.session!.seen;
-  while (Object.keys(seen).length < MAX_SEEN) seen[randomBytes(16).toString('hex')] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+  let entries = Object.keys(seen).length;
+  while (entries < MAX_SEEN) {
+    const id = randomBytes(16).toString('hex');
+    if (id in seen) continue;
+    seen[id] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+    entries++;
+  }
   store.save(state);
   const peer = f.store(sender); await peer.exclusive(() => peer.sync());
   for (let index = 0; index < messages; index++) {
