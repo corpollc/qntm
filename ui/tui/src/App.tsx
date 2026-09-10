@@ -25,6 +25,8 @@ import type { DropboxSubscription, Identity } from '@corpollc/qntm';
 import { keyIDToString } from '@corpollc/qntm';
 import { COMMANDS, findCommand, matchCommands } from './lib/commands.js';
 import { theme } from './lib/theme.js';
+import { groupNotice, type GroupSubscription } from './lib/groups.js';
+import { runGroupCommand } from './lib/group-commands.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -68,7 +70,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const [bellEnabled, setBellEnabled] = useState(true);
   const [sidebarFocusIdx, setSidebarFocusIdx] = useState(0);
 
-  const subscriptionsRef = useRef<Map<string, DropboxSubscription>>(new Map());
+  const subscriptionsRef = useRef<Map<string, DropboxSubscription | GroupSubscription>>(new Map());
   const connectedConversationsRef = useRef(new Set<string>());
   const activeConvIdRef = useRef<string | null>(null);
 
@@ -82,6 +84,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   const gatewayBusyRef = useRef(false);
   const reviewedPages = useRef(new Set<number>());
   const composerEditing = useRef(false);
+  const groupBusy = useRef(false);
   const reviewLines = useMemo(() => review ? wrapAnsi(review.details, Math.max(20, terminalWidth - 6), { hard: true, trim: false }).split('\n') : [], [review, terminalWidth]);
   const pageSize = Math.max(3, terminalHeight - 13);
   const pageCount = Math.max(1, Math.ceil(reviewLines.length / pageSize));
@@ -134,13 +137,39 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
 
   useEffect(() => {
     if (!identity) return;
-    const nextSubscriptions = new Map<string, DropboxSubscription>();
+    const nextSubscriptions = new Map<string, DropboxSubscription | GroupSubscription>();
     subscriptionsRef.current.forEach((subscription) => subscription.close());
     subscriptionsRef.current = nextSubscriptions;
     connectedConversationsRef.current = new Set();
     setConnected(false);
 
     for (const conv of store.loadConversations()) {
+      if (conv.managedGroup) {
+        let seen = new Set(store.loadHistory(conv.id).map(message => message.id));
+        const subscription = store.groups.watch(conv.id, {
+          onChange: () => {
+            try {
+              const history = store.loadHistory(conv.id);
+              const count = history.filter(message => !seen.has(message.id) && message.direction === 'incoming').length;
+              seen = new Set(history.map(message => message.id));
+              setConversations(store.loadConversations());
+              if (activeConvIdRef.current === conv.id) setMessages(history);
+              else if (count) {
+                setUnread(previous => ({ ...previous, [conv.id]: (previous[conv.id] || 0) + count }));
+                if (bellEnabled) process.stdout.write('\x07');
+              }
+            } catch (error) { addSystemMessage(error instanceof Error ? error.message : 'Cannot read group state.', theme.error); }
+          },
+          onStatus: (online, error) => {
+            if (online) connectedConversationsRef.current.add(conv.id);
+            else connectedConversationsRef.current.delete(conv.id);
+            setConnected(connectedConversationsRef.current.size > 0);
+            if (error) addSystemMessage(error, theme.error);
+          },
+        });
+        nextSubscriptions.set(conv.id, subscription);
+        continue;
+      }
       const convCrypto = store.getConversationCrypto(conv.id);
       if (!convCrypto) continue;
 
@@ -297,6 +326,23 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
   // ── Slash commands ─────────────────────────────────────────────────
 
   const handleCommand = useCallback((cmd: string, args: string) => {
+    if (['group', 'contact'].includes(cmd.toLowerCase()) || (cmd.toLowerCase() === 'join' && args.includes('#group='))) {
+      void (async () => {
+        if (groupBusy.current) { addSystemMessage('Group command is still running. Wait for its receipt, then /group retry if an operation is pending.', theme.warning); return; }
+        groupBusy.current = true;
+        try {
+          const result = await runGroupCommand(store, cmd.toLowerCase(), args, activeConvId);
+          if (result.conversationId) { activeConvIdRef.current = result.conversationId; setActiveConvId(result.conversationId); }
+          setConversations(store.loadConversations());
+          if (activeConvIdRef.current) setMessages(store.loadHistory(activeConvIdRef.current));
+          setScrollOffset(0); addSystemMessage(result.text, theme.info);
+        } catch (error) {
+          setConversations(store.loadConversations());
+          addSystemMessage(error instanceof Error ? error.message : 'Group command failed.', theme.error);
+        } finally { groupBusy.current = false; }
+      })();
+      return;
+    }
     const gatewayCommands = ['gate', 'request', 'secret', 'propose', 'approve', 'disapprove', 'gov-approve', 'gov-disapprove', 'review', 'confirm', 'cancel'];
     if (gatewayCommands.includes(cmd.toLowerCase())) {
       void (async () => {
@@ -426,6 +472,12 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         }
         if (!activeConvId) {
           addSystemMessage('No active conversation.', theme.error);
+          break;
+        }
+        if (store.findConversation(activeConvId)?.managedGroup) {
+          void store.groups.run(['convo', 'name', '--', activeConvId, name]).then(() => {
+            setConversations(store.loadConversations()); addSystemMessage(`Conversation renamed to: ${name}`, theme.success);
+          }).catch(error => addSystemMessage(error instanceof Error ? error.message : 'Rename failed.', theme.error));
           break;
         }
         const convs = store.loadConversations();
@@ -667,7 +719,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         </Box>
         <Box flexGrow={1} justifyContent="center">
           <Text bold color={theme.brand}>
-            {activeConvName || 'qntm messenger'}
+            {terminalText(activeConvName || 'qntm messenger').replace(/[\r\n\t]/g, ' ')}
           </Text>
         </Box>
         <Box width={32} justifyContent="flex-end">
@@ -711,7 +763,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
             messages={allMessages}
             conversationName={activeConvName}
             scrollOffset={scrollOffset}
-            terminalHeight={terminalHeight}
+            terminalHeight={terminalHeight - (groupNotice(conversations.find(conversation => conversation.id === activeConvId)) ? 2 : 0)}
             sidebarVisible={sidebarVisible}
             resolveContact={(kid) => store.resolveContact(kid)}
           />}
@@ -719,6 +771,9 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
       </Box>
 
       {/* Status bar */}
+      {groupNotice(conversations.find(conversation => conversation.id === activeConvId)) && (
+        <Box paddingX={1}><Text color={theme.warning}>{groupNotice(conversations.find(conversation => conversation.id === activeConvId))}</Text></Box>
+      )}
       <StatusBar
         kid={kidHex}
         name={displayName}

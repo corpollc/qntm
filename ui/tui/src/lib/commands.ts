@@ -12,6 +12,16 @@ export interface CommandDef {
 
 export const COMMANDS: CommandDef[] = [
   {
+    name: 'contact', usage: '/contact [list | add <name> <public-key> | remove <name>]',
+    brief: 'Manage verified contact addresses',
+    description: 'Pin a verified full Ed25519 public key with /contact add <name> <public-key>. Quote names containing spaces. /contact list shows complete pins; /contact remove <name> deletes only the local address. Existing names cannot silently change keys. /alias is only a display label, not an identity pin.',
+  },
+  {
+    name: 'group', usage: '/group <create|add|remove|link|open|refresh|retry|rekey|status>',
+    brief: 'Manage contact groups',
+    description: 'Use /group create <name>, then /group add <contact> in the active group. Adding admits the pinned contact and delivers fresh encrypted keys; share the returned public link. /join <link> or /group open <link> opens it with your identity. /group remove <contact> removes and rotates keys. /group refresh <contact> resends current keys only to an existing member. For missing history, /group status shows a recovery challenge; the current member uses /group refresh <contact> --challenge <hex> and shares their returned link. Explicit readmission supports /group add <contact> --challenge <hex>. /group retry resumes an exact saved operation; /group rekey finishes an interrupted rotation. /group link retrieves your public locator (no keys, no expiry). Requires the matching Python client; see ui/tui/README.md.',
+  },
+  {
     name: 'invite',
     usage: '/invite [name]',
     brief: 'Create a new conversation',
@@ -23,7 +33,7 @@ export const COMMANDS: CommandDef[] = [
     usage: '/join <token-or-link>',
     brief: 'Join a conversation',
     description:
-      'Joins an existing conversation using an invite token or link. Usage: /join <token-or-link>. Paste a bare token or a full invite link.',
+      'Opens a public contact-group link with your existing identity, or joins a legacy conversation using an invite token or link. Usage: /join <token-or-link>. A public group link contains no keys: the inviter must already have added your full public key.',
   },
   {
     name: 'approve',
