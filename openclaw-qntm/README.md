@@ -240,7 +240,7 @@ contact or permission changes. Cancel a review with `cancel` and `reviewToken`.
 | --- | --- | --- |
 | `add` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Admit a pinned identity, rotate, deliver welcome. Any current ordinary member may add. |
 | `remove` | `{ "contact": "Colleague" }` | Remove and rotate for remaining members; creator removal is rejected. |
-| `refresh` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Deliver current keys to an existing member without rotation. |
+| `refresh` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Deliver current keys without rotation. Include renewal proof when this member has a known completed admission; otherwise use generic refresh. |
 | `rekey` | `{}` | Complete a pending rotation or rotate the current roster. |
 | `retry` | `{}` | Resume the exact saved operation; never generate replacement ciphertext. |
 | `open` | `{ "link": "optional public link" }` | Reopen a pinned link for this configured group/relay. |
@@ -259,22 +259,31 @@ it also retries that pinned welcome. The challenge is signed and encrypted insid
 the welcome, so reposting an older welcome at a newer relay sequence does not
 clear recovery. A matching challenged refresh can replace a competing key at the
 same epoch; queued plaintext from the abandoned branch is discarded before agent
-dispatch. A refresh cannot undo saved removal: explicit readmission needs
-a new `add` welcome. For a blocked host whose agent cannot be awakened, the local
+dispatch. Generic refresh cannot undo saved removal. After an explicit later
+readmission, refresh can deliver its accepted admission proof with current keys
+even if that admission's first welcome expired. Neither form admits a removed
+identity or grants keys from before admission. For a blocked host whose agent cannot be awakened, the local
 operator can inspect the `session.recovery` field in the private checkpoint below.
 No unsolicited guidance request or message to another party is sent automatically.
 
 Private checkpoints live under
 `<OPENCLAW_STATE_DIR>/plugins/qntm/accounts/<account>/groups/<conversation>.json`.
 They atomically store current keys, full roster, replay cursor, recovery challenge,
-bounded pending ciphertext, exact unfinished outgoing operation, and **plaintext
+saved removal epoch, accepted admission IDs/digests/source epochs and completing
+rekey IDs/digests, bounded pending ciphertext, exact unfinished outgoing operation, and **plaintext
 messages awaiting host dispatch**. Files are mode `0600` in private directories;
 this is filesystem protection, not password encryption. Host transcripts and the
-existing durable ingress queue can retain plaintext after dispatch. These records,
-contact names and recovery challenges are not uploaded to the relay or added to its metrics.
+existing durable ingress queue can retain plaintext after dispatch. Pending
+renewals retain the expected current keys and full admission map, pinned recipient,
+welcome purpose and original recovery challenge so restart retries can recheck
+the same proof and send identical ciphertext. These checkpoint files and contact
+names are not uploaded. Welcomes carry current keys, roster, admission proof and
+any challenge encrypted to the recipient; the relay and its metrics cannot read
+those contents.
 Tool status and reviews expose their displayed contact/member metadata to the host
-transcript and configured model provider. Prepared encryption keys stay in private
-plugin state and are omitted from tool review output.
+transcript and configured model provider, including welcome purpose and any
+displayed recovery challenge. Prepared encryption keys and full admission proofs
+stay in private plugin state and are omitted from tool review output.
 See [metadata boundaries](../docs/group-welcomes.md#metadata-and-security-boundaries).
 
 Local writers serialize with a per-group lock and revision check. Pending
@@ -294,7 +303,12 @@ admission; it does not add a member or rotate keys. It can recover delivery of a
 later readmission whose first welcome expired, but cannot undo a newer saved
 removal. Candidate selection prefers the highest epoch, then the newest refresh
 or renewal; its historical admission rekey ID is never treated as a fresh
-rotation. Native tools do not yet issue admission renewals.
+rotation. The native `refresh` action issues renewal when the pinned recipient
+has complete current admission proof. Founding members and older checkpoints
+without that proof keep generic refresh. The review identifies which form will
+be sent; admission changes invalidate it. A pending renewal also checks the full
+current admission map before release, and restart retries keep its exact bytes
+and challenge. Older pending generic-refresh journals remain retryable as written.
 Expired messages without
 acceptance evidence and superseded membership operations remain blocked and
 preserved for reconciliation. Do not delete the

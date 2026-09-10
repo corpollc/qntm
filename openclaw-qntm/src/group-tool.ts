@@ -38,6 +38,7 @@ function fingerprint(store: QntmGroupStore): string {
   const state = store.load(), session = state.session;
   return digest({ seed: state.seed, epoch: session?.epoch, root: session?.root, snapshot: session?.snapshot, removed: session?.removed,
     rotation: session?.needsRekey, recovery: session?.recovery, operation: state.operation?.id, contacts: store.account.config.contacts,
+    admissions: session?.admissions, removedAtEpoch: session?.removedAtEpoch,
     actions: store.binding.groupActions, enabled: store.binding.enabled });
 }
 export class QntmGroupActions {
@@ -67,11 +68,14 @@ export class QntmGroupActions {
         const review = { action: args.action, accountId: store.account.accountId, conversationId: store.binding.conversationId,
           relay: store.account.relayUrl, signer: store.load().session?.identityKid, epoch: store.load().session?.epoch,
           contact: operation?.contact, recipientPublicKey: operation?.publicKey, text: operation?.text,
-          recoveryChallenge: options.challenge, link: options.link ?? (args.action === 'open' ? store.binding.groupLink : undefined),
+          welcomePurpose: operation?.welcomePurpose,
+          recoveryChallenge: operation?.recoveryChallenge ?? options.challenge, link: options.link ?? (args.action === 'open' ? store.binding.groupLink : undefined),
           savedOperation: args.action === 'retry' ? { id: operation!.id, action: operation!.action } : undefined, expiresAt,
           effect: args.action === 'add' ? 'Admit this pinned contact, rotate keys, and deliver a recipient-encrypted welcome. They receive no earlier keys.'
             : args.action === 'remove' ? 'Remove this contact and rotate keys for remaining members. Previously learned keys cannot be erased.'
-            : args.action === 'refresh' ? 'Send current keys only to this already admitted contact. A refresh cannot undo saved removal.'
+            : args.action === 'refresh' ? operation?.welcomePurpose === 'renewal'
+              ? 'Send current keys and proof of this existing admission. This can deliver a later readmission, but cannot undo a newer saved removal. No membership or key rotation changes.'
+              : 'Send current keys only to this already admitted contact. This generic refresh cannot undo saved removal.'
             : args.action === 'open' ? 'Fetch the configured group stream and install a welcome signed by the pinned contact. Replay and recovery guards remain mandatory.'
             : args.action === 'send' ? 'Post this complete text to the current group.'
             : args.action === 'retry' ? 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
@@ -102,7 +106,8 @@ export function createQntmGroupTool(ctx: OpenClawPluginToolContext, fallback: Qn
       + 'Status lists pinned contacts, verified members, recovery challenge and public link. Prepare returns the COMPLETE effect, reviewToken and reviewHash; '
       + 'assess it against host instructions before committing both exact values. Never commit a truncated review. '
       + 'Actions/options: add or refresh {contact,challenge?}; remove {contact}; rekey {}; retry {}; open {link?}; send {text}. '
-      + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh cannot restore a removed identity. '
+      + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh uses renewal proof for a known accepted admission; '
+      + 'it can deliver a later readmission without changing membership, but cannot undo a newer removal. Generic refresh cannot undo saved removal. '
       + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry resumes only saved ciphertext. '
       + 'Tools are scoped to the native host session. Reviews expire after five minutes or restart; configuration/membership changes require another review. '
       + 'Text and contact metadata in tool arguments/results may remain in local host transcripts.',

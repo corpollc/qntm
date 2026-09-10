@@ -14,8 +14,9 @@ import {
   receiveGroupEvent, requireGroupRecovery, openGroupWelcome, groupSessionFromWelcome, parseGroupLink, createGroupLink,
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
+  prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent,
   createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical,
-  type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupWelcome, type OuterEnvelope,
+  type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupAdmissionRenewal, type GroupWelcome, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { readBoundedFile, writePrivateJSON } from './storage.js';
 import { validateInbound, inboundId, MAX_PENDING_DISPATCHES, type QntmInbound } from './checkpoint.js';
@@ -29,6 +30,7 @@ const rowSchema = z.object({ seq: seq.min(1), wire: z.string().max(128 * 1024) }
 const operationSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{32}$/), action: z.enum(['add', 'remove', 'refresh', 'rekey', 'send']),
   contact: z.string().optional(), publicKey: z.string().optional(), text: z.string().optional(),
+  welcomePurpose: z.enum(['refresh', 'renewal']).optional(), recoveryChallenge: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   expected: z.unknown(), controls: z.array(z.string().max(128 * 1024)).max(2),
   welcomes: z.array(z.string().max(128 * 1024)).max(1), sentControls: seq.max(2), sentWelcomes: seq.max(1),
 }).strict();
@@ -269,10 +271,16 @@ export class QntmGroupStore {
     if (options.challenge) requireValue(/^[0-9a-f]{64}$/.test(options.challenge) && ['add', 'refresh'].includes(action), 'Recovery challenge must be 64 hex characters for add or refresh');
     const challenge = options.challenge ? new Uint8Array(Buffer.from(options.challenge, 'hex')) : undefined;
     let controls: OuterEnvelope[] = [], welcomes: OuterEnvelope[] = [], expected = session;
+    let welcomePurpose: GroupOperation['welcomePurpose'];
     if (action === 'add' || action === 'refresh') {
+      const admission = recipient && session.admissions[toHex(keyIDFromPublicKey(recipient))];
+      welcomePurpose = action === 'refresh' ? admission?.completion ? 'renewal' : 'refresh' : undefined;
       const value = action === 'add' ? prepareGroupSessionAddition(identity, session, [recipient!], undefined, challenge, state.cursor)
-        : prepareGroupWelcomeRefresh(identity, session, [recipient!], undefined, challenge, state.cursor);
-      expected = createGroupSession(identity, value.conversation, value.state);
+        : welcomePurpose === 'renewal' ? prepareGroupAdmissionRenewal(identity, session, recipient!,
+          { addId: admission!.addId, addDigest: admission!.addDigest }, undefined, challenge, state.cursor)
+          : prepareGroupWelcomeRefresh(identity, session, [recipient!], undefined, challenge, state.cursor);
+      expected = createGroupSession(identity, value.conversation, value.state, { signedEpoch: session.signedEpoch,
+        ...(welcomePurpose === 'renewal' ? { admissions: (value as GroupAdmissionRenewal).admissions } : {}) });
       if (action === 'add') controls = [(value as GroupAddition).addition, (value as GroupAddition).rekey];
       welcomes = value.welcomes;
     } else if (action === 'rekey') {
@@ -288,6 +296,7 @@ export class QntmGroupStore {
       controls = [createMessage(identity, groupSessionConversation(session), 'text', new TextEncoder().encode(options.text))];
     }
     return { id: randomUUID().replaceAll('-', ''), action, contact, publicKey: recipient && base64UrlEncode(recipient), text: options.text,
+      welcomePurpose, recoveryChallenge: options.challenge,
       expected, controls: controls.map(encode), welcomes: welcomes.map(encode), sentControls: 0, sentWelcomes: 0 };
   }
   saveOperation(operation: GroupOperation): void {
@@ -329,7 +338,15 @@ export class QntmGroupStore {
     const base = { conversation: groupSessionConversation(expected), state: group(expected), welcomes: operation.welcomes.map(envelope) };
     if (operation.action === 'add') assertGroupAdditionAccepted(this.account.identity!, state.session,
       { ...base, addition: envelope(operation.controls[0]), rekey: envelope(operation.controls[1]) } as GroupAddition);
-    if (operation.action === 'refresh') assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
+    if (operation.action === 'refresh') {
+      if (operation.welcomePurpose === 'renewal') {
+        requireValue(operation.publicKey, 'Saved renewal recipient is missing');
+        const recipient = base64UrlDecode(operation.publicKey), admission = expected.admissions[toHex(keyIDFromPublicKey(recipient))];
+        requireValue(admission?.completion, 'Saved renewal admission proof is missing');
+        assertGroupAdmissionRenewalCurrent(this.account.identity!, state.session,
+          { ...base, recipient, admission, admissions: expected.admissions } as GroupAdmissionRenewal);
+      } else assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
+    }
     for (; operation.sentWelcomes < operation.welcomes.length;) {
       const wire = operation.welcomes[operation.sentWelcomes];
       requireValue(envelope(wire).expiry_ts >= Math.floor(Date.now() / 1000), 'Saved welcome expired; preserve the operation for reconciliation');

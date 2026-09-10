@@ -12,7 +12,7 @@ import { stageGroupDelivery, stageAcceptedGroupSend } from '../openclaw-qntm/tes
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
-  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, prepareGroupSessionAddition, decryptMessage, type GroupSessionState, type OuterEnvelope,
+  serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, decryptMessage, type GroupSessionState, type OuterEnvelope,
 } from '@corpollc/qntm';
 const TIMEOUT = 240_000;
 describe.sequential('native OpenClaw contact welcomes with Python and TypeScript peers', () => {
@@ -147,7 +147,10 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
   }, TIMEOUT);
   it('refreshes current membership and persists it through a real host restart', async () => {
     const before = checkpoint().session.root;
-    await action('refresh-dave', 'refresh', { contact: 'Dave' });
+    const refreshed = await action('refresh-dave', 'refresh', { contact: 'Dave' });
+    expect(refreshed[1].review!.welcomePurpose).toBe('renewal');
+    const founder = await action('refresh-alice-founder', 'refresh', { contact: 'Alice' });
+    expect(founder[1].review!.welcomePurpose).toBe('refresh');
     expect(checkpoint().session.root).toBe(before);
     await action('rotate', 'rekey');
     await host.stop('SIGKILL');
@@ -209,7 +212,9 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const readmission = prepareGroupSessionAddition(identity, state, [host.identity.publicKey], 20, undefined, Number(record.group_cursor));
     for (const envelope of [readmission.addition, readmission.rekey, readmission.welcomes[0]]) await relay.postMessage(envelope.conv_id, serializeEnvelope(envelope));
     await h.alice.run(['recv', convId]);
+    await h.dave.run(['recv', convId]); // Still-admitted Dave catches the short-lived rotation before expiry.
     expect((h.alice.readConversation(convId).group_session as GroupSessionState).epoch).toBe(9);
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).epoch).toBe(9);
     await delay(Math.max(0, (readmission.welcomes[0].expiry_ts + 2) * 1000 - Date.now()));
     // Use the matching Python library in the fixture's installed CLI environment.
     // No new CLI/agent renewal action is implied by this receiving-client test.
@@ -240,5 +245,42 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(() => decryptMessage(excluded, groupSessionConversation(installed))).toThrow();
     await action('after-python-renewal', 'send', { text: 'native accepts renewed delivery of its later admission' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native accepts renewed delivery of its later admission', 'native reply after Python renewal');
+  }, TIMEOUT);
+  it('uses the native reviewed refresh to renew Python readmission after its first welcome expires', async () => {
+    await action('remove-dave-before-renewal', 'remove', { contact: 'Dave' });
+    await h.dave.run(['recv', convId]);
+    const removed = h.dave.readConversation(convId).group_session as GroupSessionState;
+    expect(removed.removed).toBe(true); expect(removed.removedAtEpoch).toBe(9);
+    await h.alice.run(['recv', convId]);
+    const identity = aliceIdentity();
+    const excluded = createMessage(identity, groupSessionConversation(restoreGroupSession(identity, h.alice.readConversation(convId).group_session)),
+      'text', new TextEncoder().encode('private while Dave was excluded'));
+    await relay.postMessage(excluded.conv_id, serializeEnvelope(excluded));
+    await h.alice.run(['recv', convId]);
+    const record = h.alice.readConversation(convId);
+    const addition = prepareGroupSessionAddition(identity, restoreGroupSession(identity, record.group_session),
+      [new Uint8Array(Buffer.from(h.dave.readIdentity().public_key, 'hex'))], 20, undefined, Number(record.group_cursor));
+    for (const envelope of [addition.addition, addition.rekey, addition.welcomes[0]]) await relay.postMessage(envelope.conv_id, serializeEnvelope(envelope));
+    await h.alice.run(['recv', convId]);
+    await host.waitFor(() => checkpoint().session?.epoch === 11 && !checkpoint().session?.needsRekey, 'native accepted later Dave admission');
+    await delay(Math.max(0, (addition.welcomes[0].expiry_ts + 2) * 1000 - Date.now()));
+    const accepted = checkpoint(), nativeState = restoreGroupSession(host.identity, accepted.session);
+    const recipient = new Uint8Array(Buffer.from(h.dave.readIdentity().public_key, 'hex'));
+    const generic = prepareGroupWelcomeRefresh(host.identity, nativeState, [recipient], undefined, undefined, accepted.cursor);
+    await relay.postMessage(generic.conversation.id, serializeEnvelope(generic.welcomes[0]));
+    const link = createGroupLink({ conversationId: generic.conversation.id, inviterPublicKey: host.identity.publicKey, relayUrl: h.relayUrl });
+    await expect(h.dave.run(['group', 'join', link])).rejects.toThrow();
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).removed).toBe(true);
+    const reviewed = await action('renew-dave-readmission', 'refresh', { contact: 'Dave' });
+    expect(reviewed[1].review!.welcomePurpose).toBe('renewal');
+    expect(reviewed[1].review!.effect).toContain('proof of this existing admission');
+    expect(checkpoint().session.epoch).toBe(11); expect(checkpoint().session.root).toBe(nativeState.root);
+    await h.dave.run(['group', 'join', link]);
+    const dave = h.dave.readConversation(convId).group_session as GroupSessionState;
+    expect(dave.removed).toBe(false); expect(dave.epoch).toBe(11); expect(dave.rekeys).toEqual([]);
+    expect(dave.admissions[h.dave.readIdentity().key_id].sourceEpoch).toBe(10);
+    expect(() => decryptMessage(excluded, groupSessionConversation(dave))).toThrow();
+    await h.dave.run(['send', convId, 'Python received native renewal without exclusion keys']);
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python received native renewal without exclusion keys', 'Python reply after reviewed native renewal');
   }, TIMEOUT);
 });
