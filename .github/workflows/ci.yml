@@ -219,6 +219,13 @@ jobs:
         working-directory: worker
       - run: npm ci && npm run test:relay
         working-directory: integration
+      - name: Upload relay failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: relay-acceptance-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: integration/test-results/
 
   cross-surface-acceptance:
     uses: ./.github/workflows/ui-acceptance.yml
