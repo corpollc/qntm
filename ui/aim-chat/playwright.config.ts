@@ -8,14 +8,14 @@ export default defineConfig({
   retries: 0,
   workers: 1, // Bob fixture stubs globals — can't run in parallel
   use: {
-    baseURL: `http://localhost:${port}`,
+    baseURL: process.env.QNTM_UI_BASE_URL || `http://localhost:${port}`,
     headless: true,
     viewport: { width: 1280, height: 900 },
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
   ],
-  webServer: {
+  webServer: process.env.QNTM_UI_BASE_URL ? undefined : {
     command: `npm run dev -- --port ${port} --strictPort`,
     port,
     reuseExistingServer: !process.env.QNTM_UI_TEST_PORT,

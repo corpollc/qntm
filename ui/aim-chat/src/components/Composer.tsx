@@ -19,6 +19,7 @@ export function Composer({
   onSendMessage,
   onCheckMessages,
 }: ComposerProps) {
+  const blocked = !!selectedConversation?.contactGroup && Object.values(selectedConversation.contactGroup).some(Boolean)
   return (
     <form className="composer" onSubmit={onSendMessage}>
       <input
@@ -26,9 +27,9 @@ export function Composer({
         placeholder={selectedConversation ? 'Type a message' : 'Select a conversation first'}
         value={composer}
         onChange={(event) => setComposer(event.target.value)}
-        disabled={!selectedConversation || isWorking}
+        disabled={!selectedConversation || isWorking || blocked}
       />
-      <button className="button" type="submit" disabled={!selectedConversation || isWorking}>
+      <button className="button" type="submit" disabled={!selectedConversation || isWorking || blocked}>
         {isWorking ? <Spinner /> : 'Send'}
       </button>
       <button

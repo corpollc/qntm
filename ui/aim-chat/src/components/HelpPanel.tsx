@@ -43,8 +43,10 @@ const concepts: Concept[] = [
   },
   {
     term: 'Invite Token',
-    definition: 'The bootstrap secret used to join a conversation. Sharing the invite is how you bring in another person or agent.',
+    definition: 'A legacy bootstrap secret used to join a conversation. Anyone with the token may receive its initial keys. Contact groups instead add a verified identity and share a public group link.',
   },
+  { term: 'Contact group', definition: 'A group whose members add known identities from pinned public keys. Addition rotates keys and sends an encrypted welcome to that contact. The public group link contains no keys and has no expiry; the welcome has a delivery window.' },
+  { term: 'Recovery challenge', definition: 'When saved group history is incomplete, messaging pauses. A current member uses your challenge to send a fresh welcome, then you reopen their public link. A refresh does not add you or undo a saved removal.' },
   {
     term: 'Relay',
     definition: 'The delivery service that stores and forwards encrypted envelopes. It can route messages, but it does not see plaintext.',

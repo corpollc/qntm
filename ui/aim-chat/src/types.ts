@@ -10,6 +10,7 @@ export interface IdentityInfo {
 }
 
 export interface Conversation {
+  contactGroup?: { removed: boolean; needsRekey: boolean; recovery: boolean; pending: boolean }
   gateway?: { status?: 'pending' | 'active'; keyId: string; floor?: number } | null
   id: string
   name: string

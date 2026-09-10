@@ -5,6 +5,7 @@ interface StoredMessage {
   seq: number
   envelope_b64: string
   conv_id: string
+  messageId?: string
 }
 
 /**
@@ -16,7 +17,7 @@ interface StoredMessage {
  */
 export class RelayStub {
   private messages: StoredMessage[] = []
-  private nextSeq = 1
+  private heads = new Map<string, number>()
   private server: ReturnType<typeof createServer> | null = null
   private wss: WebSocketServer | null = null
   private subscribers: Map<string, Set<WebSocket>> = new Map()
@@ -54,7 +55,12 @@ export class RelayStub {
 
   reset(): void {
     this.messages = []
-    this.nextSeq = 1
+    this.heads.clear()
+  }
+
+  /** Simulate retention without rewinding the real relay sequence counter. */
+  expire(conversationId: string, sequence: number): void {
+    this.messages = this.messages.filter(row => row.conv_id !== conversationId || row.seq !== sequence)
   }
 
   private handleHttp(req: IncomingMessage, res: ServerResponse): void {
@@ -88,9 +94,13 @@ export class RelayStub {
     req.on('end', () => {
       try {
         const parsed = JSON.parse(body)
-        const seq = this.nextSeq++
+        const existing = parsed.msg_id && this.messages.find(msg => msg.conv_id === parsed.conv_id && msg.messageId === parsed.msg_id)
+        if (existing) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ seq: existing.seq })); return }
+        const seq = (this.heads.get(parsed.conv_id) ?? 0) + 1
+        this.heads.set(parsed.conv_id, seq)
         const msg: StoredMessage = {
           seq,
+          messageId: parsed.msg_id,
           envelope_b64: parsed.envelope_b64,
           conv_id: parsed.conv_id,
         }
@@ -141,7 +151,7 @@ export class RelayStub {
       ws.send(JSON.stringify({ type: 'message', seq: msg.seq, envelope_b64: msg.envelope_b64 }))
     }
 
-    const headSeq = this.messages.filter(m => m.conv_id === convId).at(-1)?.seq ?? fromSeq
+    const headSeq = this.heads.get(convId) ?? 0
     ws.send(JSON.stringify({ type: 'ready', head_seq: headSeq }))
   }
 }

@@ -6,6 +6,8 @@
 import type { DropboxSubscription } from '@corpollc/qntm'
 import * as store from './store'
 import * as qntm from './qntm'
+import { openContactGroup } from './contact-groups'
+import { parseGroupLink } from '@corpollc/qntm'
 import type { ConversationSubscriptionHandlers } from './qntm'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import starterCatalog from '../../../gate/recipes/starter.json'
@@ -14,6 +16,7 @@ function formatConversation(conv: store.StoredConversation): Conversation {
   return {
     id: conv.id,
     gateway: conv.gateway,
+    contactGroup: conv.group ? { removed: conv.group.session.removed, needsRekey: conv.group.session.needsRekey, recovery: !!conv.group.session.recovery, pending: !!conv.group.operation } : undefined,
     name: conv.name || `${conv.type || 'chat'}-${conv.id.slice(0, 8)}`,
     type: conv.type || 'direct',
     participants: conv.participants || [],
@@ -91,7 +94,13 @@ export const api = {
     return qntm.createInviteForProfile(profileId, name)
   },
 
-  acceptInvite(profileId: string, token: string, name: string): { conversationId: string; conversations: Conversation[] } {
+  async acceptInvite(profileId: string, token: string, name: string): Promise<{ conversationId: string; conversations: Conversation[] }> {
+    let group = false
+    try { parseGroupLink(token); group = true } catch { /* legacy invite */ }
+    if (group) {
+      const conversationId = await openContactGroup(profileId, token, name)
+      return { conversationId, conversations: store.listConversations(profileId).map(formatConversation) }
+    }
     return qntm.acceptInviteForProfile(profileId, token, name)
   },
 
