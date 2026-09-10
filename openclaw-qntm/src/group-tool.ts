@@ -64,14 +64,22 @@ export class QntmGroupActions {
         const operation = args.action === 'retry' ? store.prepareRetry() : args.action === 'open' ? undefined : store.prepare(args.action, options);
         if (args.action === 'retry' && !operation) throw new Error('No saved group operation to retry');
         if (args.action === 'retry' && !store.binding.groupActions?.includes(operation!.action)) throw new Error('Original pending action is no longer locally permitted');
+        const saved = args.action === 'retry' ? store.load().operation! : undefined;
+        const retryMode = !saved ? undefined : operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
+          ? 'acknowledged_cleanup' : operation!.phase
+            ? digest(operation!.controls) === digest(saved.controls) ? 'exact_rotation' : 'replacement_rotation'
+            : operation!.welcomePurpose === 'renewal'
+              ? digest(operation!.welcomes) === digest(saved.welcomes) ? 'exact_renewal' : 'replacement_renewal'
+              : 'exact';
         const expiresAt = Date.now() + 300_000;
         const review = { action: args.action, accountId: store.account.accountId, conversationId: store.binding.conversationId,
           relay: store.account.relayUrl, signer: store.load().session?.identityKid, epoch: store.load().session?.epoch,
           contact: operation?.contact, recipientPublicKey: operation?.publicKey, text: operation?.text,
-          welcomePurpose: operation?.welcomePurpose,
+          retryMode, welcomePurpose: operation?.welcomePurpose, recoveryPhase: operation?.phase,
+          retainedRevisions: operation?.superseded?.length ?? 0,
           recoveryChallenge: operation?.recoveryChallenge ?? options.challenge, link: options.link ?? (args.action === 'open' ? store.binding.groupLink : undefined),
           savedOperation: args.action === 'retry' ? { id: operation!.id, action: operation!.action,
-            recovery: operation!.origin ? 'completed_admission_renewal' : undefined } : undefined, expiresAt,
+            recovery: operation!.phase ?? (operation!.welcomePurpose === 'renewal' ? 'completed_admission_renewal' : undefined) } : undefined, expiresAt,
           effect: args.action === 'add' ? 'Admit this pinned contact, rotate keys, and deliver a recipient-encrypted welcome. They receive no earlier keys.'
             : args.action === 'remove' ? 'Remove this contact and rotate keys for remaining members. Previously learned keys cannot be erased.'
             : args.action === 'refresh' ? operation?.welcomePurpose === 'renewal'
@@ -81,7 +89,8 @@ export class QntmGroupActions {
             : args.action === 'send' ? 'Post this complete text to the current group.'
             : args.action === 'retry' ? operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
               ? 'Clear the already acknowledged welcome journal locally. No messages will be posted.'
-              : operation!.origin ? 'Deliver current keys for the same verified completed admission using the reviewed renewal. Preserve original uncertain ciphertext; do not re-add or rotate. The original recovery challenge remains bound.'
+              : operation!.phase ? 'Finish the accepted admission with this reviewed rotation for the current roster. This step does not deliver contact keys. After verified replay, prepare retry again to review the current welcome; no second add is sent.'
+              : operation!.welcomePurpose === 'renewal' ? 'Deliver current keys for the same verified completed admission using the reviewed renewal. Preserve original uncertain ciphertext; do not re-add or rotate. The original recovery challenge remains bound.'
                 : 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
             : 'Rotate keys for the complete current roster and verify the accepted transition.' };
         const reviewToken = randomUUID().replaceAll('-', ''), reviewHash = digest(review);
@@ -98,6 +107,8 @@ export class QntmGroupActions {
       this.reviews.delete(args.reviewToken);
       if (pending.action === 'open') await store.open(pending.link);
       else { if (pending.action !== 'retry') store.saveOperation(pending.operation!); else store.saveRetry(pending.operation!); await store.resume(); }
+      if (pending.action === 'retry' && store.load().operation?.phase === 'addition_rekey') return { ...store.status(), status: 'rotation_verified',
+        welcomePending: true, nextAction: 'prepare retry to review delivery of the current welcome', operation: pending.action };
       return { ...store.status(), status: 'submitted', operation: pending.action };
     });
   }
@@ -112,7 +123,7 @@ export function createQntmGroupTool(ctx: OpenClawPluginToolContext, fallback: Qn
       + 'Actions/options: add or refresh {contact,challenge?}; remove {contact}; rekey {}; retry {}; open {link?}; send {text}. '
       + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh uses renewal proof for a known accepted admission; '
       + 'it can deliver a later readmission without changing membership, but cannot undo a newer removal. Generic refresh cannot undo saved removal. '
-      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. '
+      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. Interrupted admission rotations return rotation_verified with welcomePending; prepare and commit retry again to review current welcome delivery. '
       + 'Tools are scoped to the native host session. Reviews expire after five minutes or restart; configuration/membership changes require another review. '
       + 'Text and contact metadata in tool arguments/results may remain in local host transcripts.',
     parameters: { type: 'object', additionalProperties: false, properties: {

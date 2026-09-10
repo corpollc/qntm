@@ -40,7 +40,7 @@ export async function stageAcceptedGroupSend(config, stateDir) {
 
 /** Pause an already admitted real model turn, then leave a durable completed ADD
  * whose welcome was never acknowledged. No monitor or transport is mocked. */
-export async function stageCompletedGroupAddition(config, stateDir, contact, ttl = 1) {
+export async function stageCompletedGroupAddition(config, stateDir, contact, ttl = 1, partial = false) {
   const account = resolveQntmAccount({ cfg: config });
   const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
   return ordinary.exclusive(async () => {
@@ -52,9 +52,9 @@ export async function stageCompletedGroupAddition(config, stateDir, contact, ttl
     operation.welcomes = prepared.welcomes.map(value => base64UrlEncode(serializeEnvelope(value)));
     operation.expected = createGroupSession(account.identity, prepared.conversation, prepared.state);
     ordinary.saveOperation(operation);
-    for (const wire of operation.controls) await ordinary.client.postMessage(ordinary.binding.conversation.id, base64UrlDecode(wire));
+    for (const wire of operation.controls.slice(0, partial ? 1 : 2)) await ordinary.client.postMessage(ordinary.binding.conversation.id, base64UrlDecode(wire));
     await ordinary.sync();
-    if (ordinary.load().session.needsRekey || ordinary.load().session.epoch !== prepared.conversation.currentEpoch) throw new Error('Staged native admission did not complete');
+    if (ordinary.load().session.needsRekey !== partial || ordinary.load().session.epoch !== (partial ? before.session.epoch : prepared.conversation.currentEpoch)) throw new Error('Staged native admission did not complete');
     return { expiry: prepared.welcomes[0].expiry_ts, original: operation, currentRoot: ordinary.load().session.root };
   });
 }
