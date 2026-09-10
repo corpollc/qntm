@@ -91,6 +91,56 @@ def test_contact_add_open_send_restart_remove_and_readmission(setup):
     f.command(f.contact_dir, 'send', f.cid, 'back after readmission')
 
 
+@pytest.mark.parametrize('readmission', [False, True])
+def test_cli_opens_library_renewal_after_original_delivery_is_gone(setup, monkeypatch, readmission):
+    import time
+    from qntm import prepare_group_admission_renewal, prepare_group_session_addition
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    if readmission:
+        join(f.contact_dir, f.contact, link)
+        owner.change(f.cid, 'Colleague')
+        GroupClient(f.contact_dir, f.contact, f.relay).sync(f.cid)
+        current = owner.sync(f.cid)
+        addition = prepare_group_session_addition(f.owner, current['group_session'], [f.contact['publicKey']], ttl=1,
+                                                  replay_from_sequence=current['group_cursor'])
+        for envelope in (addition['addition'], addition['rekey'], *addition['welcomes']):
+            f.send(f.relay, f.cid, serialize_envelope(envelope))
+        owner.sync(f.cid)
+        later = time.time() + 2
+        monkeypatch.setattr(time, 'time', lambda: later)
+    owner.change(f.cid)
+    record = owner.sync(f.cid)
+    state = record['group_session']
+    admission = state['admissions'][f.contact['keyID'].hex()]
+    renewal = prepare_group_admission_renewal(f.owner, state, f.contact['publicKey'],
+                                             {key: admission[key] for key in ('addId', 'addDigest')},
+                                             replay_from_sequence=record['group_cursor'])
+    renewal_wire = serialize_envelope(renewal['welcomes'][0])
+    f.send(f.relay, f.cid, renewal_wire)
+    retained = {renewal_wire}
+    if readmission:
+        # A newer generic refresh must not hide a valid readmission renewal.
+        owner.refresh(f.cid, 'Colleague')
+        retained.add(f.rows[f.cid][-1])
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if readmission or deserialize_envelope(base64.b64decode(row['envelope_b64'])).get('kind') != 'group_welcome'
+                or base64.b64decode(row['envelope_b64']) in retained], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    result = join(f.contact_dir, f.contact, link)
+    assert not result['removed'] and not result['recovery_required']
+    joined = cli._load_conversations(f.contact_dir)[0]['group_session']
+    assert joined['epoch'] == state['epoch'] and joined['admissions'] == state['admissions']
+    if readmission:
+        assert joined['removedAtEpoch'] == 1
+    f.command(f.contact_dir, 'send', f.cid, 'opened renewed delivery')
+    assert any(row.get('unsafe_body') == 'opened renewed delivery' for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
+
+
 @pytest.mark.parametrize('failure_index', [1, 2, 3])
 def test_retry_reuses_exact_ciphertext_after_lost_response(setup, monkeypatch, failure_index):
     f = setup
@@ -722,7 +772,8 @@ def test_first_join_blocks_competing_source_rekey_and_recovers_same_epoch(setup,
             # but must never be given its pre-admission epoch0 root.
             source = copy.deepcopy(record['group_session'])
             frame = source['rekeys'][0]
-            source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+            source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={},
+                          admissions=copy.deepcopy(frame['admissions']), needsRekey=True)
             with monkeypatch.context() as nested:
                 nested.setattr('qntm.message.generate_message_id', lambda: b'\x01' * 16)
                 competing = prepare_group_session_rekey(f.owner, source)['rekey']
@@ -782,7 +833,8 @@ def test_watch_does_not_dispatch_incomplete_subscription_replay(setup, monkeypat
     saved = owner.sync(f.cid)['group_session']
     source = copy.deepcopy(saved)
     frame = source['rekeys'][0]
-    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={},
+                          admissions=copy.deepcopy(frame['admissions']), needsRekey=True)
     competing = prepare_group_session_rekey(f.owner, source)['rekey']
     text = create_message(f.owner, group_session_conversation(saved), 'text', b'text before replay is validated')
     f.send(f.relay, f.cid, serialize_envelope(text))
@@ -956,7 +1008,8 @@ def test_reused_id_does_not_resurrect_losing_branch_queued_plaintext(setup, monk
 
     source = copy.deepcopy(saved)
     frame = source['rekeys'][0]
-    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={},
+                          admissions=copy.deepcopy(frame['admissions']), needsRekey=True)
     with monkeypatch.context() as fixed:
         fixed.setattr('qntm.message.generate_message_id', lambda: b'\x01' * 16)
         competing = prepare_group_session_rekey(f.owner, source)['rekey']

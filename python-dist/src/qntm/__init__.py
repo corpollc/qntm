@@ -101,6 +101,7 @@ from .group_session import (
     assert_group_can_send, create_group_control_message, receive_group_event,
     prepare_group_session_addition, assert_group_addition_accepted,
     prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
+    prepare_group_admission_renewal, assert_group_admission_renewal_current,
     require_group_recovery, check_group_replay_coverage, check_group_welcome_replay, check_group_unverifiable_epoch, check_expired_group_control, group_session_from_welcome,
     GROUP_REKEY_GRACE_SECONDS, MAX_GROUP_REKEY_CHECKPOINTS,
 )
