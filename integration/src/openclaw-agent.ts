@@ -92,8 +92,9 @@ export class OpenClawAgent {
     try { return JSON.parse(await readFile(join(this.stateDir, 'plugins/qntm/accounts/default/conversations', `${this.conversationId}.json`), 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   }
-  async journey(peer: HistoryAgent, plan: ToolPlan): Promise<ToolResult[]> {
+  async journey(peer: HistoryAgent, plan: ToolPlan, beforePrepare?: () => Promise<void>): Promise<ToolResult[]> {
     if (this.provider.outcomes.has(plan.id)) throw new Error('Duplicate test journey ID');
+    if (beforePrepare) this.provider.beforePrepare.set(plan.id, beforePrepare);
     const marker = 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(plan)).toString('base64url');
     const sent = await peer.run(['send', this.conversationId, marker]);
     if (!sent.ok) throw new Error(sent.error);

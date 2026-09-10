@@ -22,5 +22,6 @@ export function createToolProvider(): Promise<{
   url: string;
   outcomes: Map<string, ToolResult[]>;
   failures: string[];
+  beforePrepare: Map<string, () => Promise<void>>;
   close(): Promise<void>;
 }>;

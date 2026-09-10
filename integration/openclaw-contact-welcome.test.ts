@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -27,6 +27,7 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const raw = h.alice.readIdentity();
     return { privateKey: new Uint8Array(Buffer.from(raw.private_key, 'hex')), publicKey: new Uint8Array(Buffer.from(raw.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(raw.key_id, 'hex')) };
   };
+  const checkpointLink = () => createGroupLink({ conversationId: new Uint8Array(Buffer.from(convId, 'hex')), inviterPublicKey: host.identity.publicKey, relayUrl: h.relayUrl });
   const checkpoint = () => JSON.parse(readFileSync(join(host.stateDir, 'plugins/qntm/accounts/default/groups', `${convId}.json`), 'utf8'));
   afterEach(({ task }) => {
     if (task.result?.state !== 'fail' || !h || !host) return;
@@ -283,4 +284,35 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     await h.dave.run(['send', convId, 'Python received native renewal without exclusion keys']);
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python received native renewal without exclusion keys', 'Python reply after reviewed native renewal');
   }, TIMEOUT);
+  it('reviews native retry of a completed expired ADD and delivers its current renewal to the removed Python peer', async () => {
+    await action('remove-dave-before-pending-retry', 'remove', { contact: 'Dave' });
+    await h.dave.run(['recv', convId]);
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).removed).toBe(true);
+    const removedEpoch = (h.dave.readConversation(convId).group_session as GroupSessionState).removedAtEpoch!;
+    let original: { controls: string[]; welcomes: string[] }, root: string;
+    const reviewed = await host.journey(h.alice,
+      { id: 'retry-expired-native-add', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' }, async () => {
+        // The request already entered the real host before the operation barrier.
+        // Simulate interruption after accepted controls, before welcome delivery.
+        const staged = await stageCompletedGroupAddition(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'Dave', 5);
+        original = staged.original; root = staged.currentRoot;
+        await h.alice.run(['recv', convId]);
+        await delay(Math.max(0, (staged.expiry + 1) * 1000 - Date.now()));
+        expect(checkpoint().operation.welcomes).toEqual(original.welcomes);
+      });
+    expect(reviewed[1].review!.welcomePurpose).toBe('renewal');
+    expect(reviewed[1].review!.effect).toContain('same verified completed admission');
+    expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).toBe(root!);
+    const result = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0);
+    const originalWires = original!.controls.map(wire => Buffer.from(wire, 'base64url').toString('hex'));
+    for (const wire of originalWires) expect(result.entries.filter(row => Buffer.from(row.envelope).toString('hex') === wire)).toHaveLength(1);
+    expect(result.entries.some(row => Buffer.from(row.envelope).toString('base64url') === original!.welcomes[0])).toBe(false);
+    await h.dave.run(['group', 'join', checkpointLink()]);
+    const dave = h.dave.readConversation(convId).group_session as GroupSessionState;
+    expect(dave.removed).toBe(false); expect(dave.rekeys).toEqual([]);
+    expect(dave.admissions[h.dave.readIdentity().key_id].sourceEpoch).toBeGreaterThan(removedEpoch);
+    await h.dave.run(['send', convId, 'Python joined through native reviewed pending admission retry']);
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python joined through native reviewed pending admission retry', 'Python reply after pending native admission recovery');
+  }, TIMEOUT);
+
 });

@@ -13,9 +13,9 @@ import {
   restoreGroupSession, groupSessionConversation, checkGroupReplayCoverage, checkExpiredGroupControl, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch,
   receiveGroupEvent, requireGroupRecovery, openGroupWelcome, groupSessionFromWelcome, parseGroupLink, createGroupLink,
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
-  assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
+  assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
   prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent,
-  createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical,
+  createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical, marshalCanonical, openSecret,
   type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupAdmissionRenewal, type GroupWelcome, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { readBoundedFile, writePrivateJSON } from './storage.js';
@@ -27,9 +27,15 @@ import type { ResolvedQntmAccount, ResolvedQntmBinding, QntmGroupAction } from '
 const seq = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const dispatchGeneration = () => randomUUID().replaceAll('-', '');
 const rowSchema = z.object({ seq: seq.min(1), wire: z.string().max(128 * 1024) }).strict();
+const originalAdditionSchema = z.object({
+  controls: z.array(z.string().max(128 * 1024)).length(2), welcomes: z.array(z.string().max(128 * 1024)).length(1),
+  sentControls: seq.max(2), sentWelcomes: seq.max(1), recipient: z.string(),
+  addId: z.string().regex(/^[0-9a-f]{32}$/), addDigest: z.string().regex(/^[0-9a-f]{64}$/), delivery: z.literal('unknown'),
+}).strict();
 const operationSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{32}$/), action: z.enum(['add', 'remove', 'refresh', 'rekey', 'send']),
   contact: z.string().optional(), publicKey: z.string().optional(), text: z.string().optional(),
+  origin: originalAdditionSchema.optional(),
   welcomePurpose: z.enum(['refresh', 'renewal']).optional(), recoveryChallenge: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   expected: z.unknown(), controls: z.array(z.string().max(128 * 1024)).max(2),
   welcomes: z.array(z.string().max(128 * 1024)).max(1), sentControls: seq.max(2), sentWelcomes: seq.max(1),
@@ -303,50 +309,140 @@ export class QntmGroupStore {
     const state = this.load(); requireValue(!state.operation, 'An exact group operation is already pending');
     state.operation = operationSchema.parse(operation); this.save(state);
   }
+  private additionProof(state: GroupCheckpoint, operation: GroupOperation) {
+    requireValue(operation.action === 'add' && !operation.origin && operation.controls.length === 2
+      && operation.publicKey && state.session, 'Invalid original addition journal');
+    const wire = base64UrlDecode(operation.controls[0]), addition = deserializeEnvelope(wire);
+    requireValue(encode(addition) === operation.controls[0] && toHex(addition.conv_id) === this.binding.conversationId,
+      'Saved addition context is invalid');
+    const recipient = base64UrlDecode(operation.publicKey), kid = toHex(keyIDFromPublicKey(recipient));
+    const expected = { addId: toHex(addition.msg_id), addDigest: toHex(new QSP1Suite().hash(wire)) };
+    const admission = state.session.admissions[kid];
+    return admission?.addId === expected.addId && admission.addDigest === expected.addDigest
+      ? { admission, recipient, expected } : undefined;
+  }
+  private welcomeBase(operation: GroupOperation) {
+    const expected = restoreGroupSession(this.account.identity!, operation.expected);
+    return { conversation: groupSessionConversation(expected), state: group(expected), welcomes: operation.welcomes.map(envelope) };
+  }
+  private assertExactAddition(state: GroupCheckpoint, operation: GroupOperation): void {
+    const proof = this.additionProof(state, operation), rekey = envelope(operation.controls[1]);
+    requireValue(proof?.admission.completion?.rekeyId === toHex(rekey.msg_id)
+      && proof.admission.completion.rekeyDigest === toHex(new QSP1Suite().hash(base64UrlDecode(operation.controls[1]))),
+    'Original completing rekey is no longer canonical');
+    assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session!, this.welcomeBase(operation) as GroupWelcomeRefresh);
+  }
+  private checkContact(operation: GroupOperation): void {
+    if (operation.contact) requireValue(this.account.config.contacts?.[operation.contact]
+      && base64UrlEncode(decodeContactKey(this.account.config.contacts[operation.contact])) === operation.publicKey,
+    'Pending operation contact pin changed; preserve it for reconciliation');
+  }
+  private additionChallenge(operation: GroupOperation): string | undefined {
+    // Draft journals stored the optional challenge only inside their signed box.
+    if (operation.recoveryChallenge !== undefined) return operation.recoveryChallenge;
+    const identity = this.account.identity!, outer = envelope(operation.welcomes[0]);
+    const plain = openSecret(identity.privateKey, base64UrlDecode(operation.publicKey!), outer.ciphertext);
+    const signed = unmarshalCanonical<{ payload: Record<string, unknown>; signature: Uint8Array }>(plain), payload = signed.payload;
+    const { ciphertext: _ciphertext, ...header } = outer;
+    const same = (a: unknown, b: unknown) => toHex(marshalCanonical(a)) === toHex(marshalCanonical(b));
+    requireValue(toHex(plain) === toHex(marshalCanonical(signed))
+      && payload.proto === 'qntm/group-welcome/v1' && same(payload.inviter_ik_pk, identity.publicKey)
+      && same(payload.recipient_ik_pk, base64UrlDecode(operation.publicKey!))
+      && toHex(outer.conv_id) === this.binding.conversationId
+      && same(payload.addition_id, envelope(operation.controls[0]).msg_id)
+      && same(payload.rekey_id, envelope(operation.controls[1]).msg_id) && same(payload.envelope, header)
+      && new QSP1Suite().verify(identity.publicKey, marshalCanonical(payload), signed.signature), 'Invalid saved welcome challenge binding');
+    const challenge = payload.recovery_challenge;
+    requireValue(challenge === undefined || challenge instanceof Uint8Array && challenge.length === 32, 'Invalid saved recovery challenge');
+    return challenge === undefined ? undefined : toHex(challenge as Uint8Array);
+  }
+  /** Plan only: replacement ciphertext is reviewed before any journal or POST changes.
+   * A renewed operation is exact-retry-only; repeated expiry remains blocked. */
+  prepareRetry(): GroupOperation {
+    const state = this.load(), operation = state.operation;
+    requireValue(operation, 'No saved group operation to retry');
+    if (operation.welcomes.length && operation.sentWelcomes === operation.welcomes.length) return operation;
+    this.checkContact(operation);
+    if (operation.action !== 'add' || operation.origin) return operation;
+    const proof = this.additionProof(state, operation);
+    if (!proof?.admission.completion) return operation;
+    assertGroupCanSend(this.account.identity!, state.session!);
+    try {
+      this.assertExactAddition(state, operation);
+      requireValue(operation.welcomes.every(wire => envelope(wire).expiry_ts >= Math.floor(Date.now() / 1000)), 'Expired original welcome');
+      return operation;
+    } catch { /* Exact completed admission permits current-key renewal, not readmission. */ }
+    const challenge = this.additionChallenge(operation);
+    const renewed = prepareGroupAdmissionRenewal(this.account.identity!, state.session!, proof.recipient, proof.expected,
+      undefined, challenge ? new Uint8Array(Buffer.from(challenge, 'hex')) : undefined, state.cursor);
+    return { ...operation, welcomePurpose: 'renewal', recoveryChallenge: challenge, controls: [], sentControls: 0,
+      welcomes: renewed.welcomes.map(encode), sentWelcomes: 0,
+      expected: createGroupSession(this.account.identity!, renewed.conversation, renewed.state,
+        { signedEpoch: state.session!.signedEpoch, admissions: renewed.admissions }),
+      origin: { controls: [...operation.controls], welcomes: [...operation.welcomes], sentControls: operation.sentControls,
+        sentWelcomes: operation.sentWelcomes, recipient: operation.publicKey!, ...proof.expected, delivery: 'unknown' } };
+  }
+  /** Caller owns writer lock and has matched the complete review fingerprint. */
+  saveRetry(operation: GroupOperation): void {
+    const state = this.load();
+    requireValue(state.operation?.id === operation.id, 'Pending operation changed before retry');
+    state.operation = operationSchema.parse(operation); this.save(state);
+  }
+  /** Caller owns the writer lock through replay, every POST and its journal write. */
   async resume(): Promise<number | undefined> {
     let publishedSequence: number | undefined;
     await this.sync();
     let state = this.load(), operation = state.operation;
-    requireValue(operation && state.session && !state.session.recovery && !state.session.removed, 'No retryable group operation or recovery is required');
-    if (operation.contact) requireValue(this.account.config.contacts?.[operation.contact]
-      && base64UrlEncode(decodeContactKey(this.account.config.contacts[operation.contact])) === operation.publicKey, 'Pending operation contact pin changed; preserve it for reconciliation');
+    requireValue(operation, 'No saved group operation to retry');
+    // This is only local journal cleanup. Acknowledged welcomes need no new
+    // network publication or current membership authority after a later change.
+    if (operation.welcomes.length && operation.sentWelcomes === operation.welcomes.length) {
+      state.operation = null; this.save(state); return;
+    }
+    requireValue(state.session && !state.session.recovery && !state.session.removed, 'No retryable group operation or recovery is required');
+    this.checkContact(operation);
     for (; operation.sentControls < operation.controls.length;) {
       const wire = operation.controls[operation.sentControls], outer = envelope(wire);
       await this.sync(); state = this.load();
-      requireValue(state.session, 'Missing group checkpoint');
-      // Validate the exact pending control against freshly replayed state before
-      // publishing it. A verified ambiguous POST needs no second publication.
-      // Expiry prevents a new publication, not recognition of an accepted one.
-      requireValue(state.session.seen[toHex(outer.msg_id)] || outer.expiry_ts >= Math.floor(Date.now() / 1000),
-        'Saved group operation expired; preserve it for reconciliation');
-      const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
-      if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
+      requireValue(state.session && state.operation && digest(state.operation) === digest(operation), 'Pending operation changed during replay');
+      const proof = operation.action === 'add' && !operation.origin ? this.additionProof(state, operation) : undefined;
+      const proven = Boolean(proof && (operation.sentControls === 0 || proof.admission.completion));
+      if (!proven) {
+        if (operation.action === 'add') {
+          assertGroupCanSend(this.account.identity!, { ...state.session, needsRekey: false });
+          if (operation.sentControls === 0) requireValue(!state.session.needsRekey && state.session.epoch === outer.conv_epoch
+            && !state.session.admissions[toHex(keyIDFromPublicKey(base64UrlDecode(operation.publicKey!)))],
+          'Original addition is no longer safe to publish; preserve it for reconciliation');
+          else requireValue(proof, 'Original addition is no longer the current admission');
+        }
+        requireValue(state.session.seen[toHex(outer.msg_id)] || outer.expiry_ts >= Math.floor(Date.now() / 1000),
+          'Saved group operation expired; preserve it for reconciliation');
+        const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
+        if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
+      }
       state = this.load(); operation = state.operation!; operation.sentControls++; this.save(state);
     }
     await this.sync(); state = this.load(); operation = state.operation!;
     requireValue(state.session, 'Missing group checkpoint');
     const expected = restoreGroupSession(this.account.identity!, operation.expected);
     assertGroupCanSend(this.account.identity!, state.session);
-    for (const wire of operation.controls) {
+    if (operation.action === 'add' && !operation.origin) this.assertExactAddition(state, operation);
+    else for (const wire of operation.controls) {
       const outer = envelope(wire);
       requireValue(state.session.seen[toHex(outer.msg_id)]?.digest === toHex(new QSP1Suite().hash(base64UrlDecode(wire))), 'Exact saved control or send has not been accepted');
     }
-    // An exact accepted text is complete even if another member rotated later.
-    // Membership operations still require their expected accepted state.
     requireValue(operation.action === 'send' || state.session.root === expected.root && state.session.epoch === expected.epoch && state.session.snapshot === expected.snapshot,
       'Pending group operation no longer matches accepted state; preserve it for reconciliation');
-    const base = { conversation: groupSessionConversation(expected), state: group(expected), welcomes: operation.welcomes.map(envelope) };
-    if (operation.action === 'add') assertGroupAdditionAccepted(this.account.identity!, state.session,
-      { ...base, addition: envelope(operation.controls[0]), rekey: envelope(operation.controls[1]) } as GroupAddition);
-    if (operation.action === 'refresh') {
-      if (operation.welcomePurpose === 'renewal') {
-        requireValue(operation.publicKey, 'Saved renewal recipient is missing');
-        const recipient = base64UrlDecode(operation.publicKey), admission = expected.admissions[toHex(keyIDFromPublicKey(recipient))];
-        requireValue(admission?.completion, 'Saved renewal admission proof is missing');
-        assertGroupAdmissionRenewalCurrent(this.account.identity!, state.session,
-          { ...base, recipient, admission, admissions: expected.admissions } as GroupAdmissionRenewal);
-      } else assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
-    }
+    const base = this.welcomeBase(operation);
+    if (operation.welcomePurpose === 'renewal') {
+      requireValue(operation.publicKey, 'Saved renewal recipient is missing');
+      const recipient = base64UrlDecode(operation.publicKey), admission = expected.admissions[toHex(keyIDFromPublicKey(recipient))];
+      requireValue(admission?.completion, 'Saved renewal admission proof is missing');
+      if (operation.origin) requireValue(operation.origin.recipient === operation.publicKey
+        && operation.origin.addId === admission.addId && operation.origin.addDigest === admission.addDigest, 'Renewal differs from its original admission');
+      assertGroupAdmissionRenewalCurrent(this.account.identity!, state.session,
+        { ...base, recipient, admission, admissions: expected.admissions } as GroupAdmissionRenewal);
+    } else if (operation.action === 'refresh') assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
     for (; operation.sentWelcomes < operation.welcomes.length;) {
       const wire = operation.welcomes[operation.sentWelcomes];
       requireValue(envelope(wire).expiry_ts >= Math.floor(Date.now() / 1000), 'Saved welcome expired; preserve the operation for reconciliation');
