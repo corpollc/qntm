@@ -82,7 +82,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     writeFileSync(join(artifactDir, 'relay.stdout.log'), relayProcess?.stdout ?? '');
     writeFileSync(join(artifactDir, 'relay.stderr.log'), relayProcess?.stderr ?? '');
     writeFileSync(join(artifactDir, 'runtime.json'), JSON.stringify({
-      node: process.version, platform: process.platform, arch: process.arch,
+      node: process.version, undici: process.versions.undici, platform: process.platform, arch: process.arch,
       url: relayUrl, command: relayProcess?.command, timeline,
     }, null, 2));
   }
@@ -101,23 +101,31 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   it('reconnects a native WebSocket after an application callback fails', async () => {
     const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);
     const sequence = await relay.postMessage(cid, new Uint8Array([97]));
-    let failOnce = true;
+    const injectedFailure = new Error('fixture persistence failure');
+    const callbackAttempts: number[] = [], errors: Error[] = [];
     const frames: RelayFrame[] = [];
     const subscription = relay.subscribeMessages(cid, 0, {
       onMessage: ({ seq }) => {
-        if (failOnce) { failOnce = false; throw new Error('fixture persistence failure'); }
+        callbackAttempts.push(seq);
+        if (callbackAttempts.length === 1) throw injectedFailure;
         frames.push({ type: 'message', seq });
       },
-      onError: () => { frames.push({ type: 'callback_error' }); },
+      // onError also reports socket failures during reconnection. Preserve the
+      // actual cause instead of labelling every transport error a callback error.
+      onError: error => { errors.push(error); },
       onClose: ({ code }) => { frames.push({ type: 'closed', seq: code }); },
     });
     try {
       await waitForFrame(frames, frame => frame.type === 'message' && frame.seq === sequence, 'native callback retry', 20_000);
-      expect(frames.filter(frame => frame.type === 'callback_error')).toHaveLength(1);
+      expect(errors.filter(error => error === injectedFailure)).toHaveLength(1);
+      expect(callbackAttempts).toEqual([sequence, sequence]);
+      expect(frames.filter(frame => frame.type === 'message')).toEqual([{ type: 'message', seq: sequence }]);
       expect(frames.some(frame => frame.type === 'closed' && frame.seq === 4000)).toBe(true);
     } finally {
       subscription.close();
       await subscription.closed;
+      writeFileSync(join(artifactDir, 'native-callback-reconnect.json'), JSON.stringify({ callbackAttempts,
+        errors: errors.map(error => ({ name: error.name, message: error.message, injected: error === injectedFailure })), frames }, null, 2));
     }
   }, 40_000);
 
@@ -500,7 +508,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
     // Waiting five seconds *after* responses would miss the stale-socket race.
     const start = performance.now() + 150;
-    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string }> = [];
+    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string; cause?: unknown }> = [];
     const conversations = Array.from({ length: 32 }, () => generateIdentity().keyID);
     await Promise.all(conversations.map(async (cid, lane) => {
       for (let round = 0; round < 5; round++) {
@@ -516,21 +524,29 @@ describe.sequential('real relay worker subscribe acceptance', () => {
           outcomes.push({ lane, round, sentAtMs, status: response.status, body: await response.text() });
         } catch (error) {
           // Await every lane before teardown, even if one transport fails.
-          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error) });
+          const cause = error instanceof Error ? error.cause : undefined;
+          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error),
+            cause: cause instanceof Error ? { name: cause.name, message: cause.message,
+              ...Object.fromEntries(Object.entries(cause)) } : cause });
         }
       }
     }));
     writeFileSync(join(artifactDir, 'idle-boundary.json'), JSON.stringify(outcomes, null, 2));
-    expect(outcomes.filter(row => row.status !== 201)).toEqual([]);
-    for (const row of outcomes) expect(JSON.parse(row.body).seq).toBe(row.round + 1);
     // Replayed bytes and sequence numbers prove that the fixture did not hide
     // an uncertain POST by resubmitting it or inventing a successful response.
     const relay = new DropboxClient(relayUrl);
+    const replays = [];
     for (const cid of conversations) {
       const replay = await relay.receiveMessages(cid);
+      replays.push({ conversation: Buffer.from(cid).toString('hex'), sequence: replay.sequence,
+        entries: replay.entries.map(row => ({ seq: row.seq, body: Buffer.from(row.envelope).toString() })) });
+    }
+    writeFileSync(join(artifactDir, 'idle-boundary-replay.json'), JSON.stringify({ node: process.version, outcomes, replays }, null, 2));
+    expect(outcomes.filter(row => row.status !== 201)).toEqual([]);
+    for (const row of outcomes) expect(JSON.parse(row.body).seq).toBe(row.round + 1);
+    for (const replay of replays) {
       expect(replay.sequence).toBe(5);
-      expect(replay.entries.map(row => ({ seq: row.seq, body: Buffer.from(row.envelope).toString() })))
-        .toEqual(Array.from({ length: 5 }, (_, round) => ({ seq: round + 1, body: `idle-boundary-${round}` })));
+      expect(replay.entries).toEqual(Array.from({ length: 5 }, (_, round) => ({ seq: round + 1, body: `idle-boundary-${round}` })));
     }
   }, 45_000);
 

@@ -32,3 +32,8 @@ are written under `integration/test-results/qntm-relay-acceptance-*`. On failure
 the stopped fixture's runtime storage is retained too. This contains synthetic
 test envelopes and relay metadata; it excludes the CLI identity profiles,
 Wrangler registry and credentials. CI uploads this directory on failure.
+Idle-boundary diagnostics retain the underlying fetch error, Node/Undici version
+and complete relay replay before asserting success, so an ambiguous response can
+be compared with stored delivery. Native callback diagnostics distinguish the
+injected application failure from transport errors and record callback attempts,
+successful delivery and close events.
