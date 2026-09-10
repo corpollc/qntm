@@ -204,6 +204,17 @@ export class QntmGroupStore {
     const result = await this.client.receiveMessages(this.binding.conversation.id, state.cursor);
     this.receive(result.entries.map(entry => ({ seq: entry.seq, wire: base64UrlEncode(entry.envelope) })), result.sequence);
   }
+  /** Finish a crashed text delivery only after exact authenticated replay.
+   * Caller owns the writer lock. This never publishes or replaces ciphertext;
+   * uncertain sends and membership operations still require explicit retry. */
+  finishAcceptedSend(): boolean {
+    const state = this.load(), operation = state.operation;
+    if (operation?.action !== 'send' || operation.controls.length !== 1 || operation.welcomes.length
+      || !state.session || state.session.recovery || state.session.removed || state.session.needsRekey) return false;
+    const wire = base64UrlDecode(operation.controls[0]), outer = deserializeEnvelope(wire);
+    if (state.session.seen[toHex(outer.msg_id)]?.digest !== toHex(new QSP1Suite().hash(wire))) return false;
+    state.operation = null; this.save(state); return true;
+  }
   async open(link = this.binding.groupLink): Promise<void> {
     requireValue(link, 'Configure a public group link from a pinned contact');
     const locator = parseGroupLink(link);
