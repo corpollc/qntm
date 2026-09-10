@@ -303,6 +303,8 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
       });
     expect(reviewed[1].review!.welcomePurpose).toBe('renewal');
     expect(reviewed[1].review!.effect).toContain('same verified completed admission');
+    // Peer receipt of the turn's reply can precede the sender's final journal save.
+    await host.waitFor(() => !checkpoint().operation, 'native retry and its turn reply finalized');
     expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).toBe(root!);
     const result = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0);
     const originalWires = original!.controls.map(wire => Buffer.from(wire, 'base64url').toString('hex'));
