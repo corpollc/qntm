@@ -466,7 +466,10 @@ class GroupClient:
 
     def _addition_proof(self, record, operation):
         """Compare an original local intent with accepted, source-bound evidence."""
-        wire = base64.b64decode(operation['controls'][0], validate=True)
+        intent = operation['origin'] if operation['kind'] == 'addition_rekey' else operation
+        if intent['kind'] != 'add' or intent['member'] != operation['member'] or len(intent['controls']) != 2:
+            raise ValueError('Invalid saved addition intent')
+        wire = base64.b64decode(intent['controls'][0], validate=True)
         addition = deserialize_envelope(wire)
         if serialize_envelope(addition) != wire or addition['conv_id'].hex() != record['id']:
             raise ValueError('Invalid saved addition context')
@@ -475,11 +478,74 @@ class GroupClient:
         admission = state['admissions'].get(operation['member'])
         if not admission or any(admission[key] != value for key, value in expected.items()):
             return None
-        recipient = next((member['public_key'] for member in _group(operation['expected']).snapshot()['founding_members']
-                          if member['key_id'].hex() == operation['member']), None)
-        if recipient is None:
+        recipient = (public_key(intent['recipient']) if operation['kind'] == 'addition_rekey' else
+                     next((member['public_key'] for member in _group(operation['expected']).snapshot()['founding_members']
+                           if member['key_id'].hex() == operation['member']), None))
+        if recipient is None or key_id_from_public_key(recipient).hex() != operation['member']:
             raise ValueError('Saved addition omits its intended recipient')
         return state, recipient, expected, admission
+
+    def _addition_origin(self, operation, recipient, expected):
+        if operation['kind'] == 'addition_rekey':
+            return copy.deepcopy(operation['origin'])
+        origin = {key: copy.deepcopy(operation[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent', 'member')}
+        origin.update(admission=expected, recipient=recipient.hex(), delivery='unknown')
+        return origin
+
+    def _assert_pending_rotation_current(self, record, operation, proof):
+        state, _, _, admission = proof
+        assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+        if not state['needsRekey'] or admission['completion'] is not None or admission['sourceEpoch'] != state['epoch']:
+            raise ValueError('Original admission is not awaiting its completing rotation')
+        encoded = operation['controls'][0 if operation['kind'] == 'addition_rekey' else 1]
+        envelope = deserialize_envelope(base64.b64decode(encoded, validate=True))
+        if envelope['expiry_ts'] < int(time.time()):
+            raise ValueError('Saved completing rotation expired')
+        applied = receive_group_event(self.identity, envelope, state)['state']
+        if any(applied[key] != operation['expected'][key] for key in ('root', 'epoch', 'snapshot')):
+            raise ValueError('Saved completing rotation differs from the current roster')
+
+    def _post_addition_rekey(self, conversation_id, operation):
+        """Release a saved repair only while the same admission still awaits it."""
+        with self._lock():
+            _, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before rotation release; use group retry')
+            proof = self._addition_proof(record, operation)
+            if proof is None:
+                raise ValueError('Original addition is no longer the accepted admission; operation preserved')
+            if proof[3]['completion'] is not None:
+                return  # A verified competing rotation already finished the admission.
+            self._assert_pending_rotation_current(record, operation, proof)
+            # An ACK cannot fill receive coverage for an unverified control or
+            # install predicted keys. Exact authenticated replay decides progress.
+            cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['controls'][0], validate=True))
+
+    def _post_addition_control(self, conversation_id, operation, encoded):
+        """Resident receive must not let an old add race past a newer removal."""
+        with self._lock():
+            _, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before control release; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+            proof = self._addition_proof(record, operation)
+            wire = base64.b64decode(encoded, validate=True)
+            envelope = deserialize_envelope(wire)
+            if encoded == operation['controls'][0]:
+                if proof is not None:
+                    return
+                if (state['needsRekey'] or state['epoch'] != envelope['conv_epoch']
+                        or operation['member'] in state['admissions']):
+                    raise ValueError('Original addition is no longer safe to publish; operation preserved')
+                receive_group_event(self.identity, envelope, state)
+            else:
+                if proof is None:
+                    raise ValueError('Original addition is no longer the accepted admission; operation preserved')
+                if proof[3]['completion'] is not None:
+                    return
+                self._assert_pending_rotation_current(record, operation, proof)
+            cli._http_send(self.relay_url, conversation_id, wire)
 
     def _addition_challenge(self, operation, recipient):
         """Older draft journals kept their optional challenge only in the box."""
@@ -528,32 +594,58 @@ class GroupClient:
                 raise ValueError('Pending operation changed before reconciliation; use group retry')
             proof = self._addition_proof(record, original)
             if proof is None:
-                source = deserialize_envelope(base64.b64decode(original['controls'][0], validate=True))['conv_epoch']
-                if record['group_session']['epoch'] > source or original['member'] in record['group_session'].get('admissions', {}):
+                intent = original.get('origin', original)
+                source = deserialize_envelope(base64.b64decode(intent['controls'][0], validate=True))['conv_epoch']
+                if (original['kind'] == 'addition_rekey' or record['group_session']['epoch'] > source
+                        or record['group_session']['needsRekey']
+                        or original['member'] in record['group_session'].get('admissions', {})):
                     raise ValueError('Original addition is no longer the accepted admission; operation preserved')
                 return record, False
-            if proof[3]['completion'] is None:
-                return record, False  # Exact rotation retry remains available; expired rotation stays blocked.
-            state, recipient, expected, _ = proof
+            state, recipient, expected, admission = proof
+            if admission['completion'] is None:
+                assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+                if not state['needsRekey'] or admission['sourceEpoch'] != state['epoch']:
+                    raise ValueError('Original admission is not awaiting its completing rotation')
+                try:
+                    self._assert_pending_rotation_current(record, original, proof)
+                    return record, False
+                except (ValueError, CryptoError):
+                    if original['kind'] == 'addition_rekey':
+                        raise  # Keep a second uncertain/expired repair intact for reconciliation.
+                challenge = self._addition_challenge(original, recipient)
+                rotation = prepare_group_session_rekey(self.identity, state)
+                trial = receive_group_event(self.identity, rotation['rekey'], state)['state']
+                record['group_operation'] = {'kind': 'addition_rekey',
+                    'controls': [base64.b64encode(serialize_envelope(rotation['rekey'])).decode()],
+                    'welcomes': [], 'welcomes_sent': 0,
+                    'expected': create_group_session(self.identity, rotation['conversation'], rotation['state'],
+                                                    signed_epoch=state['signedEpoch'], admissions=trial['admissions']),
+                    'member': original['member'], 'recipient': recipient.hex(),
+                    'recovery_challenge': challenge.hex() if challenge else None,
+                    'origin': self._addition_origin(original, recipient, expected)}
+                cli._save_conversations(self.config_dir, records)
+                return record, False
             assert_group_can_send(self.identity, state)
-            try:
-                self._assert_exact_addition_current(record, original)
-                return record, True
-            except ValueError:
-                pass
+            if original['kind'] == 'add':
+                try:
+                    self._assert_exact_addition_current(record, original)
+                    return record, True
+                except ValueError:
+                    pass
             challenge = self._addition_challenge(original, recipient)
             renewed = prepare_group_admission_renewal(self.identity, state, recipient, expected,
                                                        recovery_challenge=challenge, replay_from_sequence=record.get('group_cursor', 0))
             # Retain original ciphertext and delivery uncertainty once, without
             # nesting checkpoints or duplicating obsolete plaintext group roots.
-            origin = {key: copy.deepcopy(original[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent', 'member')}
-            origin.update(admission=expected, recipient=recipient.hex(), delivery='unknown')
+            origin = self._addition_origin(original, recipient, expected)
             record['group_operation'] = {'kind': 'renewal', 'controls': [],
                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in renewed['welcomes']], 'welcomes_sent': 0,
                 'expected': create_group_session(self.identity, renewed['conversation'], renewed['state'],
                                                 signed_epoch=state['signedEpoch'], admissions=renewed['admissions']),
                 'member': original['member'], 'recipient': recipient.hex(), 'admission': renewed['admission'],
-                'recovery_challenge': challenge.hex() if challenge else None, 'origin': origin}
+                'recovery_challenge': challenge.hex() if challenge else None, 'origin': origin,
+                **({'rotation': {'controls': copy.deepcopy(original['controls']), 'delivery': 'unknown'}}
+                   if original['kind'] == 'addition_rekey' else {})}
             cli._save_conversations(self.config_dir, records)
             return record, False
 
@@ -573,15 +665,22 @@ class GroupClient:
         if record['group_session'].get('recovery'):
             raise ValueError('Group history is incomplete; open a fresh welcome from a current member before retrying')
         exact_addition_proof = False
-        if reconcile and operation['kind'] == 'add':
+        if reconcile and operation['kind'] in ('add', 'addition_rekey'):
             record, exact_addition_proof = self._reconcile_addition(conversation_id, operation)
             operation = record['group_operation']
-        for encoded in ([] if exact_addition_proof else operation['controls']):
+        controls = [] if exact_addition_proof else operation['controls']
+        if reconcile and operation['kind'] == 'add' and self._addition_proof(record, operation) is not None:
+            controls = controls[1:]  # Durable admission proves the add even after seen-cache eviction.
+        for encoded in controls:
             wire = base64.b64decode(encoded, validate=True)
             envelope = deserialize_envelope(wire)
             state = record['group_session']
             known = state['seen'].get(envelope['msg_id'].hex())
-            if not known:
+            if operation['kind'] == 'addition_rekey':
+                self._post_addition_rekey(conversation_id, operation)
+            elif operation['kind'] == 'add':
+                self._post_addition_control(conversation_id, operation, encoded)
+            elif not known:
                 if operation['kind'] == 'create':
                     if not _creation_message(self.identity, record, envelope):
                         raise ValueError('Invalid saved group creation')
@@ -598,8 +697,18 @@ class GroupClient:
             elif known['digest'] != _suite.hash(wire).hex():
                 raise ValueError('Pending group message conflicts with accepted state')
             record = self.sync(conversation_id)
+            if operation['kind'] in ('add', 'addition_rekey'):
+                proof = self._addition_proof(record, operation)
+                if proof and (encoded == operation['controls'][0] and operation['kind'] == 'add'
+                              or proof[3]['completion'] is not None):
+                    continue  # The canonical completing rekey may be another member's.
             if record['group_session']['seen'].get(envelope['msg_id'].hex(), {}).get('digest') != _suite.hash(wire).hex():
                 raise ValueError('Group control is not yet verified in relay replay; use group retry')
+        if reconcile and operation['kind'] in ('add', 'addition_rekey'):
+            record, exact_addition_proof = self._reconcile_addition(conversation_id, operation)
+            operation = record['group_operation']
+            if operation['kind'] == 'addition_rekey':
+                raise ValueError('Completing rotation is not yet verified in relay replay; use group retry')
         if operation['kind'] == 'add' and not exact_addition_proof:
             prepared = {'conversation': group_session_conversation(operation['expected']), 'state': _group(operation['expected']),
                         'addition': deserialize_envelope(base64.b64decode(operation['controls'][0])),
