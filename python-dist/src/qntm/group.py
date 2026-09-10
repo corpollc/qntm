@@ -249,6 +249,17 @@ class GroupState:
     def list_admins(self) -> list[bytes]:
         return list(self.admins)
 
+    def snapshot(self) -> dict:
+        """Detached, creator-first snapshot of trusted local group state."""
+        import copy
+        ordered = sorted(self.members, key=lambda kid: (kid != self.creator, kid))
+        return {
+            "group_name": self.group_name,
+            "description": self.description,
+            "created_at": self.created_at,
+            "founding_members": [copy.deepcopy(self.members[kid]) for kid in ordered],
+        }
+
     def to_dict(self) -> dict:
         """Serialize state for JSON storage."""
         members_list = []

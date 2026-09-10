@@ -1,12 +1,17 @@
-import type { Conversation, Identity } from "@corpollc/qntm";
+import type { Conversation, Identity, GroupSessionState } from "@corpollc/qntm";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 
 export type QntmGatewayAction = "invite" | "request" | "approve" | "disapprove" | "secret" | "propose" | "gov-approve" | "gov-disapprove";
+
+export type QntmGroupAction = "add" | "remove" | "refresh" | "rekey" | "retry" | "open" | "send";
 
 export type QntmConversationConfig = {
   name?: string;
   enabled?: boolean;
   invite?: string;
+  /** Public locator: configuring it explicitly authorizes fetching a pinned contact welcome. */
+  groupLink?: string;
+  groupActions?: QntmGroupAction[];
   /** Locally permitted gateway actions. Omitted/empty disables the tool. */
   gatewayActions?: QntmGatewayAction[];
   convId?: string;
@@ -30,6 +35,8 @@ export type QntmAccountConfig = {
   identityFile?: string;
   identityDir?: string;
   defaultTo?: string;
+  /** Locally verified full Ed25519 public keys, indexed by contact name. */
+  contacts?: Record<string, string>;
   conversations?: Record<string, QntmConversationConfig | undefined>;
 };
 
@@ -51,6 +58,10 @@ export type ResolvedQntmBinding = {
   enabled: boolean;
   gatewayActions?: QntmGatewayAction[];
   invite?: string;
+  groupLink?: string;
+  groupActions?: QntmGroupAction[];
+  groupSeed?: { session: GroupSessionState; cursor: number };
+  ordinaryGroup?: boolean;
   conversationId: string;
   conversation: Conversation;
   chatType: "direct" | "group";

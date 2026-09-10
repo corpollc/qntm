@@ -1,3 +1,6 @@
+import { parseGroupLink, base64UrlDecode, groupSessionConversation, restoreGroupSession, type Identity } from "@corpollc/qntm";
+import { readBoundedFile } from "./storage.js";
+import { join } from "node:path";
 import {
   createAccountListHelpers,
   DEFAULT_ACCOUNT_ID,
@@ -68,7 +71,7 @@ export function inspectQntmAccount(cfg: QntmRootConfig, accountId?: string | nul
     const config = mergeAccountConfig(cfg, id);
     const identityConfigured = Boolean(config.identity?.trim() || config.identityFile?.trim() || config.identityDir?.trim());
     const hasBinding = Object.values(config.conversations ?? {}).some((binding) =>
-      binding && binding.enabled !== false && (binding.invite?.trim() || (binding.convId?.trim() && config.identityDir?.trim())),
+      binding && binding.enabled !== false && (binding.groupLink?.trim() || binding.invite?.trim() || (binding.convId?.trim() && config.identityDir?.trim())),
     );
     return {
       accountId: id,
@@ -129,7 +132,7 @@ function resolveConversationStoreDir(config: QntmAccountConfig): string | undefi
   return config.identityDir?.trim() || undefined;
 }
 
-function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQntmBinding[] {
+function resolveBindings(config: QntmAccountConfig, errors: string[], identity?: Identity): ResolvedQntmBinding[] {
   const bindings: ResolvedQntmBinding[] = [];
   const conversationStoreDir = resolveConversationStoreDir(config);
   for (const [rawKey, value] of Object.entries(config.conversations ?? {})) {
@@ -138,7 +141,7 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
     }
     const invite = value?.invite?.trim();
     const convId = normalizeConversationId(value?.convId ?? "");
-    if (!invite && !value?.convId?.trim()) {
+    if (!value.groupLink && !invite && !value?.convId?.trim()) {
       continue;
     }
     const key = normalizeQntmBindingKey(rawKey);
@@ -146,12 +149,32 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
       errors.push(`invalid qntm conversation key: ${rawKey}`);
       continue;
     }
-    if (!invite && !convId) {
+    if (!value.groupLink && !invite && !convId) {
       errors.push(`invalid qntm conversation id for "${rawKey}": expected 32 hex characters`);
       continue;
     }
     try {
-      const conversation = invite
+      let groupSeed: ResolvedQntmBinding['groupSeed'];
+      const locator = value.groupLink ? parseGroupLink(value.groupLink) : undefined;
+      if (locator) {
+        if (invite || convId || value.gatewayActions?.length) throw new Error('group link conflicts with legacy or gateway configuration');
+        const pinned = Object.values(config.contacts ?? {}).some(key => toHex(decodeContactKey(key)) === toHex(locator.inviterPublicKey));
+        if (!pinned) throw new Error('group link inviter must match a locally configured contact pin');
+        if (locator.relayUrl !== (config.relayUrl?.trim() || DEFAULT_RELAY_URL).replace(/\/+$/, '')) throw new Error('group link relay differs from configured relay');
+      } else if (convId && conversationStoreDir && identity) {
+        const records = JSON.parse(readBoundedFile(join(conversationStoreDir, 'conversations.json'), 16 * 1024 * 1024).toString('utf8'));
+        const record = Array.isArray(records) && records.find(item => item.id === convId);
+        if (record?.group_session) {
+          if (record.group_operation || record.group_pending?.length) throw new Error('finish pending CLI group operation and receive before provisioning OpenClaw');
+          if (record.gateway || record.is_gateway || value.gatewayActions?.length) throw new Error('ordinary group checkpoint cannot use gateway actions');
+          if (record.relay_url && record.relay_url.replace(/\/+$/, '') !== (config.relayUrl?.trim() || DEFAULT_RELAY_URL).replace(/\/+$/, '')) throw new Error('saved group relay differs from configured relay');
+          groupSeed = { session: restoreGroupSession(identity, record.group_session), cursor: record.group_cursor ?? 0 };
+        }
+      }
+      const conversation = groupSeed ? groupSessionConversation(groupSeed.session) : locator ? {
+        id: locator.conversationId, type: 'group' as const, currentEpoch: 0, participants: [], createdAt: new Date(0),
+        keys: { root: new Uint8Array(32), aeadKey: new Uint8Array(32), nonceKey: new Uint8Array(32) },
+      } : invite
         ? resolveInviteConversation(invite)
         : loadQntmConversationFromDir(conversationStoreDir ?? "", convId!);
       const bindingInvite = invite ?? conversation.inviteToken?.trim();
@@ -172,6 +195,7 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
         label: value.name?.trim() || conversation.name?.trim() || rawKey || toHex(conversation.id),
         enabled: value.enabled !== false,
         gatewayActions: value.gatewayActions,
+        groupActions: value.groupActions, groupLink: value.groupLink, groupSeed, ordinaryGroup: Boolean(locator || groupSeed),
         invite: bindingInvite || undefined,
         conversationId: toHex(conversation.id),
         conversation,
@@ -180,14 +204,14 @@ function resolveBindings(config: QntmAccountConfig, errors: string[]): ResolvedQ
         triggerNames,
       });
     } catch (error) {
-      if (!invite && !conversationStoreDir) {
+      if (!value.groupLink && !invite && !conversationStoreDir) {
         errors.push(
           `qntm conversation "${rawKey}" uses convId but no identityDir is configured`,
         );
         continue;
       }
       errors.push(
-        invite
+        value.groupLink ? `invalid qntm public group link for "${rawKey}": ${String(error)}` : invite
           ? `invalid qntm invite for "${rawKey}": ${String(error)}`
           : `invalid qntm conversation for "${rawKey}": ${String(error)}`,
       );
@@ -239,7 +263,7 @@ export function resolveQntmAccount(params: {
       configErrors.push(`invalid qntm identity: ${String(error)}`);
     }
 
-    const bindings = resolveBindings(config, configErrors);
+    const bindings = resolveBindings(config, configErrors, identity);
     const configured = Boolean(identity && bindings.some((binding) => binding.enabled));
 
     return {
@@ -297,4 +321,11 @@ export function resolveQntmBinding(
 
 export function isDefaultQntmAccount(accountId?: string | null): boolean {
   return normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID;
+}
+
+/** Contact pins are host configuration, never learned from inbound message content. */
+export function decodeContactKey(value: string): Uint8Array {
+  const key = /^[a-f0-9]{64}$/i.test(value) ? new Uint8Array(Buffer.from(value, 'hex')) : base64UrlDecode(value);
+  if (key.length !== 32) throw new Error('Contact requires a full Ed25519 public key');
+  return key;
 }

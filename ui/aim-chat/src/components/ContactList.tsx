@@ -19,9 +19,10 @@ export function ContactList({
 }: ContactListProps) {
   return (
     <>
+      <h3 className="contact-alias-heading">Display aliases</h3>
       <div className="contact-list">
         {visibleContactKeys.length === 0 && (
-          <div className="empty">Contacts appear automatically when you receive messages from others.</div>
+          <div className="empty">Sender aliases appear here when messages arrive. An alias does not pin or verify a public key.</div>
         )}
         {visibleContactKeys.map((key) => (
           <div className="contact-row" key={key}>

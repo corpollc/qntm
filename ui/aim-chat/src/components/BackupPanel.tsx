@@ -71,6 +71,8 @@ export function BackupPanel({ setStatus, setError }: { setStatus: (s: string) =>
         <tr><th>Profiles</th><td>{review.current?.profiles.length ?? 'Unreadable'}</td><td>{review.incoming.profiles.length}</td></tr>
         <tr><th>Conversations</th><td>{review.current?.conversations ?? 'Unreadable'}</td><td>{review.incoming.conversations}</td></tr>
         <tr><th>Messages</th><td>{review.current?.messages ?? 'Unreadable'}</td><td>{review.incoming.messages}</td></tr>
+        <tr><th>Contact pins</th><td>{review.current?.contactPins.length ?? 'Unreadable'}</td><td>{review.incoming.contactPins.length}</td></tr>
+        <tr><th>Contact groups</th><td>{review.current?.contactGroups.length ?? 'Unreadable'}</td><td>{review.incoming.contactGroups.length}</td></tr>
         <tr><th>Guidance contacts</th><td>{review.current?.guidance.length ?? 'Unreadable'}</td><td>{review.incoming.guidance.length}</td></tr>
       </tbody></table>
       <p><strong>Current relay:</strong> {review.current?.relayUrl ?? 'Unreadable'}</p>
@@ -86,6 +88,10 @@ function BackupDestinations({ data }: { data: BackupSummary }) {
     <p><strong>Restored relay:</strong> {data.relayUrl}</p>
     <h4>Restored identities</h4>
     <ul>{data.profiles.map(p => <li key={p.id}>{p.name} — <code>{p.keyId ?? 'No identity'}</code></li>)}</ul>
+    <h4>Restored contact pins</h4>
+    {data.contactPins.length ? <ul>{data.contactPins.map((c, i) => <li key={i}>{c.profile}: {c.name}<br /><code>{c.publicKey}</code></li>)}</ul> : <p>None.</p>}
+    <h4>Restored contact groups</h4>
+    {data.contactGroups.length ? <ul>{data.contactGroups.map((c, i) => <li key={i}>{c.profile}: {c.name}<br />Relay {c.relayUrl}{c.removed && ' · Removed'}{c.recovery && ' · Recovery required'}</li>)}</ul> : <p>None.</p>}
     <h4>Restored guidance destinations</h4>
     {data.guidance.length ? <ul>{data.guidance.map((c, i) => <li key={i}><strong>{c.profile}: {c.name}</strong> ({c.category})<br />Recipient <code>{c.recipientKeyId}</code><br />Conversation <code>{c.conversationId}</code><br />Relay {c.relayUrl}</li>)}</ul> : <p>None.</p>}
     <h4>Restored gateways</h4>

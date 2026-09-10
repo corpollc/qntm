@@ -124,6 +124,7 @@ export function extractToken(input: string): string {
   const trimmed = input.replace(/\s+/g, '')
   try {
     const url = new URL(trimmed)
+    if (url.hash.startsWith('#group=')) return trimmed
     const invite = url.searchParams.get('invite')
     if (invite) return invite.replace(/\s+/g, '')
     if (url.hash) return url.hash.replace(/^#/, '').replace(/\s+/g, '')

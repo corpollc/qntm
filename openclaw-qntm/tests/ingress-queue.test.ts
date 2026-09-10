@@ -31,6 +31,26 @@ function message(id: number, conversation = 1): IngressPayload {
 }
 const enqueue = (queue: QntmIngressQueue, payload: IngressPayload) => queue.enqueue(inboundId(payload.body), payload);
 
+test('ordinary same-ID deliveries retain separate generation and digest identities through restart', async () => {
+  const f = fixture(); let queue = f.open();
+  const stale = message(1); stale.body.groupDispatch = { generation: '11'.repeat(16), digest: 'aa'.repeat(32) };
+  const fresh = structuredClone(stale); fresh.body.text = 'canonical payload';
+  fresh.body.groupDispatch = { generation: '22'.repeat(16), digest: 'bb'.repeat(32) };
+  expect(fresh.body.messageId).toBe(stale.body.messageId);
+  expect(inboundId(fresh.body)).not.toBe(inboundId(stale.body));
+  expect((await enqueue(queue, stale)).kind).toBe('accepted');
+  expect((await enqueue(queue, fresh)).kind).toBe('accepted');
+  f.close(queue); queue = f.open();
+  const oldClaim = (await queue.claimNext())!;
+  expect(oldClaim.payload.body.text).toBe(stale.body.text); await queue.complete(oldClaim);
+  const freshClaim = (await queue.claimNext())!;
+  expect(freshClaim.payload.body.text).toBe('canonical payload'); expect(freshClaim.id).toBe(inboundId(fresh.body));
+  await queue.complete(freshClaim);
+  expect((await enqueue(queue, fresh)).kind).toBe('completed');
+  const legacy = message(2);
+  expect(inboundId(legacy.body)).toBe(`${legacy.body.conversationId}:${legacy.body.messageId}`);
+});
+
 test('restart recovers pending work and a dead claim; stale owners cannot settle the new claim', async () => {
   const f = fixture(); let queue = f.open();
   const first = message(1), second = message(2);

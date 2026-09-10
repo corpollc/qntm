@@ -40,6 +40,13 @@ class _Stopped(Exception):
     pass
 
 
+MAX_GROUP_REPLAY_MESSAGES = 8192
+MAX_GROUP_REPLAY_BYTES = 16 << 20
+# Host compatibility probe: complete replay and live-commit gates, plus durable
+# ciphertext-bound dispatch eligibility independent of replay-cache eviction.
+GROUP_RECEIVE_CONTRACT_VERSION = 1
+
+
 def status(state, **details):
     print(json.dumps({"kind": "recv.status", "data": {"state": state, **details}},
                      separators=(",", ":")), file=sys.stderr, flush=True)
@@ -47,17 +54,46 @@ def status(state, **details):
 
 def events(config_dir, conversation_id):
     """Build the same versioned event for stdout and every hook from saved data."""
+    return [event for _, event in delivery_events(config_dir, conversation_id)]
+
+
+def _group_delivery_state(config_dir, conversation_id):
+    record = cli._find_conversation(cli._load_conversations(config_dir), conversation_id)
+    if not record:
+        return False, None
+    group = record.get('group_session')
+    allowed = not group or not (group.get('recovery') or group.get('removed') or group.get('needsRekey') or record.get('group_operation'))
+    return allowed, record
+
+
+def _eligible_group_entry(entry, group):
+    binding = entry.get('receive_binding')
+    if not binding or not binding.get('valid'):
+        return False
+    seen = group['seen'].get(entry['msg_id'])
+    return seen is None or seen['digest'] == binding['digest']
+
+
+def delivery_events(config_dir, conversation_id):
+    """Private delivery order can advance when an older relay item decrypts late."""
+    allowed, record = _group_delivery_state(config_dir, conversation_id)
+    if not allowed:
+        return []
     result = []
-    for entry in cli._load_history(config_dir, conversation_id):
+    group = record.get('group_session')
+    history = record.get('group_history', []) if group else cli._load_history(config_dir, conversation_id)
+    for entry in history:
         event = entry.get("receive_event")
         if entry.get("direction") != "incoming" or event is None:
             continue
-        result.append({
+        if group and not _eligible_group_entry(entry, group):
+            continue  # Never re-dispatch queued plaintext from a replaced branch.
+        result.append((entry.get('receive_order', event['sequence']), {
             "ok": True, "kind": "recv.message", "rules": cli.AGENT_RULES,
             "system_warning": cli.SYSTEM_WARNING,
             "data": event,
-        })
-    return sorted(result, key=lambda event: event["data"]["sequence"])
+        }))
+    return sorted(result, key=lambda pair: pair[0])
 
 
 @dataclass(frozen=True)
@@ -192,11 +228,12 @@ class ConsumerState:
 
 
 class Consumer(threading.Thread):
-    def __init__(self, target, state, config_dir, conversation_id, own_kid, timeout, stop):
+    def __init__(self, target, state, config_dir, conversation_id, own_kid, timeout, stop, replay_ready=None):
         super().__init__(name="qntm-" + target.id[:20], daemon=True)
         self.target, self.state = target, state
         self.config_dir, self.conversation_id, self.own_kid = config_dir, conversation_id, own_kid
         self.timeout, self.stop = timeout, stop
+        self.replay_ready = replay_ready
         self.wake = threading.Event()
         self.error = None
 
@@ -215,11 +252,24 @@ class Consumer(threading.Thread):
         delay = 1
         while not self.stop.is_set():
             self.wake.clear()
-            pending = [event for event in events(self.config_dir, self.conversation_id)
-                       if event["data"]["sequence"] > self.state.cursor(self.target)]
-            for event in pending:
+            if self.replay_ready is not None and not self.replay_ready.is_set():
+                self.wake.wait(1)
+                continue
+            pending = [(order, event) for order, event in delivery_events(self.config_dir, self.conversation_id)
+                       if order > self.state.cursor(self.target)]
+            for order, event in pending:
                 if self.stop.is_set():
                     return
+                allowed, record = _group_delivery_state(self.config_dir, self.conversation_id)
+                if (self.replay_ready is not None and not self.replay_ready.is_set()) or not allowed:
+                    break
+                group = record.get('group_session')
+                if group:
+                    current = next((entry for entry in record.get('group_history', [])
+                                    if entry.get('receive_order') == order
+                                    and entry.get('receive_event') == event['data']), None)
+                    if current is None or not _eligible_group_entry(current, group):
+                        continue
                 try:
                     if self.target.include_self or event["data"]["message"]["sender_kid"] != self.own_kid:
                         if self.target.kind == "stdout":
@@ -234,7 +284,7 @@ class Consumer(threading.Thread):
                     self.stop.wait(delay)
                     delay = min(delay * 2, 30)
                     break
-                self.state.acknowledge(self.target, event["data"]["sequence"])
+                self.state.acknowledge(self.target, order)
                 delay = 1
             else:
                 # Also notice receives committed by a one-shot CLI/MCP process.
@@ -253,9 +303,11 @@ def subscription(url, options):
         websocket.close()
 
 
-def receive(config_dir, relay, conversation_id, identity, stop, consumers):
+def receive(config_dir, relay, conversation_id, identity, stop, consumers, replay_ready=None):
     delay = 1
     while not stop.is_set():
+        if replay_ready is not None:
+            replay_ready.clear()
         cursor = cli._load_cursors(config_dir).get(conversation_id, 0)
         url = cli._subscribe_url(relay, conversation_id, cursor)
         options = {"open_timeout": 10, "close_timeout": 2, "max_size": 2 << 20,
@@ -266,6 +318,7 @@ def receive(config_dir, relay, conversation_id, identity, stop, consumers):
             with subscription(url, options) as websocket:
                 connected_at = time.monotonic()
                 last_ping = connected_at
+                backlog, backlog_bytes, replaying = [], 0, True
                 while not stop.is_set():
                     try:
                         raw = websocket.recv(timeout=1)
@@ -298,23 +351,45 @@ def receive(config_dir, relay, conversation_id, identity, stop, consumers):
                     record = cli._resolve_conversation(conversations, conversation_id)
                     if record is None:
                         raise WatchError("Conversation was removed while watching")
+                    group = record.get('group_session')
+                    if group and replaying and kind == 'message':
+                        backlog_bytes += len(raw.encode('utf-8')) if isinstance(raw, str) else len(raw)
+                        if len(backlog) >= MAX_GROUP_REPLAY_MESSAGES or backlog_bytes > MAX_GROUP_REPLAY_BYTES:
+                            raise WatchError('Group subscription replay exceeds its local bound; receive progress was not advanced')
+                        backlog.append(frame)
+                        continue
+                    if group and kind == 'ready' and (not replaying or sequence < max([cursor, *[row['seq'] for row in backlog]])):
+                        raise WebSocketException('invalid group replay head')
+                    if group and replay_ready is not None:
+                        replay_ready.clear()
                     # Local persistence errors are fatal: never retry them as
                     # network failures or move past data we couldn't save.
                     cli._process_received_messages(config_dir, identity, conversations, record,
-                                                   [frame] if kind == "message" else [], sequence)
+                                                   [frame] if kind == "message" else backlog, sequence)
+                    if kind == 'ready':
+                        backlog, backlog_bytes, replaying = [], 0, False
+                    if not replaying and replay_ready is not None:
+                        replay_ready.set()
                     for consumer in consumers:
                         consumer.wake.set()
                     if kind == "ready":
-                        status("ready", conversation_id=conversation_id, head_sequence=sequence)
+                        recovery = cli._group_recovery_status(config_dir, conversation_id)
+                        status("recovery_required" if recovery else "ready", conversation_id=conversation_id,
+                               head_sequence=sequence, **recovery)
                     if time.monotonic() - connected_at >= 30:
                         delay = 1
         except (WebSocketException, ConnectionError, TimeoutError, cli.ssl.SSLError, cli.socket.gaierror) as error:
+            if replay_ready is not None:
+                replay_ready.clear()
             if stop.is_set():
                 break
             pause = min(delay * random.uniform(1, 1.25), 30)
             status("reconnecting", conversation_id=conversation_id, cause=type(error).__name__, retry_in=pause)
             stop.wait(pause)
             delay = min(delay * 2, 30)
+        finally:
+            if replay_ready is not None:
+                replay_ready.clear()
 
 
 def watch(args):
@@ -327,17 +402,24 @@ def watch(args):
     if not record:
         raise WatchError("Conversation not found")
     conversation_id = record["id"]
+    relay = cli._conversation_relay(args, record)
     path = Path(config_dir) / "watch" / (conversation_id + ".json")
     stop = threading.Event()
     previous_handlers = {}
     consumers = []
     try:
         with private_lock(path.with_suffix(".lock"), blocking=False):
-            existing = events(config_dir, conversation_id)
-            baseline = max((event["data"]["sequence"] for event in existing), default=0)
+            # A newly configured target starts after saved history even when
+            # current group recovery or an unfinished operation blocks delivery.
+            existing = cli._load_history(config_dir, conversation_id)
+            baseline = max((entry.get('receive_order', entry.get('sequence', 0))
+                            for entry in existing if entry.get('receive_event')), default=0)
             state = ConsumerState(path, relay.rstrip("/"), configured, baseline)
+            # A running legacy group can be upgraded by another local command.
+            # Every consumer therefore waits for the current connection's head.
+            replay_ready = threading.Event()
             consumers = [Consumer(target, state, config_dir, conversation_id, identity["keyID"].hex(),
-                                  getattr(args, "hook_timeout", 10), stop) for target in configured]
+                                  getattr(args, "hook_timeout", 10), stop, replay_ready) for target in configured]
             if threading.current_thread() is threading.main_thread():
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     previous_handlers[sig] = signal.signal(sig, lambda *_: stop.set())
@@ -345,7 +427,7 @@ def watch(args):
                 for consumer in consumers:
                     consumer.start()
                 status("connecting", conversation_id=conversation_id)
-                receive(config_dir, relay, conversation_id, identity, stop, consumers)
+                receive(config_dir, relay, conversation_id, identity, stop, consumers, replay_ready)
             finally:
                 stop.set()
                 for consumer in consumers:

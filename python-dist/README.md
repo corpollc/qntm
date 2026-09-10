@@ -69,7 +69,57 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-**12 tools available:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`
+**Released tools:** `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`.
+
+This checkout also adds unreleased CLI and MCP contact-add workflows for ordinary
+groups. Pin a full public address, add the contact, and share the returned public
+group link; their existing identity decrypts the welcome automatically. MCP adds
+`contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
+`group_remove_contact`, `group_rekey`, `group_refresh`, `group_retry` and `group_link`.
+`qntm group refresh GROUP CONTACT` renews welcome delivery for an existing member
+using current keys; it does not change membership or rotate keys.
+If a saved generic refresh for a founding member expires or a later rotation
+changes its keys, `qntm group retry GROUP` can prepare a current delivery. Retry
+authenticates the original recipient and optional recovery challenge, retains
+the earlier ciphertext as bounded private evidence, and checks current membership
+before posting. Still-valid uncertain delivery keeps its exact bytes. A generic
+refresh remains generic and cannot undo saved removal.
+Retry of a saved rekey, remove, or create may finish from private authenticated
+history after the bounded replay cache forgets that ID: exact ciphertext digest,
+source epoch, positive verified sequence, and a still-valid branch binding.
+A losing rekey, its descendants, or a replacement welcome leave invalidated
+history, which overrides a leftover cache entry and is not completion proof.
+HTTP acknowledgements, message IDs alone, expected roots, and application text
+are not used.
+When a saved removal is proven accepted that way but its completing rekey
+expired, no longer fits the verified roster, or was never posted, retry saves a
+fresh rotation for the current membership (including a sole surviving creator)
+before posting it, keeping the original ciphertext as bounded evidence. A helper
+member's verified rotation, a later readmission, or another removal that already
+left the removal's epoch finishes the operation without posting; nothing is ever
+re-removed. A saved removal pins its target's member record and admission, so an
+exact retry refuses a later readmission of the same identity. A removal that was
+never accepted stays preserved when it expires or its epoch is superseded; plain
+retry never mints a replacement removal. `qntm group retry GROUP
+--release-unproven` (MCP `group_retry` with `release_unproven=true`) instead
+gives up local retry of such a journal after full replay: only a `remove` or
+repair journal whose original removal is not verified and can no longer be
+retried exactly (expired, superseded, another branch, absent or readmitted
+target, or a legacy journal whose target was admitted at the current epoch) is
+eligible. A verified removal, a still exact-retryable one, missing history, or a
+journal that changed during replay is refused. Release posts nothing, claims
+nothing was removed, and leaves received membership, removal, rotation and
+recovery state as they are; sends stay blocked while any of those barriers hold.
+The uncertain ciphertext, target pin and prior evidence move into a flat private
+archive on the conversation under the same 256-entry and 4 MiB limits; when that
+archive cannot hold the entry, release refuses and the journal stays unchanged.
+A later `group remove` is a fresh current-epoch decision with its own pin.
+A standalone `group rekey` journal is retried
+exactly while valid, replaced from current membership when its bytes expired or
+no longer apply, and finished without posting once any verified rotation left
+its source epoch. Every release rechecks the journal, current authority, replay
+and the removal proof under the receive lock.
+See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
 

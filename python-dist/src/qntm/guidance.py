@@ -63,6 +63,9 @@ def _destination(config_dir, relay_url, contact):
         raise ValueError("The pinned conversation is unavailable. Join it before requesting guidance.")
     if kid not in conv.get("participants", []):
         raise ValueError("The recipient is not a known participant. Verify the conversation and recipient before pinning.")
+    if conv.get('group_session'):
+        from .group_session import assert_group_can_send
+        assert_group_can_send(identity, conv['group_session'])
     return identity, conv
 
 
@@ -132,6 +135,13 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
     # Validate and encrypt the same snapshot; do not reload different keys or
     # membership after checking the token.
     preview, identity, conv = _prepare_request(config_dir, relay_url, contact_id, question, context)
+    if conv.get('group_session'):
+        from .group_client import GroupClient
+        GroupClient(config_dir, identity, relay_url).sync(conv['id'])
+        # Refresh before comparing the reviewed audience, never after it.
+        preview, identity, conv = _prepare_request(config_dir, relay_url, contact_id, question, context)
+        if conv.get('group_operation'):
+            raise ValueError('A group operation is pending; finish it before sending guidance')
     if not re.fullmatch(r"[0-9a-f]{64}", review_token) or not hmac.compare_digest(preview["review_token"], review_token):
         raise ValueError("The request or destination changed. Prepare and review the request again before sending.")
     envelope = create_message(identity, _conv_to_crypto(conv), "text", preview["message"].encode(), None, default_ttl())
@@ -143,6 +153,7 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
         "msg_id": message_id, "direction": "outgoing", "body_type": "text",
         "body": preview["message"], "created_ts": envelope["created_ts"],
         "guidance_contact_id": contact_id,
+        "relay_receipt_sequence": result.get('seq', 0),
     })
     _save_history(config_dir, conv["id"], history)
     return {"status": "sent", "conversation_id": conv["id"], "message_id": message_id,

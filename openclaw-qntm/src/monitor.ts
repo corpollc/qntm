@@ -1,4 +1,5 @@
-import { DropboxClient } from "@corpollc/qntm";
+import { QntmGroupStore, groupDispatchDisposition, type GroupRow } from "./group-store.js";
+import { DropboxClient, base64UrlEncode } from "@corpollc/qntm";
 import type { PluginRuntime, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { createNormalizedOutboundDeliverer } from "openclaw/plugin-sdk/reply-payload";
 import { createReplyPrefixOptions, createChannelIngressMonitor, bindIngressLifecycleToReplyOptions,
@@ -54,8 +55,8 @@ async function dispatchInboundMessage(params: {
   statusSink?: StatusSink;
   now: () => number;
 }): Promise<ChannelIngressMonitorDeliveryResult> {
-  const current = params.store.load(params.binding);
-  if (current.session.removed) return { kind: "completed" };
+  const ordinary = params.binding.ordinaryGroup ? new QntmGroupStore(params.account, params.binding) : undefined;
+  if (!params.binding.ordinaryGroup && params.store.load(params.binding).session.removed) return { kind: "completed" };
   const senderKeyId = params.inbound.senderKid;
   const senderDisplay = describeSender(senderKeyId);
   const { rawBody, bodyForAgent } = decodeQntmBody(params.inbound.bodyType, new TextEncoder().encode(params.inbound.text));
@@ -148,6 +149,11 @@ async function dispatchInboundMessage(params: {
     if (!text.trim()) {
       return;
     }
+    if (ordinary) {
+      await ordinary.send(text);
+      params.statusSink?.({ lastOutboundAt: params.now(), lastError: null });
+      return;
+    }
     const latest = params.store.load(params.binding);
     if (latest.session.removed) throw new Error("qntm identity has been removed from this conversation");
     await sendQntmText({
@@ -209,6 +215,9 @@ export async function monitorQntmAccount(params: {
   if (new Set(bindings.map(binding => binding.conversationId)).size !== bindings.length) {
     throw new Error("qntm conversation has multiple enabled bindings in one account");
   }
+  const groups = new Map(bindings.filter(binding => binding.ordinaryGroup).map(binding => [binding.conversationId, new QntmGroupStore(params.account, binding)]));
+  const replaying = new Set(groups.keys());
+  const deferredGroups = new Map<string, { message: QntmInbound; lifecycle: ChannelIngressMonitorLifecycle }>();
   const report = () => {
     params.statusSink?.({ lastError: "qntm pending host delivery failed; retained for retry" });
     params.log?.error?.("qntm pending host delivery failed; retained for retry");
@@ -217,6 +226,15 @@ export async function monitorQntmAccount(params: {
     const binding = bindings.find(binding => binding.conversationId === message.conversationId);
     // A removed binding cannot dispatch under another conversation's route.
     if (!binding) return { kind: "completed" };
+    if (binding.ordinaryGroup) {
+      const disposition = groupDispatchDisposition(groups.get(binding.conversationId)!.load(), message);
+      if (replaying.has(binding.conversationId) || disposition === 'defer') {
+        lifecycle.onDeferred();
+        deferredGroups.set(inboundId(message), { message, lifecycle });
+        return { kind: 'deferred' };
+      }
+      if (disposition === 'discard') return { kind: 'completed' };
+    }
     return await dispatchInboundMessage({ ...params, binding, inbound: validateInbound(message), store,
       lifecycle, client, cfg: params.cfg as QntmRootConfig, now });
   };
@@ -258,13 +276,38 @@ export async function monitorQntmAccount(params: {
     if (flushing) return flushing;
     if (stopped) return Promise.resolve();
     flushing = (async () => {
+      for (const [id, pending] of deferredGroups) {
+        const ordinary = groups.get(pending.message.conversationId);
+        if (ordinary && (replaying.has(pending.message.conversationId)
+          || groupDispatchDisposition(ordinary.load(), pending.message) === 'defer')) {
+          pending.lifecycle.onDeferredHeartbeat?.();
+          continue;
+        }
+        // The SDK holds deferred claims. Release without counting a host
+        // failure, then let its normal drain recheck or discard the payload.
+        deferredGroups.delete(id);
+        try {
+          if (pending.lifecycle.onCancelled) await pending.lifecycle.onCancelled();
+          else await pending.lifecycle.onAbandoned();
+        } catch (error) {
+          if (!deferredGroups.has(id)) deferredGroups.set(id, pending);
+          throw error;
+        }
+      }
       for (const binding of bindings) {
-        for (const message of store.load(binding).outbox) {
+        const ordinary = groups.get(binding.conversationId), checkpoint = ordinary?.load();
+        if (ordinary && (replaying.has(binding.conversationId) || !checkpoint?.session || checkpoint.session.recovery || checkpoint.session.removed || checkpoint.session.needsRekey || checkpoint.operation)) continue;
+        for (const message of (checkpoint ?? store.load(binding)).outbox) {
           if (stopped) return;
+          if (ordinary && groupDispatchDisposition(ordinary.load(), message) === 'discard') {
+            await ordinary.removeOutbox(inboundId(message));
+            continue;
+          }
           await ingress.admit(message);
           // If this write fails, the next admission hits qntm's durable
           // duplicate record; the original plaintext pending entry is retained.
-          store.removeOutbox(binding, inboundId(message));
+          if (ordinary) await ordinary.removeOutbox(inboundId(message));
+          else store.removeOutbox(binding, inboundId(message));
         }
       }
     })().finally(() => { flushing = undefined; });
@@ -274,8 +317,62 @@ export async function monitorQntmAccount(params: {
   timer.unref();
   try {
     ingress.start();
+    for (const ordinary of groups.values()) {
+      replaying.add(ordinary.binding.conversationId);
+      await ordinary.exclusive(async () => {
+        await ordinary.sync();
+        if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
+          try { await ordinary.open(); } catch { /* Still waiting for a valid pinned recovery or readmission welcome. */ }
+        }
+        ordinary.finishAcceptedSend();
+      });
+    }
     await flush().catch(report);
     for (const binding of bindings) {
+      const ordinary = groups.get(binding.conversationId);
+      if (ordinary) {
+        let batch: GroupRow[] = [], live = false;
+        subscriptions.push(client.subscribeMessages(binding.conversation.id, ordinary.load().cursor, {
+          getCursor: () => ordinary.load().cursor,
+          onOpen: () => { batch = []; live = false; replaying.add(binding.conversationId); },
+          onClose: () => { live = false; replaying.add(binding.conversationId); },
+          onMessage: async ({ seq, envelope }) => {
+            if (stopped) return;
+            const row = { seq, wire: base64UrlEncode(envelope) };
+            if (!live) {
+              batch.push(row);
+              if (batch.length > 256 || batch.reduce((sum, item) => sum + item.wire.length, 0) > 6 * 1024 * 1024) throw new Error('qntm replay batch exceeds its safety limit');
+            } else {
+              replaying.add(binding.conversationId);
+              await ordinary.exclusive(async () => {
+                ordinary.receive([row], Math.max(seq, ordinary.load().cursor));
+                if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
+                  try { await ordinary.open(); } catch { /* Recovery remains durable until a valid welcome arrives. */ }
+                }
+                ordinary.finishAcceptedSend();
+              });
+              replaying.delete(binding.conversationId);
+              await flush().catch(report);
+            }
+          },
+          onReady: async (head: number) => {
+            await ordinary.exclusive(async () => {
+              ordinary.receive(batch, Math.max(head, ordinary.load().cursor));
+              // A fresh welcome can arrive between initial sync and ready, or
+              // in reconnect backlog. It needs the same handling as live input.
+              if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
+                try { await ordinary.open(); } catch { /* Remain paused until an authorized welcome is available. */ }
+              }
+              ordinary.finishAcceptedSend();
+            });
+            batch = []; live = true; replaying.delete(binding.conversationId);
+            if (ordinary.load().session?.recovery) params.statusSink?.({ lastError: 'qntm group requires a challenged welcome; inspect qntm_group status' });
+            await flush().catch(report);
+          },
+          onError: () => { live = false; replaying.add(binding.conversationId); params.statusSink?.({ lastError: 'qntm group subscription failed; reconnecting from durable checkpoint' }); },
+        }));
+        continue;
+      }
       const initialCursor = store.load(binding).cursor;
       subscriptions.push(client.subscribeMessages(binding.conversation.id, initialCursor, {
         getCursor: () => store.load(binding).cursor,

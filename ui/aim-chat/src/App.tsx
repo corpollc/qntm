@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
-import type { DropboxSubscription } from '@corpollc/qntm'
+import { parseGroupLink, type DropboxSubscription } from '@corpollc/qntm'
 import { api } from './api'
 import type { ChatMessage, ContactAlias, Conversation, GateRecipe, IdentityInfo, Profile } from './types'
 import { shortId, APP_VERSION, buildInviteLink, extractToken } from './utils'
@@ -22,6 +22,7 @@ import {
   type RelayConnectionState,
 } from './relayStatus'
 import { parseInviteConvId } from './qntm'
+import { ContactGroupPanel } from './components/ContactGroupPanel'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -267,7 +268,7 @@ export default function App() {
   useEffect(() => {
     const url = new URL(window.location.href)
     const fragment = url.hash.slice(1)
-    const fragmentToken = parseInviteConvId(fragment) ? fragment : ''
+    const fragmentToken = parseInviteConvId(url.href) && url.hash.startsWith('#group=') ? url.href : parseInviteConvId(fragment) ? fragment : ''
     const token = fragmentToken || url.searchParams.get('invite')
     if (token) {
       setInviteToken(token.replace(/\s+/g, ''))
@@ -303,7 +304,7 @@ export default function App() {
 
       // Check if we already have this conversation
       const existing = conversations.find(c => c.id === convId)
-      if (existing) {
+      if (existing && !token.includes('#group=')) {
         selectConversation(convId)
       } else {
         setInviteToken(token)
@@ -411,6 +412,11 @@ export default function App() {
           profileName,
           conversationId,
           {
+            onState: () => {
+              if (activeProfileIdRef.current !== activeProfileId) return
+              setConversations(api.listConversations(activeProfileId).conversations)
+              if (selectedConversationIdRef.current === conversationId) setMessages(api.getHistory(activeProfileId, conversationId).messages)
+            },
             onMessage: async () => {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
@@ -568,7 +574,9 @@ export default function App() {
       const stillExists = conversationsResponse.conversations.some(c => c.id === previousId)
       // Startup/refresh may finish after navigation. Keep non-chat pages open,
       // including the settings route used after a confirmed backup restore.
-      if (['/settings', '/help', '/guidance'].includes(pathnameRef.current)) {
+      // A just-arrived invite may precede the router's hashchange effect. Its
+      // fragment belongs to the join flow, not this older profile read.
+      if (parseInviteConvId(window.location.href) || ['/settings', '/help', '/guidance'].includes(pathnameRef.current)) {
         setSelectedConversationId(stillExists ? previousId : conversationsResponse.conversations[0]?.id || '')
         setError('')
         return
@@ -819,7 +827,11 @@ export default function App() {
 
     setIsWorking(true)
     try {
-      const label = name.trim() || `${activeProfile?.name || 'Conversation'} Link`
+      let label = name.trim()
+      if (!label) {
+        try { parseGroupLink(token) } // Preserve the saved or signed group name.
+        catch { label = `${activeProfile?.name || 'Conversation'} Link` }
+      }
       const response = await api.acceptInvite(activeProfileId, token, label)
       setConversations(response.conversations)
 
@@ -842,6 +854,7 @@ export default function App() {
   }
 
   async function onAcceptInvite(name: string) {
+    if (inviteToken.includes('#group=')) { setShowJoinModal(true); return }
     if (!activeProfileId) {
       return
     }
@@ -1260,6 +1273,8 @@ export default function App() {
             onAcceptInvite={onAcceptInvite}
             onContactDraftChange={onContactDraftChange}
             onSaveContact={onSaveContact}
+            contactGroupPanel={<ContactGroupPanel key={activeProfileId} profileId={activeProfileId} conversationId={selectedConversationId}
+              onChange={(id) => { setConversations(api.listConversations(activeProfileId).conversations); setContacts(api.listContacts(activeProfileId).contacts); if (id) selectConversation(id) }} />}
             setStatus={setStatus}
           />
 

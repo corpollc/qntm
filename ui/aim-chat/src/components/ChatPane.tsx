@@ -265,7 +265,7 @@ export function ChatPane({
             {selectedConversation ? shortId(selectedConversation.id) : 'Create or accept an invite'}
           </div>
         </div>
-        {selectedConversation && (
+        {selectedConversation && !selectedConversation.contactGroup && (
           <button
             className={`gate-toggle ${showGatePanel ? 'active' : ''}`}
             type="button"
@@ -278,6 +278,9 @@ export function ChatPane({
         )}
       </div>
 
+      {selectedConversation?.contactGroup && Object.values(selectedConversation.contactGroup).some(Boolean) && <div className="group-status-banner" role="status">
+        {selectedConversation.contactGroup.removed ? 'You were removed from this group.' : selectedConversation.contactGroup.recovery ? 'Group history needs recovery. Open Contacts for your recovery challenge.' : selectedConversation.contactGroup.pending ? 'A group operation is saved. Open Contacts to retry it.' : 'Membership changed. Finish key rotation in Contacts before sending.'}
+      </div>}
       <div className="chat-log">
         {showWelcome && (
           <WelcomeCard

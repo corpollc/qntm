@@ -24,7 +24,9 @@ import {
   type GatewaySessionState,
   type ConversationEvent,
   type GatewayBootstrapRequest,
+  type GroupSessionState,
 } from '@corpollc/qntm';
+import { GroupBridge } from './groups.js';
 
 // ─── Hex helpers ───────────────────────────────────────────────────────
 
@@ -63,6 +65,11 @@ export interface StoredConversation {
   cursor?: number;
   messages?: StoredMessage[];
   pendingGatewayBootstrap?: { url: string; request: GatewayBootstrapRequest };
+  /** Read-only projection of the locked Python contact-group profile. */
+  managedGroup?: boolean;
+  groupSession?: GroupSessionState;
+  groupOperation?: string;
+  relayUrl?: string;
 
 }
 
@@ -89,10 +96,12 @@ export interface StoreData {
 export class Store {
   readonly configDir: string;
   readonly dropboxUrl: string;
+  readonly groups: GroupBridge;
 
   constructor(configDir: string, dropboxUrl: string) {
     this.configDir = configDir;
     this.dropboxUrl = dropboxUrl;
+    this.groups = new GroupBridge(configDir, dropboxUrl);
     fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
     fs.chmodSync(configDir, 0o700);
   }
@@ -197,13 +206,15 @@ export class Store {
   }
 
   loadConversations(): StoredConversation[] {
-    if (!fs.existsSync(this.conversationsPath())) return [];
-    const raw = JSON.parse(fs.readFileSync(this.conversationsPath(), 'utf8'));
-    return Array.isArray(raw) ? raw : [];
+    const raw = fs.existsSync(this.conversationsPath()) ? JSON.parse(fs.readFileSync(this.conversationsPath(), 'utf8')) : [];
+    const native = Array.isArray(raw) ? raw : [];
+    const groups = this.groups.conversations();
+    if (groups.some(group => native.some(row => row.id === group.id))) throw new Error('Conversation exists in both terminal profiles; resolve the duplicate before continuing.');
+    return [...native, ...groups];
   }
 
   saveConversations(conversations: StoredConversation[]): void {
-    this.writeJSON(this.conversationsPath(), conversations);
+    this.writeJSON(this.conversationsPath(), conversations.filter(conversation => !conversation.managedGroup));
   }
 
   findConversation(convId: string): StoredConversation | null {
@@ -299,6 +310,7 @@ export class Store {
   gatewaySession(convId: string, identity: Identity): GatewaySessionState {
     const stored = this.findConversation(convId);
     if (!stored) throw new Error('Unknown conversation');
+    if (stored.managedGroup) throw new Error('Contact groups use ordinary membership. Gateway promotion for these groups is not available yet; existing gateway conversations retain their review commands.');
     if (stored.session) return stored.session;
     const conversation = this.getConversationCrypto(convId)!;
     const keys: Uint8Array[] = [];
@@ -311,6 +323,7 @@ export class Store {
     const conversations = this.loadConversations();
     const stored = conversations.find(c => c.id === convId);
     if (!stored) throw new Error('Unknown conversation');
+    if (stored.managedGroup) throw new Error('Contact-group writes must use the group client.');
     stored.messages ??= this.loadHistory(convId);
     stored.cursor ??= this.loadCursor(convId);
     update(stored);

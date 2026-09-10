@@ -1,5 +1,7 @@
-import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity } from '@corpollc/qntm'
-import type { StoreData } from './store'
+import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
+import { MAX_GROUP_CONTROL_RECEIPTS, type StoreData, type StoredConversation, type StoredGroupOperation } from './store'
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS,
+  validateGroupRemovalTarget } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -68,7 +70,7 @@ function parsedJSON(json: string): Obj {
 
 /** Validate all persisted fields before any storage mutation; no network access. */
 export function validateBackup(json: string): StoreData {
-  const data = object(parsedJSON(json), 'store fields', ['activeProfileId', 'profiles', 'identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'cursors', 'dropboxUrl'])
+  const data = object(parsedJSON(json), 'store fields', ['activeProfileId', 'profiles', 'identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'contactPins', 'cursors', 'dropboxUrl'])
   const profiles = list(data.profiles, 'profiles', 100)
   const profileIds = profiles.map(p => {
     object(p, 'profile fields', ['id', 'name'])
@@ -82,7 +84,8 @@ export function validateBackup(json: string): StoreData {
   url(data.dropboxUrl, 'relay URL')
   // Guidance pins were introduced after the original backup format.
   if (data.guidanceContacts === undefined) data.guidanceContacts = {}
-  for (const name of ['identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'cursors']) {
+  if (data.contactPins === undefined) data.contactPins = {}
+  for (const name of ['identities', 'conversations', 'history', 'contacts', 'guidanceContacts', 'contactPins', 'cursors']) {
     object(data[name], name)
     if (Object.keys(data[name]).some(id => !profileIds.includes(id))) fail(`${name} references a missing profile`)
   }
@@ -98,7 +101,7 @@ export function validateBackup(json: string): StoreData {
     const conversations = list(data.conversations[pid] ?? [], 'conversations', 1000)
     unique(conversations.map(c => hex(object(c, 'conversation').id, 16, 'conversation ID')), 'duplicate conversation IDs')
     for (const conv of conversations) {
-      object(conv, 'conversation fields', ['id', 'name', 'type', 'keys', 'participants', 'participantPublicKeys', 'gateway', 'createdAt', 'currentEpoch', 'inviteToken'])
+      object(conv, 'conversation fields', ['id', 'name', 'type', 'keys', 'participants', 'participantPublicKeys', 'gateway', 'createdAt', 'currentEpoch', 'inviteToken', 'group'])
       text(conv.name, 'conversation name', 1024, true)
       if (!['direct', 'group', 'announce'].includes(conv.type)) fail('conversation type')
       object(conv.keys, 'conversation keys', ['root', 'aeadKey', 'nonceKey'])
@@ -113,11 +116,161 @@ export function validateBackup(json: string): StoreData {
       integer(conv.currentEpoch, 'conversation epoch')
       if (conv.inviteToken !== undefined) text(conv.inviteToken, 'invite token', 65536)
       if (conv.gateway != null) validateGateway(conv.gateway, conv)
+      if (conv.group !== undefined) {
+        if (conv.type !== 'group' || conv.gateway != null || conv.inviteToken !== undefined) fail('contact group boundary')
+        const identity = data.identities[pid]
+        if (!identity) fail('contact group identity missing')
+        const localIdentity = { privateKey: hexBytes(identity.privateKey), publicKey: hexBytes(identity.publicKey), keyID: hexBytes(identity.keyId) }
+        const host = object(conv.group, 'group host fields', ['session', 'cursor', 'bootstrapSequence', 'removedSequence', 'pending', 'receipts', 'controlReceipts', 'operation', 'relayUrl', 'inviterPublicKey', 'revision'])
+        const checkpoint = restoreGroupSession(localIdentity, host.session)
+        if (checkpoint.conversationId !== conv.id) fail('group checkpoint conversation mismatch')
+        const crypto = groupSessionConversation(checkpoint)
+        const encodedHex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
+        for (const key of ['root', 'aeadKey', 'nonceKey'] as const) if (conv.keys[key] !== encodedHex(crypto.keys[key])) fail('group checkpoint key mismatch')
+        const rosterKeys = parseGroupGenesisBody(base64UrlDecode(checkpoint.snapshot)).founding_members.map(member => encodedHex(member.public_key)).sort()
+        if (!Array.isArray(conv.participantPublicKeys) || [...conv.participantPublicKeys].sort().join(',') !== rosterKeys.join(',')) fail('group checkpoint public keys mismatch')
+        if (conv.currentEpoch !== checkpoint.epoch || [...conv.participants].sort().join(',') !== crypto.participants.map(encodedHex).sort().join(',')) fail('group checkpoint roster mismatch')
+        integer(host.cursor, 'group cursor'); integer(host.bootstrapSequence, 'group bootstrap sequence'); integer(host.revision, 'group revision')
+        if (host.bootstrapSequence > host.cursor || (data.cursors[pid]?.[conv.id] ?? 0) !== host.cursor) fail('group cursor mismatch')
+        if (host.removedSequence !== undefined) integer(host.removedSequence, 'group removal sequence', 1)
+        url(host.relayUrl, 'group relay URL')
+        createGroupLink({ conversationId: hexBytes(conv.id), inviterPublicKey: hexBytes(hex(host.inviterPublicKey, 32, 'group inviter key')), relayUrl: host.relayUrl })
+        const pending = list(host.pending, 'pending group ciphertext', 256)
+        let pendingBytes = 0
+        for (const row of pending) { object(row, 'pending row', ['seq', 'wire']); integer(row.seq, 'pending sequence', 1); if (row.seq > host.cursor) fail('pending sequence exceeds cursor'); pendingBytes += b64(row.wire, 'pending ciphertext').length }
+        if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
+        for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
+        if (host.controlReceipts !== undefined) {
+          const identities: string[] = []
+          for (const row of list(host.controlReceipts, 'group control receipts', MAX_GROUP_CONTROL_RECEIPTS)) {
+            const item = object(row, 'group control receipt', ['id', 'digest', 'epoch', 'sequence', 'valid', 'bodyType'])
+            hex(item.id, 16, 'control receipt id'); hex(item.digest, 32, 'control receipt digest')
+            integer(item.epoch, 'control receipt epoch'); integer(item.sequence, 'control receipt sequence', 1)
+            if (item.sequence > host.cursor) fail('control receipt sequence exceeds cursor')
+            if (typeof item.valid !== 'boolean') fail('control receipt validity')
+            if (!['group_genesis', 'group_add', 'group_remove', 'group_rekey'].includes(item.bodyType)) fail('control receipt body type')
+            identities.push(`${item.id}:${item.digest}`)
+          }
+          unique(identities, 'duplicate control receipt identity')
+        }
+        if (host.operation !== null) {
+          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded', 'target'])
+          if (!['addition', 'addition_rekey', 'refresh', 'renewal', 'remove', 'removal_rekey', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
+          const expected = restoreGroupSession(localIdentity, op.expected)
+          if (expected.conversationId !== conv.id) fail('group operation conversation mismatch')
+          const controls = list(op.controls, 'saved group controls', 2), welcomes = list(op.welcomes, 'saved group welcomes', 128)
+          const expectedControls = ({ addition: 2, addition_rekey: 1, remove: 2, removal_rekey: 1, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
+          if (controls.length !== expectedControls || (['addition', 'refresh', 'renewal'].includes(op.kind) ? !welcomes.length : welcomes.length !== 0)) fail('group operation shape')
+          if (op.kind !== 'remove' && op.target !== undefined) fail('unexpected removal target field')
+          if (op.kind === 'remove' && op.target !== undefined) {
+            const target = object(op.target, 'removal target fields', ['keyId', 'publicKey', 'record', 'admission'])
+            try { validateGroupRemovalTarget(target as Parameters<typeof validateGroupRemovalTarget>[0]) } catch { fail('removal target binding') }
+            // The saved expected checkpoint already excludes the pinned incarnation.
+            if (parseGroupGenesisBody(base64UrlDecode(expected.snapshot)).founding_members.some(member => encodedHex(member.key_id) === target.keyId)) fail('removal target still present in expected roster')
+          }
+          if (op.kind === 'removal_rekey') {
+            if (op.recipient !== undefined || op.admission !== undefined || op.recoveryChallenge !== undefined) fail('unexpected removal repair fields')
+            const origin = object(op.origin, 'original removal fields', ['kind', 'controls', 'welcomes', 'delivered', 'target', 'delivery'])
+            if (origin.kind !== 'remove' || origin.delivery !== 'unknown') fail('original removal context')
+            const originalControls = list(origin.controls, 'original removal controls', 2), originalWelcomes = list(origin.welcomes, 'original removal welcomes', 0)
+            if (originalControls.length !== 2 || originalWelcomes.length !== 0 || integer(origin.delivered, 'original removal delivered count') !== 0) fail('original removal shape')
+            const repair = deserializeEnvelope(b64(controls[0], 'saved removal repair'))
+            const removal = deserializeEnvelope(b64(originalControls[0], 'original removal wire')), rekey = deserializeEnvelope(b64(originalControls[1], 'original completing rekey wire'))
+            for (const envelope of [repair, removal, rekey]) {
+              if (encodedHex(envelope.conv_id) !== conv.id || envelope.conv_epoch !== expected.epoch - 1) fail('removal repair epoch binding')
+            }
+            if (origin.target !== undefined) {
+              const target = object(origin.target, 'original removal target fields', ['keyId', 'publicKey', 'record', 'admission'])
+              try { validateGroupRemovalTarget(target as Parameters<typeof validateGroupRemovalTarget>[0]) } catch { fail('original removal target binding') }
+            }
+          }
+          if (op.kind === 'renewal' || op.kind === 'addition_rekey') {
+            const recipient = hex(op.recipient, 32, 'renewal recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
+            const accepted = expected.admissions[kid]
+            const acceptedCompletion = accepted?.completion
+            const roster = parseGroupGenesisBody(base64UrlDecode(expected.snapshot)).founding_members
+            if (!roster.some(member => encodedHex(member.public_key) === recipient) || !acceptedCompletion) fail('recovery recipient admission binding')
+            if (op.kind === 'renewal') {
+              const admission = object(op.admission, 'renewal admission', ['addId', 'addDigest', 'sourceEpoch', 'completion'])
+              const completion = object(admission.completion, 'renewal completion', ['rekeyId', 'rekeyDigest'])
+              if (welcomes.length !== 1 || admission.addId !== accepted.addId || admission.addDigest !== accepted.addDigest
+                || admission.sourceEpoch !== accepted.sourceEpoch || completion.rekeyId !== acceptedCompletion!.rekeyId
+                || completion.rekeyDigest !== acceptedCompletion!.rekeyDigest) fail('renewal admission binding')
+              groupRenewalChallenge(localIdentity, op as Extract<StoredGroupOperation, { kind: 'renewal' }>)
+            } else {
+              if (op.admission !== undefined || op.origin === undefined) fail('rotation repair fields')
+              const wire = b64(controls[0], 'saved rotation repair'), rekey = deserializeEnvelope(wire)
+              if (encodedHex(rekey.msg_id) !== acceptedCompletion!.rekeyId || encodedHex(new QSP1Suite().hash(wire)) !== acceptedCompletion!.rekeyDigest
+                || rekey.conv_epoch !== accepted.sourceEpoch || expected.epoch !== accepted.sourceEpoch + 1) fail('rotation repair completion binding')
+            }
+            if (op.origin !== undefined) {
+              const origin = object(op.origin, 'original addition fields', ['kind', 'controls', 'welcomes', 'delivered', 'recipient', 'admission', 'recoveryChallenge', 'delivery'])
+              if (origin.kind !== 'addition' || origin.delivery !== 'unknown' || origin.recipient !== recipient) fail('original addition context')
+              const originalControls = list(origin.controls, 'original addition controls', 2), originalWelcomes = list(origin.welcomes, 'original addition welcomes', 1)
+              if (originalControls.length !== 2 || originalWelcomes.length !== 1) fail('original addition shape')
+              integer(origin.delivered, 'original delivered welcome count')
+              if (origin.delivered > originalWelcomes.length) fail('original delivered welcome count')
+              const proof = object(origin.admission, 'original addition proof', ['addId', 'addDigest'])
+              const wire = b64(originalControls[0], 'original addition wire'), addition = deserializeEnvelope(wire)
+              if (proof.addId !== accepted.addId || proof.addDigest !== accepted.addDigest
+                || proof.addId !== encodedHex(addition.msg_id) || proof.addDigest !== encodedHex(new QSP1Suite().hash(wire))
+                || addition.conv_epoch !== accepted.sourceEpoch) fail('original addition proof binding')
+              if (origin.recoveryChallenge !== null) hex(origin.recoveryChallenge, 32, 'original recovery challenge')
+              for (const wire of [...originalControls, ...originalWelcomes]) {
+                if (encodedHex(deserializeEnvelope(b64(wire, 'original encrypted envelope')).conv_id) !== conv.id) fail('original addition envelope context')
+              }
+              groupAdditionChallenge(localIdentity, { kind: 'addition', controls: originalControls, welcomes: originalWelcomes,
+                expected, delivered: origin.delivered, recipient, recoveryChallenge: origin.recoveryChallenge })
+            }
+
+          } else if (op.kind !== 'removal_rekey') {
+            if (op.admission !== undefined || op.origin !== undefined || !['refresh', 'rekey'].includes(op.kind) && op.superseded !== undefined) fail('unexpected renewal fields')
+            if (op.kind === 'addition') {
+              if (op.recipient !== undefined) {
+                const recipient = hex(op.recipient, 32, 'addition recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
+                if (!expected.admissions[kid]?.completion) fail('addition recipient provenance')
+              }
+              if (op.recoveryChallenge !== undefined && op.recoveryChallenge !== null) hex(op.recoveryChallenge, 32, 'addition recovery challenge')
+              if (op.recipient !== undefined || op.recoveryChallenge !== undefined) {
+                const addition = op as Extract<StoredGroupOperation, { kind: 'addition' }>
+                groupAdditionChallenge(localIdentity, addition, groupAdditionIntent(localIdentity, addition))
+              }
+            } else if (op.kind === 'refresh') {
+              if (op.recipient !== undefined) hex(op.recipient, 32, 'refresh recipient')
+              if (op.recoveryChallenge !== undefined && op.recoveryChallenge !== null) hex(op.recoveryChallenge, 32, 'refresh recovery challenge')
+              groupRefreshIntent(localIdentity, op as Extract<StoredGroupOperation, { kind: 'refresh' }>)
+            } else if (op.recipient !== undefined || op.recoveryChallenge !== undefined) fail('unexpected addition fields')
+          }
+          if (['renewal', 'addition_rekey', 'refresh', 'removal_rekey', 'rekey'].includes(op.kind)) {
+            const superseded = op.superseded === undefined ? [] : list(op.superseded, 'superseded operations', MAX_GROUP_OPERATION_REVISIONS)
+            const kinds = ({ refresh: ['refresh'], removal_rekey: ['removal_rekey'], rekey: ['rekey'] } as Record<string, string[]>)[op.kind] ?? ['addition_rekey', 'renewal']
+            for (const value of superseded) {
+              const item = object(value, 'superseded operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
+              if (!kinds.includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
+              const rotation = ['addition_rekey', 'removal_rekey', 'rekey'].includes(item.kind)
+              const oldControls = list(item.controls, 'superseded controls', 1), oldWelcomes = list(item.welcomes, 'superseded welcomes', 1)
+              if (oldControls.length !== (rotation ? 1 : 0) || oldWelcomes.length !== (rotation ? 0 : 1)) fail('superseded operation shape')
+              if (integer(item.delivered, 'superseded delivered count') > oldWelcomes.length) fail('superseded delivered count')
+              for (const wire of [...oldControls, ...oldWelcomes]) {
+                if (encodedHex(deserializeEnvelope(b64(wire, 'superseded ciphertext')).conv_id) !== conv.id) fail('superseded operation conversation')
+              }
+            }
+            assertGroupOperationEvidenceBudget(op.origin, superseded)
+          }
+          if (['renewal', 'addition_rekey'].includes(op.kind) && op.recoveryChallenge !== undefined) fail('unexpected recovery challenge field')
+          for (const wire of [...controls, ...welcomes]) {
+            const envelope = deserializeEnvelope(b64(wire, 'saved group wire'))
+            if (encodedHex(envelope.conv_id) !== conv.id) fail('saved operation envelope conversation mismatch')
+          }
+          integer(op.delivered, 'delivered welcomes')
+          if (op.delivered > welcomes.length) fail('delivered welcome count')
+        }
+      }
     }
     for (const [id, messages] of Object.entries(object(data.history[pid] ?? {}, 'history'))) {
       hex(id, 16, 'history conversation ID')
       for (const msg of list(messages, 'messages', 10_000)) {
-        object(msg, 'message fields', ['id', 'conversationId', 'direction', 'sender', 'senderKey', 'bodyType', 'text', 'createdAt'])
+        object(msg, 'message fields', ['id', 'conversationId', 'direction', 'sender', 'senderKey', 'bodyType', 'text', 'createdAt', 'groupBinding'])
         text(msg.id, 'message ID', 256)
         if (msg.conversationId !== id) fail('message conversation mismatch')
         if (!['incoming', 'outgoing'].includes(msg.direction)) fail('message direction')
@@ -126,6 +279,13 @@ export function validateBackup(json: string): StoreData {
         text(msg.bodyType, 'body type', 256)
         text(msg.text, 'message text', 1024 * 1024, true)
         date(msg.createdAt, 'message creation time')
+        if (msg.groupBinding !== undefined) {
+          const binding = object(msg.groupBinding, 'group history binding', ['digest', 'epoch', 'valid'])
+          hex(binding.digest, 32, 'group history digest'); integer(binding.epoch, 'group history epoch')
+          if (typeof binding.valid !== 'boolean') fail('group history validity')
+          hex(msg.id, 16, 'group history message ID')
+          if (!(data.conversations[pid] ?? []).some((conv: StoredConversation) => conv.id === id && conv.group)) fail('group history conversation missing')
+        }
       }
     }
     for (const [id, cursor] of Object.entries(object(data.cursors[pid] ?? {}, 'cursors'))) {
@@ -133,6 +293,12 @@ export function validateBackup(json: string): StoreData {
     }
     for (const [key, name] of Object.entries(object(data.contacts[pid] ?? {}, 'contacts'))) {
       text(key, 'contact key', 256); text(name, 'contact name', 1024)
+    }
+    for (const [kid, pk] of Object.entries(object(data.contactPins[pid] ?? {}, 'contact pins'))) {
+      hex(kid, 16, 'contact pin key ID')
+      const key = hexBytes(hex(pk, 32, 'contact pin public key'))
+      createGroupLink({ conversationId: new Uint8Array(16), inviterPublicKey: key, relayUrl: data.dropboxUrl })
+      if (Array.from(keyIDFromPublicKey(key), b => b.toString(16).padStart(2, '0')).join('') !== kid) fail('contact pin key ID mismatch')
     }
     const contacts = list(data.guidanceContacts[pid] ?? [], 'guidance contacts', 1000)
     unique(contacts.map(c => text(object(c, 'guidance contact').id, 'guidance ID', 128)), 'duplicate guidance IDs')
@@ -178,6 +344,8 @@ export interface BackupSummary {
   conversations: number
   messages: number
   relayUrl: string
+  contactPins: Array<{ profile: string; name: string; key: string; publicKey: string }>
+  contactGroups: Array<{ profile: string; name: string; id: string; relayUrl: string; removed: boolean; recovery: boolean }>
   guidance: Array<{ profile: string; name: string; category: string; recipientKeyId: string; conversationId: string; relayUrl: string }>
   gateways: Array<{ profile: string; conversationId: string; keyId: string; status: string; url?: string }>
 }
@@ -187,6 +355,8 @@ function summary(data: StoreData): BackupSummary {
     conversations: Object.values(data.conversations).reduce((n, rows) => n + rows.length, 0),
     messages: Object.values(data.history).reduce((n, convs) => n + Object.values(convs).reduce((m, rows) => m + rows.length, 0), 0),
     relayUrl: data.dropboxUrl,
+    contactPins: data.profiles.flatMap(p => Object.entries(data.contactPins?.[p.id] ?? {}).map(([key, publicKey]) => ({ profile: p.name, name: data.contacts[p.id]?.[key] || key, key, publicKey }))),
+    contactGroups: data.profiles.flatMap(p => (data.conversations[p.id] ?? []).filter(c => c.group).map(c => ({ profile: p.name, name: c.name, id: c.id, relayUrl: c.group!.relayUrl, removed: c.group!.session.removed, recovery: !!c.group!.session.recovery }))),
     guidance: data.profiles.flatMap(p => (data.guidanceContacts[p.id] ?? []).map(c => ({ profile: p.name, ...c }))),
     gateways: data.profiles.flatMap(p => (data.conversations[p.id] ?? []).filter(c => c.gateway).map(c => ({ profile: p.name, conversationId: c.id, keyId: c.gateway!.keyId, status: c.gateway!.status ?? 'legacy', url: c.gateway!.pending?.url }))),
   }

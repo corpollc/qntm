@@ -4,7 +4,7 @@
  * All state lives in the browser — no server needed.
  */
 
-import type { GatewayInvitation, GatewayBootstrapRequest } from '@corpollc/qntm'
+import type { GroupAdmission, GroupSessionState, GatewayInvitation, GatewayBootstrapRequest } from '@corpollc/qntm'
 import type { GuidanceContact } from './guidance'
 
 const STORE_KEY = 'aim-store'
@@ -37,6 +37,79 @@ export interface StoredGatewayIdentity {
   keyId: string     // base64url
 }
 
+export interface StoredGroupAdditionOrigin {
+  kind: 'addition'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  recipient: string
+  admission: Pick<GroupAdmission, 'addId' | 'addDigest'>
+  recoveryChallenge: string | null
+  delivery: 'unknown'
+}
+export interface StoredGroupOperationEvidence {
+  kind: 'addition_rekey' | 'renewal' | 'refresh' | 'removal_rekey' | 'rekey'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  delivery: 'unknown'
+}
+/** The exact member incarnation a saved removal targets: full key, canonical
+ * roster record and admission provenance at intent time. A later readmission of
+ * the same identity never matches it. */
+export interface StoredGroupRemovalTarget {
+  keyId: string
+  publicKey: string
+  record: string
+  admission: GroupAdmission | null
+}
+export interface StoredGroupRemovalOrigin {
+  kind: 'remove'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  target?: StoredGroupRemovalTarget
+  delivery: 'unknown'
+}
+export type StoredGroupOperation = {
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  expected: GroupSessionState
+} & ({ kind: 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never; target?: never }
+  | { kind: 'remove'; target?: StoredGroupRemovalTarget; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
+  | { kind: 'rekey'; superseded?: StoredGroupOperationEvidence[]; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; target?: never }
+  | { kind: 'removal_rekey'; origin: StoredGroupRemovalOrigin; superseded?: StoredGroupOperationEvidence[]; recipient?: never; admission?: never; recoveryChallenge?: never; target?: never }
+  | { kind: 'refresh'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: StoredGroupOperationEvidence[]; target?: never }
+  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: never; target?: never }
+  | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never; target?: never }
+  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never; target?: never })
+
+export type StoredGroupControlBody = 'group_genesis' | 'group_add' | 'group_remove' | 'group_rekey'
+export const MAX_GROUP_CONTROL_RECEIPTS = 64
+/** Private exact pending-control receive proof. Missing entries stay unknown. */
+export interface StoredGroupControlReceipt {
+  id: string
+  digest: string
+  epoch: number
+  sequence: number
+  valid: boolean
+  bodyType: StoredGroupControlBody
+}
+export interface StoredGroup {
+  session: GroupSessionState
+  cursor: number
+  bootstrapSequence: number
+  removedSequence?: number
+  pending: Array<{ seq: number; wire: string }>
+  receipts: number[]
+  controlReceipts?: StoredGroupControlReceipt[]
+  operation: StoredGroupOperation | null
+  relayUrl: string
+  inviterPublicKey: string
+  revision: number
+}
+
 export interface StoredConversation {
   id: string
   name: string
@@ -48,6 +121,7 @@ export interface StoredConversation {
   createdAt: string
   currentEpoch: number
   inviteToken?: string
+  group?: StoredGroup
 }
 
 export interface StoredMessage {
@@ -59,6 +133,9 @@ export interface StoredMessage {
   bodyType: string
   text: string
   createdAt: string
+  /** Exact authenticated ordinary-group envelope. Invalid branch history is
+   * retained privately but cannot be displayed or dispatched as current. */
+  groupBinding?: { digest: string; epoch: number; valid: boolean }
 }
 
 export interface StoreData {
@@ -67,6 +144,7 @@ export interface StoreData {
   identities: Record<string, StoredIdentity>       // profileId -> identity
   conversations: Record<string, StoredConversation[]> // profileId -> conversations
   history: Record<string, Record<string, StoredMessage[]>> // profileId -> convId -> messages
+  contactPins?: Record<string, Record<string, string>> // profile -> key ID -> full public key
   contacts: Record<string, Record<string, string>>  // profileId -> key -> name
   guidanceContacts: Record<string, GuidanceContact[]>
   cursors: Record<string, Record<string, number>>    // profileId -> convId -> seq
@@ -98,6 +176,7 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
     createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
     currentEpoch: typeof raw?.currentEpoch === 'number' ? raw.currentEpoch : 0,
     inviteToken: typeof raw?.inviteToken === 'string' ? raw.inviteToken : undefined,
+    group: raw?.group,
   }
 }
 
@@ -128,6 +207,7 @@ function loadStore(): StoreData {
         conversations: normalizeConversations(parsed.conversations),
         history: parsed.history || {},
         contacts: parsed.contacts || {},
+        contactPins: parsed.contactPins || {},
         guidanceContacts: parsed.guidanceContacts || {},
         cursors: parsed.cursors || {},
         dropboxUrl: parsed.dropboxUrl || DEFAULT_DROPBOX_URL,
@@ -141,6 +221,7 @@ function loadStore(): StoreData {
     conversations: {},
     history: {},
     contacts: {},
+    contactPins: {},
     guidanceContacts: {},
     cursors: {},
     dropboxUrl: DEFAULT_DROPBOX_URL,
@@ -204,6 +285,7 @@ export function deleteProfile(profileId: string): void {
   delete store.conversations[profileId]
   delete store.history[profileId]
   delete store.contacts[profileId]
+  if (store.contactPins) delete store.contactPins[profileId]
   delete store.guidanceContacts[profileId]
   delete store.cursors[profileId]
   if (store.activeProfileId === profileId) {
@@ -259,7 +341,9 @@ export function updateConversation(
     return null
   }
 
+  const revision = convs[index].group?.revision
   const updated = normalizeConversation(updater(convs[index]))
+  if (updated.group && revision !== undefined) updated.group.revision = revision + 1
   convs[index] = updated
   saveStore(store)
   return updated
@@ -305,7 +389,8 @@ export function setContact(profileId: string, key: string, name: string): void {
   if (name.trim()) {
     store.contacts[profileId][normalizedKey] = name.trim()
   } else {
-    delete store.contacts[profileId][normalizedKey]
+    delete store.contacts[profileId]
+  if (store.contactPins) delete store.contactPins[profileId][normalizedKey]
   }
   saveStore(store)
 }
@@ -321,6 +406,13 @@ export function resolveContactAlias(profileId: string, senderKey: string): strin
 export function getHistory(profileId: string, conversationId: string): StoredMessage[] {
   const store = loadStore()
   return store.history?.[profileId]?.[conversationId] || []
+}
+
+export function getVisibleHistory(profileId: string, conversationId: string): StoredMessage[] {
+  const data = loadStore(), rows = data.history?.[profileId]?.[conversationId] || []
+  return data.conversations[profileId]?.find(conv => conv.id === conversationId)?.group
+    ? rows.filter(row => row.groupBinding?.valid === true)
+    : rows
 }
 
 export function addHistoryMessage(profileId: string, conversationId: string, message: StoredMessage): void {
@@ -399,3 +491,47 @@ export function deleteConversation(profileId: string, conversationId: string): v
 }
 
 export { DEFAULT_DROPBOX_URL }
+
+/** One localStorage write commits keys, membership, ciphertext, history and cursor.
+ * Group hosts hold a Web Lock across network/receive operations and re-read other
+ * profiles here, so unrelated synchronous edits are not overwritten. */
+export function commitGroup(profileId: string, conv: StoredConversation, history: StoredMessage[], expectedRevision?: number): void {
+  const data = loadStore()
+  const conversations = data.conversations[profileId] ?? []
+  const index = conversations.findIndex(c => c.id === conv.id)
+  const current = conversations[index]
+  if (expectedRevision !== undefined && current?.group?.revision !== expectedRevision) throw new Error('Group changed in another tab; retry')
+  if (!data.identities[profileId] || data.identities[profileId].keyId !== conv.group?.session.identityKid) throw new Error('Group identity changed; reopen this profile')
+  if (index < 0) conversations.push(normalizeConversation(conv))
+  else conversations[index] = normalizeConversation(conv)
+  data.conversations[profileId] = conversations
+  data.history[profileId] ??= {}
+  data.history[profileId][conv.id] = history.slice(-1000)
+  data.cursors[profileId] ??= {}
+  data.cursors[profileId][conv.id] = conv.group!.cursor
+  saveStore(data)
+}
+
+export function listContactPins(profileId: string): Array<{ key: string; publicKey: string; name: string }> {
+  const data = loadStore()
+  return Object.entries(data.contactPins?.[profileId] ?? {}).map(([key, publicKey]) => ({ key, publicKey, name: data.contacts[profileId]?.[key] || key }))
+}
+
+export function saveContactPin(profileId: string, key: string, publicKey: string, name: string): void {
+  const data = loadStore()
+  data.contactPins ??= {}
+  data.contactPins[profileId] ??= {}
+  data.contacts[profileId] ??= {}
+  const existing = Object.entries(data.contactPins[profileId]).find(([kid]) => data.contacts[profileId]?.[kid]?.toLowerCase() === name.toLowerCase())
+  if (existing && existing[1] !== publicKey) throw new Error('That contact name already pins another identity; remove the old pin first')
+  if (data.contactPins[profileId][key] && data.contactPins[profileId][key] !== publicKey) throw new Error('Contact public key does not match its existing pin')
+  data.contactPins[profileId][key] = publicKey
+  data.contacts[profileId][key] = name
+  saveStore(data)
+}
+
+export function removeContactPin(profileId: string, key: string): void {
+  const data = loadStore()
+  if (data.contactPins?.[profileId]) delete data.contactPins[profileId][key]
+  saveStore(data)
+}

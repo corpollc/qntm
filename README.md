@@ -190,6 +190,19 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 
 Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes this checkout; entries marked unreleased are not yet in published 0.6.1 packages.
 
+Unreleased ordinary-group contact addition is available in the browser, Python
+CLI/MCP, terminal and OpenClaw, with matching Python and TypeScript library helpers.
+Adding a verified contact rotates keys, delivers an encrypted welcome and returns
+a public group link. Contacts may open links in any order; clients catch up before
+enabling sends and pause for recovery if required history is missing. The terminal
+uses the matching Python receiver; OpenClaw actions require local configuration
+and review. Completed control retries survive replay-cache eviction and later
+rotations using private authenticated evidence. OpenClaw also supports a
+[local recovery turn after restart](openclaw-qntm/README.md#local-recovery-entry-point).
+Gateway-governed welcomes, legacy migration and complete recovery
+across competing operations remain unfinished. See [contact addition and storage
+details](docs/group-welcomes.md) and the [library parity table](docs/client-parity.md).
+
 ## Experimental charter registry
 
 v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.
@@ -255,7 +268,9 @@ pip install 'qntm[mcp]'
 }
 ```
 
-12 tools: `identity_generate`, `identity_show`, `conversation_create`, `conversation_join`, `conversation_list`, `send_message`, `receive_messages`, `conversation_history`, `protocol_info`, `guidance_contacts`, `guidance_prepare`, `guidance_send`.
+Published tools cover identity, conversations, sending/receiving, history and
+guidance. This checkout also adds unreleased contact pins and ordinary-group
+creation, addition, removal, refresh, rekey, retry and public-link tools.
 
 [Full MCP docs →](docs/mcp-server.md)
 

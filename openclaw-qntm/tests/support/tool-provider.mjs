@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 
 /** Deterministic local model fixture: exercises the actual host tool-call loop. */
 export async function createToolProvider() {
-  const outcomes = new Map(), failures = [];
+  const outcomes = new Map(), failures = [], beforePrepare = new Map();
   const server = createServer(async (request, response) => {
     try {
       assert.equal(request.url, '/v1/chat/completions');
@@ -17,7 +17,8 @@ export async function createToolProvider() {
       assert.ok(marker, 'native inbound test marker must reach the model: ' + JSON.stringify(body.messages.filter(message => message.role === 'user').map(message => text(message.content).slice(0, 512))));
       const plan = JSON.parse(Buffer.from(marker[1], 'base64url').toString());
       const names = body.tools?.map(tool => tool.function?.name) ?? [];
-      assert.ok(names.includes('qntm_gateway'), `optional native tool absent: ${names.join(',')}`);
+      const tool = plan.tool ?? 'qntm_gateway';
+      assert.ok(names.includes(tool), `optional native tool absent: ${names.join(',')}`);
       const results = body.messages.slice(index + 1).filter(message => message.role === 'tool').map(message => JSON.parse(text(message.content)));
       let args;
       if (plan.single) {
@@ -31,17 +32,28 @@ export async function createToolProvider() {
       } else if (results.length === 0) args = { operation: 'status' };
       else if (results.length === 1) {
         assert.equal(results[0].status, plan.initialStatus ?? 'accepted');
+        const hook = beforePrepare.get(plan.id);
+        beforePrepare.delete(plan.id);
+        await hook?.();
         args = { operation: 'prepare', action: plan.action, options: plan.options };
       } else if (results.length === 2) {
         assert.equal(results[1].status, 'review_required', JSON.stringify(results[1]));
         args = { operation: 'commit', reviewToken: results[1].reviewToken, reviewHash: results[1].reviewHash };
+      } else if (plan.finishRotation && results.length === 3) {
+        assert.equal(results[2].status, 'rotation_verified', JSON.stringify(results[2]));
+        assert.equal(results[2].welcomePending, true);
+        args = { operation: 'prepare', action: 'retry' };
+      } else if (plan.finishRotation && results.length === 4) {
+        assert.equal(results[3].status, 'review_required', JSON.stringify(results[3]));
+        assert.equal(results[3].review.welcomePurpose, 'renewal');
+        args = { operation: 'commit', reviewToken: results[3].reviewToken, reviewHash: results[3].reviewHash };
       } else {
-        assert.equal(results.length, 3);
-        assert.equal(results[2].status, plan.expectedStatus ?? 'submitted', JSON.stringify(results[2]));
+        assert.equal(results.length, plan.finishRotation ? 5 : 3);
+        assert.equal(results.at(-1).status, plan.expectedStatus ?? 'submitted', JSON.stringify(results.at(-1)));
         outcomes.set(plan.id, results);
       }
       const delta = args ? { role: 'assistant', tool_calls: [{ index: 0, id: `call_${plan.id}_${results.length}`, type: 'function',
-        function: { name: 'qntm_gateway', arguments: JSON.stringify(args) } }] }
+        function: { name: tool, arguments: JSON.stringify(args) } }] }
         : { role: 'assistant', content: `gateway-tool-complete:${plan.id}` };
       const chunk = { id: `chatcmpl-${plan.id}`, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'fixture',
         choices: [{ index: 0, delta, finish_reason: null }] };
@@ -56,6 +68,6 @@ export async function createToolProvider() {
     }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  return { url: `http://127.0.0.1:${server.address().port}/v1`, outcomes, failures,
+  return { url: `http://127.0.0.1:${server.address().port}/v1`, outcomes, failures, beforePrepare,
     close: () => new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); }) };
 }

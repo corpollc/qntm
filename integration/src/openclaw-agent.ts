@@ -92,14 +92,38 @@ export class OpenClawAgent {
     try { return JSON.parse(await readFile(join(this.stateDir, 'plugins/qntm/accounts/default/conversations', `${this.conversationId}.json`), 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   }
-  async journey(peer: HistoryAgent, plan: ToolPlan): Promise<ToolResult[]> {
+  async journey(peer: HistoryAgent, plan: ToolPlan, beforePrepare?: () => Promise<void>): Promise<ToolResult[]> {
     if (this.provider.outcomes.has(plan.id)) throw new Error('Duplicate test journey ID');
+    if (beforePrepare) this.provider.beforePrepare.set(plan.id, beforePrepare);
     const marker = 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(plan)).toString('base64url');
     const sent = await peer.run(['send', this.conversationId, marker]);
     if (!sent.ok) throw new Error(sent.error);
     await this.waitFor(() => this.provider.outcomes.has(plan.id), `native gateway tool: ${plan.id}`);
     await waitForCliHistory(peer, this.conversationId, entry => entry.unsafe_body === `gateway-tool-complete:${plan.id}`, 'native agent turn completion');
     return this.provider.outcomes.get(plan.id)!;
+  }
+  /** Operator-initiated turn from a fresh CLI process against the running host:
+   * the documented Gateway-backed `openclaw agent --channel qntm --to <binding>`.
+   * The turn's tool plan still comes from the same deterministic model fixture. */
+  async localAgentTurn(plan: ToolPlan, target: string, options: { extra?: string[]; expectToolAbsent?: boolean } = {}): Promise<{ code: number | null; stdout: string; stderr: string; results: ToolResult[]; toolAbsent: boolean }> {
+    if (this.provider.outcomes.has(plan.id)) throw new Error('Duplicate test journey ID');
+    const extra = options.extra ?? [];
+    const marker = 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(plan)).toString('base64url');
+    const outcome = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [host, 'agent', '--channel', 'qntm', '--to', target, '--message', marker, '--json', ...extra],
+        { cwd: this.rootDir, env: this.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '', stderr = '';
+      const timeout = setTimeout(() => this.kill(child, 'SIGKILL'), 180_000);
+      child.stdout!.on('data', data => { stdout += data; }); child.stderr!.on('data', data => { stderr += data; });
+      child.once('error', error => { clearTimeout(timeout); reject(error); });
+      child.once('exit', code => { clearTimeout(timeout); this.log += stderr; resolve({ code, stdout, stderr }); });
+    });
+    // The model fixture asserts that the optional tool is present. When a test
+    // expects the route to hide it, consume exactly those recorded failures.
+    const toolAbsent = this.provider.failures.length > 0 && this.provider.failures.every(failure => failure.includes('optional native tool absent'));
+    if (options.expectToolAbsent && toolAbsent) this.provider.failures.length = 0;
+    if (this.provider.failures.length) throw new Error(this.provider.failures.join('\n'));
+    return { ...outcome, results: this.provider.outcomes.get(plan.id) ?? [], toolAbsent };
   }
   async stop(signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
     const child = this.child;

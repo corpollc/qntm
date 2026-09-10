@@ -8,7 +8,7 @@ import pytest
 
 from qntm import cli
 from qntm.identity import generate_identity
-from qntm.storage import load_json, private_directory, save_json
+from qntm.storage import load_json, private_directory, save_json, private_lock
 
 
 def mode(path):
@@ -120,3 +120,52 @@ def test_announce_and_naming_use_private_storage(tmp_path):
     NamingStore(path).set_identity_name("ab" * 16, "Peer")
     for file in Path(path).iterdir():
         assert mode(file) == 0o600
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX process-lock contract')
+def test_nested_lock_keeps_other_processes_excluded(tmp_path):
+    import subprocess
+    import sys
+    path = tmp_path / 'profile' / 'receive.lock'
+    child = '''import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(23)
+'''
+    def attempt():
+        return subprocess.run([sys.executable, '-c', child, str(path)], timeout=5).returncode
+    with private_lock(path):
+        with pytest.raises(BlockingIOError):
+            with private_lock(path, blocking=False):
+                pass
+        with private_lock(path, blocking=False, reentrant=True):
+            assert attempt() == 23
+        assert attempt() == 23
+    assert attempt() == 0
+
+
+@pytest.mark.skipif(not hasattr(os, 'fork'), reason='POSIX fork inheritance')
+def test_fork_does_not_inherit_reentrant_lock_ownership(tmp_path):
+    import subprocess
+    import sys
+    path = tmp_path / 'profile' / 'receive.lock'
+    # Fork in a fresh single-threaded process, not pytest's process after watch
+    # and HTTP tests have started background threads.
+    code = '''import os, sys
+from qntm.storage import private_lock
+with private_lock(sys.argv[1]):
+    pid = os.fork()
+    if pid == 0:
+        try:
+            with private_lock(sys.argv[1], blocking=False, reentrant=True):
+                os._exit(1)
+        except BlockingIOError:
+            os._exit(0)
+        except BaseException:
+            os._exit(2)
+    _, status = os.waitpid(pid, 0)
+    sys.exit(os.waitstatus_to_exitcode(status))
+'''
+    subprocess.run([sys.executable, '-c', code, str(path)], check=True, timeout=5)

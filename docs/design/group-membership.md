@@ -1,7 +1,25 @@
 # Group membership: add a contact, share a link
 
-Decision recorded September 9, 2026. This is the agreed product direction;
-automatic welcome delivery is not yet implemented.
+Decision recorded September 9, 2026. The unreleased [implementation](../group-welcomes.md)
+now includes browser, CLI/MCP, terminal and OpenClaw contact addition, automatic
+encrypted welcome delivery and public link opening, backed by matching
+Python/TypeScript library checkpoints. Gateway governance, legacy migration and
+complete recovery across competing rekeys remain unfinished.
+
+Public links have no expiry. Opening order is independent of addition order:
+later rotations include already-added contacts before they open their links.
+Welcome expiry and relay retention bound delivery, not membership. The CLI/MCP
+`group refresh` operation and matching library helpers now let a member with
+current state resend current keys to a still-admitted contact. This changes no
+membership and supplies no earlier epoch keys. A refresh cannot undo saved
+removal; readmission requires a new authorized addition.
+
+The welcome signs the relay position the sender had fully checked before
+preparing it. Recipients check every later position through the relay's captured
+head, including controls that raced ahead of the welcome itself. A missing
+position pauses sends and agent delivery, with a persisted random challenge for
+a fresh current-member welcome. This detects retention gaps without disclosing
+earlier keys or adding a membership-approval step.
 
 ## Contact addition
 

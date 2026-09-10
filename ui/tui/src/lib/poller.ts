@@ -45,6 +45,7 @@ export async function applyIncomingEnvelope(
   envelopeBytes: Uint8Array,
   seq?: number,
 ): Promise<StoredMessage | null> {
+  if (store.findConversation(convId)?.managedGroup) throw new Error('Contact groups must use their durable receive subscription.');
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return null;
   if (seq !== undefined && (!Number.isSafeInteger(seq) || seq < 1)) throw new Error('Invalid receive sequence');
@@ -109,6 +110,13 @@ export async function pollConversation(
   identity: Identity,
   convId: string,
 ): Promise<PollResult> {
+  if (store.findConversation(convId)?.managedGroup) {
+    const received = await store.groups.run(['recv', convId]);
+    // Local history retains superseded plaintext for inspection. Only the
+    // receiver's filtered result is eligible to be reported as new delivery.
+    const accepted = new Set((received.messages || []).map((message: { message_id: string }) => message.message_id));
+    return { messages: store.loadHistory(convId).filter(message => accepted.has(message.id)), newCursor: store.loadCursor(convId) };
+  }
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return { messages: [], newCursor: 0 };
 
@@ -138,6 +146,12 @@ export async function sendMessage(
   text: string,
   bodyType = 'text',
 ): Promise<StoredMessage | null> {
+  if (store.findConversation(convId)?.managedGroup) {
+    if (bodyType !== 'text') throw new Error('Use the group commands for membership actions.');
+    if (!store.findConversation(convId)?.groupSession) throw new Error('Group setup is incomplete; use /group retry.');
+    const result = await store.groups.run(['send', '--', convId, text]);
+    return store.loadHistory(convId).find(message => message.id === result.message_id) || store.loadHistory(convId).at(-1) || null;
+  }
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return null;
 

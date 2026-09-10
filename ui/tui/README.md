@@ -4,6 +4,99 @@ The Ink client stores one local identity in `~/.qntm-human`, independently of th
 
 `/invite [name]` creates a conversation; `/join <token-or-link>` joins one. `/help` lists commands and `/help <command>` gives details. Keyboard navigation applies only when the composer is empty, so digits in message text and IDs cannot switch conversations. Escape enters scroll mode; j/k scroll by terminal line. Gateway summaries fit the viewport; complete action details appear in a separate paged review.
 
+## Contact groups (unreleased)
+
+Contact groups use the matching Python client's durable receiver and operation
+outbox. Install it from the same checkout before starting the terminal:
+
+```bash
+# From the repository root; choose a private environment location.
+python3 -m venv .venv-tui
+.venv-tui/bin/python -m pip install ./python-dist
+export QNTM_TUI_PYTHON="$PWD/.venv-tui/bin/python"
+cd ui/tui
+npm start
+```
+
+`QNTM_TUI_PYTHON` is one executable path, not a shell command. Without it the
+terminal uses `python3`. An incompatible or missing package produces a setup
+message when using contact commands; legacy chat and gateway commands continue
+to use the TypeScript client. Published 0.6.1 packages do not have these contact
+group operations.
+
+Verify a contact's full Ed25519 public key through your existing contact channel,
+then add it to the local address book. `/identity` shows your own public key.
+Names containing spaces can be quoted; a short key ID or `/alias` display label
+does not substitute for a pinned address.
+
+```text
+/contact add "Alex Morgan" FULL_PUBLIC_KEY
+/group create Project chat
+/group add "Alex Morgan"
+```
+
+Adding admits that identity and sends its fresh group keys in a recipient-encrypted
+welcome through the existing group stream. Any current ordinary member can add
+a contact. Share the returned public link; the added contact opens it with
+`/join <link>` or `/group open <link>`. No membership request or further approval
+is needed. Contacts can open in a different order from their additions; the
+receiver catches up through later rekeys before enabling sends. New members
+receive no pre-admission keys or history.
+
+| Command in the active contact group | Effect |
+| --- | --- |
+| `/group add <contact>` | Admit the pinned identity, rotate keys and deliver its welcome |
+| `/group remove <contact>` | Remove the member and rotate keys for those remaining |
+| `/group refresh <contact>` | Deliver current keys to an existing member without changing membership |
+| `/group link` | Show your public locator for contacts whose welcomes you issued |
+| `/group status` | Show epoch, member count, relay, unfinished operation and recovery challenge |
+| `/group retry` | Check current group state and continue a saved operation |
+| `/group rekey` | Finish an interrupted membership rotation |
+| `/contact list` | Show full locally pinned addresses |
+| `/contact remove <name>` | Delete a local pin without changing group membership |
+
+The public link contains the group ID, inviter public key and relay URL. It
+contains no encryption keys and has no expiry. A welcome has a seven-day maximum
+lifetime and can disappear with relay retention. Missing that delivery window
+does not end membership: a current member can issue `/group refresh <contact>`
+and share their returned link. A refresh cannot undo a saved removal. Explicit
+readmission requires a new addition and does not expose the interval of exclusion.
+The creator cannot be removed.
+
+An incomplete-history warning remains above the composer while sends are paused.
+Use `/group status` to copy the complete recovery challenge to a current member
+through your existing contact channel. That member uses:
+
+```text
+/group refresh "Alex Morgan" --challenge RECOVERY_CHALLENGE
+```
+
+Then the recovering member opens the returned public link again. The challenge
+binds the signed, encrypted welcome to this recovery; reposting an old welcome
+does not clear the warning. It grants no admission permission. Explicit
+readmission also accepts `/group add <contact> --challenge <challenge>`.
+The supplying member must still have current membership state.
+
+Pending operations, missing history, unfinished rotation and saved removal all
+block sends in the receiver, even if a terminal view is stale. A failed operation
+keeps its saved ciphertext for `/group retry`; do not delete the profile to retry.
+If creation was interrupted, select its group from the sidebar and inspect
+`/group status`. Conflicting or expired operations may require further recovery;
+retry does not invent a new membership decision.
+
+One resident `recv --watch` process keeps a WebSocket subscription open per
+contact group. It reconnects on network failures and shares locked state with
+one-shot commands. `/quit`, Ctrl-C and normal process termination stop these
+receivers. An unexpected receiver exit is shown in chat; restart the terminal
+to resume. There is no polling daemon to install and no incoming-message hook
+that can authorize membership changes.
+
+Ordinary contact groups and legacy/gateway groups retain separate authenticated
+state. Automatic migration of old groups and gateway promotion of a contact
+group are not implemented yet. Existing gateway conversations keep the review
+and governance flows below. See [the shared welcome design](../../docs/group-welcomes.md)
+for protocol boundaries and remaining conflict-recovery work.
+
 ## Gateway actions (unreleased)
 
 Gateway authority comes from the participant's signed invitation and the gateway's matching signed acceptance in chat. Received requests cannot choose the trusted gateway, policy, or signer roster.
@@ -76,8 +169,49 @@ Other branches are `rules_change` with `proposedRules: [{service, endpoint, verb
 
 New writes use private `0600` files in a `0700` directory and atomic replacement. `conversations.json` commits current keys, verified protocol state, message history and the receive cursor together. Old `history.json` and `cursors.json` are read during migration and left on disk. A process crash before the commit replays the envelope; exact already-authenticated replay is deduplicated without keeping old keys. Send responses never advance the receive cursor. One running TUI process should own a config directory; file replacement is not a multi-process locking protocol.
 
+Contact groups instead live in the private `contact-groups/` child profile,
+using the **same identity** as the terminal. Its identity copy must match; a
+different saved identity is refused. The Python receiver alone writes its
+`conversations.json`, atomically saving keys, roster, decrypted history, cursor,
+recovery challenge, pending ciphertext and exact outbox under process locks and
+revision checks. The terminal reads that record without copying group keys or
+checkpoints into its native `conversations.json`. Contact pins live in this
+child profile's `contacts.json`; local display aliases remain in `store.json`.
+Back up the entire terminal profile, including `contact-groups/`. Ordinary group
+history is not subject to the native 1,000-message display-history limit below
+and has no automatic local expiry.
+
+Each received group event also saves its verified ciphertext digest, source epoch
+and delivery eligibility. Plaintext from a superseded branch can remain in local
+history for inspection, but is excluded from receive results and hooks. Valid
+pending delivery survives ordinary replay-cache eviction.
+
 Local identity, conversation keys, decrypted history, and accepted gateway checkpoints are **unencrypted at rest**. File permissions protect them from other ordinary users, not the account owner or malware. Treat this directory as sensitive; do not import someone else's checkpoint as proof of authority. History retains 1,000 display messages, 4,096 verified gateway events, and 8,192 replay digests per conversation. Missing older subjects fail verification instead of accepting unreferenced votes.
+
+The contact-group profile and pinned names are never uploaded. The terminal adds
+no relay metrics or recipient labels. The relay sees its existing conversation
+locator, message ordering, timestamps, epoch, encrypted sizes and transport
+metadata, plus the welcome envelope's kind; it cannot read the welcome's member
+identities, roster, challenge or keys. Public links disclose the locator and
+inviter public key to their holders. Opening a link contacts its named relay,
+so use a link from your verified contact.
 
 A legacy installation with only display history cannot reconstruct an accepted gateway from that text. It needs retained, verifiable invitation/acceptance envelopes and matching epoch keys. Joining an already-rekeyed conversation from an old invite remains a tracked cross-client limitation (`qntm-2g7v`). This release does not claim to recover deleted or expired relay history. Removed identities receive no future epoch key and cannot create terminal gateway actions.
 
 Tests exercise the canonical state reducer, forged signatures and authority, exact review/cancel/send, changed-state rejection, private atomic restart recovery, real PTY input, and four-client journeys through a real relay/gateway with Python, TypeScript, and browser peers.
+
+`npm test` also invokes Python for contact-group tests; install this checkout's
+`python-dist` first or set `QNTM_TEST_PYTHON` to an installed interpreter. The
+suite checks full-key pins, profile isolation, resident receiver replacement,
+noncreator addition of a TypeScript peer, removal, challenged recovery and exact
+retry after an outage. The opt-in real PTY/worker journey is:
+
+```bash
+# From integration/, after building client/ and ui/tui/ and installing worker/.
+QNTM_TEST_PYTHON=/absolute/path/to/python npx vitest run terminal-contact-welcome.test.ts
+```
+
+It exercises both welcome opening orders, re-admission, process restart, actual
+relay retention, challenged recovery and a removed terminal joiner. It records
+ANSI terminal proof in the printed artifact directory and deletes test identity
+and relay data at completion.
