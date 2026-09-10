@@ -98,12 +98,13 @@ export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/
 
 export { prepareGroupAddition, openGroupWelcome, isGroupWelcomeEnvelope,
   MAX_GROUP_WELCOME_BYTES, GROUP_WELCOME_TTL } from './group/welcome.js';
-export type { GroupAddition, GroupWelcome, GroupWelcomeEnvelope } from './group/welcome.js';
+export type { GroupAddition, GroupWelcome, GroupWelcomeEnvelope, GroupAdmission, GroupAdmissions } from './group/welcome.js';
 export { createGroupLink, parseGroupLink, MAX_GROUP_LINK_BYTES } from './group/link.js';
 export type { GroupLocator } from './group/link.js';
 export { createGroupSession, restoreGroupSession, groupSessionConversation, assertGroupCanSend,
   prepareGroupSessionAddition, assertGroupAdditionAccepted, createGroupControlMessage, receiveGroupEvent,
   prepareGroupWelcomeRefresh, assertGroupWelcomeRefreshCurrent, prepareGroupSessionRekey,
+  prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent,
   requireGroupRecovery, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl, groupSessionFromWelcome,
   GROUP_REKEY_GRACE_SECONDS, MAX_GROUP_REKEY_CHECKPOINTS } from './group/session.js';
-export type { GroupSessionState, GroupEvent, GroupWelcomeRefresh, GroupSessionRekey, GroupRecovery } from './group/session.js';
+export type { GroupSessionState, GroupEvent, GroupWelcomeRefresh, GroupSessionRekey, GroupRecovery, GroupAdmissionRenewal } from './group/session.js';
