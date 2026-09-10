@@ -3112,7 +3112,7 @@ claude code channel:
     group_rekey_p = group_sub.add_parser("rekey", help="Rekey group (new epoch)")
     group_rekey_p.add_argument("conversation", help="Conversation ID or prefix")
 
-    group_retry_p = group_sub.add_parser('retry', help='Resume saved group delivery; renew completed additions when original delivery is stale')
+    group_retry_p = group_sub.add_parser('retry', help='Resume saved group delivery; renew completed additions and finish accepted removals or stale rotations from current membership')
     group_retry_p.add_argument('conversation', help='Conversation ID or prefix')
     group_refresh_p = group_sub.add_parser('refresh', help='Resend current keys to an existing member without changing membership')
     group_refresh_p.add_argument('conversation', help='Conversation ID or prefix')

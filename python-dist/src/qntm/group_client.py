@@ -27,7 +27,7 @@ from .group_session import (
     prepare_group_admission_renewal, assert_group_admission_renewal_current,
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
-from .identity import base64url_decode, key_id_from_public_key
+from .identity import base64url_decode, base64url_encode, key_id_from_public_key
 from .message import deserialize_envelope, serialize_envelope, decrypt_message
 from .receive import create_receive_event
 from .storage import private_lock
@@ -166,6 +166,39 @@ def _control_accepted(record, wire):
                 and entry.get('body_type') in ('group_genesis', 'group_add', 'group_remove', 'group_rekey')):
             return True
     return bool(known and known['epoch'] == envelope['conv_epoch'])
+
+
+def _removal_target(state, kid):
+    """Pin the exact member record and admission incarnation a removal targets."""
+    member = next((row for row in _group(state).snapshot()['founding_members'] if row['key_id'] == kid), None)
+    if member is None:
+        raise ValueError('Invalid removed member')
+    admission = state.get('admissions', {}).get(kid.hex())
+    return {'key_id': kid.hex(), 'public_key': member['public_key'].hex(),
+            'record': base64url_encode(marshal_canonical(member)), 'admission': copy.deepcopy(admission)}
+
+
+def _assert_removal_target_current(state, operation, removed_members):
+    """Refuse to publish an old removal against a later admission of its target.
+
+    Journals saved before target pinning still detect a readmission at the
+    current source epoch: the intent was prepared while no addition was pending,
+    so any admission sourced at this epoch is newer than the intent.
+    """
+    target = operation.get('target')
+    admissions = state.get('admissions', {})
+    if target is None:
+        for kid in removed_members:
+            admission = admissions.get(kid.hex())
+            if admission and admission['sourceEpoch'] == state['epoch']:
+                raise ValueError('Saved removal predates a later admission of its target; operation preserved')
+        return
+    kid = bytes.fromhex(target['key_id'])
+    if removed_members != [kid]:
+        raise ValueError('Saved removal differs from its pinned target; operation preserved')
+    current = _removal_target(state, kid)
+    if marshal_canonical(current) != marshal_canonical(target):
+        raise ValueError('Saved removal no longer targets its original admission; operation preserved')
 
 
 def _creation_message(identity, record, envelope):
@@ -427,33 +460,43 @@ class GroupClient:
                                                 'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None})
             return self._resume(record['id'])
 
+    def prepare_change(self, record, member=None, reason='', ttl=None):
+        """Build the exact remove/rekey journal from a synced record; save before POST.
+
+        A removal journal pins its target's full member record and admission
+        incarnation so an exact retry can never remove a later readmission.
+        """
+        state = record['group_session']
+        if member is not None:
+            assert_group_can_send(self.identity, state)
+        conversation, group = group_session_conversation(state), _group(state)
+        controls, target = [], None
+        if member is not None:
+            kid = bytes.fromhex(member) if re.fullmatch('[0-9a-fA-F]{32}', member) else key_id_from_public_key(resolve_contact(self.config_dir, member))
+            envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason))
+            applied = receive_group_event(self.identity, envelope, state)
+            target = _removal_target(state, kid)
+            group = applied['group']
+            controls.append(envelope)
+        if member is None:
+            controls.append(prepare_group_session_rekey(self.identity, state, ttl)['rekey'])
+        else:
+            body, _ = create_rekey(self.identity, conversation, group, conversation['id'])
+            controls.append(create_group_control_message(self.identity, conversation, 'group_rekey', body, ttl))
+        # Verify every transition locally before saving or sending any part.
+        trial = state
+        for envelope in controls:
+            trial = receive_group_event(self.identity, envelope, trial)['state']
+        return {'kind': 'remove' if member is not None else 'rekey',
+                'controls': [base64.b64encode(serialize_envelope(e)).decode() for e in controls],
+                'welcomes': [], 'welcomes_sent': 0, 'expected': trial,
+                **({'target': target} if target else {})}
+
     def change(self, conversation_id, member=None, reason=''):
         record = self.enable(conversation_id)
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
-            state = record['group_session']
-            if member is not None:
-                assert_group_can_send(self.identity, state)
-            conversation, group = group_session_conversation(state), _group(state)
-            controls = []
-            if member is not None:
-                kid = bytes.fromhex(member) if re.fullmatch('[0-9a-fA-F]{32}', member) else key_id_from_public_key(resolve_contact(self.config_dir, member))
-                envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason))
-                applied = receive_group_event(self.identity, envelope, state)
-                group = applied['group']
-                controls.append(envelope)
-            if member is None:
-                controls.append(prepare_group_session_rekey(self.identity, state)['rekey'])
-            else:
-                body, _ = create_rekey(self.identity, conversation, group, conversation['id'])
-                controls.append(create_group_control_message(self.identity, conversation, 'group_rekey', body))
-            # Verify every transition locally before saving or sending any part.
-            trial = state
-            for envelope in controls:
-                trial = receive_group_event(self.identity, envelope, trial)['state']
-            self._save_operation(record['id'], {'kind': 'remove' if member is not None else 'rekey',
-                                                'controls': [base64.b64encode(serialize_envelope(e)).decode() for e in controls],
-                                                'welcomes': [], 'welcomes_sent': 0, 'expected': trial})
+            self._save_operation(record['id'], self.prepare_change(record, member, reason))
             return self._resume(record['id'])
 
     def refresh(self, conversation_id, address, challenge=''):
@@ -602,7 +645,9 @@ class GroupClient:
             else:
                 if envelope['conv_epoch'] != state['epoch']:
                     raise ValueError('Saved control no longer targets the current epoch; preserve it for reconciliation')
-                receive_group_event(self.identity, envelope, state)
+                applied = receive_group_event(self.identity, envelope, state)
+                if operation['kind'] == 'remove' and applied.get('message') and applied['message']['inner']['body_type'] == 'group_remove':
+                    _assert_removal_target_current(state, operation, unmarshal(applied['message']['inner']['body'])['removed_members'])
             receipt = cli._http_send(self.relay_url, conversation_id, wire)
             if operation['kind'] == 'create':
                 # Only locally authenticated genesis receipts can bridge their
@@ -611,6 +656,131 @@ class GroupClient:
                 if type(seq) is int and seq > record.get('group_cursor', 0):
                     record.setdefault('group_delivery_receipts', []).append(seq)
                 cli._save_conversations(self.config_dir, records)
+
+    def _removal_proof(self, record, operation):
+        """Prove the original removal only from exact authenticated receive history."""
+        intent = operation['origin'] if operation['kind'] == 'removal_rekey' else operation
+        if intent['kind'] != 'remove' or len(intent['controls']) != 2 or intent.get('welcomes'):
+            raise ValueError('Invalid saved removal intent')
+        wire = base64.b64decode(intent['controls'][0], validate=True)
+        removal = deserialize_envelope(wire)
+        if serialize_envelope(removal) != wire or removal['conv_id'].hex() != record['id']:
+            raise ValueError('Invalid saved removal context')
+        return _control_accepted(record, wire), removal['conv_epoch']
+
+    def _removal_completed(self, record, operation):
+        """An accepted removal is finished once any verified rotation left its source epoch."""
+        accepted, source = self._removal_proof(record, operation)
+        return accepted and record['group_session']['epoch'] > source
+
+    def _assert_rotation_current(self, state, encoded, expected):
+        """Exact saved rotation ciphertext stays exact only while it still applies."""
+        envelope = deserialize_envelope(base64.b64decode(encoded, validate=True))
+        if envelope['expiry_ts'] < int(time.time()):
+            raise ValueError('Saved rotation expired')
+        if envelope['conv_epoch'] != state['epoch']:
+            raise ValueError('Saved control no longer targets the current epoch; preserve it for reconciliation')
+        applied = receive_group_event(self.identity, envelope, state)['state']
+        if any(applied[key] != expected[key] for key in ('root', 'epoch', 'snapshot')):
+            raise ValueError('Saved rotation differs from the current roster')
+
+    def _rotation_journal(self, state, kind, previous):
+        rotation = prepare_group_session_rekey(self.identity, state)
+        trial = receive_group_event(self.identity, rotation['rekey'], state)['state']
+        return {**previous, 'kind': kind, 'controls': [base64.b64encode(serialize_envelope(rotation['rekey'])).decode()],
+                'welcomes': [], 'welcomes_sent': 0,
+                'expected': create_group_session(self.identity, rotation['conversation'], rotation['state'],
+                                                signed_epoch=state['signedEpoch'], admissions=trial['admissions'])}
+
+    def _reconcile_removal(self, conversation_id, original):
+        """Finish an accepted removal from current membership; never re-remove."""
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(original):
+                raise ValueError('Pending operation changed before removal reconciliation; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            accepted, source = self._removal_proof(record, original)
+            if not accepted:
+                # Absent targets, predicted roots and acknowledgements prove nothing.
+                # A same-epoch, unexpired removal keeps its exact bytes for retry.
+                if original['kind'] == 'removal_rekey':
+                    raise ValueError('Original removal is no longer verified in current history; operation preserved')
+                if state['epoch'] != source:
+                    raise ValueError('Saved removal was superseded before its acceptance was verified; operation preserved')
+                removal = deserialize_envelope(base64.b64decode(original['controls'][0], validate=True))
+                if removal['expiry_ts'] < int(time.time()):
+                    raise ValueError('Saved removal expired before its acceptance was verified; operation preserved')
+                try:
+                    receive_group_event(self.identity, removal, state)
+                except CryptoError:
+                    raise ValueError('Saved removal cannot be verified against the current branch; operation preserved') from None
+                return record, False
+            if state['epoch'] > source:
+                return record, True  # A verified canonical rotation already left the removal's epoch.
+            if not state['needsRekey']:
+                raise ValueError('Accepted removal is not awaiting its completing rotation; operation preserved')
+            assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+            encoded = original['controls'][1 if original['kind'] == 'remove' else 0]
+            try:
+                self._assert_rotation_current(state, encoded, original['expected'])
+                return record, False
+            except (ValueError, CryptoError):
+                pass
+            origin = (copy.deepcopy(original['origin']) if original['kind'] == 'removal_rekey' else
+                      {**{key: copy.deepcopy(original[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent')},
+                       **({'target': copy.deepcopy(original['target'])} if 'target' in original else {}), 'delivery': 'unknown'})
+            record['group_operation'] = self._rotation_journal(state, 'removal_rekey', {
+                'origin': origin,
+                **({'superseded_operations': self._superseded_evidence(original)} if original['kind'] == 'removal_rekey' else {})})
+            cli._save_conversations(self.config_dir, records)
+            return record, False
+
+    def _post_removal_rekey(self, conversation_id, operation):
+        """Release a completing rotation only while its accepted removal still awaits one."""
+        with self._lock():
+            _, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before rotation release; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            accepted, source = self._removal_proof(record, operation)
+            if not accepted:
+                raise ValueError('Original removal is no longer verified in current history; operation preserved')
+            if state['epoch'] > source:
+                return  # Another member's verified rotation finished the removal.
+            if state['epoch'] != source or not state['needsRekey']:
+                raise ValueError('Accepted removal is not awaiting its completing rotation; operation preserved')
+            assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+            self._assert_rotation_current(state, operation['controls'][0], operation['expected'])
+            cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['controls'][0], validate=True))
+
+    def _reconcile_rotation(self, conversation_id, original):
+        """Keep an exact rotation, finish a superseded one, or renew a still-current intent."""
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(original):
+                raise ValueError('Pending operation changed before rotation reconciliation; use group retry')
+            if original['kind'] != 'rekey' or len(original['controls']) != 1 or original.get('welcomes'):
+                raise ValueError('Invalid saved rotation intent')
+            state = restore_group_session(self.identity, record['group_session'])
+            wire = base64.b64decode(original['controls'][0], validate=True)
+            envelope = deserialize_envelope(wire)
+            if serialize_envelope(envelope) != wire or envelope['conv_id'].hex() != record['id']:
+                raise ValueError('Invalid saved rotation context')
+            if _control_accepted(record, wire):
+                return record, False
+            assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+            if state['epoch'] > envelope['conv_epoch']:
+                return record, True  # Any verified later rotation fulfils a standalone rotation intent.
+            try:
+                self._assert_rotation_current(state, original['controls'][0], original['expected'])
+                return record, False
+            except (ValueError, CryptoError):
+                pass
+            record['group_operation'] = self._rotation_journal(state, 'rekey', {
+                **{key: copy.deepcopy(value) for key, value in original.items() if key != 'expected'},
+                'superseded_operations': self._superseded_evidence(original)})
+            cli._save_conversations(self.config_dir, records)
+            return record, False
 
     def _addition_challenge(self, operation, recipient):
         """Older draft journals kept their optional challenge only in the box."""
@@ -855,6 +1025,16 @@ class GroupClient:
         elif reconcile and operation['kind'] == 'refresh':
             record = self._reconcile_refresh(conversation_id, operation)
             operation = record['group_operation']
+        elif reconcile and operation['kind'] in ('remove', 'removal_rekey'):
+            record, completed = self._reconcile_removal(conversation_id, operation)
+            if completed:
+                return self._finish_operation(conversation_id, operation)
+            operation = record['group_operation']
+        elif reconcile and operation['kind'] == 'rekey':
+            record, completed = self._reconcile_rotation(conversation_id, operation)
+            if completed:
+                return self._finish_operation(conversation_id, operation)
+            operation = record['group_operation']
         controls = [] if exact_addition_proof else operation['controls']
         if reconcile and operation['kind'] == 'add' and self._addition_proof(record, operation) is not None:
             controls = controls[1:]  # Durable admission proves the add even after seen-cache eviction.
@@ -865,6 +1045,8 @@ class GroupClient:
                 self._post_addition_rekey(conversation_id, operation)
             elif operation['kind'] == 'add':
                 self._post_addition_control(conversation_id, operation, encoded)
+            elif operation['kind'] == 'removal_rekey':
+                self._post_removal_rekey(conversation_id, operation)
             else:
                 self._post_group_control(conversation_id, operation, wire)
             record = self.sync(conversation_id)
@@ -873,6 +1055,9 @@ class GroupClient:
                 if proof and (encoded == operation['controls'][0] and operation['kind'] == 'add'
                               or proof[3]['completion'] is not None):
                     continue  # The canonical completing rekey may be another member's.
+            if (operation['kind'] in ('remove', 'removal_rekey') and encoded == operation['controls'][-1]
+                    and self._removal_completed(record, operation)):
+                continue  # A helper's verified rotation may have finished the accepted removal.
             if not _control_accepted(record, wire):
                 raise ValueError('Group control is not yet verified in relay replay; use group retry')
         if reconcile and operation['kind'] in ('add', 'addition_rekey'):

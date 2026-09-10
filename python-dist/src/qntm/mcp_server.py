@@ -696,6 +696,11 @@ def group_retry(conversation: str) -> dict:
     can journal a replacement rotation; verified completion precedes the welcome.
     No new membership is granted. Derived rotations and renewals can be reconciled
     again for the same admission, retaining bounded exact delivery evidence.
+    An accepted removal whose completing rekey expired or no longer fits the
+    verified roster gets a fresh current-roster rotation; a helper's verified
+    rotation or a later readmission finishes it without posting, and nothing is
+    re-removed. A standalone rekey is replaced when stale or finished once a later
+    rotation is verified. A removal never proven accepted stays preserved.
     Changed admission, removal, missing history or evidence limits block recovery.
 
     Legacy creation stays a bearer-invite group. Its result distinguishes relay
