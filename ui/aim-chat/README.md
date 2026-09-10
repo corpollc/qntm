@@ -94,16 +94,26 @@ saved checkpoint stays removed across restarts. Explicit readmission produces a
 new epoch; it does not disclose messages from an interval of exclusion. New
 members receive no earlier epoch keys.
 
-**Refresh welcome** resends current keys to a still-admitted contact who missed
-the welcome's delivery window. It changes no membership. If the recipient reports
+**Refresh welcome** sends current keys to a still-admitted contact who missed
+the welcome's delivery window. When the sender has complete evidence of that
+contact's current admission, it sends an admission renewal containing that exact
+proof. A recipient with a saved removal can open this renewal only if an explicit
+new addition already admitted them after that removal. Founding members and
+older checkpoints without admission evidence receive a generic refresh, which
+cannot undo a saved removal. Neither operation changes membership or discloses
+earlier epoch keys. If the recipient reports
 missing history, paste their recovery challenge into the optional challenge
 field before refreshing, then share your returned link. An old welcome reposted
-at a newer relay sequence cannot answer the challenge. Refresh cannot undo a
-saved removal; that requires an explicit new addition.
+at a newer relay sequence cannot answer the challenge. A renewal for an older
+admission cannot undo a later removal.
 
 The browser saves an unfinished operation before posting and verifies its exact
 controls through relay replay before releasing the welcome. **Retry saved
 operation** resumes those exact encrypted messages after an uncertain send.
+Saved renewals include the recipient's full key, exact admission proof and
+complete expected admission map; retry checks them against the current state
+before posting. Encrypted backups preserve this evidence and the original
+challenge. Older generic refresh journals remain exact generic retries.
 Ordinary messaging pauses during an unfinished operation, key rotation, removal,
 or required recovery. The welcome signs the sender’s fully processed relay cursor as a replay anchor.
 Opening its link verifies coverage from that anchor and replays retained

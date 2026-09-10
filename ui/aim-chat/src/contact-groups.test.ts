@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { generateIdentity, DropboxClient, createMessage, groupSessionConversation, serializeEnvelope,
   deserializeEnvelope, isGroupWelcomeEnvelope, openGroupWelcome, parseGroupLink, receiveGroupEvent, createGroupSession,
-  createGroupLink, keyIDFromPublicKey, base64UrlDecode, base64UrlEncode, prepareGroupWelcomeRefresh,
+  createGroupLink, keyIDFromPublicKey, base64UrlDecode, base64UrlEncode, prepareGroupWelcomeRefresh, groupSessionFromWelcome,
   prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupAdmissionRenewal, createGroupControlMessage, createGroupRemoveBody, assertGroupCanSend } from '@corpollc/qntm'
 import type { SubscriptionMessage, Identity, GroupSessionState } from '@corpollc/qntm'
 import * as store from './store'
@@ -175,8 +175,10 @@ describe('browser contact group host', () => {
     await changeContactGroup(alice.id, id, 'rekey')
     const current = session(alice.id, id), { addId, addDigest } = current.admissions[kid]
     const anchor = store.findConversation(alice.id, id)!.group!.cursor
-    const renewal = prepareGroupAdmissionRenewal(alice.identity, current, bob.identity.publicKey, { addId, addDigest }, undefined, undefined, anchor)
-    await post(id, renewal.welcomes[0])
+    await changeContactGroup(alice.id, id, 'refresh', kid)
+    const renewal = openGroupWelcome(bob.identity, relay.get(id)!.at(-1)!.envelope, parseGroupLink(link))
+    expect(renewal.purpose).toBe('renewal')
+    expect(renewal.admissions[kid]).toMatchObject({ addId, addDigest })
     const refresh = prepareGroupWelcomeRefresh(alice.identity, current, [bob.identity.publicKey], undefined, undefined, anchor)
     await post(id, refresh.welcomes[0])
     await openContactGroup(bob.id, link)
@@ -192,6 +194,102 @@ describe('browser contact group host', () => {
     await expect(openContactGroup(bob.id, link)).rejects.toThrow()
     expect(session(bob.id, id).removed).toBe(true)
     expect(session(bob.id, id).removedAtEpoch).toBe(4)
+  })
+
+  it('keeps founding and unknown admission refreshes generic, without undoing a saved removal', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
+    const id = await createContactGroup(alice.id, 'Legacy admission')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey)); pinContact(bob.id, 'Alice', hex(alice.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', kid)
+    await openContactGroup(bob.id, link)
+    const bobLink = await changeContactGroup(bob.id, id, 'refresh', hex(alice.identity.keyID))
+    expect(openGroupWelcome(alice.identity, relay.get(id)!.at(-1)!.envelope, parseGroupLink(bobLink)).purpose).toBe('refresh')
+    await changeContactGroup(alice.id, id, 'remove', kid)
+    await syncContactGroup(bob.id, id)
+    const removed = session(bob.id, id)
+    await changeContactGroup(alice.id, id, 'add', kid)
+    // Older checkpoints can contain a valid roster without admission evidence.
+    const record = store.findConversation(alice.id, id)!
+    record.group!.session.admissions = {}
+    store.updateConversation(alice.id, id, () => record)
+    await changeContactGroup(alice.id, id, 'refresh', kid)
+    const row = relay.get(id)!.at(-1)!, welcome = openGroupWelcome(bob.identity, row.envelope, parseGroupLink(link))
+    expect(welcome.purpose).toBe('refresh')
+    expect(() => groupSessionFromWelcome(bob.identity, welcome, row.seq, removed)).toThrow(/remov/i)
+    expect(session(bob.id, id)).toEqual(removed)
+  })
+
+  it('preserves a renewal recipient, admission, challenge and exact ciphertext through encrypted backup retry', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
+    const id = await createContactGroup(alice.id, 'Saved renewal')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', kid)
+    const challenge = 'ab'.repeat(32), beforeRows = relay.get(id)!.length
+    failPost = true
+    await expect(changeContactGroup(alice.id, id, 'refresh', kid, challenge)).rejects.toThrow('Delivery uncertain')
+    const saved = store.findConversation(alice.id, id)!.group!.operation!
+    expect(saved.kind).toBe('renewal'); expect(saved.controls).toEqual([])
+    expect(saved.recipient).toBe(hex(bob.identity.publicKey))
+    expect(saved.admission).toEqual(saved.expected.admissions[kid])
+    const welcome = openGroupWelcome(bob.identity, base64UrlDecode(saved.welcomes[0]), parseGroupLink(link))
+    expect(welcome.purpose).toBe('renewal'); expect(hex(welcome.recoveryChallenge!)).toBe(challenge)
+    const encrypted = await exportEncryptedBackup('synthetic renewal backup password')
+    localStorage.clear(); restoreBackup(await prepareBackup(encrypted, 'synthetic renewal backup password'))
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(saved)
+    failPost = false
+    expect(await retryContactGroup(alice.id, id)).toBe(link)
+    expect(relay.get(id)).toHaveLength(beforeRows + 1)
+    expect(base64UrlEncode(relay.get(id)!.at(-1)!.envelope)).toBe(saved.welcomes[0])
+    expect(store.findConversation(alice.id, id)!.group!.operation).toBeNull()
+  })
+
+  it('rejects renewal backup proof changes and changed current provenance before retrying', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), carol = profile('Carol'), kid = hex(bob.identity.keyID)
+    const id = await createContactGroup(alice.id, 'Renewal guard')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey)); pinContact(alice.id, 'Carol', hex(carol.identity.publicKey))
+    await changeContactGroup(alice.id, id, 'add', kid)
+    await changeContactGroup(alice.id, id, 'add', hex(carol.identity.keyID))
+    failPost = true
+    await expect(changeContactGroup(alice.id, id, 'refresh', kid)).rejects.toThrow('Delivery uncertain')
+    const original = rawBackup(), data = JSON.parse(original)
+    const corruptions = [
+      (op: any) => { delete op.recipient },
+      (op: any) => { op.recipient = hex(carol.identity.publicKey) },
+      (op: any) => { op.admission.addDigest = '12'.repeat(32) },
+      (op: any) => { op.admission.completion = null },
+      (op: any) => { delete op.expected.admissions[kid] },
+      (op: any) => { op.welcomes.push(op.welcomes[0]) },
+    ]
+    for (const corrupt of corruptions) {
+      const invalid = structuredClone(data); corrupt(invalid.conversations[alice.id][0].group.operation)
+      expect(() => validateBackup(JSON.stringify(invalid))).toThrow()
+      expect(rawBackup()).toBe(original)
+    }
+    const record = store.findConversation(alice.id, id)!, saved = record.group!.operation
+    // Even another recipient's provenance must still match the reviewed map.
+    record.group!.session.admissions[hex(carol.identity.keyID)].addDigest = '34'.repeat(32)
+    store.updateConversation(alice.id, id, () => record)
+    const beforeRows = relay.get(id)!.length
+    failPost = false
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/admission/i)
+    expect(relay.get(id)).toHaveLength(beforeRows)
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(saved)
+  })
+
+  it('restores an older generic refresh journal as an exact generic retry', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
+    const id = await createContactGroup(alice.id, 'Older refresh')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', kid)
+    const record = store.findConversation(alice.id, id)!, expected = record.group!.session
+    const refresh = prepareGroupWelcomeRefresh(alice.identity, expected, [bob.identity.publicKey], undefined, undefined, record.group!.cursor)
+    record.group!.operation = { kind: 'refresh', controls: [], welcomes: refresh.welcomes.map(w => base64UrlEncode(serializeEnvelope(w))), delivered: 0, expected }
+    store.updateConversation(alice.id, id, () => record)
+    const before = rawBackup()
+    localStorage.clear(); restoreBackup(await prepareBackup(before))
+    await retryContactGroup(alice.id, id)
+    expect(base64UrlEncode(relay.get(id)!.at(-1)!.envelope)).toBe(record.group!.operation.welcomes[0])
+    expect(openGroupWelcome(bob.identity, relay.get(id)!.at(-1)!.envelope, parseGroupLink(link)).purpose).toBe('refresh')
   })
 
   it('detects an omitted rotation between the signed anchor and delayed welcome', async () => {
