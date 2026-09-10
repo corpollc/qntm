@@ -121,9 +121,9 @@ For groups using this receiver, private `conversations.json` stores the current
 keys and checkpoint, full roster, **decrypted message history**, relay cursor,
 pending ciphertext and exact unfinished outgoing operation in one atomic update.
 It also stores the recovery boundary, reason and challenge, and sequence receipts
-for locally posted welcomes and text. Known own receipts can account for those
+for locally posted genesis, welcomes and text. Known own receipts can account for those
 expired rows without treating an unknown missing control as harmless. Welcome
-receipts are pruned when the receive cursor passes them; text receipts remain
+and genesis receipts are pruned when the receive cursor passes them; text receipts remain
 with local history.
 Contact names and public keys live in private `contacts.json`. File locks serialize
 receive writes and individual group operations; revision checks reject stale
