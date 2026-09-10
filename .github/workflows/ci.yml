@@ -1,7 +1,206 @@
 name: CI
+
 on:
+  pull_request:
+  push:
+    branches: ["main"]
   workflow_dispatch:
+  workflow_call:
+
 jobs:
+  test-client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit runtime and development dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build package
+        run: npm run build
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python peer for library interoperability
+        run: python -m pip install -e ../python-dist/
+      - name: Verify fresh Python and TypeScript group welcomes
+        run: npm run test:cross
+
+      - name: Verify publish tarball
+        run: npm pack --dry-run
+
+  test-charter-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check monitoring configuration and alert behavior
+        run: |
+          docker run --rm --network none --entrypoint /bin/promtool -v "$PWD/charter-registry/deploy:/etc/prometheus:ro" prom/prometheus:v3.14.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --network none --entrypoint /bin/promtool -v "$PWD/charter-registry/deploy:/etc/prometheus:ro" -w /etc/prometheus prom/prometheus:v3.14.0 test rules alerts.test.yml
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e python-dist/
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: charter-registry/go.mod
+          cache-dependency-path: charter-registry/go.sum
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: go test -race ./... && go vet ./... && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        working-directory: charter-registry
+      - run: npm ci && npm run build && npm run test:charter-server
+        working-directory: client
+      - name: Verify deterministic charter vectors
+        run: node client/scripts/generate-charter-vectors.mjs && git diff --exit-code -- specs/test-vectors/charter-registry-v02.json
+      - name: Verify deterministic Ed25519 acceptance vectors
+        run: node client/scripts/generate-ed25519-vectors.mjs && git diff --exit-code -- specs/test-vectors/ed25519-verification.json
+
+  test-aim-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui/aim-chat
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python peer for browser journeys
+        run: python -m pip install -e "python-dist[mcp]"
+        working-directory: .
+
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/aim-chat/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: client
+
+      - name: Build client package
+        run: npm run build
+        working-directory: client
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit UI runtime and development dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build UI
+        run: npm run build
+
+      - name: Prepare Ubuntu package sources
+        # System libraries come from Ubuntu, Chromium comes from Playwright.
+        # The runner's Chrome deb source is not needed for either.
+        uses: ./.github/actions/prepare-apt
+
+      - name: Run browser component journeys
+        run: npx playwright install --with-deps chromium && npm run test:e2e
+
+  test-tui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui/tui
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/prepare-apt
+
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y expect
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python group client for terminal journeys
+        run: python -m pip install -e "python-dist[mcp]"
+        working-directory: .
+
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/tui/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: client
+
+      - name: Build client package
+        run: npm run build
+        working-directory: client
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Audit runtime and development dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Build TUI
+        run: npm run build
+
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -e "python-dist/[mcp]" && pip install pytest
+
+      - name: Exercise minimum supported WebSocket client
+        if: matrix.python-version == '3.10'
+        run: pip install websockets==13.0 tomli
+
+      - name: Run tests
+        run: python -m pytest python-dist/tests/ -v
+
+      - name: Verify CLI help documentation
+        run: python scripts/generate_cli_reference.py --check
+
   test-relay:
     runs-on: ubuntu-latest
     steps:
@@ -9,22 +208,102 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           package-manager-cache: false
-          node-version: "22.23.2"
-      - run: node -p 'JSON.stringify({node:process.version,undici:process.versions.undici,platform:process.platform,arch:process.arch})'
+          node-version: "22"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -r monitoring/requirements.txt
+      - run: python -m pip install -r monitoring/requirements.txt && python -m unittest discover -s monitoring -v
       - run: npm ci && npm run build
         working-directory: client
+      - run: npm ci && npm audit --audit-level=moderate && npm run typecheck
+        working-directory: worker
+      - run: npm ci && npm run test:relay
+        working-directory: integration
+
+  cross-surface-acceptance:
+    uses: ./.github/workflows/ui-acceptance.yml
+
+  test-adapters:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [openclaw-qntm, nanoclaw-qntm, channel]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci && npm run build
+        working-directory: client
+      - uses: actions/setup-node@v6
+        if: matrix.package == 'openclaw-qntm'
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm ci && npm test && npm run typecheck
+        if: matrix.package != 'openclaw-qntm'
+        working-directory: ${{ matrix.package }}
+      - run: npm ci --ignore-scripts && npm test && npm run typecheck
+        if: matrix.package == 'openclaw-qntm'
+        working-directory: openclaw-qntm
+      - name: Audit maintained adapter runtime and development dependencies
+        if: matrix.package != 'nanoclaw-qntm'
+        run: npm audit --audit-level=moderate
+        working-directory: ${{ matrix.package }}
+      - name: Retain the legacy adapter runtime check
+        if: matrix.package == 'nanoclaw-qntm'
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: nanoclaw-qntm
+      - name: Validate OpenClaw metadata and real host delivery
+        if: matrix.package == 'openclaw-qntm'
+        run: npm run check:manifest && npm run test:host
+        working-directory: openclaw-qntm
+
+  test-integration-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: client
+      - run: npm ci && npm audit --audit-level=moderate && npm run test:model
+        working-directory: integration
+      - run: npm ci && npm audit --audit-level=moderate && npx tsc --noEmit
+        working-directory: echo-worker
       - run: npm ci
         working-directory: worker
       - run: npm ci
-        working-directory: integration
-      - run: npm run test:relay
-        working-directory: integration
-      - uses: actions/upload-artifact@v6
-        if: always()
+        working-directory: gateway-worker
+      - uses: actions/setup-python@v6
         with:
-          name: relay-idle-diagnostic-${{ github.run_id }}
-          path: integration/test-results
+          python-version: "3.12"
+      - name: Run actual README examples and echo Worker journeys
+        run: npm run test:readme
+        working-directory: integration
+
+  release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_release.py
+      - run: python -m unittest discover -s scripts/tests
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+        working-directory: python-dist
+      - name: Audit locked Python runtime and MCP dependencies
+        working-directory: python-dist
+        run: |
+          uv export --locked --extra mcp --format requirements-txt --no-dev --no-emit-project --no-hashes > /tmp/qntm-runtime-requirements.txt
+          uvx pip-audit --no-deps --disable-pip -r /tmp/qntm-runtime-requirements.txt
+      - run: pip install build twine
+      - run: python -m build python-dist && twine check python-dist/dist/*
+      - name: Exercise installed wheel outside the source tree
+        run: python scripts/check_installed_wheel.py python-dist/dist/*.whl
