@@ -1,5 +1,5 @@
 import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody } from '@corpollc/qntm'
-import type { StoreData } from './store'
+import type { StoreData, StoredConversation } from './store'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -158,7 +158,7 @@ export function validateBackup(json: string): StoreData {
     for (const [id, messages] of Object.entries(object(data.history[pid] ?? {}, 'history'))) {
       hex(id, 16, 'history conversation ID')
       for (const msg of list(messages, 'messages', 10_000)) {
-        object(msg, 'message fields', ['id', 'conversationId', 'direction', 'sender', 'senderKey', 'bodyType', 'text', 'createdAt'])
+        object(msg, 'message fields', ['id', 'conversationId', 'direction', 'sender', 'senderKey', 'bodyType', 'text', 'createdAt', 'groupBinding'])
         text(msg.id, 'message ID', 256)
         if (msg.conversationId !== id) fail('message conversation mismatch')
         if (!['incoming', 'outgoing'].includes(msg.direction)) fail('message direction')
@@ -167,6 +167,13 @@ export function validateBackup(json: string): StoreData {
         text(msg.bodyType, 'body type', 256)
         text(msg.text, 'message text', 1024 * 1024, true)
         date(msg.createdAt, 'message creation time')
+        if (msg.groupBinding !== undefined) {
+          const binding = object(msg.groupBinding, 'group history binding', ['digest', 'epoch', 'valid'])
+          hex(binding.digest, 32, 'group history digest'); integer(binding.epoch, 'group history epoch')
+          if (typeof binding.valid !== 'boolean') fail('group history validity')
+          hex(msg.id, 16, 'group history message ID')
+          if (!(data.conversations[pid] ?? []).some((conv: StoredConversation) => conv.id === id && conv.group)) fail('group history conversation missing')
+        }
       }
     }
     for (const [id, cursor] of Object.entries(object(data.cursors[pid] ?? {}, 'cursors'))) {

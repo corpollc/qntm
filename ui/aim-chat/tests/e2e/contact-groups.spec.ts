@@ -327,3 +327,49 @@ for (const timing of ['before welcome', 'after opening'] as const) test(`browser
   const reply = replyBatch.entries.map(row => deserializeEnvelope(row.envelope)).filter(envelope => !isGroupWelcomeEnvelope(envelope)).map(envelope => receiveGroupEvent(peer, envelope, opened.state)).find(result => !result.duplicate && new TextDecoder().decode(result.message.inner.body) === 'recovered canonical branch reply')
   expect(reply).toBeDefined()
 })
+
+test('browser hides an invalidated branch immediately while preserving earlier accepted history', async ({ page }) => {
+  await page.goto('/'); await contacts(page)
+  await pin(page, 'History peer', generateIdentity())
+  await page.getByLabel('Group name', { exact: true }).fill('History validity')
+  await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+  await page.getByPlaceholder('Type a message').fill('earlier stable history')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(page.locator('.message-body', { hasText: 'earlier stable history' })).toBeVisible()
+  const link = await add(page, 'History peer'), locator = parseGroupLink(link), id = hex(locator.conversationId)
+  await page.getByPlaceholder('Type a message').fill('losing descendant history')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(page.locator('.message-body', { hasText: 'losing descendant history' })).toBeVisible()
+  const saved: GroupSessionState = await page.evaluate(cid => {
+    const data = JSON.parse(localStorage.getItem('aim-store')!)
+    return data.conversations[data.activeProfileId].find((conv: { id: string }) => conv.id === cid).group.session
+  }, id)
+  const frame = saved.rekeys[0]
+  const source = { ...saved, epoch: frame.epoch, root: frame.root, snapshot: frame.snapshot, rekeys: [], seen: {}, recovery: null }
+  // Choose the test control's ID before signing/encryption, avoiding a random
+  // retry budget when the original rekey happened to have a very small ID.
+  const getRandomValues = crypto.getRandomValues
+  let competing
+  try {
+    Object.defineProperty(crypto, 'getRandomValues', { configurable: true, value: (value: Uint8Array) => {
+      const result = getRandomValues.call(crypto, value)
+      if (value.byteLength === 16) value.fill(0)
+      return result
+    } })
+    competing = prepareGroupSessionRekey(browserIdentity, source)
+  } finally { Object.defineProperty(crypto, 'getRandomValues', { configurable: true, value: getRandomValues }) }
+  expect(hex(competing.rekey.msg_id) < frame.messageId).toBe(true)
+  await new DropboxClient(locator.relayUrl).postMessage(locator.conversationId, serializeEnvelope(competing.rekey))
+  await expect(page.getByText('Group recovery required', { exact: true })).toBeVisible()
+  await expect(page.locator('.message-body', { hasText: 'losing descendant history' })).toHaveCount(0)
+  await expect(page.locator('.message-body', { hasText: 'earlier stable history' })).toBeVisible()
+  await page.reload()
+  await expect(page.locator('.message-body', { hasText: 'losing descendant history' })).toHaveCount(0)
+  await expect(page.locator('.message-body', { hasText: 'earlier stable history' })).toBeVisible()
+  const archive = await page.evaluate(cid => {
+    const data = JSON.parse(localStorage.getItem('aim-store')!)
+    return data.history[data.activeProfileId][cid]
+  }, id)
+  expect(archive.find((message: { text: string }) => message.text === 'losing descendant history').groupBinding.valid).toBe(false)
+})

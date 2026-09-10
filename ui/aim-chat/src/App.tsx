@@ -412,7 +412,11 @@ export default function App() {
           profileName,
           conversationId,
           {
-            onState: () => { if (activeProfileIdRef.current === activeProfileId) setConversations(api.listConversations(activeProfileId).conversations) },
+            onState: () => {
+              if (activeProfileIdRef.current !== activeProfileId) return
+              setConversations(api.listConversations(activeProfileId).conversations)
+              if (selectedConversationIdRef.current === conversationId) setMessages(api.getHistory(activeProfileId, conversationId).messages)
+            },
             onMessage: async () => {
               if (activeProfileIdRef.current !== activeProfileId) {
                 return
