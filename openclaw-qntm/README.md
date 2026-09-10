@@ -156,7 +156,7 @@ The base directory is `OPENCLAW_STATE_DIR`, or `~/.openclaw` when unset. qntm ow
 | --- | --- |
 | `conversations/<conv_id>.json` | Current conversation keys/epoch, creation date/type, participant IDs and known public keys, signed gateway invitation/context, verified gateway workflow history, removal status, relay/legacy cursors, initial configuration hash, identity key ID, exact replay IDs/digests, and up to 64 pending plaintext deliveries. Current state remains until the operator removes it. No prior epoch keys are retained. Replay history is capped at 8,192 IDs; workflow history at 4,096 events and approximately 8 MiB. The complete file is capped at 16 MiB. |
 | `conversations/<conv_id>.json.gateway-bootstrap` | At most 96 KiB: sealed bootstrap ciphertext, identity/conversation/invitation/message IDs, epoch, relay/gateway URLs, gateway public key, relay sequence and expiry. Contains no plaintext conversation keys. Removed after verified acceptance on a received event; failed cleanup retries on later events. Otherwise remains until overwritten by later admission or removed by the operator, including after expiry. Expired or mismatched bootstrap cannot be retried. |
-| `groups/<conv_id>.json` | Ordinary-group identity/configuration hash and revision, current root and full roster, source replay/bootstrap cursors, saved removal sequence, recovery boundary/reason/challenge, a random local dispatch generation, up to 8,192 authenticated IDs/digests, up to 64 prior source-key/roster checkpoints, up to 256 pending ciphertext entries/4 MiB, up to 64 pending plaintext deliveries, own welcome sequence receipts, an exact unfinished operation including expected keys, and at most two pending-control acceptance receipts (message ID, ciphertext digest, source epoch, verified relay sequence, branch validity) bound to that operation's exact controls or, for a removal repair, its original removal. Removal journals also pin the target's key ID, public key, member record and admission incarnation. Admission recovery retains the original encrypted controls/welcome, delivery counters, recipient pin and exact admission ID/digest once, alongside the current exact repair or renewal. Superseded recovery ciphertext and delivery counters form a flat history capped at 256 revisions; original plus superseded evidence is capped at 4 MiB of canonical CBOR. At either bound, replacement is refused and the saved operation remains. Retained evidence contains no old expected plaintext roots. Prior roots authenticate competing rekeys only; eligibility lasts at most 24 hours; expired archive entries are pruned on successful receive writes. Whole file capped at 16 MiB; backups can retain earlier keys. A temporary `.lock` file contains the writer PID. |
+| `groups/<conv_id>.json` | Ordinary-group identity/configuration hash and revision, current root and full roster, source replay/bootstrap cursors, saved removal sequence, recovery boundary/reason/challenge, a random local dispatch generation, up to 8,192 authenticated IDs/digests, up to 64 prior source-key/roster checkpoints, up to 256 pending ciphertext entries/4 MiB, up to 64 pending plaintext deliveries, own welcome sequence receipts, an exact unfinished operation including expected keys, a flat archive of explicitly released unproven removals (exact ciphertext, counters, target pin, origin and superseded evidence, reason and time; no expected roots; shares the 256-entry/4 MiB evidence bounds), and at most two pending-control acceptance receipts (message ID, ciphertext digest, source epoch, verified relay sequence, branch validity) bound to that operation's exact controls or, for a removal repair, its original removal. Removal journals also pin the target's key ID, public key, member record and admission incarnation. Admission recovery retains the original encrypted controls/welcome, delivery counters, recipient pin and exact admission ID/digest once, alongside the current exact repair or renewal. Superseded recovery ciphertext and delivery counters form a flat history capped at 256 revisions; original plus superseded evidence is capped at 4 MiB of canonical CBOR. At either bound, replacement is refused and the saved operation remains. Retained evidence contains no old expected plaintext roots. Prior roots authenticate competing rekeys only; eligibility lasts at most 24 hours; expired archive entries are pruned on successful receive writes. Whole file capped at 16 MiB; backups can retain earlier keys. A temporary `.lock` file contains the writer PID. |
 | `ingress.sqlite` and SQLite sidecars | Pending/claimed/failed plaintext deliveries: conversation and message IDs, sender key ID/public key, epoch, creation time, body type/text and gateway-verification flag; ordinary-group dispatch generation and accepted envelope digest; queue account/channel, lane, arrival/update/attempt timestamps, attempt counts and claim token/owner/heartbeat. Host exceptions are replaced by fixed failure strings. At most 1,024 pending/claimed events are admitted; full storage retains the checkpoint outbox and applies backpressure. Pending work has no time-based expiry. |
 | Completed/failed queue records | A completed row drops its plaintext payload when OpenClaw durably adopts the turn, or when a synchronous dispatch completes. Completed IDs are retained for seven days, capped at 8,192; failed records retain their payload for seven days, capped at 1,024. Pruning runs at startup and approximately hourly while the monitor runs. The SQLite main file has a 65,536-page limit (256 MiB with its default page size); sidecars and checkpoint files are additional storage. |
 
@@ -246,6 +246,7 @@ contact or permission changes. Cancel a review with `cancel` and `reviewToken`.
 | `retry` | `{}` | Review exact retry, acknowledged-welcome cleanup, accepted-control cleanup, replacement rotation for the same pending admission or proven removal, replacement of a stale standalone rotation, current-key renewal, or generic refresh for the same current recipient. Original and superseded ciphertext remain retained. |
 | `open` | `{ "link": "optional public link" }` | Reopen a pinned link for this configured group/relay. |
 | `send` | `{ "text": "Complete text to review" }` | Review and send explicit text. Normal native replies retain existing host authorization. |
+| `release_unproven` | `{}` | Review the explicit local release of a stale, unproven removal journal into the private archive. Posts nothing; permitted exactly by the binding's `remove` action. |
 
 A missing relay sequence, expired authenticated control or competing-rekey rewind
 pauses sends and agent dispatch. The checkpoint records a fresh `recovery.challenge`;
@@ -435,6 +436,30 @@ expired or whose epoch was superseded stays preserved with a precise reason
 and continues to block new operations. After a challenged welcome
 replacement the retained proof is dropped by design, so such a journal is
 also preserved rather than completed from the welcome's roster.
+
+The operator can give up local retry of such a journal explicitly with the
+reviewed `release_unproven` action (also from the local recovery entry point
+after a restart). Prepare shows the original target pin, whether it is still a
+member, the current status, the release reason and the evidence counts; commit
+runs after full replay under the writer lock, rechecks every predicate, then
+atomically moves the exact uncertain ciphertext, target pin, origin and
+superseded evidence with the reason into the private archive and clears the
+journal. Nothing is posted, nothing is claimed accepted or revoked, no member is
+removed or re-removed, and membership, rotation, removal and recovery state stay
+exactly as received; a wanted removal is a separately reviewed `remove` that
+pins the current incarnation. Eligible journals are a `remove` or its
+`removal_rekey` repair whose original removal is not proven and whose exact
+bytes no longer apply: expired, superseded by a later epoch, undecryptable on
+the current branch, target absent, otherwise inapplicable, a changed target
+incarnation, or (for journals without a pin) a same-epoch admission of the
+target. A proven removal, an exact still-retryable removal, any other kind of
+journal, an incomplete-history barrier or a changed journal between review and
+commit is refused. The archive shares the 256-entry/4 MiB evidence bounds;
+when the entry cannot fit, release is refused and journal and archive stay
+unchanged. The archive survives receive, restart and challenged welcome
+replacement, and is part of the review fingerprint. A removed local identity
+may release; its send, rotation and history barriers are unchanged. A late
+authenticated arrival of released ciphertext is handled by ordinary receive.
 
 A standalone `rekey` journal stays byte-for-byte exact while it still applies.
 Any verified rotation that leaves its source epoch fulfils the rotation intent

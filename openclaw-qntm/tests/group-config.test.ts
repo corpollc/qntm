@@ -82,7 +82,9 @@ describe('OpenClaw contact group configuration and native scope', () => {
     expect(resolveGroupToolScope(routed, cfg).key).not.toBe(inbound.key);
     await expect(service.execute(resolveGroupToolScope(routed, cfg), { operation: 'commit', reviewToken: '00'.repeat(16), reviewHash: '00'.repeat(32) }))
       .rejects.toThrow('Review unavailable, expired or mismatched');
-    // Local initiation grants no action the binding does not permit.
+    // Local initiation grants no action the binding does not permit, including
+    // release_unproven which is never implied by an unknown or add-only grant.
     await expect(service.execute(resolveGroupToolScope(routed, cfg), { operation: 'prepare', action: 'retry' })).rejects.toThrow('not permitted');
+    await expect(service.execute(resolveGroupToolScope(routed, cfg), { operation: 'prepare', action: 'release_unproven' })).rejects.toThrow('not permitted');
   });
 });

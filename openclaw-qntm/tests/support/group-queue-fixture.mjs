@@ -4,7 +4,7 @@ import { QntmIngressQueue } from '../../src/ingress-queue.js';
 import { resolveQntmAccount } from '../../src/accounts.js';
 import { inboundId } from '../../src/checkpoint.js';
 import { randomBytes } from 'node:crypto';
-import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey, receiveGroupEvent, createGroupSession, restoreGroupSession } from '@corpollc/qntm';
+import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey, receiveGroupEvent, createGroupSession, restoreGroupSession, createGroupControlMessage, createGroupRemoveBody, groupSessionConversation, keyIDFromPublicKey } from '@corpollc/qntm';
 
 export async function stageGroupDelivery(config, stateDir, messageId) {
   const account = resolveQntmAccount({ cfg: config });
@@ -118,6 +118,30 @@ export async function stagePendingGroupRemoval(config, stateDir, contact, ttl = 
     if (!accepted.session.needsRekey || !ordinary.controlAccepted(accepted, operation.controls[0]) || ordinary.controlAccepted(accepted, operation.controls[1])) throw new Error('Staged removal was not accepted in replay');
     return { cursor: accepted.cursor, epoch: accepted.session.epoch, removalId: Buffer.from(removal.msg_id).toString('hex'),
       rekeyId: Buffer.from(rotation.msg_id).toString('hex'), expiry: rotation.expiry_ts, controls: operation.controls, target: operation.target };
+  });
+}
+
+/** With the host stopped, leave a production removal journal whose removal
+ * control has a short signed lifetime and was never posted. Only the crash
+ * window and the lifetimes are chosen here; prepare, pin and journal are
+ * production code, and nothing is claimed accepted. */
+export async function stageUnpostedGroupRemoval(config, stateDir, contact, ttl = 8) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    if (ordinary.load().operation) throw new Error('Fixture found an unexpected pending operation');
+    const state = ordinary.load(), operation = ordinary.prepare('remove', { contact });
+    const kid = keyIDFromPublicKey(base64UrlDecode(operation.publicKey));
+    const removal = createGroupControlMessage(account.identity, groupSessionConversation(state.session), 'group_remove', createGroupRemoveBody([kid]), ttl);
+    const removed = receiveGroupEvent(account.identity, removal, state.session).state;
+    const rotation = prepareGroupSessionRekey(account.identity, removed, ttl).rekey;
+    operation.controls = [removal, rotation].map(value => base64UrlEncode(serializeEnvelope(value)));
+    operation.expected = receiveGroupEvent(account.identity, rotation, removed).state;
+    if (operation.target?.keyId !== Buffer.from(kid).toString('hex')) throw new Error('Fixture removal lacks its target pin');
+    ordinary.saveOperation(operation);
+    return { cursor: state.cursor, epoch: state.session.epoch, removalId: Buffer.from(removal.msg_id).toString('hex'),
+      expiry: removal.expiry_ts, controls: operation.controls, target: operation.target };
   });
 }
 

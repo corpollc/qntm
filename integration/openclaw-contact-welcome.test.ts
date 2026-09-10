@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, CliAgent, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation, stagePendingGroupRotation, stagePendingGroupRemoval, stageUncertainRemovalRepair } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation, stagePendingGroupRotation, stagePendingGroupRemoval, stageUncertainRemovalRepair, stageUnpostedGroupRemoval } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -596,6 +596,135 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     const postRepair = final.entries.filter(row => row.seq > repairSeq).concat(afterRows);
     expect(postRepair.length).toBeGreaterThan(2);
     for (const row of postRepair) expect(() => decryptMessage(deserializeEnvelope(row.envelope), priorKeys)).toThrow();
+  }, TIMEOUT);
+
+  it('releases a stale unposted native removal through an operator-initiated turn after restart with no POST, then a separately reviewed removal excludes the target', async () => {
+    const provider = (host as unknown as { provider: { outcomes: Map<string, unknown> } }).provider;
+    const conversationId = parseGroupLink(checkpointLink()).conversationId;
+    const hostConversation = () => groupSessionConversation(restoreGroupSession(host.identity, checkpoint().session));
+    const decryptAll = (rows: Array<{ seq: number; envelope: Uint8Array }>, conversation: ReturnType<typeof hostConversation>) => rows.flatMap(row => {
+      try { const message = decryptMessage(deserializeEnvelope(row.envelope), conversation); return [{ seq: row.seq, type: message.inner.body_type, text: new TextDecoder().decode(message.inner.body) }]; } catch { return []; }
+    });
+    const replayTs = (rows: Array<{ seq: number; envelope: Uint8Array }>) => {
+      const texts: string[] = [];
+      for (const row of rows.filter(row => row.seq > tsCursor)) {
+        try {
+          const event = receiveGroupEvent(tsPeer, deserializeEnvelope(row.envelope), tsSession);
+          tsSession = event.state; tsCursor = row.seq;
+          if (!event.duplicate && event.message.inner.body_type === 'text') texts.push(new TextDecoder().decode(event.message.inner.body));
+        } catch { /* Welcomes and rows a removed identity can no longer open. */ }
+      }
+      return texts;
+    };
+    // Readmit Dave (Python target) and TypeScript (survivor) so both current-key peers exist for the release.
+    const readded = await action('readmit-dave-for-release', 'add', { contact: 'Dave' });
+    await h.dave.run(['group', 'join', String(readded.at(-1)!.groupLink)]);
+    const tsAdd = await action('readmit-ts-survivor-for-release', 'add', { contact: 'TypeScript' });
+    const locator = parseGroupLink(String(tsAdd.at(-1)!.groupLink));
+    const admitted = await relay.receiveMessages(locator.conversationId);
+    let opened: { seq: number; welcome: ReturnType<typeof openGroupWelcome> } | undefined;
+    for (const row of admitted.entries) {
+      try {
+        const welcome = openGroupWelcome(tsPeer, row.envelope, locator);
+        if (!opened || welcome.conversation.currentEpoch > opened.welcome.conversation.currentEpoch
+          || (welcome.conversation.currentEpoch === opened.welcome.conversation.currentEpoch && row.seq > opened.seq)) opened = { seq: row.seq, welcome };
+      } catch { /* Other recipients and ordinary messages. */ }
+    }
+    tsSession = checkGroupWelcomeReplay(groupSessionFromWelcome(tsPeer, opened!.welcome, opened!.seq, tsSession), opened!.welcome, admitted.sequence, admitted.entries);
+    tsCursor = opened!.welcome.replayFromSequence;
+    replayTs(admitted.entries);
+    expect(tsSession.removed).toBe(false); expect(tsSession.recovery).toBeNull();
+    await h.dave.run(['send', convId, 'dave back before the unposted removal']);
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'dave back before the unposted removal', 'Dave readmitted');
+    await host.stop();
+    const deferredPlan = { id: 'deferred-behind-unposted-removal', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    await h.alice.run(['send', convId, 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(deferredPlan)).toString('base64url')]);
+    // Durable state of a host that saved its removal journal and died before any POST; the removal control lives 8 s.
+    const staged = await stageUnpostedGroupRemoval(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'Dave', 8);
+    expect(checkpoint().operation.controls).toEqual(staged.controls); expect(checkpoint().controlReceipts).toEqual([]);
+    const before = await relay.receiveMessages(conversationId, 0);
+    expect(before.entries.map(row => Buffer.from(row.envelope).toString('base64url'))).not.toContain(staged.controls[0]);
+    await host.start();
+    await host.waitFor(() => checkpoint().cursor >= before.sequence, 'host replayed after restart with the unposted removal pending');
+    await delay(Math.max(0, (staged.expiry + 1) * 1000 - Date.now()));
+    expect(provider.outcomes.has(deferredPlan.id)).toBe(false); expect(checkpoint().operation.controls).toEqual(staged.controls);
+    // Existing owner-scope / malformed-id guards still hide the new action.
+    const wrong = await host.localAgentTurn({ id: 'operator-release-wrong-conversation', tool: 'qntm_group', action: 'release_unproven', initialStatus: 'ready' },
+      'ff'.repeat(16), { expectToolAbsent: true });
+    expect(wrong.results).toEqual([]); expect(wrong.toolAbsent || wrong.code !== 0).toBe(true);
+    expect(checkpoint().operation.controls).toEqual(staged.controls);
+    expect((await relay.receiveMessages(conversationId, 0)).sequence).toBe(before.sequence);
+    // Plain retry from a fresh CLI process refuses precisely and posts nothing.
+    const refused = await host.localAgentTurn({ id: 'operator-retry-refuses-expired-removal', tool: 'qntm_group', single: { operation: 'prepare', action: 'retry' },
+      expectedStatus: 'error', expectedCode: 'group_action_failed' }, 'test');
+    expect(String(refused.results[0].message)).toContain('expired before its acceptance was verified');
+    expect((await relay.receiveMessages(conversationId, 0)).sequence).toBe(before.sequence);
+    // The explicit local release enters the same reviewed route from a fresh CLI process.
+    const released = await host.localAgentTurn({ id: 'operator-release-unproven', tool: 'qntm_group', action: 'release_unproven', initialStatus: 'ready', expectedStatus: 'released' }, 'test');
+    expect(released.code).toBe(0);
+    const review = released.results[1].review as Record<string, any>;
+    expect(review.releaseReason).toBe('expired'); expect(review.target).toMatchObject({ keyId: h.dave.readIdentity().key_id, stillMember: true });
+    expect(review.effect).toContain('No message will be posted');
+    expect(review.effect).toContain('Nothing is claimed accepted or revoked');
+    expect(review.effect).not.toMatch(/\bcancel(?:led|lation)?\b|\bundone\b/i);
+    expect(review.evidence).toMatchObject({ controls: 2, archivedAfterRelease: 1 });
+    expect(released.results[2]).toMatchObject({ status: 'released', reason: 'expired', releasedOperations: 1 });
+    expect(released.results[2]).not.toHaveProperty('cancelled'); expect(released.results[2]).not.toHaveProperty('accepted');
+    await host.waitFor(() => !checkpoint().operation, 'release cleared the journal');
+    expect(checkpoint().releasedOperations).toHaveLength(1);
+    expect(checkpoint().releasedOperations[0]).toMatchObject({ action: 'remove', controls: staged.controls, target: staged.target, delivery: 'unknown', releasedReason: 'expired' });
+    expect(JSON.stringify(checkpoint().releasedOperations)).not.toContain('"expected"');
+    expect(checkpoint().session.needsRekey).toBe(false); expect(checkpoint().session.removed).toBe(false); expect(checkpoint().session.epoch).toBe(staged.epoch);
+    const afterRelease = await relay.receiveMessages(conversationId, 0);
+    expect(afterRelease.sequence).toBe(before.sequence);
+    expect(afterRelease.entries.map(row => Buffer.from(row.envelope).toString('base64url'))).not.toContain(staged.controls[0]);
+    expect(afterRelease.entries.map(row => Buffer.from(row.envelope).toString('base64url'))).not.toContain(staged.controls[1]);
+    // Nothing was excluded: the deferred turn runs, and Dave still reads and replies with the current keys.
+    await host.waitFor(() => provider.outcomes.has(deferredPlan.id), 'deferred inbound turn released after the release');
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === `gateway-tool-complete:${deferredPlan.id}`, 'deferred turn completion');
+    await h.alice.run(['send', convId, 'survivor text after native release']);
+    await waitForCliHistory(h.dave, convId, row => row.unsafe_body === 'survivor text after native release', 'Dave still reads current traffic after release');
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).removed).toBe(false);
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).epoch).toBe(staged.epoch);
+    await h.dave.run(['send', convId, 'dave still present after native release']);
+    await host.waitFor(async () => decryptAll((await relay.receiveMessages(conversationId, afterRelease.sequence)).entries, hostConversation())
+      .some(row => row.text === 'dave still present after native release'), 'host received Dave after the release');
+    expect(decryptAll((await relay.receiveMessages(conversationId, afterRelease.sequence)).entries, hostConversation()).map(row => row.text))
+      .toContain('dave still present after native release');
+    const tsAfterRelease = replayTs((await relay.receiveMessages(conversationId, tsCursor)).entries);
+    expect(tsAfterRelease).toContain('survivor text after native release');
+    expect(tsAfterRelease).toContain('dave still present after native release');
+    expect(tsSession.removed).toBe(false); expect(tsSession.epoch).toBe(staged.epoch);
+    // A wanted removal is a fresh, separately reviewed decision at the current incarnation.
+    const daveBefore = h.dave.readConversation(convId).group_session as GroupSessionState;
+    const priorKeys = groupSessionConversation(daveBefore);
+    const currentKeys = hostConversation();
+    const removal = await action('remove-dave-after-release', 'remove', { contact: 'Dave' });
+    expect(removal.at(-1)!.status).toBe('submitted');
+    await host.waitFor(() => checkpoint().session.epoch === staged.epoch + 1 && !checkpoint().operation, 'fresh removal completed');
+    const final = await relay.receiveMessages(conversationId, afterRelease.sequence);
+    const wires = final.entries.map(row => Buffer.from(row.envelope).toString('base64url'));
+    expect(wires).not.toContain(staged.controls[0]); expect(wires).not.toContain(staged.controls[1]);
+    const freshControls = decryptAll(final.entries, currentKeys).filter(row => row.type === 'group_remove' || row.type === 'group_rekey');
+    expect(freshControls.map(row => row.type)).toEqual(['group_remove', 'group_rekey']);
+    expect(final.entries.filter(row => freshControls.some(control => control.seq === row.seq)).map(row => deserializeEnvelope(row.envelope).conv_epoch))
+      .toEqual([staged.epoch, staged.epoch]);
+    expect(final.entries.filter(row => freshControls.some(control => control.seq === row.seq)).map(row => Buffer.from(deserializeEnvelope(row.envelope).msg_id).toString('hex')))
+      .not.toContain(staged.removalId);
+    await h.dave.run(['recv', convId]);
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).removed).toBe(true);
+    expect(daveBefore.epoch).toBe(staged.epoch);
+    await expect(h.dave.run(['send', convId, 'removed after fresh reviewed removal'])).rejects.toThrow();
+    await h.alice.run(['send', convId, 'survivor reply after fresh removal']);
+    await host.waitFor(async () => decryptAll((await relay.receiveMessages(conversationId, final.sequence)).entries, hostConversation())
+      .some(row => row.text === 'survivor reply after fresh removal'), 'host received the survivor reply after the fresh removal');
+    expect(decryptAll((await relay.receiveMessages(conversationId, final.sequence)).entries, hostConversation()).map(row => row.text))
+      .toContain('survivor reply after fresh removal');
+    expect(replayTs((await relay.receiveMessages(conversationId, tsCursor)).entries)).toContain('survivor reply after fresh removal');
+    expect(tsSession.removed).toBe(false);
+    expect(checkpoint().releasedOperations).toHaveLength(1);
+    expect(checkpoint().releasedOperations[0].controls).toEqual(staged.controls);
+    for (const row of (await relay.receiveMessages(conversationId, final.sequence)).entries) expect(() => decryptMessage(deserializeEnvelope(row.envelope), priorKeys)).toThrow();
   }, TIMEOUT);
 
 });

@@ -15,7 +15,7 @@ import {
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
   assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
   prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent, MAX_GROUP_WELCOME_BYTES, GROUP_WELCOME_TTL,
-  createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical, marshalCanonical, openSecret,
+  createGroupSession, createMessage, decryptMessage, keyIDFromPublicKey, unmarshalCanonical, marshalCanonical, openSecret,
   type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupAdmissionRenewal, type GroupWelcome, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { readBoundedFile, writePrivateJSON } from './storage.js';
@@ -86,6 +86,19 @@ const controlReceiptSchema = z.object({
   epoch: z.number().int().min(0).max(0xffffffff), sequence: seq.min(1), valid: z.boolean(),
 }).strict();
 export type GroupControlReceipt = z.infer<typeof controlReceiptSchema>;
+/** Uncertain removal evidence whose local retry ownership was explicitly
+ * released: exact ciphertext, counters, target pin, origin and superseded
+ * history with the reason and time. Never an expected root, never a claim. */
+export const RELEASE_REASONS = ['expired', 'superseded', 'wrong_branch', 'target_absent', 'inapplicable', 'incarnation_changed', 'legacy_same_epoch_admission'] as const;
+export type ReleaseReason = typeof RELEASE_REASONS[number];
+const releasedOperationSchema = z.object({
+  action: z.literal('remove'), phase: z.literal('removal_rekey').optional(), controls: z.array(z.string().max(128 * 1024)).max(2),
+  welcomes: z.array(z.string().max(128 * 1024)).max(0), sentControls: seq.max(2), sentWelcomes: seq.max(0),
+  target: removalTargetSchema.optional(), origin: originalRemovalSchema.optional(),
+  superseded: z.array(evidenceSchema).max(MAX_OPERATION_REVISIONS).optional(), delivery: z.literal('unknown'),
+  releasedReason: z.enum(RELEASE_REASONS), releasedAt: seq,
+}).strict();
+export type ReleasedOperation = z.infer<typeof releasedOperationSchema>;
 const schema = z.object({
   version: z.literal(1), seed: z.string().regex(/^[0-9a-f]{64}$/), revision: seq,
   cursor: seq, bootstrap: seq, session: z.unknown().nullable(),
@@ -93,10 +106,12 @@ const schema = z.object({
   receipts: z.array(seq.min(1)).max(8192), operation: operationSchema.nullable(), removedSequence: seq,
   dispatchGeneration: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   controlReceipts: z.array(controlReceiptSchema).max(2).optional(),
+  releasedOperations: z.array(releasedOperationSchema).max(MAX_OPERATION_REVISIONS).optional(),
 }).strict();
 export type GroupRow = z.infer<typeof rowSchema>;
-export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox' | 'dispatchGeneration' | 'controlReceipts'> {
+export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox' | 'dispatchGeneration' | 'controlReceipts' | 'releasedOperations'> {
   session: GroupSessionState | null; outbox: QntmInbound[]; dispatchGeneration: string; controlReceipts: GroupControlReceipt[];
+  releasedOperations: ReleasedOperation[];
 }
 /** Pending host jobs are rechecked immediately before entering the agent. */
 export function groupDispatchDisposition(state: GroupCheckpoint, inbound: QntmInbound): 'dispatch' | 'defer' | 'discard' {
@@ -144,7 +159,7 @@ export class QntmGroupStore {
       const cursor = this.binding.groupSeed?.cursor ?? 0;
       seq.parse(cursor);
       return { version: 1, seed: this.seed, revision: 0, cursor, bootstrap: cursor, session,
-        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0, dispatchGeneration: dispatchGeneration(), controlReceipts: [] };
+        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0, dispatchGeneration: dispatchGeneration(), controlReceipts: [], releasedOperations: [] };
     }
     const parsed = schema.parse(JSON.parse(raw.toString('utf8')));
     requireValue(parsed.seed === this.seed, 'Group checkpoint identity or initial configuration changed; preserve and inspect its private file');
@@ -153,8 +168,9 @@ export class QntmGroupStore {
     const outbox = parsed.outbox.map(validateInbound);
     requireValue(outbox.every(item => item.conversationId === this.binding.conversationId), 'Group dispatch conversation mismatch');
     if (parsed.operation) { restoreGroupSession(this.account.identity!, parsed.operation.expected); this.checkEvidence(parsed.operation); }
-    const state = { ...parsed, session, outbox, dispatchGeneration: parsed.dispatchGeneration ?? dispatchGeneration(), controlReceipts: parsed.controlReceipts ?? [] };
-    this.checkReceipts(state);
+    const state = { ...parsed, session, outbox, dispatchGeneration: parsed.dispatchGeneration ?? dispatchGeneration(), controlReceipts: parsed.controlReceipts ?? [],
+      releasedOperations: parsed.releasedOperations ?? [] };
+    this.checkReceipts(state); QntmGroupStore.checkArchive(state.releasedOperations);
     return state;
   }
   save(state: GroupCheckpoint): void {
@@ -163,9 +179,14 @@ export class QntmGroupStore {
     const next = { ...state, revision: state.revision + 1 };
     schema.parse(next);
     if (next.operation) this.checkEvidence(next.operation);
-    this.checkReceipts(next);
+    this.checkReceipts(next); QntmGroupStore.checkArchive(next.releasedOperations);
     writePrivateJSON(this.filename, next, 16 * 1024 * 1024);
     state.revision = next.revision;
+  }
+  /** The release archive shares the existing flat evidence bounds. */
+  private static checkArchive(archive: ReleasedOperation[]): void {
+    requireValue(archive.length <= MAX_OPERATION_REVISIONS && marshalCanonical(archive).length <= MAX_OPERATION_EVIDENCE_BYTES,
+      'Saved release archive reached its limit; preserve the operation');
   }
   /** Every receipt must name one exact pending control of this conversation at
    * a verified relay sequence. Anything else fails closed. */
@@ -254,6 +275,7 @@ export class QntmGroupStore {
         acceptedControls: state.operation.controls.filter(wire => this.controlAccepted(state, wire)).length },
       members: state.session ? group(state.session).snapshot().founding_members.map(member => ({ keyId: toHex(member.key_id), publicKey: base64UrlEncode(member.public_key) })) : [],
       contacts: Object.entries(this.account.config.contacts ?? {}).map(([name, key]) => ({ name, publicKey: base64UrlEncode(decodeContactKey(key)) })),
+      releasedOperations: state.releasedOperations.length,
       groupLink: this.link(), permittedActions: this.binding.groupActions ?? [] };
   }
   /** Caller owns the writer lock. All rows, including unreadable ones, count toward coverage. */
@@ -694,6 +716,56 @@ export class QntmGroupStore {
     catch { /* Review a replacement rotation for the current roster. */ }
     const next = this.rotationJournal(session, { ...operation, superseded: this.retainSuperseded(operation) });
     this.checkEvidence(next); return next;
+  }
+  /** Classify why the saved removal can no longer be retried exactly. Throws
+   * when its bytes still apply at this epoch to their pinned incarnation,
+   * whatever journal kind holds them. Nothing here infers acceptance. */
+  private staleRemovalReason(session: GroupSessionState, intent: { controls: string[]; target?: GroupRemovalTarget }): ReleaseReason {
+    const identity = this.account.identity!, outer = envelope(intent.controls[0]);
+    if (session.epoch !== outer.conv_epoch) return 'superseded';
+    if (outer.expiry_ts < Math.floor(Date.now() / 1000)) return 'expired';
+    try { decryptMessage(outer, groupSessionConversation(session)); } catch { return 'wrong_branch'; }
+    let event: ReturnType<typeof receiveGroupEvent>;
+    try { event = receiveGroupEvent(identity, outer, session); }
+    catch (error) { return error instanceof Error && error.message.includes('removed member') ? 'target_absent' : 'inapplicable'; }
+    requireValue(!event.duplicate && event.message.inner.body_type === 'group_remove', 'Saved removal does not match its pending journal; use retry');
+    try { this.assertRemovalTargetCurrent(session, intent, QntmGroupStore.removedMembers(event.message)); }
+    catch (error) { return error instanceof Error && error.message.includes('later admission') ? 'legacy_same_epoch_admission' : 'incarnation_changed'; }
+    throw new Error('Saved removal is still exact-retryable; use retry');
+  }
+  private releasedRow(operation: GroupOperation, reason: ReleaseReason): ReleasedOperation {
+    const { id: _id, expected: _expected, contact: _contact, publicKey: _publicKey, text: _text, welcomePurpose: _purpose, recoveryChallenge: _challenge, ...rest } = operation;
+    return releasedOperationSchema.parse({ ...rest, action: 'remove', delivery: 'unknown', releasedReason: reason, releasedAt: Math.floor(Date.now() / 1000) });
+  }
+  /** Plan only: an explicitly local release of a stale, unproven removal. The
+   * uncertain ciphertext, pin and prior evidence would move to the bounded
+   * private archive with the reason; nothing is posted, accepted or revoked. */
+  prepareRelease(): { operation: GroupOperation; reason: ReleaseReason; archive: ReleasedOperation[] } {
+    const state = this.load(), operation = state.operation;
+    requireValue(operation, 'No saved group operation to release');
+    requireValue(operation.action === 'remove', 'Pending operation is not an unproven removal; use retry');
+    requireValue(state.session, 'Missing group checkpoint');
+    requireValue(!state.session.recovery, 'Group history is incomplete; open a fresh welcome from a current member before releasing');
+    const { intent, wire } = this.removalIntent(operation);
+    requireValue(!this.controlAccepted(state, wire), 'Removal is verified in current history; use retry');
+    const reason = this.staleRemovalReason(state.session, intent);
+    const archive = [...state.releasedOperations, this.releasedRow(operation, reason)];
+    // Never drop retained uncertain evidence to make room: refuse instead.
+    QntmGroupStore.checkArchive(archive);
+    return { operation, reason, archive };
+  }
+  /** Caller owns the writer lock after full replay and has matched the review
+   * fingerprint. Rechecks every eligibility predicate, then archives and clears
+   * the journal atomically. Membership, rotation, removal and recovery state
+   * are untouched and no message is posted. */
+  release(reviewed: GroupOperation, reason: ReleaseReason): { reason: ReleaseReason; releasedOperations: number } {
+    const state = this.load();
+    requireValue(state.operation && digest(state.operation) === digest(reviewed), 'Pending operation changed before release; prepare a new review');
+    const plan = this.prepareRelease();
+    requireValue(plan.reason === reason, 'Release reason changed after review; prepare a new review');
+    state.releasedOperations = plan.archive; state.operation = null; state.controlReceipts = [];
+    this.save(state);
+    return { reason, releasedOperations: state.releasedOperations.length };
   }
   /** Plan only: every replacement needs a fresh concrete tool review before
    * journal writes or POST. Unknown valid delivery remains byte-for-byte exact. */

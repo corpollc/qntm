@@ -146,6 +146,278 @@ async function helperJoined(f: ReturnType<typeof fixture>, owner: QntmGroupStore
   const late = f.store(f.late, undefined, owner.link()); await late.exclusive(() => late.open()); return late;
 }
 const members = (store: QntmGroupStore) => groupSessionConversation(store.load().session!).participants.map(toHex);
+/** An unposted production removal journal with short signed lifetimes (crash before any POST). */
+async function unpostedRemoval(f: ReturnType<typeof fixture>, store: QntmGroupStore, contact: string, ttl = 1) {
+  await store.exclusive(() => store.sync());
+  const state = store.load(), identity = store.account.identity!, operation = store.prepare('remove', { contact });
+  const kid = keyIDFromPublicKey(base64UrlDecode(operation.publicKey!));
+  const removal = createGroupControlMessage(identity, groupSessionConversation(state.session!), 'group_remove', createGroupRemoveBody([kid]), ttl);
+  const removed = receiveGroupEvent(identity, removal, state.session!).state, rotation = prepareGroupSessionRekey(identity, removed, ttl).rekey;
+  operation.controls = [removal, rotation].map(value => base64UrlEncode(serializeEnvelope(value)));
+  operation.expected = receiveGroupEvent(identity, rotation, removed).state;
+  store.saveOperation(operation); return store.load().operation!;
+}
+async function releaseThroughTool(store: QntmGroupStore, key: string) {
+  const service = new QntmGroupActions(), scope = { key, store };
+  const review = await service.execute(scope, { operation: 'prepare', action: 'release_unproven' }) as any;
+  const result = await service.execute(scope, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash }) as any;
+  return { review, result };
+}
+describe('OpenClaw explicit release of stale unproven removals', () => {
+  it.each(['pinned', 'legacy'] as const)('releases an expired unposted removal into the archive without posting and restores sending (%s journal)', async journal => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner);
+    let original = await unpostedRemoval(f, owner, 'Member');
+    if (journal === 'legacy') { const state = owner.load(); delete state.operation!.target; owner.save(state); original = owner.load().operation!; }
+    expireControl(original.controls[0]);
+    const count = f.rows.length;
+    expect(() => owner.prepareRetry()).toThrow('expired before its acceptance was verified');
+    const beforePlan = owner.load();
+    const planned = owner.prepareRelease();
+    expect(planned.reason).toBe('expired');
+    expect(owner.load().operation).toEqual(beforePlan.operation);
+    expect(owner.load().releasedOperations).toEqual([]);
+    const { review, result } = await releaseThroughTool(owner, 'release-expired');
+    expect(review.review.action).toBe('release_unproven'); expect(review.review.releaseReason).toBe('expired');
+    expect(review.review.effect).toContain('No message will be posted'); expect(review.review.effect).not.toMatch(/cancel/i);
+    expect(review.review.target).toEqual(journal === 'pinned' ? { keyId: toHex(f.member.keyID), publicKey: base64UrlEncode(f.member.publicKey), admissionSourceEpoch: null, stillMember: true } : null);
+    expect(review.review.evidence).toMatchObject({ controls: 2, sentControls: 0, welcomes: 0, originControls: 0, retainedRevisions: 0, archivedOperations: 0, archivedAfterRelease: 1 });
+    expect(review.review.currentStatus).toMatchObject({ status: 'ready', needsRekey: false, removed: false, members: 3 });
+    expect(result.status).toBe('released'); expect(result.reason).toBe('expired'); expect(result.releasedOperations).toBe(1); expect(result.pendingOperation).toBeNull();
+    expect(f.rows).toHaveLength(count);
+    const after = owner.load();
+    expect(after.operation).toBeNull(); expect(after.controlReceipts).toEqual([]);
+    expect(after.releasedOperations).toEqual([{ action: 'remove', controls: original.controls, welcomes: [], sentControls: 0, sentWelcomes: 0,
+      ...(journal === 'pinned' ? { target: original.target } : {}), delivery: 'unknown', releasedReason: 'expired', releasedAt: after.releasedOperations[0].releasedAt }]);
+    expect(JSON.stringify(after.releasedOperations)).not.toContain('"expected"');
+    expect(members(owner)).toContain(toHex(f.member.keyID)); expect(after.session!.needsRekey).toBe(false);
+    // Nothing was excluded: the target still reads and replies on the same keys.
+    await owner.send('after release');
+    const member = f.store(f.member); await member.exclusive(() => member.sync()); expect(member.load().outbox.at(-1)!.text).toBe('after release');
+    await member.send('member still present'); await owner.exclusive(() => owner.sync()); expect(owner.load().outbox.at(-1)!.text).toBe('member still present');
+    // A later explicit removal is a fresh current-epoch decision with its own pin.
+    await run(owner, 'remove', { contact: 'Member' });
+    await member.exclusive(() => member.sync()); expect(member.load().session!.removed).toBe(true);
+    expect(owner.load().releasedOperations).toEqual(after.releasedOperations);
+    await late.exclusive(() => late.sync()); expect(late.load().session!.root).toBe(owner.load().session!.root);
+  });
+  it('refuses to release a verified removal and leaves plain retry in charge', async () => {
+    const f = fixture(), owner = f.store(f.owner), original = await stagedRemoval(f, owner, 'Member');
+    expireControl(original.controls[1]);
+    const count = f.rows.length;
+    expect(() => owner.prepareRelease()).toThrow('verified in current history; use retry');
+    await expect(releaseThroughTool(owner, 'release-verified')).rejects.toThrow('verified in current history');
+    expect(f.rows).toHaveLength(count); expect(owner.load().operation).toEqual(original); expect(owner.load().releasedOperations).toEqual([]);
+    owner.saveRetry(owner.prepareRetry()); await owner.exclusive(() => owner.resume()); expect(owner.load().operation).toBeNull();
+  });
+  it('refuses to release a removal whose exact bytes still apply, whatever journal shape carries them', async () => {
+    const f = fixture(), owner = f.store(f.owner), original = await unpostedRemoval(f, owner, 'Member', 3600);
+    const count = f.rows.length;
+    expect(() => owner.prepareRelease()).toThrow('still exact-retryable; use retry');
+    // The same still-applying unproven bytes carried as a repair origin are refused too, with no acceptance claim.
+    const state = owner.load();
+    state.operation = { ...original, phase: 'removal_rekey', controls: [original.controls[1]], target: undefined,
+      origin: { kind: 'remove', controls: original.controls, welcomes: [], sentControls: 0, sentWelcomes: 0, target: original.target, delivery: 'unknown' } };
+    owner.save(state);
+    expect(() => owner.prepareRelease()).toThrow('still exact-retryable; use retry');
+    expect(f.rows).toHaveLength(count); expect(owner.load().releasedOperations).toEqual([]);
+    const restored = owner.load(); restored.operation = original; owner.save(restored);
+    owner.saveRetry(owner.prepareRetry()); await owner.exclusive(() => owner.resume());
+    expect(f.rows.slice(count).map(row => base64UrlEncode(row.envelope))).toEqual(original.controls); expect(owner.load().operation).toBeNull();
+  });
+  it.each(['add', 'rekey', 'refresh', 'send'] as const)('refuses to release a pending %s journal', async action => {
+    const f = fixture(), owner = f.store(f.owner);
+    dropPostAt(f, 1);
+    await expect(action === 'send' ? owner.send('pending text') : run(owner, action, action === 'add' ? { contact: 'Late' } : action === 'refresh' ? { contact: 'Member' } : {})).rejects.toThrow('ambiguous POST');
+    const pending = owner.load().operation!, count = f.rows.length;
+    expect(() => owner.prepareRelease()).toThrow('not an unproven removal; use retry');
+    await expect(releaseThroughTool(owner, `release-${action}`)).rejects.toThrow('not an unproven removal');
+    expect(f.rows).toHaveLength(count); expect(owner.load().operation).toEqual(pending);
+  });
+  it('refuses without a pending journal or behind an incomplete-history barrier', async () => {
+    const f = fixture(), owner = f.store(f.owner);
+    expect(() => owner.prepareRelease()).toThrow('No saved group operation to release');
+    const original = await unpostedRemoval(f, owner, 'Member'); expireControl(original.controls[0]);
+    const state = owner.load(); state.session!.recovery = { afterSequence: Math.max(1, state.cursor), reason: 'missing_history', challenge: '47'.repeat(32) }; owner.save(state);
+    expect(() => owner.prepareRelease()).toThrow('incomplete');
+    await expect(releaseThroughTool(owner, 'release-recovery')).rejects.toThrow();
+    expect(owner.load().operation).toEqual(original); expect(owner.load().releasedOperations).toEqual([]);
+  });
+  it.each(['superseded', 'wrong_branch'] as const)('releases a %s removal without excluding anyone', async stale => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), original = await unpostedRemoval(f, owner, 'Member', 3600);
+    await late.exclusive(() => late.sync());
+    if (stale === 'superseded') { await run(late, 'rekey'); await owner.exclusive(() => owner.sync()); }
+    else {
+      // A lower-ID competing child of the previous epoch installs a different root at
+      // the removal's epoch. Native receive() also pauses for missing descendant
+      // history on that rewind, so the production reducer is applied here the way
+      // Python's receive_batch does (no extra recovery barrier) and nothing is
+      // posted. Decrypt of the original same-epoch removal then fails.
+      const current = owner.load(), session = current.session!, frame = session.rekeys.at(-1)!;
+      expect(frame).toBeTruthy();
+      const branch = { ...session, epoch: frame.epoch, root: frame.root, snapshot: frame.snapshot,
+        rekeys: [] as typeof session.rekeys, seen: {}, admissions: structuredClone(frame.admissions), needsRekey: true, recovery: null };
+      let competitor; do { competitor = prepareGroupSessionRekey(f.owner, branch); } while (toHex(competitor.rekey.msg_id) >= frame.messageId);
+      const applied = receiveGroupEvent(f.owner, competitor.rekey, session).state;
+      expect(applied.epoch).toBe(session.epoch); expect(applied.root).not.toBe(session.root); expect(applied.recovery).toBeNull();
+      current.session = applied; owner.save(current);
+    }
+    const count = f.rows.length, before = owner.load();
+    const { review, result } = await releaseThroughTool(owner, `release-${stale}`);
+    expect(review.review.releaseReason).toBe(stale);
+    expect(result.status).toBe('released'); expect(f.rows).toHaveLength(count);
+    expect(owner.load().operation).toBeNull(); expect(owner.load().releasedOperations).toHaveLength(1);
+    expect(members(owner)).toContain(toHex(f.member.keyID)); expect(owner.load().session!.epoch).toBe(before.session!.epoch);
+  });
+  it.each(['pinned', 'legacy'] as const)('releases after a same-epoch readmission changed the target and never re-removes it (%s journal)', async journal => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner);
+    let original = await unpostedRemoval(f, owner, 'Member', 3600);
+    if (journal === 'legacy') { const state = owner.load(); delete state.operation!.target; owner.save(state); original = owner.load().operation!; }
+    await late.exclusive(() => late.sync()); const lateState = late.load().session!;
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createGroupControlMessage(f.late, groupSessionConversation(lateState), 'group_remove', createGroupRemoveBody([f.member.keyID]))));
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createGroupControlMessage(f.late, groupSessionConversation(lateState), 'group_add', createGroupAddBody(f.late, [f.member.publicKey]))));
+    await owner.exclusive(() => owner.sync()); expect(members(owner)).toContain(toHex(f.member.keyID));
+    const count = f.rows.length;
+    expect(() => owner.prepareRetry()).toThrow(journal === 'legacy' ? 'later admission' : 'original admission');
+    const { review, result } = await releaseThroughTool(owner, `release-readmitted-${journal}`);
+    expect(review.review.releaseReason).toBe(journal === 'legacy' ? 'legacy_same_epoch_admission' : 'incarnation_changed');
+    expect(result.status).toBe('released'); expect(f.rows).toHaveLength(count);
+    expect(owner.load().operation).toBeNull(); expect(members(owner)).toContain(toHex(f.member.keyID)); expect(owner.load().session!.needsRekey).toBe(true);
+    expect(owner.load().releasedOperations[0]).toMatchObject({ controls: original.controls, releasedReason: journal === 'legacy' ? 'legacy_same_epoch_admission' : 'incarnation_changed' });
+  });
+  it('releases when the target is already absent without claiming anything', async () => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), original = await unpostedRemoval(f, owner, 'Member', 3600);
+    await late.exclusive(() => late.sync()); const lateState = late.load().session!;
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createGroupControlMessage(f.late, groupSessionConversation(lateState), 'group_remove', createGroupRemoveBody([f.member.keyID]))));
+    await owner.exclusive(() => owner.sync()); expect(members(owner)).not.toContain(toHex(f.member.keyID)); expect(owner.load().session!.needsRekey).toBe(true);
+    expect(owner.controlAccepted(owner.load(), original.controls[0])).toBe(false);
+    const count = f.rows.length, { review, result } = await releaseThroughTool(owner, 'release-absent');
+    expect(review.review.releaseReason).toBe('target_absent'); expect(review.review.target.stillMember).toBe(false);
+    expect(result.status).toBe('released'); expect(f.rows).toHaveLength(count);
+    expect(owner.controlAccepted(owner.load(), original.controls[0])).toBe(false); expect(owner.load().session!.needsRekey).toBe(true);
+    expect(owner.load().releasedOperations[0].controls).toEqual(original.controls);
+  });
+  it('releases a removal repair whose unproven origin no longer applies on the current branch', async () => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), original = await stagedRemoval(f, owner, 'Member');
+    await late.exclusive(() => late.sync()); const lateState = late.load().session!, removeId = toHex(wireOf(original.controls[0]).msg_id);
+    expireControl(original.controls[1]);
+    const repair = owner.prepareRetry(); owner.saveRetry(repair); loseAckAt(f, 1);
+    await expect(owner.exclusive(() => owner.resume())).rejects.toThrow('ambiguous POST');
+    let competitor; do { competitor = prepareGroupSessionRekey(f.late, lateState); } while (toHex(competitor.rekey.msg_id) >= toHex(wireOf(repair.controls[0]).msg_id));
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(competitor.rekey));
+    await owner.exclusive(() => owner.sync()); const rewound = owner.load();
+    const accepted = receiveGroupEvent(f.late, competitor.rekey, lateState).state;
+    const refreshed = prepareGroupWelcomeRefresh(f.late, accepted, [f.owner.publicKey], undefined, new Uint8Array(Buffer.from(rewound.session!.recovery!.challenge, 'hex')), f.rows.at(-1)!.seq);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
+    await owner.exclusive(() => owner.open(late.link()));
+    expect(owner.controlAccepted(owner.load(), original.controls[0])).toBe(false); expect(() => owner.prepareRetry()).toThrow('no longer verified in current history');
+    const count = f.rows.length, { review, result } = await releaseThroughTool(owner, 'release-repair');
+    expect(review.review.releaseReason).toBe('superseded'); expect(review.review.savedOperation.recovery).toBe('removal_rekey');
+    expect(review.review.evidence).toMatchObject({ controls: 1, originControls: 2 });
+    expect(result.status).toBe('released'); expect(f.rows).toHaveLength(count);
+    expect(owner.load().operation).toBeNull(); expect(owner.load().controlReceipts).toEqual([]);
+    expect(owner.load().releasedOperations[0]).toMatchObject({ phase: 'removal_rekey', controls: repair.controls, origin: repair.origin, releasedReason: 'superseded' });
+    expect(owner.load().releasedOperations[0].origin!.controls[0]).toBe(original.controls[0]); void removeId;
+  });
+  it.each(['removed', 'needsRekey'] as const)('keeps received barriers after release (%s)', async barrier => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), member = f.store(f.member);
+    await member.exclusive(() => member.sync());
+    const original = await unpostedRemoval(f, member, 'Late', 3600);
+    if (barrier === 'removed') {
+      // The creator cannot be removed. A current non-creator who holds the journal
+      // is fully excluded (remove + completing rotation) and may still release.
+      await run(owner, 'remove', { contact: 'Member' });
+      await member.exclusive(() => member.sync());
+    } else {
+      expireControl(original.controls[0]);
+      await late.exclusive(() => late.sync());
+      await f.client.postMessage(f.conversation.id, serializeEnvelope(createGroupControlMessage(f.late, groupSessionConversation(late.load().session!),
+        'group_add', createGroupAddBody(f.late, [generateIdentity().publicKey]))));
+      await member.exclusive(() => member.sync());
+    }
+    expect(member.load().session!.removed).toBe(barrier === 'removed');
+    expect(member.load().session!.needsRekey).toBe(barrier === 'needsRekey');
+    const count = f.rows.length, { result } = await releaseThroughTool(member, `release-${barrier}`);
+    expect(result.status).toBe('released'); expect(result.removed).toBe(barrier === 'removed'); expect(result.needsRekey).toBe(barrier === 'needsRekey');
+    expect(f.rows).toHaveLength(count); expect(member.load().operation).toBeNull();
+    expect(member.load().session!.removed).toBe(barrier === 'removed'); expect(member.load().session!.needsRekey).toBe(barrier === 'needsRekey');
+    expect(member.binding.groupActions).toContain('remove');
+    await expect(member.send('still blocked')).rejects.toThrow();
+    await expect(member.exclusive(async () => { member.prepare('remove', { contact: 'Late' }); })).rejects.toThrow();
+    expect(f.rows).toHaveLength(count); expect(member.load().releasedOperations[0].controls).toEqual(original.controls);
+  });
+  it('requires a new review when the journal, proof or archive changes between prepare and commit', async () => {
+    const f = fixture(), owner = f.store(f.owner), original = await unpostedRemoval(f, owner, 'Member');
+    expireControl(original.controls[0]);
+    const service = new QntmGroupActions(), scope = { key: 'release-race', store: owner };
+    const review = await service.execute(scope, { operation: 'prepare', action: 'release_unproven' }) as any;
+    const state = owner.load(); state.operation!.sentControls = 1; owner.save(state);
+    const count = f.rows.length;
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash })).rejects.toThrow('configuration changed');
+    expect(f.rows).toHaveLength(count); expect(owner.load().operation).not.toBeNull(); expect(owner.load().releasedOperations).toEqual([]);
+    // Direct release also rejects a journal that no longer matches the reviewed one.
+    expect(() => owner.release(original, 'expired')).toThrow('changed before release');
+    expect(() => owner.release(owner.load().operation!, 'superseded')).toThrow('reason changed');
+    expect(owner.load().operation).not.toBeNull();
+  });
+  it.each(['revisions', 'bytes', 'malformed'] as const)('refuses unchanged when the archive cannot retain the evidence (%s)', async bound => {
+    const f = fixture(), owner = f.store(f.owner), original = await unpostedRemoval(f, owner, 'Member');
+    expireControl(original.controls[0]);
+    const disk = JSON.parse(readFileSync(owner.filename, 'utf8'));
+    const row = { action: 'remove', controls: [], welcomes: [], sentControls: 0, sentWelcomes: 0, delivery: 'unknown', releasedReason: 'expired', releasedAt: 1 };
+    if (bound === 'revisions') disk.releasedOperations = Array.from({ length: 256 }, () => row);
+    else if (bound === 'bytes') disk.releasedOperations = Array.from({ length: 40 }, () => ({ ...row, controls: ['A'.repeat(128 * 1024)] }));
+    else disk.releasedOperations = [{ ...row, expected: {} }];
+    writeFileSync(owner.filename, JSON.stringify(disk));
+    const count = f.rows.length;
+    if (bound === 'malformed') { expect(() => owner.load()).toThrow(); await expect(releaseThroughTool(owner, 'release-malformed')).rejects.toThrow(); }
+    else if (bound === 'bytes') { expect(() => owner.load()).toThrow('archive reached its limit'); }
+    else {
+      expect(() => owner.prepareRelease()).toThrow('archive reached its limit');
+      await expect(releaseThroughTool(owner, 'release-full')).rejects.toThrow('archive reached its limit');
+      expect(owner.load().operation).toEqual(original); expect(owner.load().releasedOperations).toHaveLength(256);
+    }
+    expect(f.rows).toHaveLength(count); expect(JSON.parse(readFileSync(owner.filename, 'utf8')).operation).toEqual(original);
+  });
+  it('preserves the archive across receive, restart and a challenged welcome replacement', async () => {
+    const f = fixture(), owner = f.store(f.owner), late = await helperJoined(f, owner), original = await unpostedRemoval(f, owner, 'Member');
+    expireControl(original.controls[0]);
+    const { result } = await releaseThroughTool(owner, 'release-persist'); expect(result.status).toBe('released');
+    const archive = owner.load().releasedOperations;
+    await late.send('later traffic'); await owner.exclusive(() => owner.sync());
+    const restarted = f.store(f.owner); expect(restarted.load().releasedOperations).toEqual(archive);
+    await late.send('missed retained row'); f.rows.splice(f.rows.length - 1, 1);
+    await restarted.exclusive(() => restarted.sync()); const paused = restarted.load(); expect(paused.session!.recovery).not.toBeNull();
+    expect(paused.releasedOperations).toEqual(archive);
+    // A current member posts a fresh challenged welcome; open installs it from
+    // that new row so the earlier gap is behind the welcome's replay cursor.
+    await run(late, 'refresh', { contact: 'Owner', challenge: paused.session!.recovery!.challenge });
+    await restarted.exclusive(() => restarted.open(late.link()));
+    expect(restarted.load().session!.recovery).toBeNull(); expect(restarted.load().releasedOperations).toEqual(archive);
+    expect(restarted.status().releasedOperations).toBe(1);
+  });
+  it('handles a late authenticated arrival of released expired ciphertext through ordinary receive', async () => {
+    const f = fixture(), owner = f.store(f.owner), original = await unpostedRemoval(f, owner, 'Member');
+    expireControl(original.controls[0]);
+    await releaseThroughTool(owner, 'release-late');
+    await f.client.postMessage(f.conversation.id, base64UrlDecode(original.controls[0]));
+    await owner.exclusive(() => owner.sync());
+    expect(owner.load().session!.recovery?.reason).toBe('expired_control'); expect(owner.load().releasedOperations).toHaveLength(1);
+    expect(members(owner)).toContain(toHex(f.member.keyID));
+  });
+  it('permits release exactly by the original remove action and never by an unknown or missing action', async () => {
+    const f = fixture(), owner = f.store(f.owner), original = await unpostedRemoval(f, owner, 'Member');
+    expireControl(original.controls[0]);
+    const service = new QntmGroupActions(), permitted = owner.binding.groupActions!;
+    owner.binding.groupActions = permitted.filter(action => action !== 'remove');
+    await expect(service.execute({ key: 'release-denied', store: owner }, { operation: 'prepare', action: 'release_unproven' })).rejects.toThrow('not permitted');
+    owner.binding.groupActions = permitted;
+    const review = await service.execute({ key: 'release-revoked', store: owner }, { operation: 'prepare', action: 'release_unproven' }) as any;
+    owner.binding.groupActions = permitted.filter(action => action !== 'remove');
+    await expect(service.execute({ key: 'release-revoked', store: owner }, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash })).rejects.toThrow('no longer locally permitted');
+    await expect(service.execute({ key: 'release-unknown', store: owner }, { operation: 'prepare', action: 'release' })).rejects.toThrow();
+    expect(owner.load().operation).toEqual(original); expect(owner.load().releasedOperations).toEqual([]);
+  });
+});
 describe('OpenClaw removal and rotation recovery', () => {
   it.each(['sole survivor', 'helper present'] as const)('finishes an accepted removal whose rotation expired with a reviewed rotation for the current roster (%s)', async roster => {
     const f = fixture(), owner = f.store(f.owner), late = roster === 'helper present' ? await helperJoined(f, owner) : undefined;
