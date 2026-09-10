@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Relay acceptance now verifies the close() call the TypeScript client makes after a callback failure and records the close events undici reported, and a separate raw uncompressed WebSocket test verifies on the wire that the relay echoes the client's Close code and reason before closing the connection. Node's bundled undici can report 1006 for a compressed relay socket when the relay's Close echo is still queued behind asynchronous inflate as the connection ends.
+- Completed removal and rotation retries now survive replay-cache eviction in Python, the browser and OpenClaw. Private authenticated receipts let a retry finish without reposting obsolete controls or restoring old keys, including after a later valid rotation. Competing branches and replacement welcomes invalidate prior proof; older journals without retained evidence stay preserved for reconciliation.
+
+- Relay acceptance tests now distinguish Node's reported close event from the server's actual handshake. They check callback retry and independently verify that the server returns the correct close frame before ending the connection.
 
 - Browser, Python CLI/MCP, terminal and OpenClaw retry actions can replace a stale generic refresh for the same current member. They authenticate the original recipient and recovery challenge, preserve prior ciphertext within private evidence bounds, and deliver current keys without turning a generic refresh into readmission. Older single-recipient journals remain recoverable when their signed intent can be verified. Real CLI/MCP, browser and installed OpenClaw journeys cover expiry, later rotation and replies.
 

@@ -209,6 +209,19 @@ can recover their missing metadata from the authenticated box. A generic refresh
 keeps its purpose even if admission proof is now known; it cannot clear saved
 removal. OpenClaw reviews the concrete replacement before saving and posting it.
 
+Completed removal and rotation operations can finish after their exact controls
+leave the bounded replay cache, including after a later valid rotation. Python
+uses authenticated history bindings; the browser and OpenClaw keep private
+pending-control receipts with the ciphertext digest, message ID, source epoch,
+verified relay sequence and branch validity. Receive saves this proof atomically
+with the checkpoint. A competing rekey invalidates proof from the losing branch;
+a replacement welcome invalidates prior local proof. An acknowledgement, absent
+member or matching expected root is not an acceptance receipt. Retry preserves
+older journals whose acceptance can no longer be proven. Receipt-based cleanup
+posts no obsolete controls and keeps the current keys. OpenClaw exposes this as
+an `accepted_cleanup` review, subject to the existing local action permissions.
+These receipts stay in client storage and add no relay metadata or wire fields.
+
 The relay stores each accepted POST as a new sequence row. Explicit retry after
 an unknown acknowledgement can therefore store identical ciphertext twice.
 Receiver replay checks prevent duplicate message effects; this is distinct from
