@@ -198,7 +198,7 @@ fixed original intent and current repair separately. At either limit, retry pres
 the journal and sends nothing; it never silently discards uncertain delivery.
 The entire operation journal is removed after completion.
 
-Python CLI/MCP can also repair an expired completing rotation after proving the
+Browser, Python CLI/MCP, terminal and OpenClaw can also repair an expired completing rotation after proving the
 original removal through authenticated receive. New removal journals pin the
 target's full key and admission incarnation. Retry retains the original removal
 ciphertext and rotates for the current roster; it never removes a later
@@ -207,8 +207,13 @@ retry finishes without posting. Standalone rotation retries keep valid exact
 ciphertext, replace a stale current-epoch rotation when safe, or recognize that a
 later verified rotation fulfilled the intent. This last case does not claim the
 original control was delivered. An unproven expired or superseded removal stays
-preserved. Browser/OpenClaw parity and remaining unproven-removal recovery are
-tracked under `qntm-py13` and `qntm-ra0e`; broader recovery remains `qntm-qp22`.
+preserved. OpenClaw presents the concrete replacement rotation for review and
+checks that the original removal action is still locally permitted. Browser and
+OpenClaw retain the original removal receipt when saving the repair journal;
+replacing a checkpoint with a challenged welcome invalidates prior receipts and
+can leave the operation preserved until explicit local reconciliation is available.
+Remaining unproven-removal recovery is tracked under `qntm-ra0e`; broader
+recovery remains `qntm-qp22`.
 
 Saved **generic refreshes** for founding members or checkpoints without admission
 proof can also be retried after expiry or a later rotation. Maintained clients

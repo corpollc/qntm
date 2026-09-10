@@ -30,6 +30,9 @@ processes recover interrupted additions after real delivery expiry and lost rela
 acknowledgements; a TypeScript recipient opens the current welcome and replies.
 Browser and native journeys also finish an accepted rotation after cache eviction
 and a later peer rotation without reposting the old control or restoring its keys.
+CLI/MCP, browser and native journeys repair an accepted removal whose completing
+rotation expires, preserve uncertain delivery across restart, and verify that a
+removed Python peer remains excluded while surviving members exchange messages.
 An OpenClaw restart journey uses a fresh operator CLI process to enter the group's
 existing review flow while inbound messages remain deferred; it does not require
 an agent turn to have survived the restart. See the [local recovery command](../openclaw-qntm/README.md#local-recovery-entry-point).
