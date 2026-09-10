@@ -162,9 +162,21 @@ fully recorded welcome acknowledgements can complete cleanup after a crash
 without reposting old controls. All of this metadata remains in the private
 profile until the operation finishes. The relay receives only encrypted envelopes.
 
-Two narrower cases still remain blocked with their journals intact: an accepted
-add whose rotation never completed and whose saved rekey expired, and an already
-staged renewal that itself expires or is superseded again. Broader reconciliation
+If the original add was accepted but its completing rekey expired or no longer
+matches the verified current roster, retry saves a replacement rotation before
+posting it. The exact original admission must still be pending at the current
+epoch. Only existing current members receive the new wrapped keys; the contact's
+welcome is released after authenticated replay confirms a completing rotation.
+A competing member's canonical rotation can complete this phase too. An unknown
+replacement-rotation response keeps the exact wire for restart; a replay-confirmed
+completion skips that wire even after replay-cache eviction. The renewal journal
+retains both the original intent and replacement rotation ciphertext. A POST
+acknowledgement alone never installs predicted keys or fills missing control
+history.
+
+An uncompleted replacement rotation that itself expires or stops matching the
+roster remains blocked with its journal intact. The same applies to an already
+staged renewal that expires or is superseded again. Broader reconciliation
 for refresh/remove/rekey operations and other clients remains under `qntm-qp22`.
 
 `qntm group link GROUP_ID` retrieves the public locator pinned to **your**

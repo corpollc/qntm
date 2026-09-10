@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+- Python CLI/MCP `group retry` can now finish an accepted add whose original key rotation expired or no longer matches the current roster. It saves a replacement rotation, verifies the canonical completion through relay replay, then renews current-key delivery. Restart keeps uncertain ciphertext and never repeats the add. Removal and missing history block release; a replacement that itself becomes stale remains preserved for further recovery.
+
 - Python CLI/MCP `group refresh` now renews the recipient's proven current admission. A contact can recover an expired readmission welcome after later rotations without another add or access to excluded epochs. Founding members and checkpoints without admission proof retain generic refresh behavior; saved removal still requires proof of a later admission.
 
-- CLI/MCP `group retry` now reconciles a completed pending addition against its exact current admission before retrying old controls. It keeps valid welcome ciphertext unchanged, or journals a current-key renewal after expiry, later rotation or a competing completing rekey. Removal and a different readmission block the old intent. Unknown renewal acknowledgements retain exact retry bytes; recorded welcome acknowledgements finish cleanup after restart. Partial additions with expired rotation and repeatedly superseded renewals remain preserved for further recovery work.
+- CLI/MCP `group retry` now reconciles a completed pending addition against its exact current admission before retrying old controls. It keeps valid welcome ciphertext unchanged, or journals a current-key renewal after expiry, later rotation or a competing completing rekey. Removal and a different readmission block the old intent. Unknown renewal acknowledgements retain exact retry bytes; recorded welcome acknowledgements finish cleanup after restart. Repeatedly superseded renewals remain preserved for further recovery work.
 
 - Added matching TypeScript and Python APIs to renew delivery for the same accepted group admission after later rotations. Bounded private provenance survives replay-cache eviction and follows competing-rekey rollback. A saved removal requires an admission newer than that removal; generic refreshes retain their existing restriction. The new welcome carries current keys and signed provenance, with no historical roots or new join-request step. Client recovery commands for expired pending operations remain unfinished.
 

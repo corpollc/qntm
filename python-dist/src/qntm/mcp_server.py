@@ -692,8 +692,10 @@ def group_retry(conversation: str) -> dict:
 
     Valid saved ciphertext is retried exactly. A completed contact addition whose
     delivery expired or was superseded can renew current keys only for that same
-    verified admission. No new membership is granted; unfinished rotation,
-    changed admission, removal or missing history blocks renewal.
+    verified admission. An accepted add with an expired or stale completing rekey
+    can journal a replacement rotation; verified completion precedes the welcome.
+    No new membership is granted. Changed admission, removal or missing history
+    blocks recovery; a second expired replacement stays preserved.
 
     Legacy creation stays a bearer-invite group. Its result distinguishes relay
     acknowledgement from exact replay; neither confirms delivery to a peer.
