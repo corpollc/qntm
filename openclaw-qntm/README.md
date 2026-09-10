@@ -215,6 +215,13 @@ Each welcome signs the sender’s fully processed replay cursor. The recipient
 checks coverage from that anchor and replays available decryptable controls,
 including those posted before welcome delivery. An omitted intervening rekey
 therefore requires recovery instead of silently enabling stale keys.
+An unexpected envelope from an earlier epoch after that anchor also requires
+recovery: the recipient has no pre-admission key with which to rule out a competing
+rekey. Only the exact admission controls authenticated by the welcome are exempt.
+An in-flight older message or unauthenticated relay noise can therefore pause a
+newly opened group until a current member supplies a challenged refresh.
+The same check applies to later arrivals when the checkpoint has no usable source
+key, before any message in that receive batch is dispatched to the agent.
 Contact pins are local configuration; inbound text cannot add or replace one.
 Changing a pin also invalidates any outstanding action review.
 
@@ -248,7 +255,9 @@ qntm group refresh GROUP_ID Colleague --challenge RECOVERY_CHALLENGE
 A running host watches for the response on its configured public link. On restart
 it also retries that pinned welcome. The challenge is signed and encrypted inside
 the welcome, so reposting an older welcome at a newer relay sequence does not
-clear recovery. A refresh cannot undo saved removal: explicit readmission needs
+clear recovery. A matching challenged refresh can replace a competing key at the
+same epoch; queued plaintext from the abandoned branch is discarded before agent
+dispatch. A refresh cannot undo saved removal: explicit readmission needs
 a new `add` welcome. For a blocked host whose agent cannot be awakened, the local
 operator can inspect the `session.recovery` field in the private checkpoint below.
 No unsolicited guidance request or message to another party is sent automatically.
@@ -269,8 +278,11 @@ See [metadata boundaries](../docs/group-welcomes.md#metadata-and-security-bounda
 Local writers serialize with a per-group lock and revision check. Pending
 ciphertext is bounded to 256 entries/4 MiB, and pending dispatch to 64 entries.
 An ambiguous POST retains the operation; retry verifies the exact signed control
-before publishing anything else or releasing a welcome. Expired or superseded
-operations remain blocked and preserved for reconciliation. Do not delete the
+before publishing anything else or releasing a welcome. A saved authenticated
+receipt still counts after that message expires, and an already accepted text
+finishes without reposting after a later key rotation. Expired messages without
+acceptance evidence and superseded membership operations remain blocked and
+preserved for reconciliation. Do not delete the
 profile to clear a blocked operation. Full competing-branch reconciliation remains
 unfinished: this adapter instead requires a fresh challenged welcome and discards
 undispatched plaintext from the superseded state. Already queued host jobs are

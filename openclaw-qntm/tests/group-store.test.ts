@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   generateIdentity, createInvite, createConversation, deriveConversationKeys, GroupState,
-  createGroupGenesisBody, parseGroupGenesisBody, createGroupSession, base64UrlEncode, serializeEnvelope,
+  createGroupGenesisBody, parseGroupGenesisBody, createGroupSession, base64UrlEncode, base64UrlDecode, serializeEnvelope, deserializeEnvelope,
   openGroupWelcome, groupSessionFromWelcome, createMessage, groupSessionConversation, prepareGroupWelcomeRefresh,
-  receiveGroupEvent, createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey,
+  receiveGroupEvent, createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, restoreGroupSession,
   type Identity, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { QntmGroupStore, groupDispatchDisposition, type GroupTransport } from '../src/group-store.js';
@@ -73,6 +73,35 @@ describe('OpenClaw durable ordinary groups', () => {
     const opened = openGroupWelcome(f.late, f.rows[2].envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
     expect(opened.conversation.currentEpoch).toBe(1);
   });
+  it('recognizes an exact verified control after a lost ACK, expiry and restart without reposting', async () => {
+    const f = fixture(), member = f.store(f.member); f.ambiguous();
+    await expect(run(member, 'rekey')).rejects.toThrow('ambiguous POST');
+    const pending = member.load().operation!, control = deserializeEnvelope(base64UrlDecode(pending.controls[0]));
+    expect(pending.sentControls).toBe(0);
+    await member.exclusive(() => member.sync());
+    expect(member.load().session!.seen[toHex(control.msg_id)]).toBeDefined();
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((control.expiry_ts + 1) * 1000);
+    const restarted = f.store(f.member); await restarted.exclusive(() => restarted.resume());
+    expect(restarted.load().operation).toBeNull(); expect(restarted.load().session!.epoch).toBe(1);
+    expect(f.rows).toHaveLength(1); expect(f.rows[0].envelope).toEqual(base64UrlDecode(pending.controls[0]));
+  });
+  it('retains an expired control with no authenticated acceptance evidence', async () => {
+    const f = fixture(), member = f.store(f.member), pending = member.prepare('rekey', {});
+    member.saveOperation(pending);
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(pending.controls[0])).expiry_ts + 1) * 1000);
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow('Saved group operation expired');
+    expect(member.load().operation).toEqual(pending); expect(f.rows).toHaveLength(0);
+  });
+  it('completes an exact accepted text after a lost ACK and later rekey without sending a duplicate', async () => {
+    const f = fixture(), member = f.store(f.member), owner = f.store(f.owner); f.ambiguous();
+    await expect(member.send('one accepted text')).rejects.toThrow('ambiguous POST');
+    const pending = member.load().operation!;
+    await member.exclusive(() => member.sync());
+    await run(owner, 'rekey');
+    const restarted = f.store(f.member); await restarted.exclusive(() => restarted.resume());
+    expect(restarted.load().operation).toBeNull(); expect(restarted.load().session!.epoch).toBe(1);
+    expect(f.rows).toHaveLength(2); expect(f.rows[0].envelope).toEqual(base64UrlDecode(pending.controls[0]));
+  });
   it('persists missing-history recovery, rejects a replayed welcome, then accepts its challenge-bound refresh', async () => {
     const f = fixture(), member = f.store(f.member); await run(member, 'add', { contact: 'Late' });
     const late = f.store(f.late, undefined, member.link()); await late.exclusive(() => late.open());
@@ -125,7 +154,7 @@ describe('OpenClaw durable ordinary groups', () => {
     expect(groupDispatchDisposition(member.load(), queued.messageId)).toBe('defer');
     const accepted = receiveGroupEvent(f.owner, low.rekey, source).state;
     const refreshed = prepareGroupWelcomeRefresh(f.owner, accepted, [f.member.publicKey], undefined,
-      new Uint8Array(Buffer.from(member.load().session!.recovery!.challenge, 'hex')));
+      new Uint8Array(Buffer.from(member.load().session!.recovery!.challenge, 'hex')), f.rows.at(-1)!.seq);
     await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
     await member.exclusive(() => member.open(owner.link()));
     expect(member.load().session!.recovery).toBeNull();
@@ -155,6 +184,46 @@ describe('OpenClaw durable ordinary groups', () => {
     const late = f.store(f.late, undefined, member.link()); await late.exclusive(() => late.open());
     expect(late.load().session!.recovery).toMatchObject({ reason: 'missing_history', afterSequence: 3 });
     await expect(late.send('unsafe stale key send')).rejects.toThrow();
+  });
+  it.each([[false, false], [true, false], [false, true], [true, true]])('quarantines an old-source competing rekey and recovers at the same epoch (expired=%s, afterBootstrap=%s)', async (expired, afterBootstrap) => {
+    const f = fixture(), member = f.store(f.member), source = member.load().session!;
+    let operation = member.prepare('add', { contact: 'Late' });
+    while (deserializeEnvelope(base64UrlDecode(operation.controls[1])).msg_id[0] < 128) operation = member.prepare('add', { contact: 'Late' });
+    for (const wire of operation.controls) await f.client.postMessage(f.conversation.id, base64UrlDecode(wire));
+    const admitted = receiveGroupEvent(f.member, deserializeEnvelope(base64UrlDecode(operation.controls[0])), source).state;
+    let winner = prepareGroupSessionRekey(f.member, admitted, 1);
+    while (winner.rekey.msg_id[0] >= 128) winner = prepareGroupSessionRekey(f.member, admitted, 1);
+    const losingText = createMessage(f.member, groupSessionConversation(restoreGroupSession(f.member, operation.expected)), 'text', new TextEncoder().encode('must never trigger the agent'));
+    let late = f.store(f.late, undefined, member.link());
+    if (afterBootstrap) {
+      await f.client.postMessage(f.conversation.id, base64UrlDecode(operation.welcomes[0]));
+      await late.exclusive(() => late.open()); expect(late.load().session!.recovery).toBeNull();
+    }
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(losingText));
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(winner.rekey));
+    if (!afterBootstrap) await f.client.postMessage(f.conversation.id, base64UrlDecode(operation.welcomes[0]));
+    const accepted = receiveGroupEvent(f.member, winner.rekey, admitted).state;
+    if (expired) { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((winner.rekey.expiry_ts + 1) * 1000); }
+    await late.exclusive(() => afterBootstrap ? late.sync() : late.open());
+    expect(late.load().session!.epoch).toBe(1);
+    expect(late.load().session!.recovery).not.toBeNull(); expect(late.load().outbox).toEqual([]);
+    const challenge = late.load().session!.recovery!.challenge;
+    const before = f.rows.length;
+    await expect(late.send('unsafe stale key send')).rejects.toThrow(); expect(f.rows).toHaveLength(before);
+    late = f.store(f.late, undefined, member.link());
+    await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
+    expect(late.load().session!.recovery!.challenge).toBe(challenge);
+    const refresh = prepareGroupWelcomeRefresh(f.member, accepted, [f.late.publicKey], undefined,
+      new Uint8Array(Buffer.from(challenge, 'hex')), f.rows.at(-1)!.seq);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(refresh.welcomes[0]));
+    await late.exclusive(() => late.open());
+    expect(late.load().session!.epoch).toBe(1); expect(late.load().session!.root).toBe(accepted.root);
+    expect(late.load().session!.recovery).toBeNull(); expect(late.load().session!.rekeys).toEqual([]);
+    expect(late.load().outbox).toEqual([]);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createMessage(f.member, groupSessionConversation(accepted), 'text', new TextEncoder().encode('winning branch message'))));
+    await late.exclusive(() => late.sync());
+    expect(late.load().outbox.map(row => row.text)).toEqual(['winning branch message']);
+    await late.send('safe same-epoch recovery reply');
   });
   it('blocks an expired authenticated removal posted before welcome delivery', async () => {
     const f = fixture(), member = f.store(f.member), operation = member.prepare('add', { contact: 'Late' });
