@@ -633,32 +633,78 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         expect(beforePost).toEqual([pending, pending]); // A fresh process retries the same wire, without resealing.
         const replay = await transport.receiveMessages(conversation.id);
         const renewedWire = Buffer.from(pending.welcomes[0], 'base64');
+        const renewedId = hex(deserializeEnvelope(renewedWire).msg_id);
+        const attempts = proxy.sends.slice(beforeRetry);
+        // The relay is append-only: every accepted POST occupies a new sequence
+        // row, so the committed-but-unacknowledged first attempt and the exact
+        // retry are two physical rows of one ciphertext (worker/src/index.ts
+        // increments next_seq per POST). Deduplication is the receiver's job by
+        // message ID (docs/QSP-v1.0.md). Assert exactly one attempt per row, no
+        // hidden resend, no hidden relay dedup, and one logical message.
         const matches = replay.entries.filter(row => Buffer.from(row.envelope).equals(renewedWire));
-        expect(matches).toHaveLength(1); // Two exact attempts, one real relay effect.
+        expect(matches.map(row => row.seq)).toEqual(attempts.map((_, offset) => anchor + 1 + offset));
+        expect(matches).toHaveLength(2);
+        const welcomeRows = replay.entries.filter(row => row.seq > anchor && isGroupWelcomeEnvelope(deserializeEnvelope(row.envelope)));
+        expect(welcomeRows.map(row => row.seq)).toEqual(matches.map(row => row.seq));
+        expect(new Set(welcomeRows.map(row => hex(deserializeEnvelope(row.envelope).msg_id)))).toEqual(new Set([renewedId]));
         expect(replay.entries.some(row => Buffer.from(row.envelope).toString('base64') === original.welcomes[0])).toBe(false);
+        expect(replay.entries.filter(row => row.seq > anchor)).toHaveLength(matches.length); // Nothing else was posted.
         const row = matches[0];
-        expect(row.seq).toBe(anchor + 1);
         const welcome = openGroupWelcome(founder, row.envelope, locator);
         expect(welcome.purpose).toBe('refresh');
         expect(hex(welcome.recoveryChallenge!)).toBe(hex(challenge));
         expect(welcome.replayFromSequence).toBe(anchor);
         expect(welcome.admissions[hex(founder.keyID)]).toBeUndefined();
         expect(welcome.admissions).toEqual(founderState.admissions);
+        expect(Object.keys(welcome.admissions)).toEqual([issuer.key_id]);
         const fresh = checkGroupWelcomeReplay(groupSessionFromWelcome(founder, welcome, row.seq), welcome, replay.sequence, replay.entries);
         assertGroupCanSend(founder, fresh);
-        expect(fresh).toMatchObject({ root: founderState.root, epoch: founderState.epoch, rekeys: [] });
+        expect(fresh).toMatchObject({ root: founderState.root, epoch: founderState.epoch, rekeys: [], recovery: null, removed: false, needsRekey: false });
+        expect(fresh.snapshot).toBe(founderState.snapshot);
+        expect(Object.keys(fresh.admissions)).toEqual([issuer.key_id]);
         expect(JSON.stringify(fresh)).not.toContain(oldRoot);
         if (stale === 'rotated') expect(JSON.stringify(fresh)).not.toContain(previousRoot);
         expect(() => decryptMessage(oldMessage, groupSessionConversation(fresh))).toThrow();
+        // The duplicate row is the same signed box: it installs nothing new. It
+        // neither rotates keys, adds an admission, decrypts as plaintext, nor
+        // marks history missing when bootstrapping from either physical row.
+        const duplicate = matches[1];
+        const duplicateWelcome = openGroupWelcome(founder, duplicate.envelope, locator);
+        expect(duplicateWelcome.admissions).toEqual(welcome.admissions);
+        expect(hex(duplicateWelcome.conversation.keys.root)).toBe(fresh.root);
+        expect(duplicateWelcome.conversation.currentEpoch).toBe(fresh.epoch);
+        const reinstalled = checkGroupWelcomeReplay(groupSessionFromWelcome(founder, duplicateWelcome, duplicate.seq, fresh),
+          duplicateWelcome, replay.sequence, replay.entries);
+        expect(reinstalled).toEqual(fresh);
+        const fromDuplicate = checkGroupWelcomeReplay(groupSessionFromWelcome(founder, duplicateWelcome, duplicate.seq),
+          duplicateWelcome, replay.sequence, replay.entries);
+        expect(fromDuplicate).toEqual(fresh);
+        for (const welcomeRow of matches) {
+          const envelope = deserializeEnvelope(welcomeRow.envelope);
+          expect(() => decryptMessage(envelope, groupSessionConversation(fresh))).toThrow();
+          expect(checkGroupUnverifiableEpoch(fresh, envelope, welcomeRow.seq)).toEqual(fresh);
+        }
+        expect(fresh.seen).not.toHaveProperty(renewedId);
         const text = `${surface} ${stale} founder recovered reply`;
         await transport.postMessage(conversation.id, serializeEnvelope(createMessage(founder, groupSessionConversation(fresh), 'text', new TextEncoder().encode(text))));
         const received = await command('recv', id);
         expect(received.messages.filter((message: { unsafe_body?: string }) => message.unsafe_body === text)).toHaveLength(1);
+        expect(received.messages.filter((message: { message_id?: string }) => message.message_id === renewedId)).toEqual([]);
+        // The issuing Python member replays its own duplicated welcome rows without
+        // delivering them, rotating keys, or changing admission provenance.
+        const settled = readRecord(id);
+        expect(settled.group_operation).toBeUndefined();
+        expect(settled.group_session).toMatchObject({ root: founderState.root, epoch: founderState.epoch, recovery: null });
+        expect(settled.group_session.seen).not.toHaveProperty(renewedId);
+        expect(Object.keys(settled.group_session.admissions)).toEqual([issuer.key_id]);
+        expect(settled.group_session.admissions[issuer.key_id]).toEqual(founderState.admissions[issuer.key_id]);
         writeFileSync(join(artifactDir, `${surface.toLowerCase()}-${stale}-generic-refresh.json`), JSON.stringify({
           conversation: id, surface, stale, journalShape: shape,
           originalWelcome: hex(deserializeEnvelope(Buffer.from(original.welcomes[0], 'base64')).msg_id),
-          replacementWelcome: hex(deserializeEnvelope(renewedWire).msg_id),
-          replacementAttempts: 2, replacementEffects: matches.length, evidenceRecordsBeforePost: pending.superseded_operations!.length,
+          replacementWelcome: renewedId,
+          replacementAttempts: attempts.length, replacementRelayRows: matches.map(entry => entry.seq),
+          distinctReplacementCiphertexts: new Set(attempts.map(send => send.envelope_b64)).size,
+          evidenceRecordsBeforePost: pending.superseded_operations!.length,
           lostAcknowledgements: proxy.droppedAcknowledgements, blockedReplays: proxy.blockedReplays,
           purpose: welcome.purpose, currentEpoch: fresh.epoch, replayAnchor: welcome.replayFromSequence,
           replaySequences: replay.entries.map(entry => entry.seq), receivedReply: true,
