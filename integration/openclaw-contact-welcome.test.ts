@@ -8,7 +8,7 @@ import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink,
-  groupSessionFromWelcome, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
+  groupSessionFromWelcome, checkGroupReplayCoverage, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
   serializeEnvelope, restoreGroupSession, prepareGroupSessionRekey, type GroupSessionState,
 } from '@corpollc/qntm';
 const TIMEOUT = 240_000;
@@ -48,10 +48,12 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const result = await relay.receiveMessages(locator.conversationId);
     for (const row of result.entries) {
       try {
-        const welcome = openGroupWelcome(tsPeer, row.envelope, locator); tsSession = groupSessionFromWelcome(tsPeer, welcome, row.seq); tsCursor = row.seq;
+        const welcome = openGroupWelcome(tsPeer, row.envelope, locator); tsSession = groupSessionFromWelcome(tsPeer, welcome, row.seq); tsCursor = welcome.replayFromSequence;
       } catch { /* Other recipients and ordinary messages. */ }
     }
     expect(tsSession!.epoch).toBe(3); expect(tsSession!.rekeys).toEqual([]);
+    tsSession = checkGroupReplayCoverage(tsSession, tsCursor, result.sequence, result.entries.map(row => row.seq));
+    expect(tsSession.recovery).toBeNull();
     for (const row of result.entries.filter(row => row.seq > tsCursor)) {
       try { tsSession = receiveGroupEvent(tsPeer, deserializeEnvelope(row.envelope), tsSession).state; } catch {}
     }

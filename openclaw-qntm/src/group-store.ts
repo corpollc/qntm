@@ -203,14 +203,15 @@ export class QntmGroupStore {
     }
     const candidates = rows.toSorted((a, b) => b.seq - a.seq);
     for (const row of candidates) {
-      let next: GroupSessionState;
+      let next: GroupSessionState, replayFromSequence: number;
       try {
         const opened = openGroupWelcome(this.account.identity!, base64UrlDecode(row.wire), { inviterPublicKey: locator.inviterPublicKey, conversationId: locator.conversationId });
         if (state.removedSequence && opened.purpose === 'addition' && row.seq <= state.removedSequence) continue;
         next = groupSessionFromWelcome(this.account.identity!, opened, row.seq, state.session ?? undefined);
+        replayFromSequence = opened.replayFromSequence;
       } catch { continue; }
-      state.session = next; state.cursor = row.seq; state.bootstrap = row.seq; state.pending = []; state.outbox = [];
-      this.save(state); this.receive(rows, result.sequence, true); return;
+      state.session = next; state.cursor = replayFromSequence; state.bootstrap = replayFromSequence; state.pending = []; state.outbox = [];
+      this.save(state); this.receive(rows.filter(item => item.seq > replayFromSequence), result.sequence, true); return;
     }
     throw new Error('No current welcome for this identity; retain the profile and ask a current member for a challenged refresh or explicit readmission');
   }
@@ -224,8 +225,8 @@ export class QntmGroupStore {
     const challenge = options.challenge ? new Uint8Array(Buffer.from(options.challenge, 'hex')) : undefined;
     let controls: OuterEnvelope[] = [], welcomes: OuterEnvelope[] = [], expected = session;
     if (action === 'add' || action === 'refresh') {
-      const value = action === 'add' ? prepareGroupSessionAddition(identity, session, [recipient!], undefined, challenge)
-        : prepareGroupWelcomeRefresh(identity, session, [recipient!], undefined, challenge);
+      const value = action === 'add' ? prepareGroupSessionAddition(identity, session, [recipient!], undefined, challenge, state.cursor)
+        : prepareGroupWelcomeRefresh(identity, session, [recipient!], undefined, challenge, state.cursor);
       expected = createGroupSession(identity, value.conversation, value.state);
       if (action === 'add') controls = [(value as GroupAddition).addition, (value as GroupAddition).rekey];
       welcomes = value.welcomes;
@@ -248,7 +249,8 @@ export class QntmGroupStore {
     const state = this.load(); requireValue(!state.operation, 'An exact group operation is already pending');
     state.operation = operationSchema.parse(operation); this.save(state);
   }
-  async resume(): Promise<void> {
+  async resume(): Promise<number | undefined> {
+    let publishedSequence: number | undefined;
     await this.sync();
     let state = this.load(), operation = state.operation;
     requireValue(operation && state.session && !state.session.recovery && !state.session.removed, 'No retryable group operation or recovery is required');
@@ -262,7 +264,7 @@ export class QntmGroupStore {
       // Validate the exact pending control against freshly replayed state before
       // publishing it. A verified ambiguous POST needs no second publication.
       const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
-      if (!preflight.duplicate) await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
+      if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
       state = this.load(); operation = state.operation!; operation.sentControls++; this.save(state);
     }
     await this.sync(); state = this.load(); operation = state.operation!;
@@ -285,11 +287,14 @@ export class QntmGroupStore {
       state = this.load(); operation = state.operation!; operation.sentWelcomes++; state.receipts.push(receipt); this.save(state);
     }
     state = this.load(); state.operation = null; this.save(state);
+    return publishedSequence;
   }
   async send(text: string): Promise<{ messageId: string; sequence: number }> {
     return this.exclusive(async () => {
-      await this.sync(); const operation = this.prepare('send', { text }); this.saveOperation(operation); await this.resume();
-      return { messageId: toHex(envelope(operation.controls[0]).msg_id), sequence: this.load().cursor };
+      await this.sync(); const operation = this.prepare('send', { text }); this.saveOperation(operation);
+      const sequence = await this.resume();
+      requireValue(sequence !== undefined, 'Fresh send did not return a relay receipt');
+      return { messageId: toHex(envelope(operation.controls[0]).msg_id), sequence };
     });
   }
   async removeOutbox(id: string): Promise<void> {
