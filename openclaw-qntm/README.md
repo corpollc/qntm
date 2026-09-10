@@ -286,6 +286,13 @@ matches its exact ciphertext, so a crash after relay acceptance cannot leave
 agent dispatch blocked behind a completed reply. This does not automatically
 POST uncertain sends or retry membership changes. Challenged welcomes are
 checked after subscription backlog replay as well as on live arrival.
+The receiving client also accepts admission-renewal welcomes from the pinned
+contact. A renewal carries current keys and authenticated evidence of an existing
+admission; it does not add a member or rotate keys. It can recover delivery of a
+later readmission whose first welcome expired, but cannot undo a newer saved
+removal. Candidate selection prefers the highest epoch, then the newest refresh
+or renewal; its historical admission rekey ID is never treated as a fresh
+rotation. Native tools do not yet issue admission renewals.
 Expired messages without
 acceptance evidence and superseded membership operations remain blocked and
 preserved for reconciliation. Do not delete the
