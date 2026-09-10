@@ -25,10 +25,10 @@ describe('browser contact welcomes through the relay worker', () => {
   })
   it('runs real browser addition, reverse opening, replies, refresh, removal and readmission with TS and CLI peers', async () => {
     const result = await promisify(execFile)('npm', ['run', 'test:e2e', '--', 'contact-groups.spec.ts'], {
-      cwd: join(root, 'ui/aim-chat'), timeout: 180_000, maxBuffer: 4 * 1024 * 1024,
+      cwd: join(root, 'ui/aim-chat'), timeout: 240_000, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, QNTM_UI_BASE_URL: uiUrl, QNTM_BROWSER_RELAY_URL: relayUrl },
     })
-    expect(result.stdout).toContain('10 passed')
+    expect(result.stdout).toContain('11 passed')
     expect(result.stdout).toContain('1 skipped')
-  }, 190_000)
+  }, 250_000)
 })

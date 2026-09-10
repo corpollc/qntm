@@ -70,6 +70,8 @@ async function acceptedPendingRekey(alice: ReturnType<typeof profile>, bob: Retu
   return { id, source, operation: structuredClone(host(alice.id, id).operation!) }
 }
 function pressureSeen(profile: string, id: string, keep: string[]) {
+  // Synthetic cache pressure to the legal 8192 bound. The kept IDs are not
+  // deleted; a following authenticated event still has to drive eviction.
   const data = JSON.parse(rawBackup()), conv = data.conversations[profile].find((row: { id: string }) => row.id === id)
   const seen = conv.group.session.seen, next: Record<string, { digest: string; epoch: number }> = {}
   for (const mid of keep) next[mid] = seen[mid]
@@ -878,7 +880,7 @@ describe('browser contact group host', () => {
     expect(!received.duplicate && new TextDecoder().decode(received.message.inner.body)).toBe('canonical reply')
   })
 
-  it('keeps durable message validity after real replay-cache eviction and does not dispatch its replay twice', async () => {
+  it('keeps durable message validity after synthetic cache pressure plus an authenticated eviction event', async () => {
     const alice = profile('Alice'), id = await createContactGroup(alice.id, 'Replay cache')
     const original = createMessage(alice.identity, groupSessionConversation(session(alice.id, id)), 'text', new TextEncoder().encode('durable accepted message'))
     await post(id, original)
@@ -1042,7 +1044,7 @@ describe('browser contact group host', () => {
     expect(store.findConversation(alice.id, id)!.group!.session.identityKid).toBe(hex(alice.identity.keyID))
   })
 
-  it.each([false, true] as const)('retries a completed rekey after real seen eviction%s without a duplicate POST', async laterRotation => {
+  it.each([false, true] as const)('retries a completed rekey after synthetic cache pressure plus an authenticated eviction%s without a duplicate POST', async laterRotation => {
     const alice = profile('Alice'), bob = profile('Bob'), { id, operation } = await acceptedPendingRekey(alice, bob)
     const wire = operation.controls[0], mid = hex(deserializeEnvelope(base64UrlDecode(wire)).msg_id)
     await evictWithAuthenticatedTraffic(alice, bob, id, [mid])
@@ -1063,7 +1065,7 @@ describe('browser contact group host', () => {
     else expect(session(alice.id, id).root).toBe(operation.expected.root)
   }, 30_000)
 
-  it('retries a completed remove after real seen eviction without publishing obsolete controls', async () => {
+  it('retries a completed remove after synthetic cache pressure plus authenticated eviction without publishing obsolete controls', async () => {
     const alice = profile('Alice'), bob = profile('Bob'), carol = profile('Carol')
     const { id } = await admittedGroup(alice, bob, 'Remove receipts')
     pinContact(alice.id, 'Carol', hex(carol.identity.publicKey))
@@ -1163,7 +1165,7 @@ describe('browser contact group host', () => {
   })
 
   it.each(['missing', 'wrong_digest', 'wrong_epoch', 'future_sequence', 'invalidated'] as const)(
-    'does not invent delivery from %s control-receipt evidence after eviction', async evidence => {
+    'does not invent delivery from %s control-receipt evidence after synthetic cache pressure plus authenticated eviction', async evidence => {
     const alice = profile('Alice'), bob = profile('Bob'), { id, operation } = await acceptedPendingRekey(alice, bob)
     const wire = operation.controls[0], mid = hex(deserializeEnvelope(base64UrlDecode(wire)).msg_id)
     await evictWithAuthenticatedTraffic(alice, bob, id, [mid])
@@ -1195,6 +1197,8 @@ describe('browser contact group host', () => {
       (group: any) => { group.controlReceipts = [{ ...receipts[0], valid: 'yes' }] },
       (group: any) => { group.controlReceipts = [{ ...receipts[0], bodyType: 'text' }] },
       (group: any) => { group.controlReceipts = [{ ...receipts[0], epoch: -1 }] },
+      (group: any) => { group.controlReceipts = [receipts[0], { ...receipts[0] }] },
+      (group: any) => { group.controlReceipts = [{ ...receipts[0] }, { ...receipts[0], valid: false }] },
     ]
     for (const corrupt of corruptions) {
       const invalid = structuredClone(data); corrupt(invalid.conversations[alice.id][0].group)
@@ -1211,4 +1215,18 @@ describe('browser contact group host', () => {
     expect(session(alice.id, id).seen[hex(deserializeEnvelope(base64UrlDecode(wire)).msg_id)]).toBeUndefined()
     expect(controlAccepted(host(alice.id, id), wire)).toBe(false)
   }, 20_000)
+
+  it('lets later invalidation outrank an earlier valid duplicate receipt identity', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), { id, operation } = await acceptedPendingRekey(alice, bob)
+    const wire = operation.controls[0]
+    const original = host(alice.id, id).controlReceipts!.find(row => row.id === hex(deserializeEnvelope(base64UrlDecode(wire)).msg_id))!
+    expect(controlAccepted(host(alice.id, id), wire)).toBe(true)
+    store.updateConversation(alice.id, id, conv => {
+      conv.group!.controlReceipts = [{ ...original, valid: true }, { ...original, valid: false }]
+      return conv
+    })
+    expect(controlAccepted(host(alice.id, id), wire)).toBe(false)
+    const data = JSON.parse(rawBackup())
+    expect(() => validateBackup(JSON.stringify(data))).toThrow(/duplicate control receipt/i)
+  })
 })
