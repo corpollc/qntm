@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
+import { stageGroupDelivery } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -78,6 +79,10 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     const losingPlan = { id: 'losing-delayed-bootstrap-branch', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
     const losingText = createMessage(identity, groupSessionConversation(state), 'text', new TextEncoder().encode('gateway-tool-smoke:' + Buffer.from(JSON.stringify(losingPlan)).toString('base64url')));
     await relay.postMessage(delayedBootstrapWinner.conv_id, serializeEnvelope(losingText));
+    // Complete real receive and durable queue admission while the host is down,
+    // leaving the verified payload pending across its next replay/recovery.
+    const pending = await stageGroupDelivery(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, Buffer.from(losingText.msg_id).toString('hex'));
+    expect(pending.generation).toBe(checkpoint().dispatchGeneration);
     await relay.postMessage(delayedBootstrapWinner.conv_id, serializeEnvelope(delayedBootstrapWinner));
     await host.start();
     await host.waitFor(() => Boolean(checkpoint().session?.recovery), 'post-bootstrap old-source recovery before queued dispatch');
@@ -90,6 +95,7 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     expect(checkpoint().outbox).toEqual([]); expect(checkpoint().session.rekeys).toEqual([]);
     await action('after-delayed-bootstrap-recovery', 'send', { text: 'native recovered a delayed old-source winner' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native recovered a delayed old-source winner', 'safe native delayed-bootstrap reply');
+    expect((host as unknown as { provider: { outcomes: Map<string, unknown> } }).provider.outcomes.has(losingPlan.id)).toBe(false);
   }, TIMEOUT);
   afterAll(async () => {
     if (h && host) { mkdirSync(h.artifactDir, { recursive: true }); writeFileSync(join(h.artifactDir, 'openclaw-contact.log'), host.log); }

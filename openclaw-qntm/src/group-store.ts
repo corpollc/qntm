@@ -24,6 +24,7 @@ import { toHex } from './qntm.js';
 import type { ResolvedQntmAccount, ResolvedQntmBinding, QntmGroupAction } from './types.js';
 
 const seq = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const dispatchGeneration = () => randomUUID().replaceAll('-', '');
 const rowSchema = z.object({ seq: seq.min(1), wire: z.string().max(128 * 1024) }).strict();
 const operationSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{32}$/), action: z.enum(['add', 'remove', 'refresh', 'rekey', 'send']),
@@ -37,16 +38,19 @@ const schema = z.object({
   cursor: seq, bootstrap: seq, session: z.unknown().nullable(),
   pending: z.array(rowSchema).max(256), outbox: z.array(z.unknown()).max(MAX_PENDING_DISPATCHES),
   receipts: z.array(seq.min(1)).max(8192), operation: operationSchema.nullable(), removedSequence: seq,
+  dispatchGeneration: z.string().regex(/^[0-9a-f]{32}$/).optional(),
 }).strict();
 export type GroupRow = z.infer<typeof rowSchema>;
-export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox'> {
-  session: GroupSessionState | null; outbox: QntmInbound[];
+export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox' | 'dispatchGeneration'> {
+  session: GroupSessionState | null; outbox: QntmInbound[]; dispatchGeneration: string;
 }
 /** Pending host jobs are rechecked immediately before entering the agent. */
-export function groupDispatchDisposition(state: GroupCheckpoint, messageId: string): 'dispatch' | 'defer' | 'discard' {
-  if (state.session?.removed) return 'discard';
+export function groupDispatchDisposition(state: GroupCheckpoint, inbound: QntmInbound): 'dispatch' | 'defer' | 'discard' {
+  const binding = inbound.groupDispatch;
+  if (!binding || binding.generation !== state.dispatchGeneration || state.session?.removed) return 'discard';
   if (!state.session || state.session.recovery || state.session.needsRekey || state.operation) return 'defer';
-  return state.session.seen[messageId] ? 'dispatch' : 'discard';
+  const seen = state.session.seen[inbound.messageId];
+  return !seen || seen.digest === binding.digest ? 'dispatch' : 'discard';
 }
 export type GroupTransport = Pick<DropboxClient, 'receiveMessages' | 'postMessage'>;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -78,7 +82,7 @@ export class QntmGroupStore {
       const cursor = this.binding.groupSeed?.cursor ?? 0;
       seq.parse(cursor);
       return { version: 1, seed: this.seed, revision: 0, cursor, bootstrap: cursor, session,
-        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0 };
+        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0, dispatchGeneration: dispatchGeneration() };
     }
     const parsed = schema.parse(JSON.parse(raw.toString('utf8')));
     requireValue(parsed.seed === this.seed, 'Group checkpoint identity or initial configuration changed; preserve and inspect its private file');
@@ -87,7 +91,7 @@ export class QntmGroupStore {
     const outbox = parsed.outbox.map(validateInbound);
     requireValue(outbox.every(item => item.conversationId === this.binding.conversationId), 'Group dispatch conversation mismatch');
     if (parsed.operation) restoreGroupSession(this.account.identity!, parsed.operation.expected);
-    return { ...parsed, session, outbox };
+    return { ...parsed, session, outbox, dispatchGeneration: parsed.dispatchGeneration ?? dispatchGeneration() };
   }
   save(state: GroupCheckpoint): void {
     requireValue(this.load().revision === state.revision, 'Concurrent group writer; reload before retrying');
@@ -137,6 +141,7 @@ export class QntmGroupStore {
     const state = this.load(); seq.parse(head);
     requireValue(head >= state.cursor, 'Relay head moved behind saved group cursor');
     if (!state.session) return;
+    const previousRecovery = state.session.recovery?.challenge, previousRemoved = state.session.removed;
     state.session = checkGroupReplayCoverage(state.session, state.cursor, head, [...rows.map(row => row.seq), ...state.receipts.filter(value => value > state.cursor && value <= head)]);
     const pending = new Map([...state.pending, ...rows.filter(row => replayBeforeCursor || row.seq > state.cursor)].map(row => [row.seq, row]));
     // Inspect the entire batch before producing plaintext. New members cannot
@@ -179,7 +184,8 @@ export class QntmGroupStore {
             if (senderKid !== toHex(this.account.identity!.keyID) && (this.binding.trigger !== 'mention' || this.binding.triggerNames.some(name => text.toLowerCase().includes(name.toLowerCase())))) {
               const inbound = validateInbound({ conversationId: this.binding.conversationId, messageId: toHex(wire.msg_id), senderKid,
                 senderPublicKey: base64UrlEncode(message.inner.sender_ik_pk), epoch: wire.conv_epoch, createdAt: wire.created_ts * 1000,
-                bodyType: message.inner.body_type, text, gatewayVerified: false });
+                bodyType: message.inner.body_type, text, gatewayVerified: false,
+                groupDispatch: { generation: state.dispatchGeneration, digest: state.session.seen[toHex(wire.msg_id)].digest } });
               if (!state.outbox.some(item => inboundId(item) === inboundId(inbound))) state.outbox.push(inbound);
             }
           }
@@ -187,6 +193,7 @@ export class QntmGroupStore {
       }
     }
     if (state.session.recovery || state.session.removed) state.outbox = [];
+    if (state.session.recovery?.challenge !== previousRecovery || state.session.removed !== previousRemoved) state.dispatchGeneration = dispatchGeneration();
     state.pending = state.session.recovery ? [] : [...pending.values()];
     state.cursor = head; state.receipts = state.receipts.filter(sequence => sequence > head);
     this.save(state);
@@ -222,6 +229,7 @@ export class QntmGroupStore {
         replayFromSequence = opened.replayFromSequence;
       } catch { continue; }
       state.session = next; state.cursor = replayFromSequence; state.bootstrap = replayFromSequence; state.pending = []; state.outbox = [];
+      state.dispatchGeneration = dispatchGeneration();
       this.save(state); this.receive(rows.filter(item => item.seq > replayFromSequence), result.sequence, true); return;
     }
     throw new Error('No current welcome for this identity; retain the profile and ask a current member for a challenged refresh or explicit readmission');

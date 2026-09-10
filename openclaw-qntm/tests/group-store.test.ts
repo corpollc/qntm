@@ -11,6 +11,7 @@ import {
 } from '@corpollc/qntm';
 import { QntmGroupStore, groupDispatchDisposition, type GroupTransport } from '../src/group-store.js';
 import { QntmGroupActions } from '../src/group-tool.js';
+import * as identityGeneration from '../../client/src/identity/index.js';
 import { toHex } from '../src/qntm.js';
 import type { ResolvedQntmAccount, ResolvedQntmBinding } from '../src/types.js';
 const roots: string[] = [];
@@ -151,15 +152,49 @@ describe('OpenClaw durable ordinary groups', () => {
     await f.client.postMessage(f.conversation.id, serializeEnvelope(low.rekey));
     await member.exclusive(() => member.sync());
     expect(member.load().outbox).toEqual([]); expect(member.load().session!.recovery).not.toBeNull();
-    expect(groupDispatchDisposition(member.load(), queued.messageId)).toBe('defer');
+    expect(groupDispatchDisposition(member.load(), queued)).toBe('discard');
     const accepted = receiveGroupEvent(f.owner, low.rekey, source).state;
     const refreshed = prepareGroupWelcomeRefresh(f.owner, accepted, [f.member.publicKey], undefined,
       new Uint8Array(Buffer.from(member.load().session!.recovery!.challenge, 'hex')), f.rows.at(-1)!.seq);
     await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
     await member.exclusive(() => member.open(owner.link()));
     expect(member.load().session!.recovery).toBeNull();
-    expect(groupDispatchDisposition(member.load(), queued.messageId)).toBe('discard');
+    expect(groupDispatchDisposition(member.load(), queued)).toBe('discard');
     expect(member.load().outbox).toEqual([]);
+    // A newly authenticated ciphertext may reuse an ID pruned by the rewind.
+    // It must not grant the old queued plaintext fresh delivery authority.
+    const ids = vi.spyOn(identityGeneration, 'generateMessageID').mockReturnValueOnce(losing.msg_id);
+    const canonical = createMessage(f.owner, groupSessionConversation(accepted), 'text', new TextEncoder().encode('canonical same-ID message'));
+    ids.mockRestore();
+    expect(canonical.msg_id).toEqual(losing.msg_id);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(canonical));
+    await member.exclusive(() => member.sync());
+    const fresh = member.load().outbox[0];
+    expect(fresh.messageId).toBe(queued.messageId); expect(fresh.groupDispatch).not.toEqual(queued.groupDispatch);
+    expect(groupDispatchDisposition(member.load(), queued)).toBe('discard');
+    expect(groupDispatchDisposition(member.load(), fresh)).toBe('dispatch');
+  });
+  it('keeps a verified queued delivery eligible after dedup-cache eviction and restart', async () => {
+    const f = fixture(), member = f.store(f.member);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createMessage(f.owner, f.conversation, 'text', new TextEncoder().encode('pending slow host'))));
+    await member.exclusive(() => member.sync());
+    const queued = member.load().outbox[0], checkpoint = member.load();
+    // Model the exact bounded-cache result of unrelated later traffic without
+    // performing thousands of expensive crypto operations in this regression.
+    checkpoint.session!.seen = {};
+    member.save(checkpoint);
+    const restarted = f.store(f.member);
+    expect(groupDispatchDisposition(restarted.load(), queued)).toBe('dispatch');
+    await run(restarted, 'rekey');
+    expect(groupDispatchDisposition(restarted.load(), queued)).toBe('dispatch');
+    expect(restarted.load().dispatchGeneration).toBe(queued.groupDispatch!.generation);
+  });
+  it('quarantines legacy ordinary queued drafts without granting a new binding', async () => {
+    const f = fixture(), member = f.store(f.member);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createMessage(f.owner, f.conversation, 'text', new TextEncoder().encode('old unbound draft'))));
+    await member.exclusive(() => member.sync());
+    const queued = member.load().outbox[0]; delete queued.groupDispatch;
+    expect(groupDispatchDisposition(member.load(), queued)).toBe('discard');
   });
   it('replays a current-epoch rekey posted before a delayed welcome instead of treating the welcome sequence as authority', async () => {
     const f = fixture(), member = f.store(f.member);
