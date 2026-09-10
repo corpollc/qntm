@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildSignedReceipt, generateIdentity, base64UrlEncode, keyIDFromPublicKey, QSP1Suite } from '@corpollc/qntm';
 import { GroupState, createInvite, createConversation, deriveConversationKeys, createGroupGenesisBody,
   parseGroupGenesisBody, createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
@@ -72,6 +72,31 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   let relayProcess: ManagedProcess | null = null;
   let relayUrl = '';
   let stateDir = '';
+  let artifactDir = '';
+  let failed = false;
+  const timeline: Array<Record<string, unknown>> = [];
+
+  function captureRuntime(): void {
+    if (!artifactDir) return;
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(join(artifactDir, 'relay.stdout.log'), relayProcess?.stdout ?? '');
+    writeFileSync(join(artifactDir, 'relay.stderr.log'), relayProcess?.stderr ?? '');
+    writeFileSync(join(artifactDir, 'runtime.json'), JSON.stringify({
+      node: process.version, platform: process.platform, arch: process.arch,
+      url: relayUrl, command: relayProcess?.command, timeline,
+    }, null, 2));
+  }
+
+  beforeEach(({ task }) => {
+    timeline.push({ event: 'start', name: task.name, at: new Date().toISOString() });
+  });
+
+  afterEach(({ task }) => {
+    failed ||= task.result?.state === 'fail';
+    timeline.push({ event: 'end', name: task.name, at: new Date().toISOString(),
+      state: task.result?.state, errors: task.result?.errors?.map(error => error.message) });
+    captureRuntime();
+  });
 
   it('reconnects a native WebSocket after an application callback fails', async () => {
     const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);
@@ -124,15 +149,20 @@ describe.sequential('real relay worker subscribe acceptance', () => {
 
   beforeAll(async () => {
     stateDir = mkdtempSync(join(tmpdir(), 'qntm-relay-acceptance-'));
+    artifactDir = join(REPO_ROOT, 'integration', 'test-results', basename(stateDir));
+    mkdirSync(artifactDir, { recursive: true });
+    // Keep a stock-Wrangler control for diagnosing workers-sdk#14641. Normal
+    // acceptance uses the deploy bundle in direct workerd, with no POST retry.
+    const command = process.env.QNTM_RELAY_DEV_PROXY === '1'
+      ? [process.platform === 'win32' ? 'npx.cmd' : 'npx', 'wrangler', 'dev', '--local',
+        '--ip', '127.0.0.1', '--inspector-port', '0']
+      : [process.execPath, join(REPO_ROOT, 'integration', 'src', 'relay-worker-process.mjs')];
     relayProcess = new ManagedProcess(
       'relay-acceptance',
       [
-        process.platform === 'win32' ? 'npx.cmd' : 'npx',
-        'wrangler', 'dev', '--local',
+        ...command,
         '--name', basename(stateDir).toLowerCase(),
         '--port', '0',
-        '--ip', '127.0.0.1',
-        '--inspector-port', '0',
         '--persist-to', stateDir,
         '--var', 'RATE_LIMIT_PER_MIN:5000',
         '--var', 'ENVELOPE_TTL_SECONDS:60',
@@ -140,14 +170,27 @@ describe.sequential('real relay worker subscribe acceptance', () => {
         '--var', `MONITOR_CONVERSATION_ID:${'fe'.repeat(16)}`,
       ],
       join(REPO_ROOT, 'worker'),
-      workerTestEnv(stateDir),
+      { ...workerTestEnv(stateDir), WRANGLER_SEND_METRICS: 'false',
+        WRANGLER_LOG_PATH: join(artifactDir, 'wrangler.log') },
     );
     relayUrl = await relayProcess.waitForLocalUrl('worker', '/healthz');
   }, 60_000);
 
   afterAll(async () => {
-    if (relayProcess) await relayProcess.stop();
-    if (stateDir) rmSync(stateDir, { recursive: true, force: true });
+    let stopped = false;
+    try {
+      if (relayProcess) await relayProcess.stop();
+      stopped = true;
+    } finally {
+      captureRuntime();
+      // These are synthetic test conversations. Preserve their stopped SQLite
+      // state only on failure; never copy Wrangler's registry or credentials.
+      const runtimeState = join(stateDir, 'v3');
+      if (stopped && failed && existsSync(runtimeState)) {
+        cpSync(runtimeState, join(artifactDir, 'runtime-state'), { recursive: true });
+      }
+      if (stopped && stateDir) rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   async function publish(label: string, msgId?: string): Promise<number> {
@@ -451,6 +494,60 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(sawExcludedMessage).toBe(true);
     expect(checkpoint.removed).toBe(true);
   }, 90_000);
+
+  it('posts exactly once across the native runtime idle-connection boundary', async () => {
+    // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
+    // Waiting five seconds *after* responses would miss the stale-socket race.
+    const start = performance.now() + 150;
+    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string }> = [];
+    const conversations = Array.from({ length: 32 }, () => generateIdentity().keyID);
+    await Promise.all(conversations.map(async (cid, lane) => {
+      for (let round = 0; round < 5; round++) {
+        await delay(Math.max(0, start + round * 5_000 + lane * 3 - performance.now()));
+        const sentAtMs = performance.now() - start;
+        try {
+          const response = await fetch(`${relayUrl}/v1/send`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(5_000),
+            body: JSON.stringify({ conv_id: Buffer.from(cid).toString('hex'),
+              envelope_b64: Buffer.from(`idle-boundary-${round}`).toString('base64') }),
+          });
+          outcomes.push({ lane, round, sentAtMs, status: response.status, body: await response.text() });
+        } catch (error) {
+          // Await every lane before teardown, even if one transport fails.
+          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error) });
+        }
+      }
+    }));
+    writeFileSync(join(artifactDir, 'idle-boundary.json'), JSON.stringify(outcomes, null, 2));
+    expect(outcomes.filter(row => row.status !== 201)).toEqual([]);
+    for (const row of outcomes) expect(JSON.parse(row.body).seq).toBe(row.round + 1);
+    // Replayed bytes and sequence numbers prove that the fixture did not hide
+    // an uncertain POST by resubmitting it or inventing a successful response.
+    const relay = new DropboxClient(relayUrl);
+    for (const cid of conversations) {
+      const replay = await relay.receiveMessages(cid);
+      expect(replay.sequence).toBe(5);
+      expect(replay.entries.map(row => ({ seq: row.seq, body: Buffer.from(row.envelope).toString() })))
+        .toEqual(Array.from({ length: 5 }, (_, round) => ({ seq: round + 1, body: `idle-boundary-${round}` })));
+    }
+  }, 45_000);
+
+  it('preserves committed relay content and sequence through a process restart', async () => {
+    const cid = generateIdentity().keyID;
+    const relay = new DropboxClient(relayUrl);
+    const before = new Uint8Array([101, 102]), after = new Uint8Array([103, 104]);
+    expect(await relay.postMessage(cid, before)).toBe(1);
+    await relayProcess!.restart();
+    expect(await relayProcess!.waitForLocalUrl('worker', '/healthz')).toBe(relayUrl);
+    const recovered = await relay.receiveMessages(cid);
+    expect(recovered.sequence).toBe(1);
+    expect(recovered.messages.map(bytes => Array.from(bytes))).toEqual([[101, 102]]);
+    expect(await relay.postMessage(cid, after)).toBe(2);
+    const resumed = await relay.receiveMessages(cid, recovered.sequence);
+    expect(resumed.sequence).toBe(2);
+    expect(resumed.messages.map(bytes => Array.from(bytes))).toEqual([[103, 104]]);
+  }, 30_000);
 
   it('recovers a TypeScript member through a fresh CLI welcome after real relay retention', async () => {
     const peer = generateIdentity();
