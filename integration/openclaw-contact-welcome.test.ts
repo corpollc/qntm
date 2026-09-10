@@ -339,6 +339,7 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(reviewed[2]).toMatchObject({ status: 'rotation_verified', welcomePending: true });
     expect(reviewed[3].review!.welcomePurpose).toBe('renewal');
     expect(reviewed[3].review!.retryMode).toBe('replacement_renewal'); expect(reviewed[4].status).toBe('submitted');
+    await host.waitFor(() => !checkpoint().operation, 'partial admission retry and its turn reply finalized');
     expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).not.toBe(originalRoot!);
     const result = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0);
     const wires = result.entries.map(row => Buffer.from(row.envelope).toString('base64url'));
@@ -363,6 +364,7 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
       });
     expect(reviewed[1].review!.retryMode).toBe('replacement_refresh');
     expect(reviewed[1].review!.welcomePurpose).toBe('refresh'); expect(reviewed[1].review!.recoveryChallenge).toBe(challenge);
+    await host.waitFor(() => !checkpoint().operation, 'generic refresh retry and its turn reply finalized');
     expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).toBe(root!);
     const messages = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, anchor!);
     expect(messages.entries.some(row => Buffer.from(row.envelope).toString('base64url') === original!.welcomes[0])).toBe(false);
