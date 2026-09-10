@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createInvite, generateIdentity, inviteFromURL, inviteToToken } from '@corpollc/qntm'
+import { createGroupLink, createInvite, generateIdentity, inviteFromURL, inviteToToken } from '@corpollc/qntm'
 import { RelayStub } from './fixtures/relay-stub'
 import { gatewayResultFixture } from './fixtures/gateway-result'
 
@@ -59,6 +59,40 @@ test('normal hash routes still work and same-document invite navigation is consu
   await page.evaluate(value => { window.location.hash = value }, token)
   await expect(page.getByRole('heading', { name: 'Do you want to join this chat?' })).toBeVisible()
   await expect.poll(() => page.url().includes(token)).toBe(false)
+})
+
+for (const kind of ['contact group', 'legacy invite']) test(`startup profile refresh preserves incoming ${kind} navigation`, async ({ page }) => {
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(Promise, 'all')!
+    const original = Promise.all.bind(Promise)
+    const pending: Array<() => void> = []
+    Object.defineProperty(window, 'releaseProfileReads', { configurable: true, value: () => {
+      Object.defineProperty(Promise, 'all', descriptor)
+      for (const release of pending) release()
+    } })
+    Object.defineProperty(Promise, 'all', { configurable: true, value: (values: unknown[]) => {
+      const result = original(values), [identity, conversations, contacts] = values as Array<Record<string, unknown>>
+      if (values.length === 3 && identity && 'exists' in identity && conversations && 'conversations' in conversations && contacts && 'contacts' in contacts) {
+        Object.defineProperty(window, 'profileReadsPending', { configurable: true, value: true })
+        return new Promise((resolve, reject) => pending.push(() => { void result.then(resolve, reject) }))
+      }
+      return result
+    } })
+  })
+  await page.goto('/')
+  await page.waitForFunction(() => (window as unknown as { profileReadsPending?: boolean }).profileReadsPending)
+  const fragment = kind === 'contact group'
+    ? new URL(createGroupLink({ conversationId: new Uint8Array(16), inviterPublicKey: generateIdentity().publicKey, relayUrl: relay.url })).hash
+    : `#${inviteToToken(createInvite(generateIdentity(), 'group'))}`
+  // Resolve the old reads in the same task as incoming hash navigation, before
+  // the router's hashchange effect can consume the newly arrived invitation.
+  await page.evaluate(value => {
+    window.location.hash = value
+    ;(window as unknown as { releaseProfileReads(): void }).releaseProfileReads()
+  }, fragment)
+  await expect(page.getByRole('heading', { name: kind === 'contact group' ? 'Open your contact group?' : 'Do you want to join this chat?' })).toBeVisible()
+  await expect.poll(() => page.url().includes(fragment.slice(1))).toBe(false)
+  expect(await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('aim-store')!).conversations).flat().length)).toBe(0)
 })
 
 test('legacy query links remain readable and are scrubbed without discarding the current route', async ({ page }) => {
