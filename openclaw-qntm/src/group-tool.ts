@@ -83,15 +83,18 @@ export class QntmGroupActions {
         if (args.action === 'retry' && !store.binding.groupActions?.includes(operation!.action)) throw new Error('Original pending action is no longer locally permitted');
         const current = args.action === 'retry' ? store.load() : undefined, saved = current?.operation ?? undefined;
         const acceptedControls = saved && operation!.controls.filter(wire => store.controlAccepted(current!, wire)).length;
+        // A proven removal or a rotation intent that verified replay already completed finishes
+        // locally; an admission rotation keeps its two-stage review even once accepted.
+        const cleanup = Boolean(saved && !operation!.welcomes.length && operation!.controls.length && operation!.phase !== 'addition_rekey'
+          && (acceptedControls === operation!.controls.length || store.fulfilled(current!, operation!)));
         const retryMode = !saved ? undefined : operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
-          ? 'acknowledged_cleanup' : operation!.phase
+          ? 'acknowledged_cleanup' : cleanup ? 'accepted_cleanup' : operation!.phase
             ? digest(operation!.controls) === digest(saved.controls) ? 'exact_rotation' : 'replacement_rotation'
             : operation!.welcomePurpose === 'renewal'
               ? digest(operation!.welcomes) === digest(saved.welcomes) ? 'exact_renewal' : 'replacement_renewal'
               : operation!.action === 'refresh'
                 ? digest(operation!.welcomes) === digest(saved.welcomes) ? 'exact_refresh' : 'replacement_refresh'
-                : !operation!.welcomes.length && operation!.controls.length && acceptedControls === operation!.controls.length
-                  ? 'accepted_cleanup' : 'exact';
+                : operation!.action === 'rekey' && digest(operation!.controls) !== digest(saved.controls) ? 'replacement_rotation' : 'exact';
         const expiresAt = Date.now() + 300_000;
         const review = { action: args.action, accountId: store.account.accountId, conversationId: store.binding.conversationId,
           relay: store.account.relayUrl, signer: store.load().session?.identityKid, epoch: store.load().session?.epoch,
@@ -110,8 +113,10 @@ export class QntmGroupActions {
             : args.action === 'send' ? 'Post this complete text to the current group.'
             : args.action === 'retry' ? operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
               ? 'Clear the already acknowledged welcome journal locally. No messages will be posted.'
-              : retryMode === 'accepted_cleanup' ? 'Finish the saved operation locally; every exact control is already authenticated in relay replay. No messages will be posted.'
+              : retryMode === 'accepted_cleanup' ? 'Finish the saved operation locally; its exact controls are already authenticated in relay replay, or a verified rotation already completed it. No messages will be posted.'
+              : operation!.phase === 'removal_rekey' ? 'Finish the accepted removal with this reviewed rotation for the current remaining roster. The original removal is never reposted and no member is re-removed; the stale rotation ciphertext is retained as unknown delivery evidence.'
               : operation!.phase ? 'Finish the accepted admission with this reviewed rotation for the current roster. This step does not deliver contact keys. After verified replay, prepare retry again to review the current welcome; no second add is sent.'
+              : retryMode === 'replacement_rotation' ? 'Rotate keys for the complete current roster with this reviewed replacement of the stale saved rotation; the original ciphertext is retained as unknown delivery evidence.'
               : operation!.welcomePurpose === 'refresh' ? 'Deliver a generic current-key refresh to the same pinned current member. Its original challenge is preserved; this cannot undo saved removal or become a readmission renewal.'
               : operation!.welcomePurpose === 'renewal' ? 'Deliver current keys for the same verified completed admission using the reviewed renewal. Preserve original uncertain ciphertext; do not re-add or rotate. The original recovery challenge remains bound.'
                 : 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
@@ -146,7 +151,7 @@ export function createQntmGroupTool(ctx: OpenClawPluginToolContext, fallback: Qn
       + 'Actions/options: add or refresh {contact,challenge?}; remove {contact}; rekey {}; retry {}; open {link?}; send {text}. '
       + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh uses renewal proof for a known accepted admission; '
       + 'it can deliver a later readmission without changing membership, but cannot undo a newer removal. Generic refresh cannot undo saved removal. '
-      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. Stale generic refresh retry keeps its original generic purpose, full recipient and challenge; it cannot undo removal even when admission proof is now known. Interrupted admission rotations return rotation_verified with welcomePending; prepare and commit retry again to review current welcome delivery. Retry of a remove, rekey or send whose exact controls are already authenticated in replay finishes locally as accepted_cleanup with no POST. '
+      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. Stale generic refresh retry keeps its original generic purpose, full recipient and challenge; it cannot undo removal even when admission proof is now known. Interrupted admission rotations return rotation_verified with welcomePending; prepare and commit retry again to review current welcome delivery. Retry of a remove, rekey or send whose exact controls are already authenticated in replay finishes locally as accepted_cleanup with no POST, as does a proven removal or rotation intent that a verified rotation already completed. A proven removal whose rotation went stale reviews a fresh rotation for the current remaining roster (removal_rekey); it never reposts the removal or re-removes a readmitted member. An unproven expired removal stays preserved. '
       + 'Tools are scoped to the native host session. Reviews expire after five minutes or restart; configuration/membership changes require another review. '
       + 'Text and contact metadata in tool arguments/results may remain in local host transcripts.',
     parameters: { type: 'object', additionalProperties: false, properties: {
