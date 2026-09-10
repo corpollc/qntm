@@ -1,12 +1,26 @@
 import { ed25519 } from '@noble/curves/ed25519';
+import { bytesToHex } from '@noble/hashes/utils';
+
+// Key validity depends only on these public bytes, never on membership or time.
+// Bound memory even when peers supply an unlimited stream of distinct keys.
+// Store values rather than Uint8Array identities: callers may mutate buffers.
+const validPublicKeys = new Set<string>();
+const MAX_VALID_PUBLIC_KEYS = 256;
 
 /** Canonical, nonidentity public keys in the prime-order subgroup. */
 export function isValidEd25519PublicKey(publicKey: Uint8Array): boolean {
   try {
     if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) return false;
+    const encoded = bytesToHex(publicKey);
+    if (validPublicKeys.has(encoded)) return true;
     const point = ed25519.ExtendedPoint.fromHex(publicKey, false);
-    return !point.isSmallOrder() && point.isTorsionFree() &&
-      point.toRawBytes().every((byte, i) => byte === publicKey[i]);
+    if (point.isSmallOrder() || !point.isTorsionFree() ||
+      !point.toRawBytes().every((byte, i) => byte === publicKey[i])) return false;
+    if (validPublicKeys.size >= MAX_VALID_PUBLIC_KEYS) {
+      validPublicKeys.delete(validPublicKeys.values().next().value!);
+    }
+    validPublicKeys.add(encoded);
+    return true;
   } catch { return false; }
 }
 
