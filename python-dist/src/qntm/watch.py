@@ -42,6 +42,9 @@ class _Stopped(Exception):
 
 MAX_GROUP_REPLAY_MESSAGES = 8192
 MAX_GROUP_REPLAY_BYTES = 16 << 20
+# Host compatibility probe: complete replay and live-commit gates, plus durable
+# ciphertext-bound dispatch eligibility independent of replay-cache eviction.
+GROUP_RECEIVE_CONTRACT_VERSION = 1
 
 
 def status(state, **details):
