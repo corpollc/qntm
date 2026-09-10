@@ -1531,7 +1531,7 @@ def cmd_group_rekey(args):
 
 def cmd_group_retry(args):
     client, conversation_id = _group_client(args)
-    _group_output('group.retry', lambda: client.retry(conversation_id))
+    _group_output('group.retry', lambda: client.retry(conversation_id, release_unproven=bool(getattr(args, 'release_unproven', False))))
 
 
 def cmd_group_refresh(args):
@@ -3114,6 +3114,8 @@ claude code channel:
 
     group_retry_p = group_sub.add_parser('retry', help='Resume saved group delivery; renew completed additions and finish accepted removals or stale rotations from current membership')
     group_retry_p.add_argument('conversation', help='Conversation ID or prefix')
+    group_retry_p.add_argument('--release-unproven', action='store_true',
+                               help='Give up local retry of a saved removal that was never verified and can no longer be retried exactly; posts nothing and keeps its ciphertext as private evidence')
     group_refresh_p = group_sub.add_parser('refresh', help='Resend current keys to an existing member without changing membership')
     group_refresh_p.add_argument('conversation', help='Conversation ID or prefix')
     group_refresh_p.add_argument('contact', help='Local contact name or full public key')

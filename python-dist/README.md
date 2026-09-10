@@ -99,8 +99,22 @@ member's verified rotation, a later readmission, or another removal that already
 left the removal's epoch finishes the operation without posting; nothing is ever
 re-removed. A saved removal pins its target's member record and admission, so an
 exact retry refuses a later readmission of the same identity. A removal that was
-never accepted stays preserved when it expires or its epoch is superseded; that
-case has no replacement yet. A standalone `group rekey` journal is retried
+never accepted stays preserved when it expires or its epoch is superseded; plain
+retry never mints a replacement removal. `qntm group retry GROUP
+--release-unproven` (MCP `group_retry` with `release_unproven=true`) instead
+gives up local retry of such a journal after full replay: only a `remove` or
+repair journal whose original removal is not verified and can no longer be
+retried exactly (expired, superseded, another branch, absent or readmitted
+target, or a legacy journal whose target was admitted at the current epoch) is
+eligible. A verified removal, a still exact-retryable one, missing history, or a
+journal that changed during replay is refused. Release posts nothing, claims
+nothing was removed, and leaves received membership, removal, rotation and
+recovery state as they are; sends stay blocked while any of those barriers hold.
+The uncertain ciphertext, target pin and prior evidence move into a flat private
+archive on the conversation under the same 256-entry and 4 MiB limits; when that
+archive cannot hold the entry, release refuses and the journal stays unchanged.
+A later `group remove` is a fresh current-epoch decision with its own pin.
+A standalone `group rekey` journal is retried
 exactly while valid, replaced from current membership when its bytes expired or
 no longer apply, and finished without posting once any verified rotation left
 its source epoch. Every release rechecks the journal, current authority, replay
