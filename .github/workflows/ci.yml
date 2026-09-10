@@ -141,6 +141,14 @@ jobs:
       - name: Install expect
         run: sudo apt-get update && sudo apt-get install -y expect
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python group client for terminal journeys
+        run: python -m pip install -e "python-dist[mcp]"
+        working-directory: .
+
       - uses: actions/setup-node@v6
         with:
           package-manager-cache: false
