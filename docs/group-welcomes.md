@@ -196,9 +196,19 @@ list is limited to 256 entries and 4 MiB of canonical encoded evidence. Browser
 and OpenClaw include the original intent in that byte budget; Python retains its
 fixed original intent and current repair separately. At either limit, retry preserves
 the journal and sends nothing; it never silently discards uncertain delivery.
-The entire operation journal is removed after completion. Broader reconciliation
-for remove/rekey operations remains under
-`qntm-qp22`.
+The entire operation journal is removed after completion.
+
+Python CLI/MCP can also repair an expired completing rotation after proving the
+original removal through authenticated receive. New removal journals pin the
+target's full key and admission incarnation. Retry retains the original removal
+ciphertext and rotates for the current roster; it never removes a later
+readmission again. If another verified rotation already completed that removal,
+retry finishes without posting. Standalone rotation retries keep valid exact
+ciphertext, replace a stale current-epoch rotation when safe, or recognize that a
+later verified rotation fulfilled the intent. This last case does not claim the
+original control was delivered. An unproven expired or superseded removal stays
+preserved. Browser/OpenClaw parity and remaining unproven-removal recovery are
+tracked under `qntm-py13` and `qntm-ra0e`; broader recovery remains `qntm-qp22`.
 
 Saved **generic refreshes** for founding members or checkpoints without admission
 proof can also be retried after expiry or a later rotation. Maintained clients

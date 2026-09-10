@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Python CLI/MCP can finish an accepted removal when its saved completing rotation expires, including for the sole remaining member. Retry preserves the original ciphertext, uses current membership for any replacement rotation and never removes a later readmission again. Standalone rotation retries also recover from expiry or recognize another member's completed rotation. Unproven expired removals remain preserved for reconciliation.
+
 - OpenClaw groups can recover a saved operation after restart through a local `openclaw agent --channel qntm --to GROUP_ID` turn. The host must identify it as owner initiated; the agent still reviews and commits through the existing scoped tool. Inbound messages remain deferred until recovery completes.
 
 - Completed removal and rotation retries now survive replay-cache eviction in Python, the browser and OpenClaw. Private authenticated receipts let a retry finish without reposting obsolete controls or restoring old keys, including after a later valid rotation. Competing branches and replacement welcomes invalidate prior proof; older journals without retained evidence stay preserved for reconciliation.
