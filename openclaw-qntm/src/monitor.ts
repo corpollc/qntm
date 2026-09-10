@@ -324,6 +324,7 @@ export async function monitorQntmAccount(params: {
         if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
           try { await ordinary.open(); } catch { /* Still waiting for a valid pinned recovery or readmission welcome. */ }
         }
+        ordinary.finishAcceptedSend();
       });
     }
     await flush().catch(report);
@@ -348,13 +349,22 @@ export async function monitorQntmAccount(params: {
                 if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
                   try { await ordinary.open(); } catch { /* Recovery remains durable until a valid welcome arrives. */ }
                 }
+                ordinary.finishAcceptedSend();
               });
               replaying.delete(binding.conversationId);
               await flush().catch(report);
             }
           },
           onReady: async (head: number) => {
-            await ordinary.exclusive(async () => ordinary.receive(batch, Math.max(head, ordinary.load().cursor)));
+            await ordinary.exclusive(async () => {
+              ordinary.receive(batch, Math.max(head, ordinary.load().cursor));
+              // A fresh welcome can arrive between initial sync and ready, or
+              // in reconnect backlog. It needs the same handling as live input.
+              if ((ordinary.load().session?.recovery || ordinary.load().session?.removed) && ordinary.binding.groupLink) {
+                try { await ordinary.open(); } catch { /* Remain paused until an authorized welcome is available. */ }
+              }
+              ordinary.finishAcceptedSend();
+            });
             batch = []; live = true; replaying.delete(binding.conversationId);
             if (ordinary.load().session?.recovery) params.statusSink?.({ lastError: 'qntm group requires a challenged welcome; inspect qntm_group status' });
             await flush().catch(report);
