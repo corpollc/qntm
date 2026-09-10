@@ -72,8 +72,30 @@ exact signed genesis before posting. It returns a public group link, with no
 bearer invite or implicit admission. Creation is complete only after the exact
 genesis appears in relay replay; uncertain delivery leaves the operation saved
 for `group retry`. Sends and additions wait for that operation to finish. The
-existing `group create` command without `--contact` retains legacy creation and
-invite behavior; legacy creation delivery handling remains a migration follow-up.
+existing `group create` command without `--contact` retains legacy bearer invites
+and gateway compatibility. It now saves its original encrypted genesis before
+posting and returns an error, with a conversation ID and retry instruction, if
+sending fails. `qntm group retry GROUP_ID` (or MCP `group_retry`) uses the same
+profile, identity, relay and ciphertext after a restart. Pending legacy creation
+must finish before contact-group conversion.
+
+Legacy creation results distinguish `evidence: relay_acknowledgement` (the relay
+acknowledged the POST) from `evidence: exact_replay` (the full original ciphertext
+was found in bounded relay replay). Both report `delivery: accepted`; neither
+confirms a peer received the message. Unlike contact-group creation, legacy
+creation does not require a replay check after an acknowledged POST. Unknown
+outcomes and explicit rejections return errors and preserve the journal. Retry
+checks replay before resending; it never generates a replacement genesis. An
+expired genesis without a saved receipt or exact replay match remains blocked
+for reconciliation. Keep the profile instead of repeating `group create`, which
+would create another group.
+
+The private local `groups/GROUP_ID.creation.json` journal contains the original
+encrypted genesis, conversation ID, relay URL, creator public key and any relay
+receipt. Atomic writes and a per-group process lock protect retry progress;
+completed receipts are retained so retry after a lost command result does not
+post again. The legacy conversation file still contains its unencrypted keys
+and bearer invite, under the existing local storage protections.
 
 For a still-admitted contact who missed the welcome's delivery window:
 
