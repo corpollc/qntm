@@ -71,7 +71,7 @@ export class GroupBridge {
 
   private checkAvailable(): Promise<void> {
     if (!this.available) this.available = execute(this.executable(), ['-c',
-      'import inspect; from qntm.group_client import GroupClient; from qntm.group_session import group_session_from_welcome, prepare_group_welcome_refresh; assert "challenge" in inspect.signature(GroupClient.refresh).parameters; assert "replay_from_sequence" in inspect.signature(prepare_group_welcome_refresh).parameters',
+      'import inspect; from qntm.group_client import GroupClient; from qntm.group_session import group_session_from_welcome, prepare_group_welcome_refresh, check_group_welcome_replay, check_group_unverifiable_epoch; assert "challenge" in inspect.signature(GroupClient.refresh).parameters; assert "replay_from_sequence" in inspect.signature(prepare_group_welcome_refresh).parameters',
     ], { timeout: 15000, maxBuffer: 65536 }).then(() => {}).catch(() => {
       this.available = undefined;
       throw new Error('Contact groups require the matching qntm Python package. Install python-dist from this checkout and set QNTM_TUI_PYTHON to its Python executable; see ui/tui/README.md.');

@@ -9,8 +9,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DropboxClient, generateIdentity, openGroupWelcome, isGroupWelcomeEnvelope, deserializeEnvelope,
   createMessage, serializeEnvelope, groupSessionFromWelcome, receiveGroupEvent, groupSessionConversation,
-  assertGroupCanSend, checkGroupReplayCoverage, checkExpiredGroupControl,
-  decryptMessage, type GroupSessionState, type ReceiveResult } from '@corpollc/qntm';
+  assertGroupCanSend, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl,
+  decryptMessage, type GroupSessionState, type GroupWelcome, type ReceiveResult } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 import { TuiAgent } from './src/tui-agent.js';
 import { Store, bytesToHex } from '../ui/tui/src/lib/store.js';
@@ -63,13 +63,18 @@ describe.sequential('terminal contact welcomes with real relay, Python and TypeS
     proof('live', tui);
     return shown;
   };
-  const applyTsReplay = (result: ReceiveResult) => {
-    tsState = checkGroupReplayCoverage(tsState, tsCursor, result.sequence, result.entries.map(row => row.seq));
+  const applyTsReplay = (result: ReceiveResult, welcome?: GroupWelcome) => {
+    tsState = welcome ? checkGroupWelcomeReplay(tsState, welcome, result.sequence, result.entries)
+      : checkGroupReplayCoverage(tsState, tsCursor, result.sequence, result.entries.map(row => row.seq));
+    const rows = result.entries.filter(row => row.seq > tsCursor).sort((a, b) => a.seq - b.seq)
+      .map(row => ({ seq: row.seq, envelope: deserializeEnvelope(row.envelope) }));
+    // Preflight every row before emitting any text. Bootstrap has its separate
+    // exact-hash exemptions; later batches cannot silently ignore old traffic.
+    if (!welcome) for (const row of rows) tsState = checkGroupUnverifiableEpoch(tsState, row.envelope, row.seq);
     const messages: string[] = [];
-    for (const row of result.entries.filter(row => row.seq > tsCursor).sort((a, b) => a.seq - b.seq)) {
-      const envelope = deserializeEnvelope(row.envelope);
+    for (const { seq, envelope } of rows) {
       if (isGroupWelcomeEnvelope(envelope)) continue;
-      tsState = checkExpiredGroupControl(peer, tsState, envelope, row.seq);
+      tsState = checkExpiredGroupControl(peer, tsState, envelope, seq);
       if (tsState.recovery || envelope.expiry_ts < Math.floor(Date.now() / 1000)) continue;
       // Bootstrap never discloses pre-admission roots. Such rows still count
       // toward coverage, but cannot supply application or membership history.
@@ -95,7 +100,7 @@ describe.sequential('terminal contact welcomes with real relay, Python and TypeS
     const { welcome, sequence } = selected;
     tsState = groupSessionFromWelcome(peer, welcome, sequence, tsState);
     tsCursor = welcome.replayFromSequence;
-    applyTsReplay(result);
+    applyTsReplay(result, welcome);
     assertGroupCanSend(peer, tsState);
     return { result, welcome };
   };

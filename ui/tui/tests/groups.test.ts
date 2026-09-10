@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DropboxClient, generateIdentity, openGroupWelcome, deserializeEnvelope, isGroupWelcomeEnvelope,
-  createMessage, serializeEnvelope, decryptMessage, groupSessionFromWelcome, checkGroupReplayCoverage,
+  createMessage, serializeEnvelope, decryptMessage, groupSessionFromWelcome, checkGroupWelcomeReplay,
   checkExpiredGroupControl, receiveGroupEvent, assertGroupCanSend, groupSessionConversation } from '@corpollc/qntm';
 import { Store, bytesToHex } from '../src/lib/store.js';
 import { runGroupCommand } from '../src/lib/group-commands.js';
@@ -96,7 +96,7 @@ describe.sequential('terminal contact groups through the real Python receiver', 
     }).at(-1)!;
     const opened = selected.welcome;
     let state = groupSessionFromWelcome(peer, opened, selected.seq);
-    state = checkGroupReplayCoverage(state, opened.replayFromSequence, replay.sequence, replay.entries.map(row => row.seq));
+    state = checkGroupWelcomeReplay(state, opened, replay.sequence, replay.entries);
     for (const { seq, envelope } of envelopes.filter(row => row.seq > opened.replayFromSequence)) {
       if (isGroupWelcomeEnvelope(envelope)) continue;
       state = checkExpiredGroupControl(peer, state, envelope, seq);
