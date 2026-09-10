@@ -1,5 +1,7 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { createHash, randomBytes, randomUUID } from 'crypto';
+import { connect as connectTcp } from 'node:net';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -68,6 +70,94 @@ async function closeSocket(socket: WebSocket): Promise<void> {
   ]);
 }
 
+interface RawCloseHandshake {
+  extensions: string | null;
+  frames: RelayFrame[];
+  close: { code: number; reason: string } | null;
+  finAfterClose: boolean;
+  bytesAfterClose: number;
+}
+
+/** Subscribe over a raw TCP WebSocket with no extensions requested, send a
+ * masked Close after the ready frame, and parse exactly what the relay sends
+ * back. This observes wire bytes directly and shares nothing with undici's
+ * asynchronous permessage-deflate inflate, which can report 1006 for a Close
+ * frame that did arrive. Resolves on the relay's FIN, or rejects on timeout,
+ * socket error, TCP close without a Close frame, or a malformed frame. */
+function rawCloseHandshake(
+  relayUrl: string, convId: string, code: number, reason: string, timeoutMs = 10_000,
+): Promise<RawCloseHandshake> {
+  const url = new URL(relayUrl);
+  const key = btoa(String.fromCharCode(...randomBytes(16)));
+  const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+  const result: RawCloseHandshake = { extensions: null, frames: [], close: null, finAfterClose: false, bytesAfterClose: 0 };
+  return new Promise<RawCloseHandshake>((resolvePromise, rejectPromise) => {
+    const socket = connectTcp({ host: url.hostname, port: Number(url.port) });
+    let buffer = Buffer.alloc(0), upgraded = false, closeSent = false, settled = false;
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) rejectPromise(Object.assign(error, { handshake: result }));
+      else resolvePromise(result);
+    };
+    const timer = setTimeout(() => settle(new Error(`raw close handshake timed out: ${JSON.stringify(result)}`)), timeoutMs);
+    const sendClose = () => {
+      const payload = Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason, 'utf8')]);
+      const mask = randomBytes(4);
+      const masked = Buffer.from(payload.map((byte: number, index: number) => byte ^ mask[index % 4]!));
+      socket.write(Buffer.concat([Buffer.from([0x88, 0x80 | payload.length]), mask, masked]));
+      closeSent = true;
+    };
+    const parse = () => {
+      if (!upgraded) {
+        const end = buffer.indexOf('\r\n\r\n');
+        if (end < 0) return;
+        const head = buffer.subarray(0, end).toString();
+        buffer = buffer.subarray(end + 4);
+        if (!head.startsWith('HTTP/1.1 101 ')) return settle(new Error(`upgrade rejected: ${head.split('\r\n')[0]}`));
+        if (!/^sec-websocket-accept:\s*(.+?)\s*$/im.exec(head)?.[1]?.startsWith(accept)) return settle(new Error('bad Sec-WebSocket-Accept'));
+        result.extensions = /^sec-websocket-extensions:\s*(.*?)\s*$/im.exec(head)?.[1] ?? null;
+        upgraded = true;
+      }
+      while (!settled) {
+        if (result.close) { result.bytesAfterClose += buffer.length; buffer = Buffer.alloc(0); return; }
+        if (buffer.length < 2) return;
+        const opcode = buffer[0]! & 0x0f;
+        if (buffer[1]! & 0x80) return settle(new Error('relay sent a masked frame'));
+        let length = buffer[1]! & 0x7f, offset = 2;
+        if (length === 126) { if (buffer.length < 4) return; length = buffer.readUInt16BE(2); offset = 4; }
+        else if (length === 127) return settle(new Error('unexpected 64-bit frame length'));
+        if (buffer.length < offset + length) return;
+        const payload = buffer.subarray(offset, offset + length);
+        buffer = buffer.subarray(offset + length);
+        if (opcode === 0x1) {
+          const frame = JSON.parse(payload.toString('utf8')) as RelayFrame;
+          result.frames.push(frame);
+          if (frame.type === 'ready' && !closeSent) sendClose();
+        } else if (opcode === 0x8) {
+          if (!closeSent) return settle(new Error(`relay closed first: ${payload.toString('hex')}`));
+          result.close = { code: payload.length >= 2 ? payload.readUInt16BE(0) : 1005, reason: payload.subarray(2).toString('utf8') };
+        } else if (opcode !== 0x9 && opcode !== 0xa) {
+          return settle(new Error(`unexpected opcode ${opcode}`));
+        }
+      }
+    };
+    socket.once('connect', () => {
+      socket.write(`GET /v1/subscribe?conv_id=${convId}&from_seq=0 HTTP/1.1\r\nHost: ${url.host}\r\n` +
+        `Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    socket.on('data', (chunk: Buffer) => { buffer = Buffer.concat([buffer, chunk]); parse(); });
+    socket.on('end', () => {
+      result.finAfterClose = result.close !== null;
+      settle(result.close ? undefined : new Error(`relay sent FIN without a Close frame: ${JSON.stringify(result)}`));
+    });
+    socket.on('error', error => settle(error));
+    socket.on('close', () => settle(new Error(`socket closed before the relay's FIN: ${JSON.stringify(result)}`)));
+  });
+}
+
 describe.sequential('real relay worker subscribe acceptance', () => {
   let relayProcess: ManagedProcess | null = null;
   let relayUrl = '';
@@ -105,57 +195,81 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const callbackAttempts: number[] = [], errors: Error[] = [];
     const frames: RelayFrame[] = [];
     const closeEvents: Array<{ code: number; reason: string; wasClean: boolean }> = [];
-    // Record the Close frames the maintained client sends. The echoed code
-    // reported by Node's bundled undici is not proof of client behaviour: the
-    // relay compresses frames, undici inflates them asynchronously, and when
-    // the relay's Close echo is still queued behind that inflate as the TCP
-    // connection ends, undici reports 1006 even though 4000 arrived on the
-    // wire (qntm-bw96 wire captures on Node 22.23.2 / undici 6.28.0).
+    // Record the close() calls the maintained client makes. This proves the
+    // client invoked close(4000, reason); it does not observe wire bytes. The
+    // code undici reports is the relay's echo, and undici can report 1006 for
+    // an echo that did arrive: the relay compresses frames, undici inflates
+    // them asynchronously, and a Close echo still queued behind that inflate
+    // when the TCP connection ends is never parsed (qntm-bw96 local wire
+    // captures on Node 22.23.2 / undici 6.28.0; CI only observed the 1006).
+    // The raw handshake test below checks the relay's echo on the wire.
     const sentCloses: Array<{ code?: number; reason?: string }> = [];
     const NativeWebSocket = globalThis.WebSocket;
-    globalThis.WebSocket = class RecordingWebSocket extends NativeWebSocket {
-      override close(code?: number, reason?: string): void {
-        sentCloses.push({ code, reason });
-        super.close(code, reason);
-      }
-    };
-    const subscription = relay.subscribeMessages(cid, 0, {
-      onMessage: ({ seq }) => {
-        callbackAttempts.push(seq);
-        if (callbackAttempts.length === 1) throw injectedFailure;
-        frames.push({ type: 'message', seq });
-      },
-      // onError also reports socket failures during reconnection. Preserve the
-      // actual cause instead of labelling every transport error a callback error.
-      onError: error => { errors.push(error); },
-      onClose: ({ code, reason, wasClean }) => {
-        closeEvents.push({ code, reason, wasClean });
-        frames.push({ type: 'closed', seq: code });
-      },
-    });
+    let subscription: ReturnType<typeof relay.subscribeMessages> | null = null;
     try {
+      globalThis.WebSocket = class RecordingWebSocket extends NativeWebSocket {
+        override close(code?: number, reason?: string): void {
+          sentCloses.push({ code, reason });
+          super.close(code, reason);
+        }
+      };
+      subscription = relay.subscribeMessages(cid, 0, {
+        onMessage: ({ seq }) => {
+          callbackAttempts.push(seq);
+          if (callbackAttempts.length === 1) throw injectedFailure;
+          frames.push({ type: 'message', seq });
+        },
+        // onError also reports socket failures during reconnection. Preserve the
+        // actual cause instead of labelling every transport error a callback error.
+        onError: error => { errors.push(error); },
+        onClose: ({ code, reason, wasClean }) => {
+          closeEvents.push({ code, reason, wasClean });
+          frames.push({ type: 'closed', seq: code });
+        },
+      });
       await waitForFrame(frames, frame => frame.type === 'message' && frame.seq === sequence, 'native callback retry', 20_000);
       expect(errors.filter(error => error === injectedFailure)).toHaveLength(1);
       expect(callbackAttempts).toEqual([sequence, sequence]);
       expect(frames.filter(frame => frame.type === 'message')).toEqual([{ type: 'message', seq: sequence }]);
-      // The client itself shut the failed socket down with 4000, exactly once,
-      // before the redelivery that ended the wait above.
+      // The client called close(4000, reason) exactly once before the
+      // redelivery that ended the wait above.
       expect(sentCloses).toEqual([{ code: 4000, reason: 'receive callback failed' }]);
-      // That socket reported exactly one close: the relay's echoed 4000, or
-      // undici's 1006 when the echo lost the inflate race. Any other code would
-      // mean the relay, not the client, ended the failed subscription.
+      // undici reported exactly one close for that socket: the echoed 4000, or
+      // 1006 when it never parsed the echo. Other codes are rejected as
+      // unexplained; they are not attributed to the relay here.
       expect(closeEvents).toHaveLength(1);
       expect([4000, 1006]).toContain(closeEvents[0]!.code);
     } finally {
       globalThis.WebSocket = NativeWebSocket;
-      subscription.close();
-      await subscription.closed;
+      subscription?.close();
+      await subscription?.closed;
       writeFileSync(join(artifactDir, 'native-callback-reconnect.json'), JSON.stringify({ node: process.version,
         undici: process.versions.undici, callbackAttempts,
         errors: errors.map(error => ({ name: error.name, message: error.message, injected: error === injectedFailure })),
         frames, sentCloses, closeEvents }, null, 2));
     }
   }, 40_000);
+
+  it('echoes a client Close code and reason on the wire before closing the connection', async () => {
+    // Exercise the relay's close-handshake reply directly: no extensions are
+    // requested, so frames are parsed exactly as sent. The maintained client
+    // sends these two Close codes; the relay must echo each before its FIN.
+    const cases = [{ code: 4000, reason: 'receive callback failed' }, { code: 1000, reason: 'client closed' }];
+    const observed: RawCloseHandshake[] = [];
+    try {
+      for (const { code, reason } of cases) {
+        const handshake = await rawCloseHandshake(relayUrl, randomUUID().replaceAll('-', ''), code, reason);
+        observed.push(handshake);
+        expect(handshake.extensions).toBeNull();
+        expect(handshake.frames).toEqual([{ type: 'ready', head_seq: 0 }]);
+        expect(handshake.close).toEqual({ code, reason });
+        expect(handshake.finAfterClose).toBe(true);
+        expect(handshake.bytesAfterClose).toBe(0);
+      }
+    } finally {
+      writeFileSync(join(artifactDir, 'raw-close-handshake.json'), JSON.stringify(observed, null, 2));
+    }
+  }, 30_000);
 
   it('exposes sequenced replay and serialized ready callbacks through the TypeScript client', async () => {
     const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);

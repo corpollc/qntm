@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Relay acceptance now verifies the Close frame the TypeScript client sends after a callback failure, and records sent and observed close events. Node's bundled undici can report 1006 for a compressed relay socket when the relay's Close echo is still queued behind asynchronous inflate as the connection ends; wire captures confirm the relay completes the handshake.
+- Relay acceptance now verifies the close() call the TypeScript client makes after a callback failure and records the close events undici reported, and a separate raw uncompressed WebSocket test verifies on the wire that the relay echoes the client's Close code and reason before closing the connection. Node's bundled undici can report 1006 for a compressed relay socket when the relay's Close echo is still queued behind asynchronous inflate as the connection ends.
 
 - Python group control sends now reload the saved operation and current authority under the receive lock immediately before publication. Removal, missing history, changed journals and superseded source epochs stop stale creation/removal/rekey POSTs; exact already-accepted ciphertext is recognized without reposting. Resident-receive race tests cover these checks.
 
