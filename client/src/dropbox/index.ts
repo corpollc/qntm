@@ -321,7 +321,7 @@ export class DropboxClient {
         settled = true;
         reject(error instanceof Error ? error : new Error(String(error)));
         try {
-          socket.close(1011, 'receive failed');
+          socket.close(4000, 'receive failed');
         } catch {
           // Ignore best-effort close failures.
         }
@@ -478,7 +478,7 @@ export class DropboxClient {
             failed = true;
             reportError(error);
             if (socket === ws && !closedByCaller) {
-              ws.close(1011, 'receive callback failed');
+              ws.close(4000, 'receive callback failed');
             }
           });
       });

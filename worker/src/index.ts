@@ -621,12 +621,25 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		}
 	}
 
-	webSocketClose(webSocket: WebSocket): void {
+	webSocketClose(webSocket: WebSocket, code = 1000, reason = ""): void {
 		this.pendingAuths.delete(webSocket);
+		// Our compatibility date predates automatic Close-frame replies. Finish
+		// the handshake so one-shot receives and reconnects do not time out.
+		try {
+			const replyCode = [1005, 1006, 1015].includes(code) ? 1000 : code;
+			webSocket.close(replyCode, reason);
+		} catch {
+			// A failed connection may already be closed.
+		}
 	}
 
 	webSocketError(webSocket: WebSocket): void {
 		this.pendingAuths.delete(webSocket);
+		try {
+			webSocket.close(1011, "relay connection failed");
+		} catch {
+			// Ignore best-effort close failures.
+		}
 	}
 }
 

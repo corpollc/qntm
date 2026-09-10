@@ -73,6 +73,29 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   let relayUrl = '';
   let stateDir = '';
 
+  it('reconnects a native WebSocket after an application callback fails', async () => {
+    const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);
+    const sequence = await relay.postMessage(cid, new Uint8Array([97]));
+    let failOnce = true;
+    const frames: RelayFrame[] = [];
+    const subscription = relay.subscribeMessages(cid, 0, {
+      onMessage: ({ seq }) => {
+        if (failOnce) { failOnce = false; throw new Error('fixture persistence failure'); }
+        frames.push({ type: 'message', seq });
+      },
+      onError: () => { frames.push({ type: 'callback_error' }); },
+      onClose: ({ code }) => { frames.push({ type: 'closed', seq: code }); },
+    });
+    try {
+      await waitForFrame(frames, frame => frame.type === 'message' && frame.seq === sequence, 'native callback retry', 20_000);
+      expect(frames.filter(frame => frame.type === 'callback_error')).toHaveLength(1);
+      expect(frames.some(frame => frame.type === 'closed' && frame.seq === 4000)).toBe(true);
+    } finally {
+      subscription.close();
+      await subscription.closed;
+    }
+  }, 40_000);
+
   it('exposes sequenced replay and serialized ready callbacks through the TypeScript client', async () => {
     const cid = generateIdentity().keyID, relay = new DropboxClient(relayUrl);
     const first = new Uint8Array([97]), second = new Uint8Array([98]);
