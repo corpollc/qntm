@@ -32,7 +32,8 @@ async function setup(mutate?: (body: Record<string, unknown>) => void) {
   mutate?.(body as unknown as Record<string, unknown>);
   const text = JSON.stringify(body);
   const envelope = createMessage(alice, conv, 'gate.promote', new TextEncoder().encode(text), undefined, 3600);
-  const receive = vi.spyOn(DropboxClient.prototype, 'receiveMessages').mockResolvedValue({ messages: [serializeEnvelope(envelope)], sequence: 7 });
+  const wire = serializeEnvelope(envelope);
+  const receive = vi.spyOn(DropboxClient.prototype, 'receiveMessages').mockResolvedValue({ messages: [wire], entries: [{ seq: 7, envelope: wire }], sequence: 7 });
   const post = vi.spyOn(DropboxClient.prototype, 'postMessage').mockResolvedValue(8);
   const request = sealGatewayBootstrap(alice, invitation, conv, hex(envelope.msg_id), 7);
   return { storage, memory, alice, bob, challenge, invitation, conv, envelope, text, receive, post, request };
@@ -93,7 +94,7 @@ describe('signed gateway invitation and acceptance', () => {
   });
   it('rejects an authenticated capsule when its invitation was never posted', async () => {
     const f = await setup();
-    f.receive.mockResolvedValue({ messages: [], sequence: 0 });
+    f.receive.mockResolvedValue({ messages: [], entries: [], sequence: 0 });
     expect((await acceptInvitation(f.storage, 'https://relay.test', f.request)).status).toBe(403);
   });
   it('rejects a capsule sealed by someone other than the signed inviter', async () => {
