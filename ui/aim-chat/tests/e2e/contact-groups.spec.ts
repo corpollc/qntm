@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
@@ -170,7 +170,8 @@ test('browser opens its sealed welcome, persists removal, then accepts explicit 
 })
 
 
-test('browser welcomes a fresh Python CLI peer, exchanges messages, refreshes and removes it', async ({ page }) => {
+test('browser welcomes a fresh Python CLI peer and renews its later readmission after removal', async ({ page }) => {
+  test.setTimeout(60_000)
   const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-python-'))
   const python = process.env.QNTM_TEST_PYTHON || 'python3'
   const command = async (...args: string[]) => {
@@ -206,6 +207,37 @@ test('browser welcomes a fresh Python CLI peer, exchanges messages, refreshes an
     await expect(page.getByRole('status').filter({ hasText: 'Python colleague removed' })).toBeVisible()
     await command('command', 'recv', id)
     await expect(command('command', 'send', id, 'removed peer cannot send')).rejects.toThrow(/removed/i)
+    const checkpoint = async () => JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8'))
+      .find((record: { id: string }) => record.id === id).group_session
+    const removed = await checkpoint()
+    expect(removed.removed).toBe(true); expect(removed.removedAtEpoch).toBe(1)
+    await page.getByPlaceholder('Type a message').fill('Excluded interval stays private')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    expect(await add(page, 'Python colleague')).toBe(link)
+    // The recipient stays offline through readmission and another rotation.
+    const other = generateIdentity()
+    await pin(page, 'Later TS colleague', other)
+    await add(page, 'Later TS colleague')
+    await page.getByLabel('Pinned contact', { exact: true }).selectOption({ label: 'Python colleague' })
+    await page.getByRole('button', { name: 'Refresh welcome', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Current welcome sent' })).toBeVisible()
+    await command('command', 'group', 'join', link)
+    const renewed = await checkpoint()
+    expect(renewed.epoch).toBe(4); expect(renewed.removed).toBe(false)
+    expect(renewed.removedAtEpoch).toBe(1)
+    expect(renewed.admissions[peer.key_id].sourceEpoch).toBe(2)
+    // Replaying an old addition plus rotations would retain old roots. A
+    // current admission renewal starts at this epoch with none of those keys.
+    expect(renewed.rekeys).toEqual([])
+    const reopened = await command('command', 'recv', id)
+    expect(reopened.messages.some((message: { unsafe_body: string }) => message.unsafe_body === 'Excluded interval stays private')).toBe(false)
+    await command('command', 'send', id, 'Python renewed admission reply')
+    await expect(page.locator('.message-body', { hasText: 'Python renewed admission reply' })).toBeVisible()
+    await page.getByRole('button', { name: 'Remove from group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Python colleague removed' })).toBeVisible()
+    await command('command', 'recv', id)
+    await expect(command('command', 'group', 'join', link)).rejects.toThrow()
+    expect((await checkpoint()).removedAtEpoch).toBe(4)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
