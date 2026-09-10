@@ -1078,3 +1078,47 @@ def test_new_watch_target_baseline_ignores_temporary_delivery_pause(setup, monke
     watch.watch(SimpleNamespace(config_dir=f.contact_dir, conversation=f.cid, dropbox_url=f.relay,
                                 webhook=[], on_receive=[], include_self=False, hook_timeout=1))
     assert len(targets) == 1
+
+
+def test_watch_gates_live_group_commit_before_waking_consumers(setup, monkeypatch):
+    import threading
+    from qntm import watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    cursor = cli._load_conversations(f.contact_dir)[0]['group_cursor']
+    f.command(f.owner_dir, 'send', f.cid, 'live message')
+    rows, _ = f.receive(f.relay, f.cid, cursor)
+    frames = iter([{'type': 'ready', 'head_seq': cursor}, dict(rows[0], type='message')])
+    stop, ready = threading.Event(), threading.Event()
+    processed, delivered = [], []
+    original = cli._process_received_messages
+
+    def process(*args):
+        assert not ready.is_set(), 'Consumers must wait while a newly received group batch is checked'
+        processed.append(args[-1])
+        return original(*args)
+
+    class Socket:
+        def recv(self, timeout):
+            frame = next(frames)
+            if frame['type'] == 'message':
+                assert ready.is_set()
+                stop.set()
+            return json.dumps(frame)
+
+    @contextlib.contextmanager
+    def subscription(*args):
+        yield Socket()
+
+    class Wake:
+        def set(self):
+            assert ready.is_set()
+            delivered.extend(watch.delivery_events(f.contact_dir, f.cid))
+
+    monkeypatch.setattr(watch, 'subscription', subscription)
+    monkeypatch.setattr(cli, '_process_received_messages', process)
+    watch.receive(f.contact_dir, f.relay, f.cid, f.contact, stop, [SimpleNamespace(wake=Wake())], ready)
+    assert processed == [cursor, cursor + 1]
+    assert [event['data']['message']['unsafe_body'] for _, event in delivered] == ['live message']
+    assert not ready.is_set()
