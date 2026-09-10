@@ -9,6 +9,7 @@ import {
   createGroupSession, restoreGroupSession, receiveGroupEvent, createGroupControlMessage,
   createGroupRemoveBody, createRekey, prepareGroupWelcomeRefresh, groupSessionFromWelcome,
   checkGroupReplayCoverage, assertGroupCanSend,
+  checkGroupWelcomeReplay,
 } from '../src/index.js';
 import type { Identity } from '../src/index.js';
 
@@ -46,14 +47,19 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
     expect(blocked).toEqual({ ...tsBlocked, recovery: { ...tsBlocked.recovery, challenge: blocked.recovery!.challenge } });
     expect(blocked.recovery!.challenge).toMatch(/^[0-9a-f]{64}$/);
     expect(() => assertGroupCanSend(peer, blocked)).toThrow('incomplete');
-    const refresh = prepareGroupWelcomeRefresh(owner, createGroupSession(owner, addition.conversation, addition.state),
-      [peer.publicKey], undefined, bytes(blocked.recovery!.challenge));
+    const winningConversation = { ...addition.conversation, keys: { ...addition.conversation.keys } };
+    applyRekey(winningConversation, suite.generateGroupKey(), addition.conversation.currentEpoch);
+    const refresh = prepareGroupWelcomeRefresh(owner, createGroupSession(owner, winningConversation, addition.state),
+      [peer.publicKey], undefined, bytes(blocked.recovery!.challenge), 5);
     const recovered = python({ action: 'session_recover', identity: pyIdentity, state: blocked, link,
       welcome: hex(marshalCanonical(refresh.welcomes[0])), sequence: 6 });
     const final = restoreGroupSession(peer, recovered.state);
     assertGroupCanSend(peer, final);
     expect(final.recovery).toBeNull();
-    expect(final.root).toBe(initial.root);
+    expect(final.root).toBe(hex(winningConversation.keys.root));
+    expect(final.root).not.toBe(initial.root);
+    const openedRefresh = openGroupWelcome(peer, marshalCanonical(refresh.welcomes[0]), parseGroupLink(link));
+    expect(checkGroupWelcomeReplay(final, openedRefresh, 6, [{ seq: 6, envelope: marshalCanonical(refresh.welcomes[0]) }]).recovery).toBeNull();
   });
 
   it('Python finishes a TypeScript addition interrupted before key rotation', () => {
