@@ -706,7 +706,9 @@ def group_refresh(conversation: str, contact: str, challenge: str = '') -> dict:
     """Resend current keys to an existing member under host authorization.
 
     No membership change, new rotation or older keys. Saves the exact encrypted
-    welcome for retry and returns the public group link. Optional challenge echoes
+    welcome for retry and returns the public group link. A proven current admission
+    uses renewal, including delivery after later readmission; otherwise a generic
+    refresh cannot undo saved removal. Optional challenge echoes
     the existing member's 64-hex recovery challenge; it grants no membership.
     """
     return _group_action(conversation, 'refresh', contact, challenge)

@@ -436,13 +436,23 @@ class GroupClient:
         record = self.enable(conversation_id)
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
-            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key],
-                recovery_challenge=recovery_challenge, replay_from_sequence=record.get('group_cursor', 0))
+            state = restore_group_session(self.identity, record['group_session'])
+            admission = state['admissions'].get(key_id_from_public_key(key).hex())
+            if admission and admission['completion']:
+                operation = prepare_group_admission_renewal(self.identity, state, key,
+                    {name: admission[name] for name in ('addId', 'addDigest')},
+                    recovery_challenge=recovery_challenge, replay_from_sequence=record.get('group_cursor', 0))
+            else:
+                operation = prepare_group_welcome_refresh(self.identity, state, [key],
+                    recovery_challenge=recovery_challenge, replay_from_sequence=record.get('group_cursor', 0))
             expected = create_group_session(self.identity, operation['conversation'], operation['state'],
-                                            signed_epoch=record['group_session']['signedEpoch'])
-            self._save_operation(record['id'], {'kind': 'refresh', 'controls': [],
+                                            signed_epoch=state['signedEpoch'], admissions=state['admissions'])
+            self._save_operation(record['id'], {'kind': 'renewal' if admission and admission['completion'] else 'refresh', 'controls': [],
                                                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
-                                                'welcomes_sent': 0, 'expected': expected})
+                                                'welcomes_sent': 0, 'expected': expected,
+                                                **({'recipient': key.hex(), 'admission': copy.deepcopy(admission),
+                                                    'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None}
+                                                   if admission and admission['completion'] else {})})
             return self._resume(record['id'])
 
     def retry(self, conversation_id):

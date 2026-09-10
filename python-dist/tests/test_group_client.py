@@ -94,7 +94,7 @@ def test_contact_add_open_send_restart_remove_and_readmission(setup):
 @pytest.mark.parametrize('readmission', [False, True])
 def test_cli_opens_library_renewal_after_original_delivery_is_gone(setup, monkeypatch, readmission):
     import time
-    from qntm import prepare_group_admission_renewal, prepare_group_session_addition
+    from qntm import prepare_group_admission_renewal, prepare_group_session_addition, prepare_group_welcome_refresh
     f = setup
     owner = GroupClient(f.owner_dir, f.owner, f.relay)
     link = owner.add(f.cid, 'Colleague')['group_link']
@@ -122,8 +122,11 @@ def test_cli_opens_library_renewal_after_original_delivery_is_gone(setup, monkey
     retained = {renewal_wire}
     if readmission:
         # A newer generic refresh must not hide a valid readmission renewal.
-        owner.refresh(f.cid, 'Colleague')
-        retained.add(f.rows[f.cid][-1])
+        generic = prepare_group_welcome_refresh(f.owner, state, [f.contact['publicKey']],
+                                                replay_from_sequence=record['group_cursor'])
+        wire = serialize_envelope(generic['welcomes'][0])
+        f.send(f.relay, f.cid, wire)
+        retained.add(wire)
 
     def receive(url, cid, cursor):
         rows, head = f.receive(url, cid, cursor)
