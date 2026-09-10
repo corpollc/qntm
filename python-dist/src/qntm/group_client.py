@@ -203,8 +203,9 @@ def receive_batch(record, identity, raw_messages, head):
         for raw in remaining:
             envelope = deserialize_envelope(base64.b64decode(raw['envelope_b64']))
             if envelope['expiry_ts'] < int(time.time()):
-                if raw['seq'] > result.get('group_bootstrap_sequence', 0):
-                    state = check_expired_group_control(identity, state, envelope, raw['seq'])
+                # A control can race ahead of a welcome's POST. Its source epoch
+                # still matters even when its relay sequence precedes that welcome.
+                state = check_expired_group_control(identity, state, envelope, raw['seq'])
                 if envelope['conv_epoch'] > state['epoch'] and not state['recovery'] and not state['removed']:
                     retry.append(raw)
                 continue
@@ -307,7 +308,10 @@ class GroupClient:
 
     def sync(self, conversation_id):
         _, record = self._load(conversation_id)
-        raw, head = cli._recv_once(self.relay_url, record['id'], record.get('group_cursor', 0))
+        # An acknowledged genesis can be missing from a prior replay. Retain the
+        # initial cursor until its exact bytes have actually been observed.
+        pending_creation = (record.get('group_operation') or {}).get('kind') == 'create'
+        raw, head = cli._recv_once(self.relay_url, record['id'], 0 if pending_creation else record.get('group_cursor', 0))
         if head < record.get('group_cursor', 0):
             raise ValueError('Relay replay head is older than saved progress; group state was not changed')
         cli._process_received_messages(self.config_dir, self.identity, [], record, raw, head)
@@ -435,7 +439,14 @@ class GroupClient:
                         raise ValueError('Invalid saved group creation')
                 else:
                     receive_group_event(self.identity, envelope, state)  # preflight against the latest accepted state
-                cli._http_send(self.relay_url, conversation_id, wire)
+                receipt = cli._http_send(self.relay_url, conversation_id, wire)
+                if operation['kind'] == 'create':
+                    with self._lock():
+                        records, record = self._load(conversation_id)
+                        seq = receipt.get('seq')
+                        if type(seq) is int and seq > record.get('group_cursor', 0):
+                            record.setdefault('group_delivery_receipts', []).append(seq)
+                        cli._save_conversations(self.config_dir, records)
             elif known['digest'] != _suite.hash(wire).hex():
                 raise ValueError('Pending group message conflicts with accepted state')
             record = self.sync(conversation_id)
@@ -451,7 +462,10 @@ class GroupClient:
                         'welcomes': [deserialize_envelope(base64.b64decode(w)) for w in operation['welcomes']]}
             assert_group_welcome_refresh_current(self.identity, record['group_session'], prepared)
         for position in range(operation['welcomes_sent'], len(operation['welcomes'])):
-            receipt = cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['welcomes'][position], validate=True))
+            wire = base64.b64decode(operation['welcomes'][position], validate=True)
+            if deserialize_envelope(wire)['expiry_ts'] < int(time.time()):
+                raise ValueError('Saved welcome expired; preserve the operation for reconciliation')
+            receipt = cli._http_send(self.relay_url, conversation_id, wire)
             with self._lock():
                 records, record = self._load(conversation_id)
                 record['group_operation']['welcomes_sent'] = position + 1
