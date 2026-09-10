@@ -6,6 +6,7 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | --- | --- | --- | --- |
 | Identity, invite, signed encrypted messages | Library and CLI | Library, browser and Node | Old messaging implementation is archived in `attic/` |
 | Contact-add welcomes and public group links | Unreleased CLI/MCP create, add, open, remove, current-key refresh, rekey and exact-operation retry; shared library helpers | Matching unreleased library helpers and browser workflows; terminal uses the Python receiver; OpenClaw supports configured pins/groups and reviewed native actions | No maintained messaging client |
+| Current-admission renewal | Shared API; existing CLI/MCP and terminal refresh actions | Matching shared API; browser Refresh welcome and reviewed OpenClaw refresh | No maintained messaging client |
 | Ordinary-group receive checkpoints | Unreleased authenticated reducer with atomic CLI/MCP history, cursor and pending ciphertext | Matching reducer and private JSON format; browser persists per identity with Web Locks; OpenClaw persists a locked checkpoint/dispatch queue | No maintained messaging client |
 | Expiry and saved history | Reject expired live messages; explicit `allow_expired=True` for history | Same policy; explicit `{ allowExpired: true }` for history | No maintained messaging client |
 | Persistent relay subscription | `recv --watch` owns reconnect and durable profile state | `DropboxClient.subscribeMessages` owns reconnect; application owns durable state | No maintained messaging client |
@@ -22,7 +23,11 @@ Tests cover shared encrypted receive fixtures, Python 3.10/3.12, TypeScript cryp
 Contact-group journeys additionally run against the real relay in the browser,
 terminal PTY and installed OpenClaw host, with Python and TypeScript peers. They
 cover reverse opening order, current-key refresh, restart, missing-history
-recovery, removal and readmission. The shared suites check signed replay anchors
+recovery, removal and readmission. Refresh journeys also recover an expired later
+readmission without providing keys from the interval of exclusion. Fresh CLI/MCP
+processes recover interrupted additions after real delivery expiry and lost relay
+acknowledgements; a TypeScript recipient opens the current welcome and replies.
+The shared suites check signed replay anchors
 and recovery challenges in both languages. Browser history and agent queues bind
 payloads to exact ciphertext; regression cases cover reused IDs after recovery,
 replay-cache eviction, complete replay before dispatch, and queued OpenClaw jobs
@@ -30,8 +35,8 @@ across restart. The browser hides invalidated history but retains it privately
 and in encrypted backups; Python/terminal retain readable local archives while
 excluding invalidated rows from receive events and hooks. Run `cd integration && npm run
 test:contacts` for these journeys. Gateway-governed welcomes, incomplete legacy
-rosters and automatic reconciliation of competing or expired pending operations
-remain outside this increment; see [group welcome boundaries](group-welcomes.md).
+rosters and full recovery across all clients and operation types remain
+unfinished; see [group welcome boundaries](group-welcomes.md).
 
 ## Message expiry
 
