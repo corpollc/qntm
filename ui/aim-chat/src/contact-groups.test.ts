@@ -120,6 +120,47 @@ describe('browser contact group host', () => {
     expect(store.getVisibleHistory(alice.id, id).at(-1)?.text).toBe('renewed admission reply')
   })
 
+  it.each(['refresh', 'renewal'] as const)('prefers a current %s over a later replay of the same-epoch addition welcome', async purpose => {
+    const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
+    const id = await createContactGroup(alice.id, 'Current welcome')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', kid)
+    const originalWelcome = relay.get(id)!.at(-1)!.envelope
+    await sendContactGroupMessage(alice.id, id, 'before the current welcome snapshot')
+    await syncContactGroup(alice.id, id)
+    const current = session(alice.id, id), anchor = store.findConversation(alice.id, id)!.group!.cursor
+    const { addId, addDigest } = current.admissions[kid]
+    const fresh = purpose === 'refresh'
+      ? prepareGroupWelcomeRefresh(alice.identity, current, [bob.identity.publicKey], undefined, undefined, anchor)
+      : prepareGroupAdmissionRenewal(alice.identity, current, bob.identity.publicKey, { addId, addDigest }, undefined, undefined, anchor)
+    await post(id, fresh.welcomes[0])
+    // A relay can replay ciphertext at a later sequence; that does not make
+    // the older addition snapshot fresher than the signed current welcome.
+    const seq = heads.get(id)! + 1; heads.set(id, seq)
+    relay.get(id)!.push({ seq, envelope: originalWelcome })
+    await openContactGroup(bob.id, link)
+    expect(store.findConversation(bob.id, id)!.group!.bootstrapSequence).toBe(anchor)
+    expect(session(bob.id, id).recovery).toBeNull()
+  })
+
+  it('orders competing addition welcomes by their own rekey IDs while keeping unresolved replay paused', async () => {
+    const alice = profile('Alice'), bob = profile('Bob')
+    const id = await createContactGroup(alice.id, 'Competing welcomes'), source = session(alice.id, id)
+    const anchor = store.findConversation(alice.id, id)!.group!.cursor
+    const [canonical, later] = [
+      prepareGroupSessionAddition(alice.identity, source, [bob.identity.publicKey], undefined, undefined, anchor),
+      prepareGroupSessionAddition(alice.identity, source, [bob.identity.publicKey], undefined, undefined, anchor),
+    ].sort((a, b) => hex(a.rekey.msg_id).localeCompare(hex(b.rekey.msg_id)))
+    expect(hex(canonical.rekey.msg_id) < hex(later.rekey.msg_id)).toBe(true)
+    for (const operation of [canonical, later]) {
+      for (const envelope of [operation.addition, operation.rekey, ...operation.welcomes]) await post(id, envelope)
+    }
+    await openContactGroup(bob.id, publicGroupLink(alice.id, id))
+    expect(session(bob.id, id).root).toBe(hex(canonical.conversation.keys.root))
+    expect(session(bob.id, id).recovery).not.toBeNull()
+    await expect(sendContactGroupMessage(bob.id, id, 'unresolved competing welcome')).rejects.toThrow(/history/i)
+  })
+
   it('falls back from a newer refresh to valid readmission renewal and preserves the removal fence', async () => {
     const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
     const id = await createContactGroup(alice.id, 'Renewed readmission')
