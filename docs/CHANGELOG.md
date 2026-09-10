@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added matching TypeScript and Python APIs to renew delivery for the same accepted group admission after later rotations. Bounded private provenance survives replay-cache eviction and follows competing-rekey rollback. A saved removal requires an admission newer than that removal; generic refreshes retain their existing restriction. The new welcome carries current keys and signed provenance, with no historical roots or new join-request step. Client recovery commands for expired pending operations remain unfinished.
+
+- Legacy `group create` now saves its exact signed genesis before posting and reports delivery failures. CLI `group retry` and MCP `group_retry` resume that ciphertext with the original identity and relay; lost acknowledgements can be reconciled from exact replay. An unfinished creation blocks conversion to contact-group mode. Restart tests cover rejected sends, lost acknowledgements and process termination before the acknowledgement is saved.
+
 - Fixed relay WebSocket shutdown: the server now completes the close handshake, avoiding timeout delays after one-shot receives and during reconnects. TypeScript callback failures use a valid client close code. Real relay tests cover native-client failure/replay and Python-to-TypeScript messaging.
 
 - Added ordinary-group contact workflows to the browser, Python CLI/MCP, terminal and OpenClaw. Add a verified address, rotate fresh keys and deliver a recipient-encrypted welcome over the existing group stream, then share a public link containing no keys. Addition is admission; contacts can open links in a different order. Removal and readmission exclude keys for the interval of absence. The terminal uses the matching Python receiver; OpenClaw actions require configured pins and a complete native prepare/commit review. Gateway-governed welcomes, legacy migration and automatic reconciliation of conflicting or expired pending operations remain release gaps.

@@ -532,11 +532,11 @@ def join(config_dir, identity, link, name=''):
             candidates.append((welcome, row['seq']))
         except Exception:
             continue
-    # At a given epoch, a later refresh is the inviter's latest signed current
-    # snapshot. Addition-only candidates retain the canonical rekey-ID order.
+    # Fresh current-state attestations use relay order, never their historical
+    # admission's completing rekey ID. Additions retain canonical rekey order.
     candidates.sort(key=lambda candidate: (-candidate[0]['conversation']['currentEpoch'],
-                    0 if candidate[0]['purpose'] == 'refresh' else 1,
-                    -candidate[1] if candidate[0]['purpose'] == 'refresh' else candidate[0]['rekey_id']))
+                    1 if candidate[0]['purpose'] == 'addition' else 0,
+                    candidate[0]['rekey_id'] if candidate[0]['purpose'] == 'addition' else -candidate[1]))
     with private_lock(os.path.join(config_dir, 'receive.lock')):
         records = cli._load_conversations(config_dir)
         previous = cli._find_conversation(records, conversation_id)
@@ -571,12 +571,19 @@ def join(config_dir, identity, link, name=''):
                               and welcome['conversation']['keys']['root'].hex() != previous['keys']['root']):
                 raise ValueError('Welcome is older than or conflicts with saved group state')
             if saved:
-                if saved['removed'] and welcome['purpose'] == 'refresh':
-                    readmissions = [candidate for candidate in candidates if candidate[0]['purpose'] == 'addition'
-                                    and candidate[0]['conversation']['currentEpoch'] > saved['epoch']
-                                    and candidate[1] > previous.get('group_removed_sequence', 0)]
+                if saved['removed']:
+                    readmissions = []
+                    for candidate, sequence in candidates:
+                        if (candidate['purpose'] == 'refresh' or candidate['conversation']['currentEpoch'] <= saved['epoch']
+                                or sequence <= previous.get('group_removed_sequence', 0)):
+                            continue
+                        try:
+                            group_session_from_welcome(identity, candidate, sequence, saved)
+                        except ValueError:
+                            continue
+                        readmissions.append((candidate, sequence))
                     if not readmissions:
-                        raise ValueError('A welcome refresh cannot undo saved removal; a new admission welcome is required')
+                        raise ValueError('A welcome refresh cannot undo saved removal; a new admission or valid admission renewal is required')
                     welcome, welcome_sequence = readmissions[0]
                 if saved['removed'] and welcome_sequence <= previous.get('group_removed_sequence', 0):
                     raise ValueError('Welcome predates the saved removal')

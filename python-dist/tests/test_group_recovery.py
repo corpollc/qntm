@@ -47,8 +47,6 @@ def test_coverage_detects_every_omission_and_persists_across_later_replay():
 def test_unknown_old_source_ciphertext_is_not_exempted_by_copied_message_ids(monkeypatch):
     owner, peer, state, _, pin, _ = setup()
     source = copy.deepcopy(state)
-    frame = source['rekeys'][0]
-    source.update(epoch=0, root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
     new_peer = generate_identity()
     addition = prepare_group_session_addition(owner, source, [new_peer['publicKey']])
     welcome = open_group_welcome(new_peer, marshal_canonical(addition['welcomes'][0]), **pin)
@@ -60,7 +58,7 @@ def test_unknown_old_source_ciphertext_is_not_exempted_by_copied_message_ids(mon
     extra = {'seq': 4, 'envelope': marshal_canonical(old_text)}
     assert check_group_welcome_replay(initial, welcome, 4, [*rows, extra])['recovery']['afterSequence'] == 4
     assert check_group_unverifiable_epoch(initial, old_text, 4)['recovery']['afterSequence'] == 4
-    assert check_group_unverifiable_epoch(state, old_text, 4)['recovery'] is None  # Has source-key archive.
+    assert check_group_unverifiable_epoch(state, old_text, 4)['recovery'] is None  # Knows this source epoch.
     monkeypatch.setattr('time.time', lambda: old_text['expiry_ts'] + 2)
     assert check_group_welcome_replay(initial, welcome, 4, [*rows, extra])['recovery']
     changed = {**addition['rekey'], 'ciphertext': bytes(len(addition['rekey']['ciphertext']))}

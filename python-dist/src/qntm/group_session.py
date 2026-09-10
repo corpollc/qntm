@@ -11,8 +11,9 @@ import time
 from .cbor import marshal_canonical, unmarshal
 from .crypto import QSP1Suite
 from .group import GroupState, apply_rekey, create_rekey
+from .group_admission import validate_admissions
 from .group_welcome import _validate_snapshot, prepare_group_addition, _seal_welcome, GROUP_WELCOME_TTL
-from .identity import base64url_decode, base64url_encode, validate_identity
+from .identity import base64url_decode, base64url_encode, validate_identity, key_id_from_public_key
 from .message import create_message, decrypt_message, serialize_envelope, deserialize_envelope
 
 _suite = QSP1Suite()
@@ -74,7 +75,7 @@ def _valid_wrapped(value):
         return False
 
 
-def create_group_session(identity, conversation, group, *, signed_epoch=True):
+def create_group_session(identity, conversation, group, *, signed_epoch=True, admissions=None):
     """Use only a trusted local roster or the result of open_group_welcome."""
     validate_identity(identity)
     _require(conversation.get('type') == 'group' and isinstance(conversation.get('id'), bytes)
@@ -87,9 +88,11 @@ def create_group_session(identity, conversation, group, *, signed_epoch=True):
     _require(isinstance(root, bytes) and len(root) == 32, 'Invalid group root')
     aead, nonce = _suite.derive_epoch_keys(root, conversation['id'], conversation['currentEpoch'])
     _require(aead == conversation['keys']['aeadKey'] and nonce == conversation['keys']['nonceKey'], 'Group keys differ from epoch')
+    provenance = validate_admissions({} if admissions is None else admissions, {kid.hex() for kid in group.list_members()}, conversation['currentEpoch'], complete=True)
     return {'version': 1, 'conversationId': conversation['id'].hex(), 'identityKid': identity['keyID'].hex(),
             'epoch': conversation['currentEpoch'], 'root': root.hex(), 'snapshot': encoded,
-            'removed': False, 'needsRekey': False, 'signedEpoch': signed_epoch is not False, 'rekeys': [], 'seen': {}, 'recovery': None}
+            'removed': False, 'needsRekey': False, 'signedEpoch': signed_epoch is not False, 'rekeys': [], 'seen': {}, 'recovery': None,
+            'admissions': provenance, 'removedAtEpoch': None}
 
 
 def restore_group_session(identity, value):
@@ -99,22 +102,27 @@ def restore_group_session(identity, value):
     received from another party. The JSON format is shared with TypeScript.
     """
     validate_identity(identity)
-    _require((_fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen,recovery')
-              or _fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen'))
+    base_fields = set('version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen'.split(','))
+    _require(isinstance(value, dict) and base_fields <= set(value) <= base_fields | {'recovery', 'admissions', 'removedAtEpoch'}
              and type(value['version']) is int and value['version'] == 1
              and _hex(value['conversationId'], 16) and value['identityKid'] == identity['keyID'].hex()
              and _uint(value['epoch']) and value['epoch'] <= _MAX_EPOCH and _hex(value['root'], 32)
              and type(value['removed']) is bool and type(value['needsRekey']) is bool and type(value['signedEpoch']) is bool,
              'Invalid saved group session')
     group = _roster(value['snapshot'])
+    admissions = validate_admissions(value.get('admissions', {}), {kid.hex() for kid in group.list_members()}, value['epoch'])
+    _require(value['needsRekey'] or all(record['completion'] is not None for record in admissions.values()), 'Incomplete saved group admission')
+    removed_at_epoch = value.get('removedAtEpoch')
+    _require(removed_at_epoch is None or _uint(removed_at_epoch) and removed_at_epoch <= _MAX_EPOCH, 'Invalid saved removal epoch')
     _require(value['removed'] or group.is_member(identity['keyID']), 'Saved group omits local identity')
     _require(isinstance(value['rekeys'], list) and len(value['rekeys']) <= MAX_GROUP_REKEY_CHECKPOINTS, 'Invalid rekey archive')
     last = -1
     for frame in value['rekeys']:
-        _require(_fields(frame, 'epoch,root,snapshot,messageId,expiresAt') and _uint(frame['epoch'])
+        _require((_fields(frame, 'epoch,root,snapshot,messageId,expiresAt') or _fields(frame, 'epoch,root,snapshot,messageId,expiresAt,admissions')) and _uint(frame['epoch'])
                  and last < frame['epoch'] < value['epoch'] and _hex(frame['root'], 32)
                  and _hex(frame['messageId'], 16) and _uint(frame['expiresAt']), 'Invalid rekey checkpoint')
         prior = _snapshot(frame['snapshot'])
+        validate_admissions(frame.get('admissions', {}), {member['key_id'].hex() for member in prior['founding_members']}, frame['epoch'])
         _require(prior['founding_members'][0]['key_id'] == group.snapshot()['founding_members'][0]['key_id'], 'Saved creator changed')
         last = frame['epoch']
     _require(isinstance(value['seen'], dict) and len(value['seen']) <= _MAX_SEEN, 'Invalid group replay checkpoint')
@@ -125,7 +133,10 @@ def restore_group_session(identity, value):
     _require(recovery is None or _fields(recovery, 'afterSequence,reason,challenge') and _uint(recovery['afterSequence'])
              and recovery['afterSequence'] > 0 and _hex(recovery['challenge'], 32)
              and recovery['reason'] in ('missing_history', 'expired_control'), 'Invalid group recovery state')
-    return copy.deepcopy({**value, 'recovery': recovery})
+    restored = copy.deepcopy({**value, 'recovery': recovery, 'admissions': admissions, 'removedAtEpoch': removed_at_epoch})
+    for frame in restored['rekeys']:
+        frame.setdefault('admissions', {})
+    return restored
 
 
 def require_group_recovery(previous, after_sequence, reason):
@@ -221,6 +232,10 @@ def group_session_from_welcome(identity, welcome, sequence, previous=None):
     """
     _require(_uint(sequence) and sequence > 0, 'Invalid welcome sequence')
     _require(_uint(welcome.get('replay_from_sequence')) and welcome['replay_from_sequence'] < sequence, 'Invalid welcome replay anchor')
+    admissions = validate_admissions(welcome.get('admissions', {}), {kid.hex() for kid in welcome['state'].list_members()}, welcome['conversation']['currentEpoch'], complete=True)
+    own_admission = admissions.get(identity['keyID'].hex())
+    _require(welcome['purpose'] != 'renewal' or own_admission is not None, 'Renewal lacks recipient admission provenance')
+    saved = None
     if previous:
         saved = restore_group_session(identity, previous)
         _require(saved['conversationId'] == welcome['conversation']['id'].hex(), 'Welcome belongs to a different group')
@@ -228,7 +243,10 @@ def group_session_from_welcome(identity, welcome, sequence, previous=None):
         _require(not saved['recovery'] or sequence > saved['recovery']['afterSequence'], 'Welcome predates missing group history')
         _require(not saved['recovery'] or isinstance(welcome.get('recovery_challenge'), bytes)
                  and welcome['recovery_challenge'].hex() == saved['recovery']['challenge'], 'Welcome does not answer the current recovery challenge')
-        _require(not saved['removed'] or welcome['purpose'] == 'addition', 'A welcome refresh cannot undo saved removal')
+        renewed_admission = (welcome['purpose'] == 'renewal' and own_admission is not None
+                             and saved['removedAtEpoch'] is not None
+                             and own_admission['sourceEpoch'] > saved['removedAtEpoch'])
+        _require(not saved['removed'] or welcome['purpose'] == 'addition' or renewed_admission, 'A welcome refresh cannot undo saved removal')
         _require(welcome['conversation']['currentEpoch'] >= saved['epoch'], 'Welcome is older than saved group state')
         if welcome['conversation']['currentEpoch'] == saved['epoch']:
             _require(not saved['removed'] and not saved['needsRekey'],
@@ -236,8 +254,14 @@ def group_session_from_welcome(identity, welcome, sequence, previous=None):
             if not saved['recovery']:
                 _require(welcome['conversation']['keys']['root'].hex() == saved['root'], 'Welcome cannot replace the saved epoch or removal')
                 _require(_encode_roster(welcome['state']) == saved['snapshot'], 'Welcome roster conflicts with the saved epoch')
+                for kid, admission in admissions.items():
+                    _require(kid not in saved['admissions'] or saved['admissions'][kid] == admission, 'Welcome admission conflicts with saved state')
+                    saved['admissions'][kid] = admission
                 return saved
-    return create_group_session(identity, welcome['conversation'], welcome['state'])
+    state = create_group_session(identity, welcome['conversation'], welcome['state'])
+    state['admissions'] = admissions
+    state['removedAtEpoch'] = saved['removedAtEpoch'] if saved else None
+    return state
 
 
 def group_session_conversation(state):
@@ -264,7 +288,8 @@ def prepare_group_session_addition(identity, state, recipients, ttl=None, recove
     assert_group_can_send(identity, state)
     options = {} if ttl is None else {'ttl': ttl}
     return prepare_group_addition(identity, group_session_conversation(state), _roster(state['snapshot']), recipients,
-                                  recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence, **options)
+                                  recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence,
+                                  admissions=state.get('admissions', {}), **options)
 
 
 def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL, recovery_challenge=None, replay_from_sequence=0):
@@ -290,7 +315,43 @@ def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELC
     at = int(time.time())
     return {'conversation': conversation, 'state': group,
             'welcomes': [_seal_welcome(identity, conversation, group, recipient, at, ttl,
-                                      recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence) for recipient in recipients]}
+                                      recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence,
+                                      admissions=state['admissions']) for recipient in recipients]}
+
+
+def prepare_group_admission_renewal(identity, previous, recipient_public_key, expected_admission,
+                                    ttl=GROUP_WELCOME_TTL, recovery_challenge=None, replay_from_sequence=0):
+    """Renew delivery for one already accepted admission after later rotations.
+
+    This neither adds a member nor rotates keys. Hosts pin the intended original
+    add ID and digest, save exact envelopes, and recheck before publication.
+    """
+    state = restore_group_session(identity, previous)
+    assert_group_can_send(identity, state)
+    _require(_fields(expected_admission, 'addId,addDigest') and _hex(expected_admission['addId'], 16)
+             and _hex(expected_admission['addDigest'], 32), 'Invalid expected group admission')
+    _require(isinstance(recipient_public_key, bytes) and len(recipient_public_key) == 32, 'Invalid renewal recipient')
+    kid = key_id_from_public_key(recipient_public_key).hex()
+    admission = state['admissions'].get(kid)
+    _require(admission is not None and admission['completion'] is not None
+             and admission['addId'] == expected_admission['addId'] and admission['addDigest'] == expected_admission['addDigest'],
+             'Renewal recipient admission is unknown or changed')
+    refresh = prepare_group_welcome_refresh(identity, state, [recipient_public_key], ttl, recovery_challenge, replay_from_sequence)
+    return {**refresh, 'recipient': recipient_public_key, 'admission': copy.deepcopy(admission), 'admissions': copy.deepcopy(state['admissions']),
+            'welcomes': [_seal_welcome(identity, refresh['conversation'], refresh['state'], recipient_public_key, int(time.time()), ttl,
+                                      recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence,
+                                      admissions=state['admissions'], renewal=True)]}
+
+
+def assert_group_admission_renewal_current(identity, state, operation):
+    """Recheck exact admission provenance as well as accepted keys and roster."""
+    state = restore_group_session(identity, state)
+    assert_group_welcome_refresh_current(identity, state, operation)
+    kid = key_id_from_public_key(operation['recipient']).hex()
+    _require(operation['recipient'] in {member['public_key'] for member in operation['state'].snapshot()['founding_members']}
+             and marshal_canonical(state.get('admissions', {}).get(kid)) == marshal_canonical(operation['admission'])
+             and operation['admission']['completion'] is not None
+             and marshal_canonical(state.get('admissions', {})) == marshal_canonical(operation['admissions']), 'Prepared admission renewal differs from accepted group state')
 
 
 def assert_group_welcome_refresh_current(identity, state, operation):
@@ -369,11 +430,14 @@ def receive_group_event(identity, envelope, previous):
     _require(not previous.get('recovery'), 'Group history is incomplete; open a fresh welcome from a current member')
     at = int(time.time())
     state = copy.deepcopy(previous)
+    state.setdefault('admissions', {})
+    state.setdefault('removedAtEpoch', None)
     state['rekeys'] = [frame for frame in state['rekeys'] if frame['expiresAt'] >= at]
     rewound = envelope['conv_epoch'] < state['epoch']
     source = next((frame for frame in state['rekeys'] if frame['epoch'] == envelope['conv_epoch']), None) if rewound else None
     _require(envelope['conv_epoch'] == state['epoch'] or source and mid < source['messageId'], 'Stale, future or superseded group epoch')
-    source_state = {**state, 'epoch': source['epoch'], 'root': source['root'], 'snapshot': source['snapshot']} if source else state
+    source_state = {**state, 'epoch': source['epoch'], 'root': source['root'], 'snapshot': source['snapshot'],
+                    'admissions': copy.deepcopy(source.get('admissions', {}))} if source else state
     conversation = group_session_conversation(source_state)
     message = decrypt_message(envelope, conversation)
     body_type, sender = message['inner']['body_type'], message['inner']['sender_kid']
@@ -385,6 +449,7 @@ def receive_group_event(identity, envelope, previous):
         _require(isinstance(body, dict), 'Invalid group control')
         _require(('group_epoch' not in body and not state['signedEpoch'])
                  or _uint(body.get('group_epoch')) and body['group_epoch'] == envelope['conv_epoch'], 'Group control is not signed for this epoch')
+        source_bound = _uint(body.get('group_epoch')) and body['group_epoch'] == envelope['conv_epoch']
         _require(body_type != 'group_genesis', 'Group genesis is already established')
         if body_type == 'group_add':
             members = body.get('new_members')
@@ -397,6 +462,10 @@ def receive_group_event(identity, envelope, previous):
             merged['founding_members'].extend(members)
             _validate_snapshot(merged)
             group.apply_add(body)
+            if source_bound:
+                for member in members:
+                    state['admissions'][member['key_id'].hex()] = {'addId': mid, 'addDigest': digest,
+                                                                 'sourceEpoch': envelope['conv_epoch'], 'completion': None}
             state['needsRekey'] = True
         elif body_type == 'group_remove':
             members = body.get('removed_members')
@@ -408,6 +477,10 @@ def receive_group_event(identity, envelope, previous):
                          and kid != creator and kid not in seen, 'Invalid removed member')
                 seen.add(kid)
             group.apply_remove(body)
+            for kid in members:
+                state['admissions'].pop(kid.hex(), None)
+            if source_bound and identity['keyID'] in members:
+                state['removedAtEpoch'] = max(state['removedAtEpoch'] or 0, envelope['conv_epoch'])
             state['needsRekey'] = True
             state['removed'] = state['removed'] or not group.is_member(identity['keyID'])
         else:
@@ -422,14 +495,23 @@ def receive_group_event(identity, envelope, previous):
                 if source:
                     state['rekeys'] = [frame for frame in state['rekeys'] if frame['epoch'] < source['epoch']]
                     state['seen'] = {sid: event for sid, event in state['seen'].items() if event['epoch'] <= source['epoch']}
+                    state['admissions'] = copy.deepcopy(source_state['admissions'])
                 state['rekeys'].append({'epoch': conversation['currentEpoch'], 'root': conversation['keys']['root'].hex(),
                                         'snapshot': source_state['snapshot'], 'messageId': mid,
+                                        'admissions': copy.deepcopy(state['admissions']),
                                         'expiresAt': min(envelope['expiry_ts'], at + GROUP_REKEY_GRACE_SECONDS)})
                 state['rekeys'] = state['rekeys'][-MAX_GROUP_REKEY_CHECKPOINTS:]
                 apply_rekey(conversation, root, body['new_conv_epoch'])
                 state['root'], state['epoch'] = root.hex(), body['new_conv_epoch']
+                if source_bound:
+                    for admission in state['admissions'].values():
+                        if admission['completion'] is None:
+                            admission['completion'] = {'rekeyId': mid, 'rekeyDigest': digest}
+                else:
+                    state['admissions'] = {kid: admission for kid, admission in state['admissions'].items() if admission['completion'] is not None}
             else:
                 state['removed'] = True
+                state['admissions'] = {kid: copy.deepcopy(admission) for kid, admission in source_state['admissions'].items() if admission['completion'] is not None}
             state['needsRekey'] = False
         state['snapshot'] = _encode_roster(group)
     else:
