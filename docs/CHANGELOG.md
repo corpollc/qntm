@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- OpenClaw groups can recover a saved operation after restart through a local `openclaw agent --channel qntm --to GROUP_ID` turn. The host must identify it as owner initiated; the agent still reviews and commits through the existing scoped tool. Inbound messages remain deferred until recovery completes.
+
 - Completed removal and rotation retries now survive replay-cache eviction in Python, the browser and OpenClaw. Private authenticated receipts let a retry finish without reposting obsolete controls or restoring old keys, including after a later valid rotation. Competing branches and replacement welcomes invalidate prior proof; older journals without retained evidence stay preserved for reconciliation.
 
 - Relay acceptance tests now distinguish Node's reported close event from the server's actual handshake. They check callback retry and independently verify that the server returns the correct close frame before ending the connection.

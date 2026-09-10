@@ -222,6 +222,15 @@ posts no obsolete controls and keeps the current keys. OpenClaw exposes this as
 an `accepted_cleanup` review, subject to the existing local action permissions.
 These receipts stay in client storage and add no relay metadata or wire fields.
 
+When an OpenClaw restart leaves an operation pending, a local operator can start
+a scoped recovery turn through the running OpenClaw Gateway with
+`openclaw agent --channel qntm --to GROUP_ID --message 'Review the saved qntm group operation and retry it if appropriate.' --json`.
+The command starts an agent turn; it does not approve or commit the operation.
+The existing tool permissions, prepare/commit review and current-state guards
+still apply. Group messages remain deferred until the saved operation completes.
+See the [native adapter instructions](../openclaw-qntm/README.md#local-recovery-entry-point)
+for host requirements and the local transcript footprint.
+
 The relay stores each accepted POST as a new sequence row. Explicit retry after
 an unknown acknowledgement can therefore store identical ciphertext twice.
 Receiver replay checks prevent duplicate message effects; this is distinct from

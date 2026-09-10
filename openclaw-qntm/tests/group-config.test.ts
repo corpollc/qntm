@@ -71,6 +71,9 @@ describe('OpenClaw contact group configuration and native scope', () => {
     expect(createQntmGroupTool({ ...routed, deliveryContext: { channel: 'qntm', to: `qntm:${conversation}`, accountId: 'other' } }, cfg, service)).toBeNull();
     expect(createQntmGroupTool({ ...routed, agentAccountId: 'other' }, cfg, service)).toBeNull();
     expect(createQntmGroupTool({ ...routed, sessionId: undefined }, cfg, service)).toBeNull();
+    for (const nativeChannelId of ['', 'not-a-conversation']) {
+      expect(createQntmGroupTool({ ...routed, nativeChannelId }, cfg, service)).toBeNull();
+    }
     // A native inbound turn whose delivery route disagrees with its platform conversation is refused.
     expect(createQntmGroupTool({ ...ctx, deliveryContext: { channel: 'qntm', to: `qntm:${'ff'.repeat(16)}` } }, cfg, service)).toBeNull();
     expect(createQntmGroupTool({ ...ctx, deliveryContext: { channel: 'qntm', to: `qntm:${conversation}` } }, cfg, service)?.name).toBe('qntm_group');

@@ -25,6 +25,7 @@ type Scope = { key: string; store: QntmGroupStore };
  * either signal stay outside the tool. */
 function routedConversation(ctx: OpenClawPluginToolContext): string | undefined {
   const native = /^[a-f0-9]{32}$/i.test(ctx.nativeChannelId ?? '') ? ctx.nativeChannelId!.toLowerCase() : undefined;
+  if (ctx.nativeChannelId !== undefined && !native) return undefined;
   const delivered = ctx.deliveryContext?.channel === 'qntm' && /^qntm:[a-f0-9]{32}$/i.test(ctx.deliveryContext.to ?? '')
     ? ctx.deliveryContext.to!.slice('qntm:'.length).toLowerCase() : undefined;
   if (native && delivered && native !== delivered) return undefined;
