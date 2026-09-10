@@ -50,7 +50,8 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     await h.alice.run(['identity', 'generate']); await h.dave.run(['identity', 'generate']);
     const created = await h.alice.run(['group', 'create', 'OpenClaw contact welcomes']); convId = String(created.data!.conversation_id);
     host = new OpenClawAgent(join(h.rootDir, 'openclaw'), convId);
-    await h.alice.run(['contact', 'add', 'OpenClaw', base64UrlEncode(host.identity.publicKey)]);
+    // Hex form: a base64url key can begin with '-', which the CLI's argument parser reads as an option.
+    await h.alice.run(['contact', 'add', 'OpenClaw', Buffer.from(host.identity.publicKey).toString('hex')]);
     // Exercise the supported legacy-to-contact upgrade without adding a member
     // or rotating: the creator can refresh their own current admission.
     await h.alice.run(['group', 'refresh', convId, h.alice.readIdentity().public_key]);
@@ -514,15 +515,53 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     await host.waitFor(() => checkpoint().cursor > afterRepair.sequence, 'host received the survivor reply');
     const survivorRows = await relay.receiveMessages(conversationId, afterRepair.sequence);
     expect(decryptAll(survivorRows.entries, hostConversation()).map(row => row.text)).toContain('survivor reply after native removal repair');
-    // Round two: the reviewed repair itself is posted, then the host dies before its journal is finalized.
+    // Round two: give the still-admitted TypeScript peer the host's current keys through the
+    // reviewed refresh (a signed renewal), prove it reads live survivor traffic, then remove that
+    // exact incarnation. The reviewed repair is posted and the host dies before its journal is final.
+    const tsKid = Buffer.from(tsPeer.keyID).toString('hex');
+    const renewed = await action('refresh-typescript-before-removal', 'refresh', { contact: 'TypeScript' });
+    expect(renewed[1].review!.welcomePurpose).toBe('renewal');
+    const locator = parseGroupLink(checkpointLink()), current = await relay.receiveMessages(conversationId, 0);
+    // Ordinary TypeScript open flow: pick the newest welcome this identity can open from the pinned inviter.
+    let opened: { seq: number; welcome: ReturnType<typeof openGroupWelcome> } | undefined;
+    for (const row of current.entries) {
+      try {
+        const welcome = openGroupWelcome(tsPeer, row.envelope, locator);
+        if (!opened || welcome.conversation.currentEpoch > opened.welcome.conversation.currentEpoch
+          || (welcome.conversation.currentEpoch === opened.welcome.conversation.currentEpoch && row.seq > opened.seq)) opened = { seq: row.seq, welcome };
+      } catch { /* Other recipients and ordinary messages. */ }
+    }
+    expect(opened!.welcome.purpose).toBe('renewal'); expect(opened!.welcome.conversation.currentEpoch).toBe(checkpoint().session.epoch);
+    tsSession = checkGroupWelcomeReplay(groupSessionFromWelcome(tsPeer, opened!.welcome, opened!.seq, tsSession), opened!.welcome, current.sequence, current.entries);
+    expect(tsSession.recovery).toBeNull(); expect(tsSession.removed).toBe(false);
+    tsCursor = opened!.welcome.replayFromSequence;
+    const replayInto = (rows: Array<{ seq: number; envelope: Uint8Array }>) => {
+      const texts: string[] = [];
+      for (const row of rows.filter(row => row.seq > tsCursor)) {
+        try {
+          const event = receiveGroupEvent(tsPeer, deserializeEnvelope(row.envelope), tsSession);
+          tsSession = event.state; tsCursor = row.seq;
+          if (!event.duplicate && event.message.inner.body_type === 'text') texts.push(new TextDecoder().decode(event.message.inner.body));
+        } catch { /* Welcomes and rows the removed identity can no longer open. */ }
+      }
+      return texts;
+    };
+    replayInto(current.entries);
+    expect(tsSession.epoch).toBe(checkpoint().session.epoch); expect(tsSession.root).toBe(checkpoint().session.root);
+    await h.alice.run(['send', convId, 'survivor text readable by the current TypeScript keys']);
+    await host.waitFor(() => checkpoint().cursor > current.sequence, 'host received the pre-removal survivor text');
+    expect(replayInto((await relay.receiveMessages(conversationId, tsCursor)).entries)).toContain('survivor text readable by the current TypeScript keys');
+    const priorKeys = groupSessionConversation(tsSession), priorEpoch = tsSession.epoch;
     await host.stop();
     await h.alice.run(['recv', convId]);
     const deferredAgain = { id: 'deferred-behind-uncertain-repair', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
     await h.alice.run(['send', convId, 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(deferredAgain)).toString('base64url')]);
     const second = await stagePendingGroupRemoval(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'TypeScript', 8);
+    expect(second.epoch).toBe(priorEpoch);
+    expect(second.target).toMatchObject({ keyId: tsKid, publicKey: base64UrlEncode(tsPeer.publicKey), admission: tsSession.admissions[tsKid] });
     await delay(Math.max(0, (second.expiry + 1) * 1000 - Date.now()));
     const uncertain = await stageUncertainRemovalRepair(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir);
-    expect(checkpoint().operation).toMatchObject({ phase: 'removal_rekey', controls: [uncertain.rotation], origin: { kind: 'remove', controls: second.controls, delivery: 'unknown' } });
+    expect(checkpoint().operation).toMatchObject({ phase: 'removal_rekey', controls: [uncertain.rotation], origin: { kind: 'remove', controls: second.controls, target: second.target, delivery: 'unknown' } });
     expect(checkpoint().controlReceipts).toEqual([expect.objectContaining({ messageId: second.removalId, valid: true })]);
     await host.start();
     await host.waitFor(() => checkpoint().cursor > second.cursor, 'host replayed the uncertain repair rotation after restart');
@@ -535,20 +574,26 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(finalWires).not.toContain(second.controls[1]);
     await host.waitFor(() => provider.outcomes.has(deferredAgain.id), 'second deferred inbound turn released');
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === `gateway-tool-complete:${deferredAgain.id}`, 'second deferred turn completion');
-    // Both removed peers are absent from the host's authenticated roster and from Alice's
-    // Python view; the TypeScript peer's last keys (epoch 3) cannot open post-repair traffic.
-    // (A cold offline replay of this whole history with the bare reducer is not attempted:
-    // earlier tests posted 20-second rotations that decryptMessage now rejects as expired.)
+    // The TypeScript peer replays its own removal with the keys it held immediately before it:
+    // the exact removal row marks it removed, the repair rotation wraps no key for it, and
+    // nothing published after the repair opens with those prior keys, while survivors reply.
+    replayInto(final.entries);
+    expect(tsSession.removed).toBe(true); expect(tsSession.epoch).toBe(priorEpoch);
     const hostRoster = groupSessionConversation(restoreGroupSession(host.identity, checkpoint().session)).participants.map(kid => Buffer.from(kid).toString('hex'));
-    expect(hostRoster).not.toContain(Buffer.from(tsPeer.keyID).toString('hex')); expect(hostRoster).not.toContain(h.dave.readIdentity().key_id);
-    expect(hostRoster).toContain(h.alice.readIdentity().key_id);
+    expect(hostRoster).not.toContain(tsKid); expect(hostRoster).not.toContain(h.dave.readIdentity().key_id); expect(hostRoster).toContain(h.alice.readIdentity().key_id);
     await h.alice.run(['recv', convId]);
-    expect(h.alice.readConversation(convId).participants).not.toContain(Buffer.from(tsPeer.keyID).toString('hex'));
+    expect(h.alice.readConversation(convId).participants).not.toContain(tsKid);
+    await h.alice.run(['send', convId, 'survivor reply after the TypeScript removal repair']);
     await action('after-removal-recoveries', 'send', { text: 'native finished both removals from the current roster' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native finished both removals from the current roster', 'native reply after removal recoveries');
-    const latest = (await relay.receiveMessages(conversationId, final.sequence)).entries;
-    expect(latest.length).toBeGreaterThan(0);
-    for (const row of latest) expect(() => decryptMessage(deserializeEnvelope(row.envelope), groupSessionConversation(tsSession))).toThrow();
+    const afterRows = (await relay.receiveMessages(conversationId, final.sequence)).entries;
+    const survivorTexts = decryptAll(afterRows, hostConversation()).map(row => row.text);
+    expect(survivorTexts).toContain('survivor reply after the TypeScript removal repair');
+    expect(survivorTexts).toContain('native finished both removals from the current roster');
+    const repairSeq = final.entries.find(row => Buffer.from(row.envelope).toString('base64url') === uncertain.rotation)!.seq;
+    const postRepair = final.entries.filter(row => row.seq > repairSeq).concat(afterRows);
+    expect(postRepair.length).toBeGreaterThan(2);
+    for (const row of postRepair) expect(() => decryptMessage(deserializeEnvelope(row.envelope), priorKeys)).toThrow();
   }, TIMEOUT);
 
 });
