@@ -686,7 +686,7 @@ def test_contact_creation_requires_exact_replay_after_a_post_acknowledgement(set
     assert 'group_operation' not in cli._find_conversation(cli._load_conversations(f.owner_dir), record['id'])
 
 
-def test_expired_admission_welcome_is_not_posted_or_marked_delivered(setup, monkeypatch):
+def test_retry_renews_delivery_without_posting_the_expired_admission_welcome(setup, monkeypatch):
     f = setup
 
     def withhold_welcome(url, cid, wire):
@@ -703,10 +703,11 @@ def test_expired_admission_welcome_is_not_posted_or_marked_delivered(setup, monk
     monkeypatch.setattr('time.time', lambda: expiry + 1)
     monkeypatch.setattr(cli, '_http_send', f.send)
     before = len(f.attempted)
-    with pytest.raises(ValueError, match='expired'):
-        owner.retry(f.cid)
-    assert len(f.attempted) == before
-    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == saved
+    owner.retry(f.cid)
+    assert len(f.attempted) == before + 1
+    assert f.attempted[-1] != base64.b64decode(saved['welcomes'][0])
+    assert deserialize_envelope(f.attempted[-1])['expiry_ts'] > expiry + 1
+    assert 'group_operation' not in cli._load_conversations(f.owner_dir)[0]
 
 
 @pytest.mark.parametrize('delivery', ['retained', 'expired', 'missing'])
