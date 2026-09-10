@@ -50,6 +50,7 @@ export class TestRelayServer {
   readonly conversations = new Map<string, RelayConversation>();
   url = '';
   beforeSendResponse?: () => Promise<void>;
+  rejectNextSend?: number;
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
@@ -57,6 +58,11 @@ export class TestRelayServer {
       try {
         if (req.method === 'POST' && req.url === '/v1/send') {
           const body = await readJson(req);
+          if (this.rejectNextSend) {
+            const status = this.rejectNextSend; this.rejectNextSend = undefined;
+            sendJson(res, status, { error: 'Injected send outage' });
+            return;
+          }
           const conv = this.getConversation(body.conv_id);
           const seq = conv.nextSeq++;
           const message = {

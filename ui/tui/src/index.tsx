@@ -15,6 +15,7 @@ import React from 'react';
 import { render } from 'ink';
 import App from './App.js';
 import { COMMANDS } from './lib/commands.js';
+import { stopGroupReceivers } from './lib/groups.js';
 
 // ── Arg parsing ──────────────────────────────────────────────────────────
 
@@ -80,11 +81,19 @@ import path from 'node:path';
 const configDir = args.configDir || path.join(os.homedir(), '.qntm-human');
 const dropboxUrl = args.dropboxUrl || 'https://inbox.qntm.corpo.llc';
 
-const { waitUntilExit } = render(
+const { waitUntilExit, unmount } = render(
   <App configDir={configDir} dropboxUrl={dropboxUrl} />,
   { exitOnCtrlC: true },
 );
 
-waitUntilExit().catch(() => {
+// Close resident group receivers and release their profile locks on service
+// termination as well as the interactive /quit and Ctrl-C paths.
+const shutdown = () => { stopGroupReceivers(); unmount(); };
+process.once('SIGTERM', shutdown);
+process.once('SIGHUP', shutdown);
+process.once('exit', stopGroupReceivers);
+
+waitUntilExit().then(stopGroupReceivers).catch(() => {
+  stopGroupReceivers();
   process.exit(1);
 });
