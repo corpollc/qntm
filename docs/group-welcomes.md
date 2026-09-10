@@ -1,9 +1,9 @@
 # Contact addition and encrypted group welcomes
 
 This unreleased extension implements the [add-contact design](design/group-membership.md)
-in the Python CLI and MCP, with matching Python and TypeScript library operations.
-Browser, terminal and OpenClaw interfaces, gateway-governed welcomes and complete
-recovery across competing rekeys remain unfinished (`qntm-2g7v`). It is not part
+in the browser, Python CLI/MCP, terminal and OpenClaw, with matching Python and
+TypeScript library operations. Gateway-governed welcomes, legacy migration and
+complete recovery across competing rekeys remain unfinished (`qntm-2g7v`). It is not part
 of the published 0.6.1 packages or hosted browser.
 
 The public link has no expiry, and contacts can open their links in a different
@@ -20,6 +20,22 @@ interval before the welcome was posted. A rotation can race into that interval;
 if retention has removed it, the recipient pauses and requests a fresh welcome
 instead of treating the older keys as current. History before the signed position
 is not required. The position stays inside the encrypted welcome.
+
+## Client interfaces
+
+| Client | Entry point | Persistence and requirements |
+| --- | --- | --- |
+| Browser | Contacts panel; create/add/open/remove/refresh actions | Per-identity browser storage with Web Locks and encrypted backup support; [browser guide](../ui/aim-chat/README.md) |
+| Python CLI/MCP | Commands and tools below | Private, atomic profile shared with `recv --watch` |
+| Terminal | `/contact`, `/group`, `/join` | Matching Python package and private `contact-groups` profile; [terminal guide](../ui/tui/README.md) |
+| OpenClaw | Configured pins/group link or trusted checkpoint, optional `qntm_group` tool | Native host session, configured allowed actions and complete review; [adapter guide](../openclaw-qntm/README.md) |
+
+The browser, CLI and terminal can create a new ordinary group. OpenClaw binds to
+a configured group and manages membership through its locally enabled actions.
+Pin removal changes the local address book only; group removal is a separate
+membership operation. Each client's guide describes its stored keys, plaintext
+history or dispatch queue and recovery limits. These interfaces add no relay
+endpoint or metrics label.
 
 ## CLI and MCP
 

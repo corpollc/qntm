@@ -19,8 +19,8 @@ The existing `release.yml` and `publish-npm.yml` workflow identities are retaine
 | TypeScript library | Crypto/protocol/event/subscription tests, build, package contents |
 | Python | Full suite with MCP extras on Python 3.10 and 3.12; minimum WebSocket dependency on 3.10; generated help |
 | Charter | Go race tests, vet, and vulnerability scan; real Python/TypeScript/Go HTTP/restart journeys and executable Python documentation; shared authority/canonicalization vectors; installed-wheel charter import/sign/replay |
-| Browser | Unit/component tests, production build, Playwright conversation journeys, runtime dependency audit |
-| Terminal | Unit/component tests, real PTY input and receive tests, build, runtime dependency audit |
+| Browser | Unit/component tests, production build, Playwright conversation/contact-group journeys, concurrent-tab writes, runtime dependency audit |
+| Terminal | Unit/component tests, real PTY input/receive and contact-group journeys, receiver shutdown, build, runtime dependency audit |
 | Relay | Typecheck; real Worker subscription/receipt/idle-expiry tests; SQLite migration/retention regressions |
 | Gateway | Security/governance tests and typecheck; browser/CLI approval, membership/rekey, expiry, restart, and signed invitation/acceptance journeys |
 | Adapters | OpenClaw, retained NanoClaw, and Claude channel tests/typecheck; OpenClaw 2026.9.3 compiled-package install, native tool-loop request/votes/secret/governance, encrypted replies, rekey/removal, failed host admission and process-crash recovery on Node 24; real MCP channel transport; runtime dependency audits |
@@ -68,6 +68,7 @@ The three Worker packages override the development dependency `sharp` to 0.35.4 
 
 | Feature | Cross-client evidence |
 | --- | --- |
+| Contact-group membership | Real browser, terminal PTY and installed OpenClaw host with Python/TypeScript peers: add pinned contacts, reverse opening order, replies, refresh, restart, missed-history recovery, removal and readmission; shared suites cover signed replay anchors and challenged recovery |
 | Gateway admission | CLI invitation and authenticated gateway acceptance validated by TypeScript and observed in browser history; existing UI workflow invites the gateway from the browser |
 | Native OpenClaw gateway tools | Actual packaged host and model/tool loop admit the real gateway; execute Python/native requests with browser/TypeScript peers; withdraw and restore votes; apply governance; reject terminal requests, another requester, stale reviews after rekey and lost reviews after restart; recover execution and persist removal |
 | Guidance categories | CLI pins for all three categories, discovered/prepared/sent through a real MCP connection, received in the browser; changed reviewed content is rejected |

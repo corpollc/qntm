@@ -5,8 +5,8 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | Capability | Python | TypeScript | Go |
 | --- | --- | --- | --- |
 | Identity, invite, signed encrypted messages | Library and CLI | Library, browser and Node | Old messaging implementation is archived in `attic/` |
-| Contact-add welcomes and public group links | Unreleased CLI/MCP add, open, remove, current-key refresh and exact-operation retry; shared library helpers | Matching unreleased library helpers, including refresh and completion of an interrupted rotation; browser, terminal and OpenClaw interfaces unfinished | No maintained messaging client |
-| Ordinary-group receive checkpoints | Unreleased authenticated reducer with atomic CLI/MCP history, cursor and pending ciphertext | Matching reducer and private JSON format; host persistence required | No maintained messaging client |
+| Contact-add welcomes and public group links | Unreleased CLI/MCP create, add, open, remove, current-key refresh, rekey and exact-operation retry; shared library helpers | Matching unreleased library helpers and browser workflows; terminal uses the Python receiver; OpenClaw supports configured pins/groups and reviewed native actions | No maintained messaging client |
+| Ordinary-group receive checkpoints | Unreleased authenticated reducer with atomic CLI/MCP history, cursor and pending ciphertext | Matching reducer and private JSON format; browser persists per identity with Web Locks; OpenClaw persists a locked checkpoint/dispatch queue | No maintained messaging client |
 | Expiry and saved history | Reject expired live messages; explicit `allow_expired=True` for history | Same policy; explicit `{ allowExpired: true }` for history | No maintained messaging client |
 | Persistent relay subscription | `recv --watch` owns reconnect and durable profile state | `DropboxClient.subscribeMessages` owns reconnect; application owns durable state | No maintained messaging client |
 | Portable receive event | `ReceiveEvent`, `create_receive_event` | `ReceiveEvent`, `createReceiveEvent` | Not implemented |
@@ -18,6 +18,15 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 The CLI's hook runner is client behavior: it needs no new relay endpoint. Muse and other hosts can consume the continuous JSONL subscription directly. Codex, Claude, Grok, or another harness can consume the same event through a local adapter; qntm does not ship or claim tested native insertion adapters for every harness. The Claude channel is the included MCP bridge. OpenClaw is the maintained agent integration target. The existing NanoClaw transport source is retained, but further installation and host-verification work is deferred and it is not an actively supported client.
 
 Tests cover shared encrypted receive fixtures, Python 3.10/3.12, TypeScript crypto and subscriptions, the Python/TypeScript/Go charter boundary, browser/CLI/gateway journeys, terminal PTY input, and adapter contracts. The OpenClaw adapter tests a compiled package installed in the real 2026.9.3 host, encrypted direct/group replies, rekey/removal across restart, and pending delivery recovery after host session-storage failure plus `SIGKILL`. Cross-client journeys also connect that host to actual relay/gateway Workers and Python/browser/TypeScript peers: signed admission, real execution, withdrawal/quorum, governance, wrong-requester and stale-review rejection, and restart after rekey. A deterministic local model exercises the host's real optional-tool loop; ordinary chat transport also has reply-hook coverage. These fixtures establish host and protocol compatibility, not agent judgment or universal harness support. OpenClaw uses the shared TypeScript authenticated reducer, private durable queue/checkpoint and opt-in reviewed gateway tools. See [release checks](deployment-checklist.md), [OpenClaw gateway tools](../openclaw-qntm/README.md#optional-gateway-tools), [storage/recovery](../openclaw-qntm/README.md#local-storage-privacy-and-recovery), and [receive hooks](receive-hooks.md).
+
+Contact-group journeys additionally run against the real relay in the browser,
+terminal PTY and installed OpenClaw host, with Python and TypeScript peers. They
+cover reverse opening order, current-key refresh, restart, missing-history
+recovery, removal and readmission. The shared suites check signed replay anchors
+and recovery challenges in both languages. Run `cd integration && npm run
+test:contacts` for these journeys. Gateway-governed welcomes, incomplete legacy
+rosters and automatic reconciliation of competing or expired pending operations
+remain outside this increment; see [group welcome boundaries](group-welcomes.md).
 
 ## Message expiry
 
