@@ -174,10 +174,23 @@ retains both the original intent and replacement rotation ciphertext. A POST
 acknowledgement alone never installs predicted keys or fills missing control
 history.
 
-An uncompleted replacement rotation that itself expires or stops matching the
-roster remains blocked with its journal intact. The same applies to an already
-staged renewal that expires or is superseded again. Broader reconciliation
-for refresh/remove/rekey operations and other clients remains under `qntm-qp22`.
+If a replacement rotation or renewal becomes stale again, explicit CLI/MCP retry
+can repeat this reconciliation for the same current admission. Valid uncertain
+ciphertext stays unchanged. A stale rotation still requires an incomplete
+admission at the current source epoch; a stale renewal requires a complete current
+admission. Changed membership or incomplete authenticated history blocks both.
+For example, a competing branch that requires an expired control to reconstruct
+still needs recovery from a current member; retry cannot waive that boundary.
+
+Superseded recovery operations remain as a flat private list of exact control
+and welcome ciphertext, acknowledgement counts and unknown delivery status.
+Entries contain no old expected checkpoints or nested operation histories. The
+list is limited to 256 entries and 4 MiB of canonical encoded evidence, in addition
+to the original intent and current operation. At either limit, retry preserves
+the journal and sends nothing; it never silently discards uncertain delivery.
+The entire operation journal is removed after completion. Broader reconciliation
+for generic refresh/remove/rekey operations and other clients remains under
+`qntm-qp22`.
 
 `qntm group link GROUP_ID` retrieves the public locator pinned to **your**
 identity, for contacts whose welcomes you issued. It does not add anyone or

@@ -35,6 +35,8 @@ from .storage import private_lock
 _suite = QSP1Suite()
 MAX_PENDING_MESSAGES = 256
 MAX_PENDING_BYTES = 4 * 1024 * 1024
+MAX_OPERATION_REVISIONS = 256
+MAX_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024
 
 
 def _recovery_challenge(value):
@@ -492,6 +494,17 @@ class GroupClient:
         origin.update(admission=expected, recipient=recipient.hex(), delivery='unknown')
         return origin
 
+    def _superseded_evidence(self, operation):
+        """Keep bounded exact delivery evidence without recursive checkpoints."""
+        evidence = copy.deepcopy(operation.get('superseded_operations', []))
+        if not isinstance(evidence, list) or len(evidence) >= MAX_OPERATION_REVISIONS:
+            raise ValueError('Saved recovery evidence reached its revision limit; operation preserved')
+        evidence.append({key: copy.deepcopy(operation[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent')})
+        evidence[-1]['delivery'] = 'unknown'
+        if len(marshal_canonical(evidence)) > MAX_OPERATION_EVIDENCE_BYTES:
+            raise ValueError('Saved recovery evidence reached its byte limit; operation preserved')
+        return evidence
+
     def _assert_pending_rotation_current(self, record, operation, proof):
         state, _, _, admission = proof
         assert_group_can_send(self.identity, {**state, 'needsRekey': False})
@@ -610,8 +623,7 @@ class GroupClient:
                     self._assert_pending_rotation_current(record, original, proof)
                     return record, False
                 except (ValueError, CryptoError):
-                    if original['kind'] == 'addition_rekey':
-                        raise  # Keep a second uncertain/expired repair intact for reconciliation.
+                    pass
                 challenge = self._addition_challenge(original, recipient)
                 rotation = prepare_group_session_rekey(self.identity, state)
                 trial = receive_group_event(self.identity, rotation['rekey'], state)['state']
@@ -622,7 +634,9 @@ class GroupClient:
                                                     signed_epoch=state['signedEpoch'], admissions=trial['admissions']),
                     'member': original['member'], 'recipient': recipient.hex(),
                     'recovery_challenge': challenge.hex() if challenge else None,
-                    'origin': self._addition_origin(original, recipient, expected)}
+                    'origin': self._addition_origin(original, recipient, expected),
+                    **({'superseded_operations': self._superseded_evidence(original)}
+                       if original['kind'] == 'addition_rekey' else {})}
                 cli._save_conversations(self.config_dir, records)
                 return record, False
             assert_group_can_send(self.identity, state)
@@ -644,10 +658,42 @@ class GroupClient:
                                                 signed_epoch=state['signedEpoch'], admissions=renewed['admissions']),
                 'member': original['member'], 'recipient': recipient.hex(), 'admission': renewed['admission'],
                 'recovery_challenge': challenge.hex() if challenge else None, 'origin': origin,
-                **({'rotation': {'controls': copy.deepcopy(original['controls']), 'delivery': 'unknown'}}
+                **({'rotation': {'controls': copy.deepcopy(original['controls']), 'delivery': 'unknown'},
+                    'superseded_operations': copy.deepcopy(original.get('superseded_operations', []))}
                    if original['kind'] == 'addition_rekey' else {})}
             cli._save_conversations(self.config_dir, records)
             return record, False
+
+    def _reconcile_renewal(self, conversation_id, original):
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(original):
+                raise ValueError('Pending operation changed before renewal reconciliation; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            assert_group_can_send(self.identity, state)
+            recipient = public_key(original['recipient'])
+            expected = {key: original['admission'][key] for key in ('addId', 'addDigest')}
+            admission = state['admissions'].get(key_id_from_public_key(recipient).hex())
+            if not admission or not admission['completion'] or any(admission[key] != value for key, value in expected.items()):
+                raise ValueError('Original addition is no longer the accepted admission; operation preserved')
+            prepared = {**self._prepared_welcome(original), 'recipient': recipient,
+                        'admission': original['admission'], 'admissions': original['expected']['admissions']}
+            try:
+                assert_group_admission_renewal_current(self.identity, state, prepared)
+                return record  # Exact unknown delivery remains exact while current and valid.
+            except ValueError:
+                pass
+            challenge = self._addition_challenge(original, recipient)
+            renewal = prepare_group_admission_renewal(self.identity, state, recipient, expected,
+                recovery_challenge=challenge, replay_from_sequence=record.get('group_cursor', 0))
+            record['group_operation'] = {**copy.deepcopy(original),
+                'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in renewal['welcomes']],
+                'welcomes_sent': 0, 'admission': renewal['admission'],
+                'expected': create_group_session(self.identity, renewal['conversation'], renewal['state'],
+                                                signed_epoch=state['signedEpoch'], admissions=renewal['admissions']),
+                'superseded_operations': self._superseded_evidence(original)}
+            cli._save_conversations(self.config_dir, records)
+            return record
 
     def link(self, conversation_id):
         _, record = self._load(conversation_id)
@@ -667,6 +713,9 @@ class GroupClient:
         exact_addition_proof = False
         if reconcile and operation['kind'] in ('add', 'addition_rekey'):
             record, exact_addition_proof = self._reconcile_addition(conversation_id, operation)
+            operation = record['group_operation']
+        elif reconcile and operation['kind'] == 'renewal':
+            record = self._reconcile_renewal(conversation_id, operation)
             operation = record['group_operation']
         controls = [] if exact_addition_proof else operation['controls']
         if reconcile and operation['kind'] == 'add' and self._addition_proof(record, operation) is not None:
