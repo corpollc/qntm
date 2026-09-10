@@ -115,19 +115,30 @@ ciphertext, even if the bounded replay cache has evicted its controls. If the
 delivery window expired or another accepted rotation changed the current keys,
 retry sends a renewal only when the same exact addition still proves the
 recipient's completed admission. It changes no membership and does not repeat
-the obsolete controls. Removal, another readmission, recovery or an unfinished
-rotation blocks this renewal.
+the obsolete controls. If the original addition is accepted but its completing
+rotation expired or no longer fits the current roster, retry saves a new rotation
+for that roster first. The browser installs its keys and prepares a welcome only
+after authenticated relay replay proves a canonical completing rotation. It never
+posts a second addition. Removal, another readmission or required recovery blocks
+this repair; another unfinished membership change must complete before renewing
+an already completed admission.
 Saved renewals include the recipient's full key, exact admission proof and
 complete expected admission map; retry checks them against the current state
 before posting. Encrypted backups preserve this evidence and the original
 challenge. Older generic refresh journals remain exact generic retries.
 When retry replaces an old addition's welcome, it retains the original encrypted
 controls and welcome, recipient, challenge, exact admission ID/digest and delivery
-uncertainty once. This archive contains no old expected checkpoint or plaintext
-group roots. The new expected checkpoint uses current keys and no earlier key
-archive. A failed renewal send retries that same new ciphertext; a second expiry
-or conflicting renewal remains preserved and blocked pending further
-reconciliation. Fully acknowledged welcome journals can be cleared even after
+uncertainty once. Superseded repairs and renewals are retained as a flat list of
+exact encrypted envelopes and delivery counts. The evidence is limited to 256
+superseded revisions and 4 MiB including the original admission archive; reaching
+either limit preserves the operation and stops further sends. The archive contains
+no old expected checkpoints or plaintext group roots. Each new expected checkpoint
+contains the current or proposed keys with no earlier key archive; proposed keys
+are never installed from a POST acknowledgement alone. Valid uncertain delivery
+retries the same ciphertext. A later expiry or changed current state can create a
+replacement only after rechecking the exact original admission. The optional
+challenge remains bound to the signed original welcome. This also applies to
+renewals issued directly through **Refresh welcome**. Fully acknowledged welcome journals can be cleared even after
 later removal, recovery or expiry, without another network request.
 Older draft addition journals without enough exact recipient admission evidence
 remain importable but cannot use this recovery path; retry preserves them rather
@@ -161,8 +172,10 @@ this browser does not infer a trusted full roster from message senders or migrat
 legacy groups automatically. Gateway promotion and governed welcome delivery for
 new contact groups remain unavailable. If a competing rekey rewinds accepted
 state, the browser preserves the pending operation and requests fresh recovery
-instead of claiming it reconstructed missing descendants. Expired/conflicting
-outbox reconciliation (`qntm-qp22`) remains a release prerequisite. The signed
+instead of claiming it reconstructed missing descendants. Recovery and reconciliation
+for other expired/conflicting operation kinds (`qntm-qp22`) remain a release prerequisite. Unknown
+standalone controls from an older epoch are retained rather than posted as new
+proposals. The signed
 anchor detects missing pre-welcome rows; it does not establish consensus about
 membership against a relay that fabricates a complete-looking replay.
 This source change is not a claim that the hosted 0.6.1 browser includes it.

@@ -47,14 +47,22 @@ export interface StoredGroupAdditionOrigin {
   recoveryChallenge: string | null
   delivery: 'unknown'
 }
+export interface StoredGroupOperationEvidence {
+  kind: 'addition_rekey' | 'renewal'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  delivery: 'unknown'
+}
 export type StoredGroupOperation = {
   controls: string[]
   welcomes: string[]
   delivered: number
   expected: GroupSessionState
-} & ({ kind: 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never }
-  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never }
-  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; recoveryChallenge?: never })
+} & ({ kind: 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
+  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: never }
+  | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never }
+  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never })
 
 export interface StoredGroup {
   session: GroupSessionState

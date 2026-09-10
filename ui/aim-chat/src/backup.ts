@@ -1,6 +1,6 @@
 import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
 import type { StoreData, StoredConversation, StoredGroupOperation } from './store'
-import { groupAdditionIntent, groupAdditionChallenge } from './group-operation'
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -140,23 +140,32 @@ export function validateBackup(json: string): StoreData {
         if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
         for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
         if (host.operation !== null) {
-          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin'])
-          if (!['addition', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
+          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded'])
+          if (!['addition', 'addition_rekey', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
           const expected = restoreGroupSession(localIdentity, op.expected)
           if (expected.conversationId !== conv.id) fail('group operation conversation mismatch')
           const controls = list(op.controls, 'saved group controls', 2), welcomes = list(op.welcomes, 'saved group welcomes', 128)
-          const expectedControls = ({ addition: 2, remove: 2, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
+          const expectedControls = ({ addition: 2, addition_rekey: 1, remove: 2, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
           if (controls.length !== expectedControls || (['addition', 'refresh', 'renewal'].includes(op.kind) ? !welcomes.length : welcomes.length !== 0)) fail('group operation shape')
-          if (op.kind === 'renewal') {
+          if (op.kind === 'renewal' || op.kind === 'addition_rekey') {
             const recipient = hex(op.recipient, 32, 'renewal recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
-            const admission = object(op.admission, 'renewal admission', ['addId', 'addDigest', 'sourceEpoch', 'completion'])
-            const completion = object(admission.completion, 'renewal completion', ['rekeyId', 'rekeyDigest'])
             const accepted = expected.admissions[kid]
+            const acceptedCompletion = accepted?.completion
             const roster = parseGroupGenesisBody(base64UrlDecode(expected.snapshot)).founding_members
-            if (welcomes.length !== 1 || !roster.some(member => encodedHex(member.public_key) === recipient)
-              || !accepted?.completion || admission.addId !== accepted.addId || admission.addDigest !== accepted.addDigest
-              || admission.sourceEpoch !== accepted.sourceEpoch || completion.rekeyId !== accepted.completion.rekeyId
-              || completion.rekeyDigest !== accepted.completion.rekeyDigest) fail('renewal admission binding')
+            if (!roster.some(member => encodedHex(member.public_key) === recipient) || !acceptedCompletion) fail('recovery recipient admission binding')
+            if (op.kind === 'renewal') {
+              const admission = object(op.admission, 'renewal admission', ['addId', 'addDigest', 'sourceEpoch', 'completion'])
+              const completion = object(admission.completion, 'renewal completion', ['rekeyId', 'rekeyDigest'])
+              if (welcomes.length !== 1 || admission.addId !== accepted.addId || admission.addDigest !== accepted.addDigest
+                || admission.sourceEpoch !== accepted.sourceEpoch || completion.rekeyId !== acceptedCompletion!.rekeyId
+                || completion.rekeyDigest !== acceptedCompletion!.rekeyDigest) fail('renewal admission binding')
+              groupRenewalChallenge(localIdentity, op as Extract<StoredGroupOperation, { kind: 'renewal' }>)
+            } else {
+              if (op.admission !== undefined || op.origin === undefined) fail('rotation repair fields')
+              const wire = b64(controls[0], 'saved rotation repair'), rekey = deserializeEnvelope(wire)
+              if (encodedHex(rekey.msg_id) !== acceptedCompletion!.rekeyId || encodedHex(new QSP1Suite().hash(wire)) !== acceptedCompletion!.rekeyDigest
+                || rekey.conv_epoch !== accepted.sourceEpoch || expected.epoch !== accepted.sourceEpoch + 1) fail('rotation repair completion binding')
+            }
             if (op.origin !== undefined) {
               const origin = object(op.origin, 'original addition fields', ['kind', 'controls', 'welcomes', 'delivered', 'recipient', 'admission', 'recoveryChallenge', 'delivery'])
               if (origin.kind !== 'addition' || origin.delivery !== 'unknown' || origin.recipient !== recipient) fail('original addition context')
@@ -176,8 +185,20 @@ export function validateBackup(json: string): StoreData {
               groupAdditionChallenge(localIdentity, { kind: 'addition', controls: originalControls, welcomes: originalWelcomes,
                 expected, delivered: origin.delivered, recipient, recoveryChallenge: origin.recoveryChallenge })
             }
+            const superseded = op.superseded === undefined ? [] : list(op.superseded, 'superseded operations', MAX_GROUP_OPERATION_REVISIONS)
+            for (const value of superseded) {
+              const item = object(value, 'superseded operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
+              if (!['addition_rekey', 'renewal'].includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
+              const oldControls = list(item.controls, 'superseded controls', 1), oldWelcomes = list(item.welcomes, 'superseded welcomes', 1)
+              if (oldControls.length !== (item.kind === 'addition_rekey' ? 1 : 0) || oldWelcomes.length !== (item.kind === 'renewal' ? 1 : 0)) fail('superseded operation shape')
+              if (integer(item.delivered, 'superseded delivered count') > oldWelcomes.length) fail('superseded delivered count')
+              for (const wire of [...oldControls, ...oldWelcomes]) {
+                if (encodedHex(deserializeEnvelope(b64(wire, 'superseded ciphertext')).conv_id) !== conv.id) fail('superseded operation conversation')
+              }
+            }
+            assertGroupOperationEvidenceBudget(op.origin, superseded)
           } else {
-            if (op.admission !== undefined || op.origin !== undefined) fail('unexpected renewal fields')
+            if (op.admission !== undefined || op.origin !== undefined || op.superseded !== undefined) fail('unexpected renewal fields')
             if (op.kind === 'addition') {
               if (op.recipient !== undefined) {
                 const recipient = hex(op.recipient, 32, 'addition recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
@@ -190,7 +211,7 @@ export function validateBackup(json: string): StoreData {
               }
             } else if (op.recipient !== undefined || op.recoveryChallenge !== undefined) fail('unexpected addition fields')
           }
-          if (op.kind === 'renewal' && op.recoveryChallenge !== undefined) fail('unexpected renewal challenge field')
+          if (['renewal', 'addition_rekey'].includes(op.kind) && op.recoveryChallenge !== undefined) fail('unexpected recovery challenge field')
           for (const wire of [...controls, ...welcomes]) {
             const envelope = deserializeEnvelope(b64(wire, 'saved group wire'))
             if (encodedHex(envelope.conv_id) !== conv.id) fail('saved operation envelope conversation mismatch')
