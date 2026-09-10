@@ -65,7 +65,7 @@ def main() -> None:
     for directory in ["ui/aim-chat", "ui/tui", "channel"]:
         update_json_version(REPO_ROOT / directory / "package.json", version)
         update_json_version(REPO_ROOT / directory / "package-lock.json", version)
-    for directory in ["echo-worker", "gateway-worker", "integration", "openclaw-qntm", "nanoclaw-qntm", "ui/aim-chat", "ui/tui", "channel"]:
+    for directory in ["worker", "echo-worker", "gateway-worker", "integration", "openclaw-qntm", "nanoclaw-qntm", "ui/aim-chat", "ui/tui", "channel"]:
         update_client_link_version(REPO_ROOT / directory / "package-lock.json", version)
     replace_in_file(
         REPO_ROOT / "python-dist/pyproject.toml",

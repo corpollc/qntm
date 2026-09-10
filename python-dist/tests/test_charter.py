@@ -136,7 +136,7 @@ def test_timestamp_calendar_and_safe_sequence_are_strict():
 
 
 def test_strict_subgroup_check_even_when_sodium_point_predicate_is_permissive(monkeypatch):
-    import qntm.charter.crypto as crypto
+    import qntm.ed25519 as crypto
     from qntm.identity import base64url_decode
     mixed = next(v for v in VECTORS["cases"] if v["name"] == "reject mixed torsion governance key")
     key = base64url_decode(mixed["chain"][0]["signed"]["body"]["governance"]["keys"][-1]["pubkey"])

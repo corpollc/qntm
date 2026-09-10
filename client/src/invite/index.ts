@@ -1,4 +1,5 @@
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import {
   generateIdentity, keyIDFromPublicKey, validateIdentity,
@@ -51,6 +52,7 @@ export function validateInvite(invite: InvitePayload): void {
   if (invite.inviter_ik_pk.length !== 32) {
     throw new Error(`invalid inviter public key length: ${invite.inviter_ik_pk.length}`);
   }
+  if (!isValidEd25519PublicKey(invite.inviter_ik_pk)) throw new Error('invalid inviter public key');
   if (invite.invite_salt.length < 16 || invite.invite_salt.length > 32) {
     throw new Error(`invalid invite salt length: ${invite.invite_salt.length}`);
   }

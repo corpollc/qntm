@@ -5,6 +5,7 @@ import json
 from .cbor import marshal_canonical
 from .gate import seal_secret
 from .identity import base64url_encode, base64url_decode, key_id_from_public_key
+from .ed25519 import is_valid_ed25519_public_key
 
 
 def gateway_access(conversation):
@@ -19,7 +20,7 @@ def gateway_access(conversation):
 def valid_gateway(public_key, kid):
     try:
         pk = base64url_decode(public_key)
-        return len(pk) == 32 and base64url_encode(pk) == public_key and base64url_encode(key_id_from_public_key(pk)) == kid
+        return is_valid_ed25519_public_key(pk) and base64url_encode(pk) == public_key and base64url_encode(key_id_from_public_key(pk)) == kid
     except (ValueError, TypeError):
         return False
 

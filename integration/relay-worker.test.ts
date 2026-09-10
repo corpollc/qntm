@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildSignedReceipt, generateIdentity } from '@corpollc/qntm';
+import { buildSignedReceipt, generateIdentity, base64UrlEncode, keyIDFromPublicKey, QSP1Suite } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
 interface RelayFrame {
@@ -227,19 +227,52 @@ describe.sequential('real relay worker subscribe acceptance', () => {
   }, 45_000);
 
   it('rejects malformed public keys and invalid challenge signatures', async () => {
-    for (const key of ['aa'.repeat(16), 'aa'.repeat(32)]) {
+    for (const key of ['aa'.repeat(16), 'aa'.repeat(32), `01${'00'.repeat(31)}`, '00'.repeat(32)]) {
       const frames: Array<{ type: string }> = [];
       const socket = new WebSocket(`${relayUrl.replace(/^http/, 'ws')}/v1/subscribe?conv_id=${CONV_ID}&pub_key=${key}`);
       socket.addEventListener('message', event => {
         const frame = JSON.parse(String(event.data));
         frames.push(frame);
-        if (frame.type === 'auth_challenge') socket.send(JSON.stringify({ type: 'auth_response', signature_hex: '00'.repeat(64) }));
+        if (frame.type === 'auth_challenge') socket.send(JSON.stringify({ type: 'auth_response',
+          signature_hex: key.startsWith('01') ? `01${'00'.repeat(63)}` : '00'.repeat(64) }));
       });
       await waitForFrame(frames, frame => frame.type === 'auth_failed', 'invalid authentication rejected');
       expect(frames.some(frame => frame.type === 'ready')).toBe(false);
       await closeSocket(socket);
     }
   }, 15_000);
+
+  it('rejects identity-key receipt and announcement forgeries and weak posting keys', async () => {
+    const identityKey = new Uint8Array([1, ...new Uint8Array(31)]);
+    const forgedSignature = new Uint8Array([...identityKey, ...new Uint8Array(32)]);
+    const post = (path: string, body: unknown) => fetch(`${relayUrl}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const receipt = buildSignedReceipt(generateIdentity(), Buffer.from(CONV_ID, 'hex'), Buffer.from('cd'.repeat(16), 'hex'), 1);
+    const rejected = await post('/v1/receipt', { ...receipt,
+      reader_ik_pk: base64UrlEncode(identityKey), reader_kid: Buffer.from(keyIDFromPublicKey(identityKey)).toString('hex'),
+      sig: base64UrlEncode(forgedSignature),
+    });
+    expect(rejected.status).toBe(401);
+    expect(await rejected.json()).toMatchObject({ error: 'invalid receipt signature' });
+    const conv_id = 'e1'.repeat(16), posting = generateIdentity(), master = generateIdentity();
+    const registration = { name: 'signature-profile', conv_id, master_pk: base64UrlEncode(identityKey),
+      posting_pk: base64UrlEncode(posting.publicKey), sig: Buffer.from(forgedSignature).toString('hex') };
+    expect((await post('/v1/announce/register', registration)).status).toBe(403);
+    const suite = new QSP1Suite();
+    const sign = (body: string) => Buffer.from(suite.sign(master.privateKey, suite.hash(new TextEncoder().encode(body)))).toString('hex');
+    registration.master_pk = base64UrlEncode(master.publicKey);
+    registration.posting_pk = base64UrlEncode(identityKey);
+    registration.sig = sign(`qntm-announce-v1|register|${registration.name}|${conv_id}|${registration.posting_pk}`);
+    expect((await post('/v1/announce/register', registration)).status).toBe(400);
+    registration.posting_pk = base64UrlEncode(posting.publicKey);
+    registration.sig = sign(`qntm-announce-v1|register|${registration.name}|${conv_id}|${registration.posting_pk}`);
+    expect((await post('/v1/announce/register', registration)).status).toBe(201);
+    const new_posting_pk = base64UrlEncode(identityKey);
+    expect((await post('/v1/announce/rotate', { conv_id, master_pk: registration.master_pk, new_posting_pk,
+      sig: sign(`qntm-announce-v1|rotate|${conv_id}|${new_posting_pk}`),
+    })).status).toBe(400);
+  });
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
     const msgId = 'cd'.repeat(16);

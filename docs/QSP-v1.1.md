@@ -8,6 +8,10 @@
 
 ## Scope
 
+The maintained implementation's [Ed25519 validation profile](signature-validation.md)
+requires canonical prime-subgroup signing keys and signatures. It narrows
+acceptance of malformed inputs without changing generated keys or wire fields.
+
 This document extends QSP v1.0 with two features: **group rekey** (cryptographic member exclusion via epoch-based key rotation) and **encrypted handles** (pseudonymous identifiers with selective per-conversation reveal). All v1.0 definitions, primitives, and message formats remain unchanged unless explicitly overridden below.
 
 ---

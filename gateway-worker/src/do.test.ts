@@ -414,6 +414,20 @@ describe('qntm-iv57: gate.executed authentication', () => {
 });
 
 describe('governance member-change flow', () => {
+  it('rejects a signed weak member key before storing the proposal or changing membership', async () => {
+    const { storage, process } = makeDO();
+    const state = promotedState(), original = structuredClone(state);
+    await storage.put('conv_state', state);
+    const key = new Uint8Array([1, ...new Uint8Array(31)]);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id, proposalType: 'member_add',
+      proposedMembers: [{ kid: base64UrlEncode(keyIDFromPublicKey(key)), publicKey: base64UrlEncode(key) }],
+      eligibleSignerKids: [aliceKid, bobKid], requiredApprovals: 2, expiresInSeconds: 3600,
+    });
+    await expect(process('gov.propose', encode(proposal), alice.keyID, alice.publicKey)).rejects.toThrow('invalid proposed member key');
+    expect(await storage.get('conv_state')).toEqual(original);
+    expect((await storage.list({ prefix: 'gov:' })).size).toBe(0);
+  });
   it('accepts and applies a signed member_add proposal end to end', async () => {
     const { storage, process } = makeDO();
     const state = promotedState();

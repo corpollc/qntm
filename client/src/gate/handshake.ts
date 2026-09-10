@@ -1,5 +1,6 @@
 /** Participant-initiated gateway invitations. The signed chat is the authority. */
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical } from '../crypto/cbor.js';
 import { sealSecret } from '../crypto/naclbox.js';
 import { base64UrlDecode, base64UrlEncode, keyIDFromPublicKey } from '../identity/index.js';
@@ -63,7 +64,7 @@ export function gatewayInvitationHash(body: string): string {
 export function validateGatewayIdentity(publicKey: string, kid: string): boolean {
   try {
     const pk = base64UrlDecode(publicKey);
-    return pk.length === 32 && base64UrlEncode(pk) === publicKey && base64UrlEncode(keyIDFromPublicKey(pk)) === kid;
+    return isValidEd25519PublicKey(pk) && base64UrlEncode(pk) === publicKey && base64UrlEncode(keyIDFromPublicKey(pk)) === kid;
   } catch { return false; }
 }
 export function createGatewayInviteBody(invite: GatewayInvitation, conv: Conversation, participants: Record<string, string>, floor: number): GatewayInviteBody {

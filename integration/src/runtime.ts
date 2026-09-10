@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { promisify, stripVTControlCharacters } from 'node:util';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -176,7 +176,25 @@ export class ManagedProcess {
       const group = -child.pid;
       const signal = (value: NodeJS.Signals | 0): boolean => {
         try { process.kill(group, value); return true; }
-        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'ESRCH') return false;
+          // Darwin killpg1 filters zombies and can return EPERM when no
+          // signalable members remain. Verify the owned group is empty or
+          // zombie-only; never suppress a permissions error for a live process.
+          if (process.platform === 'darwin' && code === 'EPERM') {
+            const rows = execFileSync('/bin/ps', ['-axo', 'pgid=,stat='], {
+              encoding: 'utf8', timeout: 2_000, maxBuffer: 4 * 1024 * 1024,
+            }).trim().split('\n').filter(Boolean);
+            const members = rows.map(row => {
+              const match = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
+              if (!match) throw new Error('Cannot verify process-group shutdown');
+              return { group: Number(match[1]), state: match[2] };
+            }).filter(row => row.group === child.pid);
+            if (members.every(row => row.state.startsWith('Z'))) return false;
+          }
+          throw error;
+        }
       };
       signal('SIGTERM');
       const deadline = performance.now() + 5_000;

@@ -30,6 +30,12 @@ const dropbox = new DropboxClient('https://inbox.qntm.corpo.llc')
 
 For the protocol specification, see `docs/QSP-v1.1.md` in the main repository.
 
+QSP and charter verification share a strict Ed25519 profile. Use
+`isValidEd25519PublicKey` and `verifyEd25519Signature` from `@corpollc/qntm/crypto`
+for the same acceptance rules in host code. See
+[signature validation](https://github.com/corpollc/qntm/blob/main/docs/signature-validation.md)
+for malformed-key rejection, compatibility and shared cross-language vectors.
+
 `DropboxClient.subscribeMessages` delivers replay and live envelopes with automatic
 reconnects. Persist each event before resolving `onMessage`; a rejection causes
 replay before later messages can advance progress. `createReceiveEvent` converts a

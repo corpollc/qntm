@@ -11,8 +11,8 @@ import struct
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
-    Ed25519PublicKey,
 )
+from .ed25519 import verify_ed25519_signature
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
@@ -133,13 +133,8 @@ class QSP1Suite:
         return sk.sign(message)
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        """Ed25519 verify."""
-        try:
-            pk = Ed25519PublicKey.from_public_bytes(public_key)
-            pk.verify(signature, message)
-            return True
-        except Exception:
-            return False
+        """Verify using QSP's canonical prime-subgroup Ed25519 profile."""
+        return verify_ed25519_signature(public_key, message, signature)
 
     def hash(self, data: bytes) -> bytes:
         """SHA-256."""

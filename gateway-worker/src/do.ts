@@ -6,7 +6,7 @@ import {
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
   verifyProposal, hashProposal, verifyGovApproval,
-  createGroupAddBody, createGroupRemoveBody, createGroupRekeyBody, QSP1Suite,
+  createGroupAddBody, createGroupRemoveBody, createGroupRekeyBody, QSP1Suite, isValidEd25519PublicKey,
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, DropboxSubscription, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
@@ -21,6 +21,23 @@ import { processSecret, importVaultKey, isExpired } from './vault.js';
 import { executeRequest } from './execute.js';
 
 const groupSuite = new QSP1Suite();
+
+function validateProposedMemberKeys(msg: GovProposeMessage): void {
+  if (msg.proposal_type !== 'member_add') return;
+  const members = msg.proposed_members;
+  if (!Array.isArray(members) || members.length === 0) throw new Error('gov.propose rejected: invalid proposed members');
+  const seen = new Set<string>();
+  for (const member of members) {
+    let valid = false;
+    try {
+      const key = base64UrlDecode(member.public_key);
+      valid = isValidEd25519PublicKey(key) && base64UrlEncode(key) === member.public_key &&
+        base64UrlEncode(keyIDFromPublicKey(key)) === member.kid && !seen.has(member.kid);
+    } catch { /* Report a fixed error without including untrusted key input. */ }
+    if (!valid) throw new Error('gov.propose rejected: invalid proposed member key');
+    seen.add(member.kid);
+  }
+}
 
 function trustedGovernanceQuorum(convState: ConversationState): number {
   const participantCount = Object.keys(convState.participants).length;
@@ -693,6 +710,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     if (!verifyProposal(senderPublicKey, signable, signature)) {
       throw new Error('gov.propose rejected: invalid proposal signature');
     }
+    validateProposedMemberKeys(msg);
 
     if (msg.required_approvals < 1) {
       throw new Error('gov.propose rejected: required_approvals must be at least 1');
@@ -858,6 +876,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // never apply below the quorum derived from current trusted state.
     const requiredApprovals = Math.max(proposalMsg.required_approvals, trustedGovernanceQuorum(convState));
     if (approvalCount < requiredApprovals) return;
+    validateProposedMemberKeys(proposalMsg);
 
     // Apply the proposal
     const preApplyState: ConversationState = {

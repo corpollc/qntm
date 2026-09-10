@@ -1,4 +1,5 @@
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import type { Identity, KeyID } from '../types.js';
 import { randomBytes } from '@noble/hashes/utils';
@@ -60,6 +61,7 @@ export function publicKeyFromString(s: string): Uint8Array {
   if (data.length !== 32) {
     throw new Error(`invalid public key length: ${data.length}`);
   }
+  if (!isValidEd25519PublicKey(data)) throw new Error('invalid public key');
   return data;
 }
 

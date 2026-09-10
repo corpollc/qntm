@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { isValidEd25519PublicKey, verifyEd25519Signature } from '@corpollc/qntm/crypto';
 import { envelopeTTLSeconds, expireConversationStats, RelayRetention } from "./retention.js";
 import { RelayMetricsOutbox } from "./metrics.js";
 import { RelayRateLimiter } from "./rate-limit.js";
@@ -149,7 +150,7 @@ async function computeKeyIDHexFromPublicKey(publicKeyRaw: Uint8Array): Promise<s
 
 async function verifyReceiptSignature(payload: ReadReceiptPayload): Promise<boolean> {
 	const publicKeyRaw = fromBase64URL(payload.reader_ik_pk);
-	if (publicKeyRaw.length !== 32) {
+	if (!isValidEd25519PublicKey(publicKeyRaw)) {
 		return false;
 	}
 
@@ -163,12 +164,16 @@ async function verifyReceiptSignature(payload: ReadReceiptPayload): Promise<bool
 		return false;
 	}
 
-	const publicKey = await crypto.subtle.importKey("raw", publicKeyRaw, { name: "Ed25519" }, false, ["verify"]);
-	return crypto.subtle.verify({ name: "Ed25519" }, publicKey, signatureRaw, buildReceiptSignable(payload));
+	return verifyEd25519Signature(publicKeyRaw, buildReceiptSignable(payload), signatureRaw);
 }
 
 function isHexID(value: string, expectedLength: number): boolean {
 	return new RegExp(`^[0-9a-f]{${expectedLength}}$`, "i").test(value);
+}
+
+function validEncodedSigningKey(value: string): boolean {
+	try { return isValidEd25519PublicKey(fromBase64URL(value)); }
+	catch { return false; }
 }
 
 // --- Announce channel helpers ---
@@ -190,8 +195,7 @@ async function verifyEd25519Hex(publicKeyBase64URL: string, message: Uint8Array,
 	const pkBytes = fromBase64URL(publicKeyBase64URL);
 	if (pkBytes.length !== 32) return false;
 
-	const key = await crypto.subtle.importKey("raw", pkBytes, { name: "Ed25519" }, false, ["verify"]);
-	return crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, message);
+	return verifyEd25519Signature(pkBytes, message, sigBytes);
 }
 
 async function verifyAnnounceSig(publicKeyBase64URL: string, plaintext: string, signatureHex: string): Promise<boolean> {
@@ -404,7 +408,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		// Authenticated subscribe: if pub_key is provided, issue a challenge
 		if (pubKeyHex) {
-			if (!isHexID(pubKeyHex, 64)) {
+			if (!isHexID(pubKeyHex, 64) || !isValidEd25519PublicKey(fromHex(pubKeyHex)!)) {
 				server.send(JSON.stringify({ type: "auth_failed", reason: "invalid pub_key" } satisfies SubscribeAuthFrame));
 				server.close(4003, "invalid pub_key");
 				return new Response(null, { status: 101, webSocket: client });
@@ -585,8 +589,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 			let verified = false;
 			try {
-				const key = await crypto.subtle.importKey("raw", pkBytes, { name: "Ed25519" }, false, ["verify"]);
-				verified = await crypto.subtle.verify({ name: "Ed25519" }, key, sigBytes, pending.challenge);
+				verified = verifyEd25519Signature(pkBytes, pending.challenge, sigBytes);
 			} catch {
 				verified = false;
 			}
@@ -837,6 +840,7 @@ export default {
 				}
 
 				// Reject if channel already exists
+				if (!validEncodedSigningKey(payload.posting_pk)) return errorResponse("invalid posting key", 400);
 				const existing = await getAnnounceMeta(env, payload.conv_id);
 				if (existing) {
 					return errorResponse("announce channel already exists", 409);
@@ -883,6 +887,7 @@ export default {
 				}
 
 				const rotateMeta = await getAnnounceMeta(env, payload.conv_id);
+				if (!validEncodedSigningKey(payload.new_posting_pk)) return errorResponse("invalid posting key", 400);
 				if (!rotateMeta) {
 					return errorResponse("announce channel not found", 404);
 				}

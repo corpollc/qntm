@@ -9,9 +9,26 @@ import time
 
 from .cbor import marshal_canonical, unmarshal
 from .crypto import QSP1Suite
+from .ed25519 import is_valid_ed25519_public_key
 from .identity import base64url_encode, key_id_from_public_key
 
 _suite = QSP1Suite()
+
+
+def _validate_member_key(key):
+    if not is_valid_ed25519_public_key(key):
+        raise ValueError("Invalid group member public key")
+
+
+def _validate_members(members):
+    if not isinstance(members, list):
+        raise ValueError("Invalid group members")
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("Invalid group member")
+        _validate_member_key(member.get("public_key"))
+        if member.get("key_id") != key_id_from_public_key(member["public_key"]):
+            raise ValueError("Group member key ID mismatch")
 
 
 # --- Body construction helpers ---
@@ -28,6 +45,9 @@ def create_group_genesis_body(
     The creator is always included as the first member with role "admin".
     Additional founding_member_keys are added with role "member".
     """
+    _validate_member_key(creator_identity["publicKey"])
+    for key in founding_member_keys:
+        _validate_member_key(key)
     now = int(time.time())
     creator_kid = key_id_from_public_key(creator_identity["publicKey"])
 
@@ -67,7 +87,9 @@ def create_group_genesis_body(
 
 def parse_group_genesis_body(data: bytes) -> dict:
     """Parse a CBOR-encoded group_genesis body."""
-    return unmarshal(data)
+    body = unmarshal(data)
+    _validate_members(body.get("founding_members"))
+    return body
 
 
 def create_group_add_body(
@@ -75,6 +97,9 @@ def create_group_add_body(
     new_member_keys: list[bytes],
 ) -> bytes:
     """Create a CBOR-encoded group_add body."""
+    _validate_member_key(adder_identity["publicKey"])
+    for key in new_member_keys:
+        _validate_member_key(key)
     now = int(time.time())
     adder_kid = key_id_from_public_key(adder_identity["publicKey"])
 
@@ -98,7 +123,9 @@ def create_group_add_body(
 
 def parse_group_add_body(data: bytes) -> dict:
     """Parse a CBOR-encoded group_add body."""
-    return unmarshal(data)
+    body = unmarshal(data)
+    _validate_members(body.get("new_members"))
+    return body
 
 
 def create_group_remove_body(
@@ -173,6 +200,7 @@ class GroupState:
 
     def apply_genesis(self, parsed_body: dict) -> None:
         """Apply a parsed group_genesis body to update state."""
+        _validate_members(parsed_body.get("founding_members"))
         self.group_name = parsed_body.get("group_name", "")
         self.description = parsed_body.get("description", "")
         self.created_at = parsed_body.get("created_at", 0)
@@ -188,6 +216,7 @@ class GroupState:
 
     def apply_add(self, parsed_body: dict) -> None:
         """Apply a parsed group_add body to update state."""
+        _validate_members(parsed_body.get("new_members"))
         for member in parsed_body.get("new_members", []):
             kid = bytes(member["key_id"])
             self.members[kid] = member

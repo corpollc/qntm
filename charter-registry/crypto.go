@@ -5,7 +5,7 @@ import (
 	"filippo.io/edwards25519"
 )
 
-// Match the TypeScript charter profile, independent of QSP messaging's profile.
+// Match the shared TypeScript/Python QSP and charter signing-key profile.
 // Multiplication by eight and its inverse removes torsion; the original point
 // must be unchanged and must not be the identity.
 func validPublicKey(raw []byte) bool {

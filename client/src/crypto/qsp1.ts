@@ -9,6 +9,7 @@ import {
 } from '../constants.js';
 import { marshalCanonical, unmarshalCanonical } from './cbor.js';
 import { ed25519PublicKeyToX25519, ed25519PrivateKeyToX25519, x25519SharedSecret } from './x25519.js';
+import { verifyEd25519Signature } from './ed25519.js';
 
 export class QSP1Suite {
   name(): string {
@@ -111,11 +112,7 @@ export class QSP1Suite {
   }
 
   verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array): boolean {
-    try {
-      return ed25519.verify(signature, message, publicKey);
-    } catch {
-      return false;
-    }
+    return verifyEd25519Signature(publicKey, message, signature);
   }
 
   hash(data: Uint8Array): Uint8Array {
