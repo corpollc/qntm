@@ -1,7 +1,8 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { connect as connectTcp } from 'node:net';
+import diagnostics from 'node:diagnostics_channel';
+import { connect as connectTcp, type Socket as TcpSocket } from 'node:net';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -165,6 +166,104 @@ function rawCloseHandshake(
     socket.on('error', error => settle(error));
     socket.on('close', () => settle(new Error(`socket closed before the relay's FIN: ${JSON.stringify(result)}`)));
   });
+}
+
+interface TransportWitnessRecord {
+  socket: number | null;
+  reused: boolean | null;
+  socketIdleMs: number | null;
+  wroteHeadersAtMs: number | null;
+  headersAtMs: number | null;
+  completedAtMs: number | null;
+  transportError: { name: string; code?: string; message: string } | null;
+}
+
+/** Attribute each tagged fetch to the undici socket that carried it, using
+ * Node's undici diagnostics channels. Records whether the socket was reused,
+ * how long it had been idle since its previous completed response, when the
+ * response headers and trailers arrived, connection opens/closes, and stalls
+ * of this process's event loop. This observes the maintained client's real
+ * transport without changing it, so a failed POST can be attributed to a
+ * stale reused socket, a slow relay, or a client-side stall from timestamps
+ * rather than inferred. */
+function transportWitness(tagHeader: string, start: number) {
+  const now = () => Number((performance.now() - start).toFixed(3));
+  const records = new Map<string, TransportWitnessRecord>();
+  const byRequest = new WeakMap<object, { tag: string; socket: TcpSocket }>();
+  const socketIds = new WeakMap<TcpSocket, number>();
+  const socketLastCompletedAt = new WeakMap<TcpSocket, number>();
+  const events: Array<Record<string, unknown>> = [];
+  let socketCount = 0;
+  const socketId = (socket: TcpSocket) => {
+    let id = socketIds.get(socket);
+    if (id === undefined) {
+      id = ++socketCount;
+      socketIds.set(socket, id);
+      socket.once('close', hadError => events.push({ atMs: now(), event: 'socketClosed', socket: id, hadError,
+        bytesWritten: socket.bytesWritten, bytesRead: socket.bytesRead }));
+    }
+    return id;
+  };
+  const record = (request: object) => {
+    const key = byRequest.get(request);
+    return key ? { key, row: records.get(key.tag)! } : null;
+  };
+  const tagPattern = new RegExp(`^${tagHeader}: (\\S+)$`, 'im');
+  const subscriptions: Array<[string, (message: unknown) => void]> = [
+    ['undici:client:connected', message => {
+      const { socket } = message as { socket: TcpSocket };
+      events.push({ atMs: now(), event: 'connected', socket: socketId(socket) });
+    }],
+    ['undici:client:connectError', message => {
+      const { error } = message as { error: Error };
+      events.push({ atMs: now(), event: 'connectError', message: error.message });
+    }],
+    ['undici:client:sendHeaders', message => {
+      const { request, headers, socket } = message as { request: object; headers: string; socket: TcpSocket };
+      const tag = tagPattern.exec(headers)?.[1];
+      if (!tag) return;
+      const lastCompleted = socketLastCompletedAt.get(socket);
+      byRequest.set(request, { tag, socket });
+      records.set(tag, { socket: socketId(socket), reused: socket.bytesWritten > 0,
+        socketIdleMs: lastCompleted === undefined ? null : Number((now() - lastCompleted).toFixed(3)),
+        wroteHeadersAtMs: now(), headersAtMs: null, completedAtMs: null, transportError: null });
+    }],
+    ['undici:request:headers', message => {
+      const found = record((message as { request: object }).request);
+      if (found) found.row.headersAtMs = now();
+    }],
+    ['undici:request:trailers', message => {
+      const found = record((message as { request: object }).request);
+      if (!found) return;
+      found.row.completedAtMs = now();
+      socketLastCompletedAt.set(found.key.socket, found.row.completedAtMs);
+    }],
+    ['undici:request:error', message => {
+      const { request, error } = message as { request: object; error: Error & { code?: string } };
+      const found = record(request);
+      if (found) found.row.transportError = { name: error.name, code: error.code, message: error.message };
+    }],
+  ];
+  for (const [name, handler] of subscriptions) diagnostics.subscribe(name, handler);
+  // A stalled event loop delays undici's native keep-alive timer, so a socket
+  // the client meant to drop at 4 s can still be reused at the relay's 5 s
+  // idle boundary. Record stalls above 100 ms with their timing.
+  const stalls: Array<{ atMs: number; lagMs: number }> = [];
+  let expected = performance.now() + 50;
+  const stallTimer = setInterval(() => {
+    const lag = performance.now() - expected;
+    if (lag > 100) stalls.push({ atMs: now(), lagMs: Number(lag.toFixed(1)) });
+    expected = performance.now() + 50;
+  }, 50);
+  return {
+    for: (tag: string): TransportWitnessRecord => records.get(tag)
+      ?? { socket: null, reused: null, socketIdleMs: null, wroteHeadersAtMs: null, headersAtMs: null, completedAtMs: null, transportError: null },
+    summary: () => ({ node: process.version, undici: process.versions.undici, sockets: socketCount, events, stalls }),
+    stop: () => {
+      clearInterval(stallTimer);
+      for (const [name, handler] of subscriptions) diagnostics.unsubscribe(name, handler);
+    },
+  };
 }
 
 describe.sequential('real relay worker subscribe acceptance', () => {
@@ -1065,30 +1164,40 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
     // Waiting five seconds *after* responses would miss the stale-socket race.
     const start = performance.now() + 150;
-    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string; cause?: unknown }> = [];
+    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string; cause?: unknown }
+      & Partial<TransportWitnessRecord>> = [];
     const conversations = Array.from({ length: 32 }, () => generateIdentity().keyID);
-    await Promise.all(conversations.map(async (cid, lane) => {
-      for (let round = 0; round < 5; round++) {
-        await delay(Math.max(0, start + round * 5_000 + lane * 3 - performance.now()));
-        const sentAtMs = performance.now() - start;
-        try {
-          const response = await fetch(`${relayUrl}/v1/send`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(5_000),
-            body: JSON.stringify({ conv_id: Buffer.from(cid).toString('hex'),
-              envelope_b64: Buffer.from(`idle-boundary-${round}`).toString('base64') }),
-          });
-          outcomes.push({ lane, round, sentAtMs, status: response.status, body: await response.text() });
-        } catch (error) {
-          // Await every lane before teardown, even if one transport fails.
-          const cause = error instanceof Error ? error.cause : undefined;
-          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error),
-            cause: cause instanceof Error ? { name: cause.name, message: cause.message,
-              ...Object.fromEntries(Object.entries(cause)) } : cause });
+    // Tag each POST so the witness can attribute sockets and timings to it.
+    // The relay ignores the header; the client and relay are unchanged.
+    const witness = transportWitness('x-qntm-idle-lane', start);
+    try {
+      await Promise.all(conversations.map(async (cid, lane) => {
+        for (let round = 0; round < 5; round++) {
+          await delay(Math.max(0, start + round * 5_000 + lane * 3 - performance.now()));
+          const sentAtMs = performance.now() - start;
+          try {
+            const response = await fetch(`${relayUrl}/v1/send`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json', 'x-qntm-idle-lane': `${lane}-${round}` },
+              signal: AbortSignal.timeout(5_000),
+              body: JSON.stringify({ conv_id: Buffer.from(cid).toString('hex'),
+                envelope_b64: Buffer.from(`idle-boundary-${round}`).toString('base64') }),
+            });
+            outcomes.push({ lane, round, sentAtMs, status: response.status, body: await response.text() });
+          } catch (error) {
+            // Await every lane before teardown, even if one transport fails.
+            const cause = error instanceof Error ? error.cause : undefined;
+            outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error),
+              cause: cause instanceof Error ? { name: cause.name, message: cause.message,
+                ...Object.fromEntries(Object.entries(cause)) } : cause });
+          }
         }
-      }
-    }));
+      }));
+    } finally {
+      witness.stop();
+    }
+    for (const row of outcomes) Object.assign(row, witness.for(`${row.lane}-${row.round}`));
     writeFileSync(join(artifactDir, 'idle-boundary.json'), JSON.stringify(outcomes, null, 2));
+    writeFileSync(join(artifactDir, 'idle-boundary-transport.json'), JSON.stringify(witness.summary(), null, 2));
     // Replayed bytes and sequence numbers prove that the fixture did not hide
     // an uncertain POST by resubmitting it or inventing a successful response.
     const relay = new DropboxClient(relayUrl);

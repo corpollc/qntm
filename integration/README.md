@@ -34,7 +34,13 @@ test envelopes and relay metadata; it excludes the CLI identity profiles,
 Wrangler registry and credentials. CI uploads this directory on failure.
 Idle-boundary diagnostics retain the underlying fetch error, Node/Undici version
 and complete relay replay before asserting success, so an ambiguous response can
-be compared with stored delivery. Native callback diagnostics distinguish the
+be compared with stored delivery. Each POST is also attributed, through Node's
+undici diagnostics channels, to the socket that carried it: whether that socket
+was reused, its idle time since the previous completed response, when response
+headers and trailers arrived, and connection opens and closes, together with
+event-loop stalls in the test process (`idle-boundary-transport.json`). A
+failed POST can then be classified as a stale reused socket, a slow relay or a
+client-side stall from timestamps rather than by inference. Native callback diagnostics distinguish the
 injected application failure from transport errors and record callback attempts,
 successful delivery, the client's close() calls and the close events undici
 reported. The reported code can be 1006 on Node's bundled undici even though
