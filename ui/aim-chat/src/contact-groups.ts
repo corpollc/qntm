@@ -209,10 +209,10 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     const controls = [], welcomes = []
     let expected = session
     if (action === 'add') {
-      const op = prepareGroupSessionAddition(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge))
+      const op = prepareGroupSessionAddition(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge), record.group.cursor)
       controls.push(op.addition, op.rekey); welcomes.push(...op.welcomes)
     } else if (action === 'refresh') {
-      const op = prepareGroupWelcomeRefresh(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge))
+      const op = prepareGroupWelcomeRefresh(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge), record.group.cursor)
       welcomes.push(...op.welcomes)
     } else if (action === 'remove') {
       assertGroupCanSend(identity, session)
@@ -251,7 +251,7 @@ export async function openContactGroup(profile: string, link: string, name = '')
         if (previous?.group?.removedSequence && welcome.purpose === 'addition' && entry.seq <= previous.group.removedSequence) throw new Error('This admission predates your saved removal')
         const session = groupSessionFromWelcome(identity, welcome, entry.seq, previous?.group?.session)
         const conv = welcome.conversation
-        const group: store.StoredGroup = { session, cursor: entry.seq, bootstrapSequence: entry.seq, removedSequence: previous?.group?.removedSequence,
+        const group: store.StoredGroup = { session, cursor: welcome.replayFromSequence, bootstrapSequence: welcome.replayFromSequence, removedSequence: previous?.group?.removedSequence,
           pending: [], receipts: previous?.group?.receipts ?? [], operation: previous?.group?.operation ?? null,
           relayUrl: locator.relayUrl, inviterPublicKey: hex(locator.inviterPublicKey), revision: (previous?.group?.revision ?? -1) + 1 }
         const record: store.StoredConversation = { id, name: name.trim() || previous?.name || welcome.state.snapshot().group_name, type: 'group',

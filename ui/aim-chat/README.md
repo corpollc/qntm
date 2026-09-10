@@ -105,9 +105,10 @@ The browser saves an unfinished operation before posting and verifies its exact
 controls through relay replay before releasing the welcome. **Retry saved
 operation** resumes those exact encrypted messages after an uncertain send.
 Ordinary messaging pauses during an unfinished operation, key rotation, removal,
-or required recovery. Opening a link replays retained decryptable transitions
-both before and after its welcome, including a rekey posted while the welcome was
-being delivered.
+or required recovery. The welcome signs the sender’s fully processed relay cursor as a replay anchor.
+Opening its link verifies coverage from that anchor and replays retained
+decryptable transitions, including a rekey posted while the welcome was being
+delivered. A missing row before the welcome therefore still requires recovery.
 
 Contact groups use a dedicated authenticated receive checkpoint. Legacy invite
 conversations and existing gateway conversations retain their existing flows;
@@ -116,8 +117,9 @@ legacy groups automatically. Gateway promotion and governed welcome delivery for
 new contact groups remain unavailable. If a competing rekey rewinds accepted
 state, the browser preserves the pending operation and requests fresh recovery
 instead of claiming it reconstructed missing descendants. Expired/conflicting
-outbox reconciliation (`qntm-qp22`) and freshness when an intervening pre-welcome
-rotation has expired or disappeared (`qntm-d3th`) remain release prerequisites.
+outbox reconciliation (`qntm-qp22`) remains a release prerequisite. The signed
+anchor detects missing pre-welcome rows; it does not establish consensus about
+membership against a relay that fabricates a complete-looking replay.
 This source change is not a claim that the hosted 0.6.1 browser includes it.
 
 ### Browser storage and metadata
