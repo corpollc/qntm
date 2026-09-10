@@ -109,6 +109,21 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const injectedFailure = new Error('fixture persistence failure');
     const callbackAttempts: number[] = [], errors: Error[] = [];
     const frames: RelayFrame[] = [];
+    const closeEvents: Array<{ code: number; reason: string; wasClean: boolean }> = [];
+    // Record the Close frames the maintained client sends. The echoed code
+    // reported by Node's bundled undici is not proof of client behaviour: the
+    // relay compresses frames, undici inflates them asynchronously, and when
+    // the relay's Close echo is still queued behind that inflate as the TCP
+    // connection ends, undici reports 1006 even though 4000 arrived on the
+    // wire (qntm-bw96 wire captures on Node 22.23.2 / undici 6.28.0).
+    const sentCloses: Array<{ code?: number; reason?: string }> = [];
+    const NativeWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = class RecordingWebSocket extends NativeWebSocket {
+      override close(code?: number, reason?: string): void {
+        sentCloses.push({ code, reason });
+        super.close(code, reason);
+      }
+    };
     const subscription = relay.subscribeMessages(cid, 0, {
       onMessage: ({ seq }) => {
         callbackAttempts.push(seq);
@@ -118,19 +133,32 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       // onError also reports socket failures during reconnection. Preserve the
       // actual cause instead of labelling every transport error a callback error.
       onError: error => { errors.push(error); },
-      onClose: ({ code }) => { frames.push({ type: 'closed', seq: code }); },
+      onClose: ({ code, reason, wasClean }) => {
+        closeEvents.push({ code, reason, wasClean });
+        frames.push({ type: 'closed', seq: code });
+      },
     });
     try {
       await waitForFrame(frames, frame => frame.type === 'message' && frame.seq === sequence, 'native callback retry', 20_000);
       expect(errors.filter(error => error === injectedFailure)).toHaveLength(1);
       expect(callbackAttempts).toEqual([sequence, sequence]);
       expect(frames.filter(frame => frame.type === 'message')).toEqual([{ type: 'message', seq: sequence }]);
-      expect(frames.some(frame => frame.type === 'closed' && frame.seq === 4000)).toBe(true);
+      // The client itself shut the failed socket down with 4000, exactly once,
+      // before the redelivery that ended the wait above.
+      expect(sentCloses).toEqual([{ code: 4000, reason: 'receive callback failed' }]);
+      // That socket reported exactly one close: the relay's echoed 4000, or
+      // undici's 1006 when the echo lost the inflate race. Any other code would
+      // mean the relay, not the client, ended the failed subscription.
+      expect(closeEvents).toHaveLength(1);
+      expect([4000, 1006]).toContain(closeEvents[0]!.code);
     } finally {
+      globalThis.WebSocket = NativeWebSocket;
       subscription.close();
       await subscription.closed;
-      writeFileSync(join(artifactDir, 'native-callback-reconnect.json'), JSON.stringify({ callbackAttempts,
-        errors: errors.map(error => ({ name: error.name, message: error.message, injected: error === injectedFailure })), frames }, null, 2));
+      writeFileSync(join(artifactDir, 'native-callback-reconnect.json'), JSON.stringify({ node: process.version,
+        undici: process.versions.undici, callbackAttempts,
+        errors: errors.map(error => ({ name: error.name, message: error.message, injected: error === injectedFailure })),
+        frames, sentCloses, closeEvents }, null, 2));
     }
   }, 40_000);
 
