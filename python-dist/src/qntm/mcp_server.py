@@ -694,8 +694,9 @@ def group_retry(conversation: str) -> dict:
     delivery expired or was superseded can renew current keys only for that same
     verified admission. An accepted add with an expired or stale completing rekey
     can journal a replacement rotation; verified completion precedes the welcome.
-    No new membership is granted. Changed admission, removal or missing history
-    blocks recovery; a second expired replacement stays preserved.
+    No new membership is granted. Derived rotations and renewals can be reconciled
+    again for the same admission, retaining bounded exact delivery evidence.
+    Changed admission, removal, missing history or evidence limits block recovery.
 
     Legacy creation stays a bearer-invite group. Its result distinguishes relay
     acknowledgement from exact replay; neither confirms delivery to a peer.

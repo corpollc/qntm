@@ -268,7 +268,7 @@ def test_resident_removal_after_reconciliation_blocks_stale_original_add_post(se
     assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == original
 
 
-def test_second_expired_uncertain_rotation_preserves_exact_repair_without_regeneration(setup, monkeypatch):
+def test_second_expired_uncertain_rotation_preserves_evidence_and_completes_current_admission(setup, monkeypatch):
     f = setup
     owner, _ = partial(f, monkeypatch)
     def unposted(url, cid, wire):
@@ -282,7 +282,15 @@ def test_second_expired_uncertain_rotation_preserves_exact_repair_without_regene
     monkeypatch.setattr('time.time', lambda: deadline + 1)
     monkeypatch.setattr(cli, '_http_send', f.send)
     count = len(f.attempted)
-    with pytest.raises(ValueError, match='expired'):
-        GroupClient(f.owner_dir, f.owner, f.relay).retry(f.cid)
-    assert len(f.attempted) == count
-    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == repair
+    renewal_journals = []
+    def inspect(url, cid, wire):
+        if deserialize_envelope(wire).get('kind') == 'group_welcome':
+            renewal_journals.append(copy.deepcopy(cli._load_conversations(f.owner_dir)[0]['group_operation']))
+        return f.send(url, cid, wire)
+    monkeypatch.setattr(cli, '_http_send', inspect)
+    result = GroupClient(f.owner_dir, f.owner, f.relay).retry(f.cid)
+    assert len(f.attempted) == count + 2
+    assert renewal_journals[0]['superseded_operations'][0]['controls'] == repair['controls']
+    assert 'expected' not in renewal_journals[0]['superseded_operations'][0]
+    assert renewal_journals[0]['origin'] == repair['origin']
+    assert join(f.contact_dir, f.contact, result['group_link'])['current_epoch'] == 1
