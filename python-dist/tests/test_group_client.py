@@ -655,8 +655,8 @@ def test_expired_admission_welcome_is_not_posted_or_marked_delivered(setup, monk
     assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == saved
 
 
-@pytest.mark.parametrize('expired', [False, True])
-def test_join_replays_a_rekey_that_raced_before_welcome_publication(setup, monkeypatch, expired):
+@pytest.mark.parametrize('delivery', ['retained', 'expired', 'missing'])
+def test_join_replays_a_rekey_that_raced_before_welcome_publication(setup, monkeypatch, delivery):
     from qntm import prepare_group_session_rekey
     f = setup
     owner = GroupClient(f.owner_dir, f.owner, f.relay)
@@ -665,7 +665,7 @@ def test_join_replays_a_rekey_that_raced_before_welcome_publication(setup, monke
     def race(url, cid, wire):
         if deserialize_envelope(wire).get('kind') == 'group_welcome' and not racing:
             record = cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
-            rekey = prepare_group_session_rekey(f.owner, record['group_session'], ttl=1 if expired else 3600)['rekey']
+            rekey = prepare_group_session_rekey(f.owner, record['group_session'], ttl=1 if delivery == 'expired' else 3600)['rekey']
             racing.append(rekey)
             f.send(url, cid, serialize_envelope(rekey))
         return f.send(url, cid, wire)
@@ -673,15 +673,32 @@ def test_join_replays_a_rekey_that_raced_before_welcome_publication(setup, monke
     monkeypatch.setattr(cli, '_http_send', race)
     link = owner.add(f.cid, 'Colleague')['group_link']
     assert owner.sync(f.cid)['current_epoch'] == 2
-    if expired:
+    if delivery == 'expired':
         monkeypatch.setattr('time.time', lambda: racing[0]['expiry_ts'] + 1)
+    if delivery == 'missing':
+        def retained(url, cid, cursor):
+            rows, head = f.receive(url, cid, cursor)
+            return [row for row in rows if deserialize_envelope(base64.b64decode(row['envelope_b64']))['msg_id'] != racing[0]['msg_id']], head
+        monkeypatch.setattr(cli, '_recv_once', retained)
     result = join(f.contact_dir, f.contact, link)
-    if expired:
+    if delivery != 'retained':
         assert result['recovery_required']
         recovery = cli._find_conversation(cli._load_conversations(f.contact_dir), f.cid)['group_session']['recovery']
-        assert recovery['reason'] == 'expired_control'
+        assert recovery['reason'] == ('expired_control' if delivery == 'expired' else 'missing_history')
         owner.refresh(f.cid, 'Colleague', recovery['challenge'])
         result = join(f.contact_dir, f.contact, link)
     assert not result['recovery_required'] and result['current_epoch'] == 2
     f.command(f.contact_dir, 'send', f.cid, 'joined after the racing rekey')
     assert any(row.get('unsafe_body') == 'joined after the racing rekey' for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
+
+
+def test_join_does_not_require_history_before_the_senders_signed_anchor(setup, monkeypatch):
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    def retained(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] > 1], head  # Old genesis predates the admitted state.
+    monkeypatch.setattr(cli, '_recv_once', retained)
+    result = join(f.contact_dir, f.contact, link)
+    assert not result['recovery_required'] and result['current_epoch'] == 1
