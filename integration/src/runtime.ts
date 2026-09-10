@@ -331,9 +331,12 @@ export class CliAgent {
   }
 
   readHistory(convId: string): Array<Record<string, unknown>> {
+    const conversation = this.readConversations().find(entry => String(entry.id).toLowerCase() === convId.toLowerCase());
     const path = join(this.configDir, 'chats', `${convId}.json`);
-    if (!existsSync(path)) return [];
-    const rawEntries = JSON.parse(readFileSync(path, 'utf8')) as Array<Record<string, unknown>>;
+    const rawEntries = (conversation?.group_session
+      ? conversation.group_history
+      : existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : []) as Array<Record<string, unknown>>;
+    if (!Array.isArray(rawEntries)) throw new Error('Invalid stored conversation history');
     return rawEntries.map((entry) => {
       const messageId = entry.message_id ?? entry.msg_id;
       return messageId === undefined
