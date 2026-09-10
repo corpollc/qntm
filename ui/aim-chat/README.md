@@ -109,8 +109,15 @@ admission cannot undo a later removal.
 
 The browser saves an unfinished operation before posting and verifies its exact
 controls through relay replay before releasing the welcome. **Retry saved
-operation** checks accepted admission evidence before posting old controls. A
-completed addition with a still-current, unexpired welcome retries its exact
+operation** checks accepted admission evidence before posting old controls.
+Retry of a saved rekey or remove may finish from a small private control-receipt
+checkpoint after the bounded replay cache forgets that ID: exact ciphertext
+digest, source epoch, positive verified sequence, and a still-valid branch
+binding. A losing rekey, its descendants, or a replacement welcome leave
+invalidated receipts, which override a leftover cache entry and are not
+completion proof. HTTP acknowledgements, message IDs alone, expected roots, and
+application history are not used. Missing evidence in older backups stays
+unknown. A completed addition with a still-current, unexpired welcome retries its exact
 ciphertext, even if the bounded replay cache has evicted its controls. If the
 delivery window expired or another accepted rotation changed the current keys,
 retry sends a renewal only when the same exact addition still proves the

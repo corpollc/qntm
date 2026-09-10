@@ -79,8 +79,48 @@ export function publicGroupLink(profile: string, id: string): string {
   return createGroupLink({ conversationId: bytes(id), inviterPublicKey: identityFor(profile).publicKey, relayUrl: record.group.relayUrl })
 }
 function wireId(wire: string) { return hex(deserializeEnvelope(base64UrlDecode(wire)).msg_id) }
-function controlAccepted(session: GroupSessionState, wire: string) {
-  return session.seen[wireId(wire)]?.digest === hex(suite.hash(base64UrlDecode(wire)))
+const CONTROL_BODY_TYPES = new Set<store.StoredGroupControlBody>(['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
+function controlReceipts(group: store.StoredGroup) {
+  return group.controlReceipts ??= []
+}
+function pendingControlIds(group: store.StoredGroup) {
+  return new Set((group.operation?.controls ?? []).map(wireId))
+}
+function latchControlReceipt(group: store.StoredGroup, wire: string, receipt: store.StoredGroupControlReceipt) {
+  const rows = controlReceipts(group)
+  const existing = rows.find(row => row.id === receipt.id && row.digest === receipt.digest)
+  if (existing) {
+    if (existing.valid === false) return
+    existing.epoch = receipt.epoch; existing.sequence = receipt.sequence; existing.bodyType = receipt.bodyType
+    return
+  }
+  if (!group.operation?.controls.includes(wire) && !rows.some(row => row.id === receipt.id)) return
+  rows.push(receipt)
+  const pinned = pendingControlIds(group)
+  while (rows.length > store.MAX_GROUP_CONTROL_RECEIPTS) {
+    let drop = rows.findIndex(row => !pinned.has(row.id) && row.valid)
+    if (drop < 0) drop = rows.findIndex(row => !pinned.has(row.id))
+    if (drop < 0) break
+    rows.splice(drop, 1)
+  }
+}
+function invalidateControlReceipts(group: store.StoredGroup, afterEpoch = -1, superseded = new Set<string>()) {
+  for (const receipt of group.controlReceipts ?? []) {
+    if (receipt.epoch > afterEpoch || superseded.has(receipt.id)) receipt.valid = false
+  }
+}
+/** Exact authenticated pending-control proof. Seen is only a bounded cache. */
+export function controlAccepted(group: store.StoredGroup, wire: string) {
+  const envelope = deserializeEnvelope(base64UrlDecode(wire)), mid = hex(envelope.msg_id), digest = hex(suite.hash(base64UrlDecode(wire)))
+  const known = group.session.seen[mid]
+  if (known && known.digest !== digest) throw new Error('Saved control conflicts with accepted ciphertext')
+  for (const receipt of group.controlReceipts ?? []) {
+    if (receipt.id !== mid || receipt.digest !== digest) continue
+    if (receipt.valid === false) return false
+    if (receipt.valid === true && receipt.epoch === envelope.conv_epoch && Number.isSafeInteger(receipt.sequence)
+      && receipt.sequence > 0 && receipt.sequence <= group.cursor && CONTROL_BODY_TYPES.has(receipt.bodyType)) return true
+  }
+  return Boolean(known && known.epoch === envelope.conv_epoch)
 }
 function invalidateHistory(history: store.StoredMessage[], afterEpoch = -1) {
   for (const message of history) {
@@ -127,7 +167,9 @@ export function applyGroupBatch(profile: string, id: string, entries: Subscripti
       if (host.operation?.kind === 'create' && host.operation.controls.includes(row.wire)) {
         // Own prepared genesis is trusted local seed state. Seeing its exact wire
         // proves delivery without granting authority to a repeated genesis.
-        state.seen[hex(envelope.msg_id)] = { digest: hex(suite.hash(base64UrlDecode(row.wire))), epoch: envelope.conv_epoch }
+        const digest = hex(suite.hash(base64UrlDecode(row.wire)))
+        state.seen[hex(envelope.msg_id)] = { digest, epoch: envelope.conv_epoch }
+        latchControlReceipt(host, row.wire, { id: hex(envelope.msg_id), digest, epoch: envelope.conv_epoch, sequence: row.seq, valid: true, bodyType: 'group_genesis' })
         pending.delete(key); continue
       }
       if (isGroupWelcomeEnvelope(envelope)) { pending.delete(key); continue }
@@ -141,13 +183,21 @@ export function applyGroupBatch(profile: string, id: string, entries: Subscripti
       try {
         const applied = receiveGroupEvent(identity, envelope, state)
         if (!state.removed && applied.state.removed) host.removedSequence = Math.max(host.removedSequence ?? 0, row.seq)
-        if (applied.rewound) invalidateHistory(history, envelope.conv_epoch)
+        if (applied.rewound) {
+          const superseded = new Set(state.rekeys.filter(frame => frame.epoch >= envelope.conv_epoch).map(frame => frame.messageId))
+          invalidateHistory(history, envelope.conv_epoch)
+          invalidateControlReceipts(host, envelope.conv_epoch, superseded)
+        }
         state = applied.rewound ? requireGroupRecovery(applied.state, Math.max(row.seq, head), 'missing_history') : applied.state
         pending.delete(key)
         progress = true
         if (state.recovery) break
         if (!applied.duplicate) {
           const inner = applied.message.inner, type = inner.body_type
+          if (CONTROL_BODY_TYPES.has(type as store.StoredGroupControlBody)) {
+            latchControlReceipt(host, row.wire, { id: hex(envelope.msg_id), digest: hex(suite.hash(base64UrlDecode(row.wire))),
+              epoch: envelope.conv_epoch, sequence: row.seq, valid: true, bodyType: type as store.StoredGroupControlBody })
+          }
           if (!type.startsWith('group_')) {
             const msg: store.StoredMessage = { id: hex(envelope.msg_id), conversationId: id,
               direction: hex(inner.sender_kid) === hex(identity.keyID) ? 'outgoing' : 'incoming',
@@ -319,11 +369,7 @@ function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, 
       assertPendingRotationCurrent(identity, record, op, proof)
     }
   }
-  const seen = state.seen[hex(envelope.msg_id)]
-  if (seen) {
-    if (!controlAccepted(state, wire)) throw new Error('Saved control conflicts with accepted ciphertext')
-    return false
-  }
+  if (controlAccepted(record.group, wire)) return false
   if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved operation expired; its ciphertext is retained for recovery')
   if (!['addition', 'addition_rekey', 'create'].includes(op.kind) && envelope.conv_epoch !== state.epoch) {
     throw new Error('Saved control belongs to an older group epoch; its operation is preserved')
@@ -360,12 +406,13 @@ async function resumeUnlocked(profile: string, id: string, reconcile = false): P
       const proof = additionProof(identity, record, op)
       if (proof.accepted && (op.kind === 'addition' && wire === op.controls[0] || proof.accepted.completion)) continue
     }
-    if (!controlAccepted(record.group.session, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
+    if (!controlAccepted(record.group, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
   }
   if (reconcile) op = reconcileAddition(profile, id, op)
   if (op.kind === 'addition_rekey') throw new Error('Completing rotation is not yet verified in relay replay; retry this operation')
   record = operationRecord(profile, id, op)
-  if (!op.welcomes.length && (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch)) {
+  const controlsAccepted = op.controls.every(wire => controlAccepted(record.group, wire))
+  if (!op.welcomes.length && !controlsAccepted && (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch)) {
     throw new Error('Saved operation no longer matches the accepted group state')
   }
   for (let index = op.delivered; index < op.welcomes.length; index++) {
@@ -391,7 +438,7 @@ export async function createContactGroup(profile: string, name: string): Promise
   state.applyGenesis(parseGroupGenesisBody(genesis))
   const session = createGroupSession(identity, conversation, state), id = hex(conversation.id)
   const envelope = createGroupControlMessage(identity, conversation, 'group_genesis', genesis, defaultTTL())
-  const group: store.StoredGroup = { session, cursor: 0, bootstrapSequence: 0, pending: [], receipts: [], revision: 0,
+  const group: store.StoredGroup = { session, cursor: 0, bootstrapSequence: 0, pending: [], receipts: [], controlReceipts: [], revision: 0,
     operation: { kind: 'create', controls: [base64UrlEncode(serializeEnvelope(envelope))], welcomes: [], delivered: 0, expected: session },
     relayUrl: store.getDropboxUrl(), inviterPublicKey: hex(identity.publicKey) }
   store.commitGroup(profile, { id, name: name.trim() || 'Contact group', type: 'group', keys: { root: hex(conversation.keys.root), aeadKey: hex(conversation.keys.aeadKey), nonceKey: hex(conversation.keys.nonceKey) }, participants: [hex(identity.keyID)], participantPublicKeys: [hex(identity.publicKey)], currentEpoch: 0, createdAt: new Date().toISOString(), group }, [])
@@ -477,7 +524,9 @@ export async function openContactGroup(profile: string, link: string, name = '')
         )
         const conv = welcome.conversation
         const group: store.StoredGroup = { session, cursor: welcome.replayFromSequence, bootstrapSequence: welcome.replayFromSequence, removedSequence: previous?.group?.removedSequence,
-          pending: [], receipts: previous?.group?.receipts ?? [], operation: previous?.group?.operation ?? null,
+          pending: [], receipts: previous?.group?.receipts ?? [],
+          controlReceipts: (previous?.group?.controlReceipts ?? []).map(row => ({ ...row, valid: false })),
+          operation: previous?.group?.operation ?? null,
           relayUrl: locator.relayUrl, inviterPublicKey: hex(locator.inviterPublicKey), revision: (previous?.group?.revision ?? -1) + 1 }
         const record: store.StoredConversation = { id, name: name.trim() || previous?.name || welcome.state.snapshot().group_name, type: 'group',
           keys: { root: hex(conv.keys.root), aeadKey: hex(conv.keys.aeadKey), nonceKey: hex(conv.keys.nonceKey) },

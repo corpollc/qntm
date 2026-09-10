@@ -65,6 +65,17 @@ export type StoredGroupOperation = {
   | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never }
   | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never })
 
+export type StoredGroupControlBody = 'group_genesis' | 'group_add' | 'group_remove' | 'group_rekey'
+export const MAX_GROUP_CONTROL_RECEIPTS = 64
+/** Private exact pending-control receive proof. Missing entries stay unknown. */
+export interface StoredGroupControlReceipt {
+  id: string
+  digest: string
+  epoch: number
+  sequence: number
+  valid: boolean
+  bodyType: StoredGroupControlBody
+}
 export interface StoredGroup {
   session: GroupSessionState
   cursor: number
@@ -72,6 +83,7 @@ export interface StoredGroup {
   removedSequence?: number
   pending: Array<{ seq: number; wire: string }>
   receipts: number[]
+  controlReceipts?: StoredGroupControlReceipt[]
   operation: StoredGroupOperation | null
   relayUrl: string
   inviterPublicKey: string
