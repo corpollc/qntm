@@ -1,7 +1,7 @@
 # Signing-key and signature validation
 
 The maintained TypeScript and Python clients use the same Ed25519 acceptance
-rules as the Go charter registry. This is an unreleased hardening change for
+rules as the Go charter registry. v0.6.2 applies these stricter checks to
 messaging and relay authentication; the charter already used these rules.
 
 Public keys must be 32-byte canonical encodings of nonidentity points in the

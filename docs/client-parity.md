@@ -11,7 +11,7 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | Webhook or executable delivery | CLI hook runner with independent retries | Application-owned; the Claude channel has a durable MCP outbox | Not implemented |
 | Gateway and governance | Full CLI workflows | Typed builders, authenticated parsers, envelope helpers, history summaries, authenticated session reducer, browser and terminal workflows; host owns orchestration | Gateway is TypeScript |
 | Guidance contacts | CLI and MCP local configuration/review/send | Browser local configuration/review/send | Not implemented |
-| Experimental charter v0.2 | Opt-in `qntm.charter` library: construction, authority replay, pinned HTTP transport and proofs (unreleased) | Opt-in `@corpollc/qntm/charter` library | Durable reference registrar in `charter-registry/` |
+| Experimental charter v0.2 | Opt-in `qntm.charter` library: construction, authority replay, pinned HTTP transport and proofs (since v0.6.2) | Opt-in `@corpollc/qntm/charter` library | Durable reference registrar in `charter-registry/` |
 
 The CLI's hook runner is client behavior: it needs no new relay endpoint. Muse and other hosts can consume the continuous JSONL subscription directly. Codex, Claude, Grok, or another harness can consume the same event through a local adapter; qntm does not ship or claim tested native insertion adapters for every harness. The Claude channel is the included MCP bridge. OpenClaw is the maintained agent integration target. The existing NanoClaw transport source is retained, but further installation and host-verification work is deferred and it is not an actively supported client.
 

@@ -58,7 +58,7 @@ A signature proves a key made a statement. It does not prove compliance with tha
 
 ## Python client
 
-Unreleased: install this checkout with `pip install ./python-dist` and import `qntm.charter`. Normal messaging imports do not opt into charter behavior. Supply `configured_registry_url`, `configured_registry_id`, and `configured_registrar_key` from trusted local configuration. The key is a dictionary containing canonical `kid` and `pubkey` strings; see the [hosted registrar pin](../docs/charter-operations.md).
+Install qntm v0.6.2 or later with `pip install 'qntm>=0.6.2'` and import `qntm.charter`. Normal messaging imports do not opt into charter behavior. Supply `configured_registry_url`, `configured_registry_id`, and `configured_registrar_key` from trusted local configuration. The key is a dictionary containing canonical `kid` and `pubkey` strings; see the [hosted registrar pin](../docs/charter-operations.md).
 
 ```python
 from qntm import generate_identity

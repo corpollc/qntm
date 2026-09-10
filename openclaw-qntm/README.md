@@ -4,7 +4,7 @@
 
 ## Install from this checkout
 
-The unreleased adapter targets **OpenClaw 2026.9.3** and uses its actual public SDK in tests and typechecking. Use Node **24.16.0 or later in the 24.x line**, or **26.1.0+**. Earlier OpenClaw versions are not covered by this adapter's current host test; upgrade the host before installing this revision.
+The adapter included with qntm v0.6.2 targets **OpenClaw 2026.9.3** and uses its actual public SDK in tests and typechecking. Use Node **24.16.0 or later in the 24.x line**, or **26.1.0+**. Earlier OpenClaw versions are not covered by this adapter's current host test; upgrade the host before installing this revision.
 
 From the repository root:
 
@@ -103,7 +103,7 @@ The full [cross-client acceptance suite](../docs/deployment-checklist.md) also i
 
 ## Optional gateway tools
 
-This checkout adds `qntm_gateway`; it is not part of published 0.6.1. Enable it in the host tool policy, then grant the desired actions on each conversation binding:
+qntm v0.6.2 adds `qntm_gateway`. Enable it in the host tool policy, then grant the desired actions on each conversation binding:
 
 ```json
 {

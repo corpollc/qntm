@@ -4,7 +4,7 @@ The Ink client stores one local identity in `~/.qntm-human`, independently of th
 
 `/invite [name]` creates a conversation; `/join <token-or-link>` joins one. `/help` lists commands and `/help <command>` gives details. Keyboard navigation applies only when the composer is empty, so digits in message text and IDs cannot switch conversations. Escape enters scroll mode; j/k scroll by terminal line. Gateway summaries fit the viewport; complete action details appear in a separate paged review.
 
-## Gateway actions (unreleased)
+## Gateway actions (v0.6.2+)
 
 Gateway authority comes from the participant's signed invitation and the gateway's matching signed acceptance in chat. Received requests cannot choose the trusted gateway, policy, or signer roster.
 

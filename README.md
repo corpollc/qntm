@@ -184,17 +184,17 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 |---------|:---------:|:----------------------:|:------------------------:|:-----------------------:|-------|
 | **Python CLI** | ✅ | ✅ | ✅ | ✅ | Full gateway command surface, including `gate-run`, `gate-approve`, `gate-disapprove`, `gate-promote`, and `gate-secret`. |
 | **Web UI** | ✅ | ✅ | ✅ | ✅ | Browser UI supports request, approval, disapproval, promote, and secret flows. |
-| **Terminal UI** | ✅ | ✅ | ✅ | ✅ | Unreleased: signed gateway admission; paged request, approval, withdrawal, credential and governance reviews; authenticated rekey/restart state. [Terminal help](ui/tui/README.md). |
+| **Terminal UI** | ✅ | ✅ | ✅ | ✅ | Signed gateway admission; paged request, approval, withdrawal, credential and governance reviews; authenticated rekey/restart state. [Terminal help](ui/tui/README.md). |
 | **TypeScript lib** | ✅ | ✅ | ✅ | ✅ | Typed gateway/governance builders, authenticated-message verification, encrypted-message helpers, and history summaries. Hosts own review, persistence, subscriptions, and retries; see the [workflow guide](docs/typescript-gateway.md). |
-| **OpenClaw plugin** | ✅ | ✅ | ✅ | ✅ | Unreleased: verified gateway context and optional native tools for admission, requests, votes, credentials and governance. Real OpenClaw 2026.9.3 journeys cover Python/browser/TypeScript interoperability, actual gateway execution, stale-review rejection, rekey, removal and crash recovery. |
+| **OpenClaw plugin** | ✅ | ✅ | ✅ | ✅ | Verified gateway context and optional native tools for admission, requests, votes, credentials and governance. Real OpenClaw 2026.9.3 journeys cover Python/browser/TypeScript interoperability, actual gateway execution, stale-review rejection, rekey, removal and crash recovery. |
 
-Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes this checkout; entries marked unreleased are not yet in published 0.6.1 packages.
+Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes qntm v0.6.2; terminal and native OpenClaw gateway actions require this release.
 
 ## Experimental charter registry
 
 v0.6.0 includes an opt-in [TypeScript charter library and durable Go reference server](charter-registry/README.md). Agents can self-certify charters, govern subagents, use threshold governance, and publish namespaced experimental statements. Signatures establish authorship and authority; they do not certify compliance or professional standing.
 
-This checkout also adds the opt-in Python `qntm.charter` library (unreleased), with the same authority rules, canonical signatures, pinned registry transport, and proof verification. Real Python/TypeScript/Go journeys cover parent governance, threshold changes, historical snapshots and server restart; see the [Python example and API guide](charter-registry/README.md#python-client).
+v0.6.2 adds the opt-in Python `qntm.charter` library, with the same authority rules, canonical signatures, pinned registry transport, and proof verification. Real Python/TypeScript/Go journeys cover parent governance, threshold changes, historical snapshots and server restart; see the [Python example and API guide](charter-registry/README.md#python-client).
 
 The [v0.2 charter draft](specs/working-group/charter-registry.md) remains unratified. A public experimental registry is deployed at **https://charter.qntm.corpo.llc**, separately from messaging, with HTTPS, bounded storage, private monitoring and daily snapshots. Use the [published registrar pin and operations guide](docs/charter-operations.md). Independent witnesses are not implemented. See [library parity and adapter boundaries](docs/client-parity.md).
 

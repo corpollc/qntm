@@ -8,7 +8,7 @@ The library does not own a daemon, a review screen, or a credential store. Your 
 
 Use `GateClient.createInvitation`, `createGatewayInviteBody`, and `sealGatewayBootstrap` for admission. Post the signed invitation to the conversation, then submit its sealed bootstrap material with `GateClient.promote`. HTTP success is advisory. Activate the gateway only after `matchesGatewayAcceptance` verifies its signed `gate.accept` message against the exact invitation message ID and text. See [gateway invitations](gateway-invitations.md).
 
-Unreleased: `new GateClient(url, { timeoutMs: 30_000, signal })` accepts an optional `AbortSignal` and a deadline covering headers and the complete body. The default is 30 seconds; overrides must be integers from 1 to 300,000 milliseconds. Setup and health calls reject redirects, cap decoded response bodies at 64 KiB, and never automatically retry. A timeout or cancellation does not establish that the server ignored a submitted POST: retain the exact sealed bootstrap for an explicit retry, and verify signed chat acceptance before granting authority.
+Since v0.6.2, `new GateClient(url, { timeoutMs: 30_000, signal })` accepts an optional `AbortSignal` and a deadline covering headers and the complete body. The default is 30 seconds; overrides must be integers from 1 to 300,000 milliseconds. Setup and health calls reject redirects, cap decoded response bodies at 64 KiB, and never automatically retry. A timeout or cancellation does not establish that the server ignored a submitted POST: retain the exact sealed bootstrap for an explicit retry, and verify signed chat acceptance before granting authority.
 
 Construct a `GatewayContext` from that accepted identity and verified current conversation state:
 

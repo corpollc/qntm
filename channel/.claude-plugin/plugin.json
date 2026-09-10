@@ -1,6 +1,6 @@
 {
   "name": "channel",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Encrypted qntm messaging channel for Claude Code \u2014 makes Claude a first-class qntm peer",
   "author": {
     "name": "Corpo LLC",
