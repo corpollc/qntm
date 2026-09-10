@@ -23,7 +23,12 @@ Contact-group journeys additionally run against the real relay in the browser,
 terminal PTY and installed OpenClaw host, with Python and TypeScript peers. They
 cover reverse opening order, current-key refresh, restart, missing-history
 recovery, removal and readmission. The shared suites check signed replay anchors
-and recovery challenges in both languages. Run `cd integration && npm run
+and recovery challenges in both languages. Browser history and agent queues bind
+payloads to exact ciphertext; regression cases cover reused IDs after recovery,
+replay-cache eviction, complete replay before dispatch, and queued OpenClaw jobs
+across restart. The browser hides invalidated history but retains it privately
+and in encrypted backups; Python/terminal retain readable local archives while
+excluding invalidated rows from receive events and hooks. Run `cd integration && npm run
 test:contacts` for these journeys. Gateway-governed welcomes, incomplete legacy
 rosters and automatic reconciliation of competing or expired pending operations
 remain outside this increment; see [group welcome boundaries](group-welcomes.md).
