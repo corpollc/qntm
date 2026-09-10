@@ -8,6 +8,7 @@ The TypeScript library is a first-class qntm client. Python and TypeScript share
 | Contact-add welcomes and public group links | Unreleased CLI/MCP create, add, open, remove, current-key refresh, rekey and exact-operation retry; shared library helpers | Matching unreleased library helpers and browser workflows; terminal uses the Python receiver; OpenClaw supports configured pins/groups and reviewed native actions | No maintained messaging client |
 | Current-admission renewal | Shared API; existing CLI/MCP and terminal refresh actions | Matching shared API; browser Refresh welcome and reviewed OpenClaw refresh | No maintained messaging client |
 | Ordinary-group receive checkpoints | Unreleased authenticated reducer with atomic CLI/MCP history, cursor and pending ciphertext | Matching reducer and private JSON format; browser persists per identity with Web Locks; OpenClaw persists a locked checkpoint/dispatch queue | No maintained messaging client |
+| Accepted-control retry after cache eviction | CLI/MCP and terminal reuse authenticated history proof | Browser and OpenClaw retain private exact-control receipts; losing branches invalidate them | No maintained messaging client |
 | Expiry and saved history | Reject expired live messages; explicit `allow_expired=True` for history | Same policy; explicit `{ allowExpired: true }` for history | No maintained messaging client |
 | Persistent relay subscription | `recv --watch` owns reconnect and durable profile state | `DropboxClient.subscribeMessages` owns reconnect; application owns durable state | No maintained messaging client |
 | Portable receive event | `ReceiveEvent`, `create_receive_event` | `ReceiveEvent`, `createReceiveEvent` | Not implemented |
@@ -27,6 +28,11 @@ recovery, removal and readmission. Refresh journeys also recover an expired late
 readmission without providing keys from the interval of exclusion. Fresh CLI/MCP
 processes recover interrupted additions after real delivery expiry and lost relay
 acknowledgements; a TypeScript recipient opens the current welcome and replies.
+Browser and native journeys also finish an accepted rotation after cache eviction
+and a later peer rotation without reposting the old control or restoring its keys.
+An OpenClaw restart journey uses a fresh operator CLI process to enter the group's
+existing review flow while inbound messages remain deferred; it does not require
+an agent turn to have survived the restart. See the [local recovery command](../openclaw-qntm/README.md#local-recovery-entry-point).
 The shared suites check signed replay anchors
 and recovery challenges in both languages. Browser history and agent queues bind
 payloads to exact ciphertext; regression cases cover reused IDs after recovery,

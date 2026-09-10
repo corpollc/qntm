@@ -196,7 +196,10 @@ Adding a verified contact rotates keys, delivers an encrypted welcome and return
 a public group link. Contacts may open links in any order; clients catch up before
 enabling sends and pause for recovery if required history is missing. The terminal
 uses the matching Python receiver; OpenClaw actions require local configuration
-and review. Gateway-governed welcomes, legacy migration and complete recovery
+and review. Completed control retries survive replay-cache eviction and later
+rotations using private authenticated evidence. OpenClaw also supports a
+[local recovery turn after restart](openclaw-qntm/README.md#local-recovery-entry-point).
+Gateway-governed welcomes, legacy migration and complete recovery
 across competing operations remain unfinished. See [contact addition and storage
 details](docs/group-welcomes.md) and the [library parity table](docs/client-parity.md).
 
