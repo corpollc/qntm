@@ -111,9 +111,11 @@ export async function pollConversation(
   convId: string,
 ): Promise<PollResult> {
   if (store.findConversation(convId)?.managedGroup) {
-    const before = new Set(store.loadHistory(convId).map(message => message.id));
-    await store.groups.run(['recv', convId]);
-    return { messages: store.loadHistory(convId).filter(message => !before.has(message.id)), newCursor: store.loadCursor(convId) };
+    const received = await store.groups.run(['recv', convId]);
+    // Local history retains superseded plaintext for inspection. Only the
+    // receiver's filtered result is eligible to be reported as new delivery.
+    const accepted = new Set((received.messages || []).map((message: { message_id: string }) => message.message_id));
+    return { messages: store.loadHistory(convId).filter(message => accepted.has(message.id)), newCursor: store.loadCursor(convId) };
   }
   const convCrypto = store.getConversationCrypto(convId);
   if (!convCrypto) return { messages: [], newCursor: 0 };

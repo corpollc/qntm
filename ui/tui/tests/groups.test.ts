@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DropboxClient, generateIdentity, openGroupWelcome, deserializeEnvelope, isGroupWelcomeEnvelope,
   createMessage, serializeEnvelope, decryptMessage, groupSessionFromWelcome, checkGroupWelcomeReplay,
-  checkExpiredGroupControl, receiveGroupEvent, assertGroupCanSend, groupSessionConversation } from '@corpollc/qntm';
+  checkExpiredGroupControl, receiveGroupEvent, assertGroupCanSend, groupSessionConversation,
+  restoreGroupSession, prepareGroupSessionRekey } from '@corpollc/qntm';
 import { Store, bytesToHex } from '../src/lib/store.js';
 import { runGroupCommand } from '../src/lib/group-commands.js';
 import { groupNotice, splitGroupArguments } from '../src/lib/groups.js';
@@ -172,5 +173,45 @@ describe.sequential('terminal contact groups through the real Python receiver', 
     expect(restarted.findConversation(interruptedId)!.groupOperation).toBeUndefined();
     const posted = relay.conversations.get(interruptedId)!.messages.map(message => message.envelopeB64);
     for (const wire of wires) expect(posted.filter(value => value === wire)).toHaveLength(1);
+  });
+
+  it('does not report superseded same-batch plaintext as new delivery', async () => {
+    const created = await alice.groups.run(['group', 'create', 'Competing batch', '--contact']);
+    const batchId = String(created.conversation_id);
+    const added = await alice.groups.run(['group', 'add', batchId, 'Bob $(touch never)']);
+    await bob.groups.run(['group', 'join', '--', added.group_link]);
+    const record = JSON.parse(readFileSync(join(alice.groups.profileDir, 'conversations.json'), 'utf8'))
+      .find((row: any) => row.id === batchId);
+    const identity = alice.loadIdentity()!;
+    const source = restoreGroupSession(identity, record.group_session);
+    const [winner, loser] = [prepareGroupSessionRekey(identity, source), prepareGroupSessionRekey(identity, source)]
+      .sort((a, b) => bytesToHex(a.rekey.msg_id).localeCompare(bytesToHex(b.rekey.msg_id)));
+    const superseded = createMessage(identity, loser.conversation, 'text', new TextEncoder().encode('superseded batch text'));
+    const transport = new DropboxClient(relay.url);
+    for (const envelope of [loser.rekey, superseded, winner.rekey]) {
+      await transport.postMessage(Buffer.from(batchId, 'hex'), serializeEnvelope(envelope));
+    }
+    const result = await pollConversation(bob, transport, bob.loadIdentity()!, batchId);
+    expect(result.messages.some(message => message.text === 'superseded batch text')).toBe(false);
+    expect(bob.loadHistory(batchId).some(message => message.text === 'superseded batch text')).toBe(true);
+    expect(bob.findConversation(batchId)!.groupSession!.root).toBe(bytesToHex(winner.conversation.keys.root));
+  });
+
+  it('rejects an older receiver contract even when the group APIs exist', async () => {
+    const compatibility = join(root, 'old-python-contract');
+    mkdirSync(compatibility);
+    writeFileSync(join(compatibility, 'sitecustomize.py'),
+      'import qntm.watch\nqntm.watch.GROUP_RECEIVE_CONTRACT_VERSION = 0\n', { mode: 0o600 });
+    const fresh = new Store(join(root, 'compatibility-profile'), relay.url);
+    fresh.generateIdentity();
+    const previousPath = process.env.PYTHONPATH;
+    try {
+      process.env.PYTHONPATH = compatibility + delimiter + previousPath;
+      await expect(fresh.groups.run(['contact', 'list'])).rejects.toThrow('matching qntm Python package');
+    } finally {
+      if (previousPath === undefined) delete process.env.PYTHONPATH; else process.env.PYTHONPATH = previousPath;
+    }
+    // A corrected installation can retry without recreating the terminal.
+    await expect(fresh.groups.run(['contact', 'list'])).resolves.toHaveProperty('contacts');
   });
 });

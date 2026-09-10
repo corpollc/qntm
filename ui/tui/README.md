@@ -181,6 +181,11 @@ Back up the entire terminal profile, including `contact-groups/`. Ordinary group
 history is not subject to the native 1,000-message display-history limit below
 and has no automatic local expiry.
 
+Each received group event also saves its verified ciphertext digest, source epoch
+and delivery eligibility. Plaintext from a superseded branch can remain in local
+history for inspection, but is excluded from receive results and hooks. Valid
+pending delivery survives ordinary replay-cache eviction.
+
 Local identity, conversation keys, decrypted history, and accepted gateway checkpoints are **unencrypted at rest**. File permissions protect them from other ordinary users, not the account owner or malware. Treat this directory as sensitive; do not import someone else's checkpoint as proof of authority. History retains 1,000 display messages, 4,096 verified gateway events, and 8,192 replay digests per conversation. Missing older subjects fail verification instead of accepting unreferenced votes.
 
 The contact-group profile and pinned names are never uploaded. The terminal adds
