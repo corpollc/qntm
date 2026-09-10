@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
@@ -238,6 +238,69 @@ test('browser welcomes a fresh Python CLI peer and renews its later readmission 
     await command('command', 'recv', id)
     await expect(command('command', 'group', 'join', link)).rejects.toThrow()
     expect((await checkpoint()).removedAtEpoch).toBe(4)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('browser retries an expired generic refresh for a Python founder without changing purpose or membership', async ({ page }) => {
+  test.setTimeout(60_000)
+  const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-generic-python-'))
+  const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
+    [resolve('tests/e2e/fixtures/python-group-peer.py'), directory, ...args], {
+      env: { ...process.env, PYTHONPATH: resolve('../../python-dist/src') }, timeout: 45_000,
+    })).stdout)
+  try {
+    const founder = await command('identity'), client = new DropboxClient(relay.url), other = generateIdentity()
+    const created = await command('command', '--dropbox-url', relay.url, 'group', 'create', 'Founder refresh recovery', '--contact')
+    const id = created.conversation_id
+    const added = await command('command', '--dropbox-url', relay.url, 'group', 'add', id, hex(browserIdentity.publicKey))
+    await page.goto('/'); await browserOpen(page, added.group_link); await contacts(page)
+    await expect(page.getByText('2 members · key epoch 1')).toBeVisible()
+    const saved = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return { profile: data.activeProfileId, record: data.conversations[data.activeProfileId][0] }
+    })
+    const original = prepareGroupWelcomeRefresh(browserIdentity, saved.record.group.session, [new Uint8Array(Buffer.from(founder.public_key, 'hex'))],
+      12, new Uint8Array(32).fill(0x65), saved.record.group.cursor)
+    // Model a saved generic refresh whose POST did not happen before a crash.
+    // Legacy browser journals have no explicit recipient/challenge fields.
+    await page.evaluate(({ profile, pending }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      data.conversations[profile][0].group.operation = pending; data.conversations[profile][0].group.revision++
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { profile: saved.profile, pending: { kind: 'refresh', expected: saved.record.group.session, controls: [],
+      welcomes: original.welcomes.map(w => base64UrlEncode(serializeEnvelope(w))), delivered: 0 } })
+    await page.reload(); await contacts(page)
+    await command('command', '--dropbox-url', relay.url, 'group', 'add', id, hex(other.publicKey))
+    await expect(page.getByText('3 members · key epoch 2')).toBeVisible()
+    const ts = await peerOpen(other, added.group_link)
+    const head = (await client.receiveMessages(original.conversation.id, 0)).sequence
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, (original.welcomes[0].expiry_ts + 1) * 1000 - Date.now())))
+    await page.reload(); await contacts(page)
+    const posted: Uint8Array[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(new Uint8Array(Buffer.from(request.postDataJSON().envelope_b64, 'base64')))
+    })
+    await page.getByRole('button', { name: 'Retry saved operation', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Saved operation completed' })).toBeVisible()
+    expect(posted).toHaveLength(1); expect(isGroupWelcomeEnvelope(deserializeEnvelope(posted[0]))).toBe(true)
+    expect(base64UrlEncode(posted[0])).not.toBe(base64UrlEncode(serializeEnvelope(original.welcomes[0])))
+    expect(deserializeEnvelope(posted[0]).conv_epoch).toBe(2)
+    // Force a fresh Python checkpoint from the generic box alone. This fixture
+    // discards the founder's private history, not any protocol removal fence.
+    await writeFile(join(directory, 'conversations.json'), '[]')
+    const link = await page.getByLabel('Public group link', { exact: true }).inputValue()
+    await command('command', 'group', 'join', link)
+    const record = JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8')).find((row: { id: string }) => row.id === id)
+    expect(record.group_session.epoch).toBe(2); expect(record.group_session.rekeys).toEqual([])
+    expect(record.group_session.admissions[founder.key_id]).toBeUndefined()
+    expect(record.group_cursor).toBeGreaterThanOrEqual(head + 1)
+    await command('command', 'send', id, 'Python founder received the retried generic refresh')
+    await expect(page.locator('.message-body', { hasText: 'Python founder received the retried generic refresh' })).toBeVisible()
+    await catchUpPeer(other, ts)
+    const reply = createMessage(other, groupSessionConversation(ts.state), 'text', new TextEncoder().encode('TypeScript sees unchanged membership'))
+    await client.postMessage(ts.locator.conversationId, serializeEnvelope(reply))
+    await expect(page.locator('.message-body', { hasText: 'TypeScript sees unchanged membership' })).toBeVisible()
+    await expect(page.getByText('3 members · key epoch 2')).toBeVisible()
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 

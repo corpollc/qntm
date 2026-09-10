@@ -630,6 +630,102 @@ describe('browser contact group host', () => {
     expect(openGroupWelcome(bob.identity, relay.get(id)!.at(-1)!.envelope, parseGroupLink(link)).purpose).toBe('refresh')
   })
 
+  it.each(['expired', 'changed keys'] as const)('replaces an older %s generic refresh without upgrading its purpose, retaining repeated exact evidence and challenge', async reason => {
+    const alice = profile('Alice'), bob = profile('Bob'), challenge = 'c7'.repeat(32)
+    const id = await createContactGroup(alice.id, 'Generic recovery')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', hex(bob.identity.keyID))
+    const record = store.findConversation(alice.id, id)!, expected = record.group!.session
+    const refresh = prepareGroupWelcomeRefresh(alice.identity, expected, [bob.identity.publicKey], 10, bytes(challenge), record.group!.cursor)
+    const operation: store.StoredGroupOperation = { kind: 'refresh', controls: [], welcomes: refresh.welcomes.map(w => base64UrlEncode(serializeEnvelope(w))), delivered: 0, expected }
+    store.updateConversation(alice.id, id, conv => ({ ...conv, group: { ...conv.group!, operation } }))
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    if (reason === 'expired') now.mockReturnValue((refresh.welcomes[0].expiry_ts + 1) * 1000)
+    else { await post(id, prepareGroupSessionRekey(alice.identity, session(alice.id, id)).rekey); await syncContactGroup(alice.id, id) }
+    const posted = relay.get(id)!.length, anchor = heads.get(id)!
+    failPost = true
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow('Delivery uncertain')
+    const first = store.findConversation(alice.id, id)!.group!.operation!
+    expect(first.kind).toBe('refresh'); expect(first.recipient).toBe(hex(bob.identity.publicKey)); expect(first.recoveryChallenge).toBe(challenge)
+    expect(first.expected.rekeys).toEqual([]); expect(first.origin).toBeUndefined(); expect(first.admission).toBeUndefined()
+    expect(first.superseded).toEqual([{ kind: 'refresh', controls: [], welcomes: operation.welcomes, delivered: 0, delivery: 'unknown' }])
+    const opened = openGroupWelcome(bob.identity, base64UrlDecode(first.welcomes[0]), parseGroupLink(link))
+    expect(opened.purpose).toBe('refresh'); expect(hex(opened.recoveryChallenge!)).toBe(challenge); expect(opened.replayFromSequence).toBe(anchor)
+    // Even now-known admission evidence cannot turn generic recovery into readmission.
+    expect(() => groupSessionFromWelcome(bob.identity, opened, posted + 1, {
+      ...createGroupSession(bob.identity, opened.conversation, opened.state, { admissions: opened.admissions }), removed: true, removedAtEpoch: 0,
+    })).toThrow(/remov/i)
+    const encrypted = await exportEncryptedBackup('generic recovery password')
+    localStorage.clear(); restoreBackup(await prepareBackup(encrypted, 'generic recovery password'))
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow('Delivery uncertain')
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(first)
+    now.mockReturnValue((deserializeEnvelope(base64UrlDecode(first.welcomes[0])).expiry_ts + 1) * 1000)
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow('Delivery uncertain')
+    const second = store.findConversation(alice.id, id)!.group!.operation!
+    expect(second.superseded).toEqual([...first.superseded!, { kind: 'refresh', controls: [], welcomes: first.welcomes, delivered: 0, delivery: 'unknown' }])
+    expect(second.recoveryChallenge).toBe(challenge)
+    failPost = false; await retryContactGroup(alice.id, id)
+    expect(relay.get(id)!.length).toBe(posted + 1)
+    expect(base64UrlEncode(relay.get(id)!.at(-1)!.envelope)).toBe(second.welcomes[0])
+  }, 15_000)
+
+  it('records explicit full recipient and challenge on a founding-member generic refresh', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), challenge = 'e3'.repeat(32)
+    const id = await createContactGroup(alice.id, 'Founder')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    const link = await changeContactGroup(alice.id, id, 'add', hex(bob.identity.keyID))
+    await openContactGroup(bob.id, link); pinContact(bob.id, 'Alice', hex(alice.identity.publicKey))
+    failPost = true
+    await expect(changeContactGroup(bob.id, id, 'refresh', hex(alice.identity.keyID), challenge)).rejects.toThrow('Delivery uncertain')
+    const op = store.findConversation(bob.id, id)!.group!.operation!
+    expect(op.kind).toBe('refresh'); expect(op.recipient).toBe(hex(alice.identity.publicKey)); expect(op.recoveryChallenge).toBe(challenge)
+    expect(validateBackup(rawBackup())).toBeTruthy()
+    failPost = false; await retryContactGroup(bob.id, id)
+    expect(base64UrlEncode(relay.get(id)!.at(-1)!.envelope)).toBe(op.welcomes[0])
+  })
+
+  it.each(['recipient', 'sender', 'recovery', 'rotation'] as const)('preserves a stale generic refresh without POST when blocked by %s', async reason => {
+    const alice = profile('Alice'), bob = profile('Bob')
+    const id = await createContactGroup(alice.id, 'Blocked refresh')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    await changeContactGroup(alice.id, id, 'add', hex(bob.identity.keyID))
+    const record = store.findConversation(alice.id, id)!, refresh = prepareGroupWelcomeRefresh(alice.identity, record.group!.session, [bob.identity.publicKey], 10)
+    const operation: store.StoredGroupOperation = { kind: 'refresh', controls: [], welcomes: refresh.welcomes.map(w => base64UrlEncode(serializeEnvelope(w))), delivered: 0, expected: record.group!.session }
+    if (reason === 'recipient') {
+      const remove = createGroupControlMessage(alice.identity, groupSessionConversation(record.group!.session), 'group_remove', createGroupRemoveBody([bob.identity.keyID]))
+      await post(id, remove); await syncContactGroup(alice.id, id)
+      if (reason === 'recipient') { await post(id, prepareGroupSessionRekey(alice.identity, session(alice.id, id)).rekey); await syncContactGroup(alice.id, id) }
+    } else store.updateConversation(alice.id, id, conv => ({ ...conv, group: { ...conv.group!, session: { ...conv.group!.session,
+      ...(reason === 'sender' ? { removed: true, removedAtEpoch: conv.group!.session.epoch } : reason === 'recovery' ? { recovery: { reason: 'missing_history', challenge: 'a1'.repeat(32), afterSequence: conv.group!.cursor } } : { needsRekey: true }) } } }))
+    store.updateConversation(alice.id, id, conv => ({ ...conv, group: { ...conv.group!, operation } }))
+    vi.spyOn(Date, 'now').mockReturnValue((refresh.welcomes[0].expiry_ts + 1) * 1000)
+    const count = relay.get(id)!.length
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow()
+    expect(relay.get(id)!.length).toBe(count); expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(operation)
+  })
+
+  it.each(['recipient', 'challenge', 'root', 'header', 'signature', 'purpose', 'nested evidence', 'evidence kind'] as const)('rejects generic refresh %s corruption on restore and retry', async reason => {
+    const alice = profile('Alice'), bob = profile('Bob')
+    const id = await createContactGroup(alice.id, 'Invalid refresh')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey)); await changeContactGroup(alice.id, id, 'add', hex(bob.identity.keyID))
+    const record = store.findConversation(alice.id, id)!, refresh = prepareGroupWelcomeRefresh(alice.identity, record.group!.session, [bob.identity.publicKey], 10)
+    const operation: store.StoredGroupOperation = { kind: 'refresh', controls: [], welcomes: refresh.welcomes.map(w => base64UrlEncode(serializeEnvelope(w))), delivered: 0, expected: record.group!.session, recipient: hex(bob.identity.publicKey), recoveryChallenge: null }
+    if (reason === 'recipient') operation.recipient = hex(alice.identity.publicKey)
+    if (reason === 'challenge') operation.recoveryChallenge = 'aa'.repeat(32)
+    if (reason === 'root') operation.expected = { ...operation.expected, root: 'bb'.repeat(32) }
+    if (reason === 'header') { const e = deserializeEnvelope(base64UrlDecode(operation.welcomes[0])); e.expiry_ts++; operation.welcomes[0] = base64UrlEncode(serializeEnvelope(e)) }
+    if (reason === 'signature') { const e = deserializeEnvelope(base64UrlDecode(operation.welcomes[0])); e.ciphertext[40] ^= 1; operation.welcomes[0] = base64UrlEncode(serializeEnvelope(e)) }
+    if (reason === 'purpose') operation.welcomes = prepareGroupAdmissionRenewal(alice.identity, record.group!.session, bob.identity.publicKey, { addId: record.group!.session.admissions[hex(bob.identity.keyID)].addId, addDigest: record.group!.session.admissions[hex(bob.identity.keyID)].addDigest }).welcomes.map(w => base64UrlEncode(serializeEnvelope(w)))
+    if (reason === 'nested evidence' || reason === 'evidence kind') operation.superseded = [{ kind: reason === 'evidence kind' ? 'renewal' : 'refresh', controls: [], welcomes: operation.welcomes, delivered: 0, delivery: 'unknown', ...(reason === 'nested evidence' ? { expected: operation.expected } : {}) }]
+    store.updateConversation(alice.id, id, conv => ({ ...conv, group: { ...conv.group!, operation } }))
+    expect(() => validateBackup(rawBackup())).toThrow()
+    if (!reason.includes('evidence')) {
+      const count = relay.get(id)!.length
+      await expect(retryContactGroup(alice.id, id)).rejects.toThrow()
+      expect(relay.get(id)!.length).toBe(count); expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(operation)
+    }
+  })
+
   it('detects an omitted rotation between the signed anchor and delayed welcome', async () => {
     const alice = profile('Alice'), bob = profile('Bob')
     const id = await createContactGroup(alice.id, 'Room')

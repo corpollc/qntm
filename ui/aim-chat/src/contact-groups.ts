@@ -12,7 +12,7 @@ import {
 } from '@corpollc/qntm'
 import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
-import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, sameGroupOperationValue,
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, sameGroupOperationValue,
   appendGroupOperationEvidence, assertGroupOperationEvidenceBudget } from './group-operation'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
@@ -224,6 +224,27 @@ function additionOrigin(op: AdditionOperation, intent: ReturnType<typeof additio
   return op.kind === 'addition_rekey' ? structuredClone(op.origin) : { kind: 'addition', controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered,
     recipient: hex(intent.recipient), admission: intent.proof, recoveryChallenge: challenge, delivery: 'unknown' }
 }
+function currentRefreshIntent(identity: Identity, record: ReturnType<typeof load>, op: Extract<store.StoredGroupOperation, { kind: 'refresh' }>) {
+  assertGroupCanSend(identity, record.group.session)
+  const intent = groupRefreshIntent(identity, op)
+  if (!parseGroupGenesisBody(base64UrlDecode(record.group.session.snapshot)).founding_members.some(member => hex(member.public_key) === hex(intent.recipient))) {
+    throw new Error('Original refresh recipient is no longer a current member; operation preserved')
+  }
+  return intent
+}
+function reconcileRefresh(profile: string, id: string, op: Extract<store.StoredGroupOperation, { kind: 'refresh' }>) {
+  const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
+  const intent = currentRefreshIntent(identity, record, op)
+  try { assertGroupWelcomeRefreshCurrent(identity, state, operationValue(op)); return op } catch { /* Replace only stale generic delivery. */ }
+  const refreshed = prepareGroupWelcomeRefresh(identity, state, [intent.recipient], undefined,
+    intent.challenge ? bytes(intent.challenge) : undefined, record.group.cursor)
+  const next: typeof op = { kind: 'refresh', controls: [], welcomes: refreshed.welcomes.map(welcome => base64UrlEncode(serializeEnvelope(welcome))), delivered: 0,
+    recipient: hex(intent.recipient), recoveryChallenge: intent.challenge,
+    expected: createGroupSession(identity, refreshed.conversation, refreshed.state, { signedEpoch: state.signedEpoch, admissions: state.admissions }),
+    superseded: appendGroupOperationEvidence(op) }
+  record.group.operation = next; save(profile, record)
+  return next
+}
 function reconcileRenewal(profile: string, id: string, op: Extract<store.StoredGroupOperation, { kind: 'renewal' }>) {
   const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
   assertGroupCanSend(identity, state)
@@ -242,6 +263,7 @@ function reconcileRenewal(profile: string, id: string, op: Extract<store.StoredG
   return next
 }
 function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation {
+  if (op.kind === 'refresh') return reconcileRefresh(profile, id, op)
   if (op.kind === 'renewal') return reconcileRenewal(profile, id, op)
   if (op.kind !== 'addition' && op.kind !== 'addition_rekey') return op
   const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
@@ -353,7 +375,7 @@ async function resumeUnlocked(profile: string, id: string, reconcile = false): P
     if (op.kind === 'renewal') assertGroupAdmissionRenewalCurrent(identity, record.group.session, operationValue(op) as GroupAdmissionRenewal)
     else if (op.kind === 'addition' && reconcile) assertExactAdditionCurrent(identity, record, op)
     else if (op.kind === 'addition') assertGroupAdditionAccepted(identity, record.group.session, operationValue(op) as GroupAddition)
-    else if (op.kind === 'refresh') assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
+    else if (op.kind === 'refresh') { currentRefreshIntent(identity, record, op); assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op)) }
     const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
     record = operationRecord(profile, id, op)
     record.group.receipts.push(seq); record.group.operation!.delivered = index + 1; save(profile, record)
@@ -408,6 +430,7 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     record.group.operation = renewal
       ? { ...operation, kind: 'renewal', recipient: hex(renewal.recipient), admission: renewal.admission }
       : action === 'add' ? { ...operation, kind: 'addition', recipient: hex(contactKey(profile, contact!)), recoveryChallenge: challengeBytes(challenge) ? challenge!.trim().toLowerCase() : null }
+      : action === 'refresh' ? { ...operation, kind: 'refresh', recipient: hex(contactKey(profile, contact!)), recoveryChallenge: challengeBytes(challenge) ? challenge!.trim().toLowerCase() : null }
       : { ...operation, kind: action }
     save(profile, record)
     return resumeUnlocked(profile, id)

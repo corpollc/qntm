@@ -48,7 +48,7 @@ export interface StoredGroupAdditionOrigin {
   delivery: 'unknown'
 }
 export interface StoredGroupOperationEvidence {
-  kind: 'addition_rekey' | 'renewal'
+  kind: 'addition_rekey' | 'renewal' | 'refresh'
   controls: string[]
   welcomes: string[]
   delivered: number
@@ -59,7 +59,8 @@ export type StoredGroupOperation = {
   welcomes: string[]
   delivered: number
   expected: GroupSessionState
-} & ({ kind: 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
+} & ({ kind: 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never; superseded?: never }
+  | { kind: 'refresh'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: StoredGroupOperationEvidence[] }
   | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never; superseded?: never }
   | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never }
   | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never })
