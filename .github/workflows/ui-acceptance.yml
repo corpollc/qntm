@@ -78,9 +78,15 @@ jobs:
         working-directory: integration
         run: npm ci && npm run typecheck
 
-      - name: Install Chromium
+      - name: Install Chromium for the acceptance harness
         working-directory: integration
-        run: npx playwright install --with-deps chromium
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Install Chromium for nested AIM browser journeys
+        # This package has its own lockfile and may use a different Playwright
+        # browser revision than the acceptance harness that launches it.
+        working-directory: ui/aim-chat
+        run: node node_modules/playwright/cli.js install --with-deps chromium
 
       - name: Exercise the real TUI composer under a PTY
         working-directory: ui/tui
@@ -98,4 +104,5 @@ jobs:
           if-no-files-found: ignore
           path: |
             integration/test-results/
+            ui/aim-chat/test-results/
             ui/tui/test-results/

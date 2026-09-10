@@ -14,14 +14,20 @@ import { gatewayResultFixture } from './fixtures/gateway-result'
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex')
 let relay: Pick<RelayStub, 'url' | 'stop' | 'expire'>
 let browserIdentity: Identity
-let originalWebSocket: typeof globalThis.WebSocket
+let restoreWebSocket: (() => void) | undefined
+let stopRelay: (() => Promise<void>) | undefined
 
 test.beforeEach(async ({ page, context }) => {
-  originalWebSocket = globalThis.WebSocket
+  const originalWebSocket = globalThis.WebSocket
   Object.defineProperty(globalThis, 'WebSocket', { value: WebSocket, configurable: true })
+  restoreWebSocket = () => Object.defineProperty(globalThis, 'WebSocket', { value: originalWebSocket, configurable: true })
   if (process.env.QNTM_BROWSER_RELAY_URL) {
     relay = { url: process.env.QNTM_BROWSER_RELAY_URL, stop: async () => {}, expire: () => { throw new Error('Use real relay retention instead of a fixture expiry') } }
-  } else { const local = new RelayStub(); await local.start(); relay = local }
+  } else {
+    const local = new RelayStub()
+    stopRelay = () => local.stop()
+    await local.start(); relay = local
+  }
   const data = gatewayResultFixture(relay.url)
   data.conversations = {}; data.history = {}; data.contacts = {}
   const stored = data.identities[data.activeProfileId]
@@ -29,7 +35,15 @@ test.beforeEach(async ({ page, context }) => {
   await page.addInitScript(value => { if (!localStorage.getItem('aim-store')) localStorage.setItem('aim-store', JSON.stringify(value)) }, data)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
 })
-test.afterEach(async () => { await relay.stop(); Object.defineProperty(globalThis, 'WebSocket', { value: originalWebSocket, configurable: true }) })
+test.afterEach(async () => {
+  // Browser fixture setup can fail before beforeEach starts. Restore only
+  // resources actually acquired, including when relay startup/cleanup fails.
+  try { await stopRelay?.() }
+  finally {
+    stopRelay = undefined
+    restoreWebSocket?.(); restoreWebSocket = undefined
+  }
+})
 async function contacts(page: Page) {
   const button = page.getByRole('button', { name: /^Contacts$/i })
   if (await button.getAttribute('aria-expanded') !== 'true') await button.click()
