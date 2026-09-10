@@ -195,7 +195,7 @@ def test_pending_operation_changed_after_sync_is_not_overwritten(setup, monkeypa
     assert cli._load_conversations(f.owner_dir)[0]['group_operation']['recovery_challenge'] == 'ab' * 32
 
 
-def test_partial_add_with_expired_rekey_remains_preserved_without_new_admission(setup, monkeypatch):
+def test_partial_add_with_expired_rekey_finishes_rotation_without_new_admission(setup, monkeypatch):
     f = setup
     count = 0
     def partial(url, cid, wire):
@@ -212,11 +212,13 @@ def test_partial_add_with_expired_rekey_remains_preserved_without_new_admission(
     expire(original, monkeypatch)
     monkeypatch.setattr(cli, '_http_send', f.send)
     before = len(f.attempted)
-    with pytest.raises(ValueError, match='expired'):
-        owner.retry(f.cid)
-    assert len(f.attempted) == before
+    result = owner.retry(f.cid)
+    assert len(f.attempted) == before + 2
+    assert opened(f, f.attempted[-1])['purpose'] == 'renewal'
+    assert all(wire not in [base64.b64decode(value) for value in original['controls']] for wire in f.attempted[before:])
     record = cli._load_conversations(f.owner_dir)[0]
-    assert record['group_operation'] == original and record['group_session']['needsRekey']
+    assert not record.get('group_operation') and not record['group_session']['needsRekey']
+    assert join(f.contact_dir, f.contact, result['group_link'])['current_epoch'] == 1
 
 
 def test_removed_sender_cannot_renew_a_contact_it_previously_added(setup, monkeypatch):
