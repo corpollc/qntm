@@ -4,6 +4,11 @@ The public relay is `https://inbox.qntm.corpo.llc`, attached as a custom domain 
 
 The [private relay dashboard and monitoring guide](relay-monitoring.md) covers posted-message counters, active conversations, external HTTPS/TLS checks and encrypted live-delivery/replay probes. Counts distinguish application traffic from the synthetic probe and display when measurement began.
 
+The relay imports the client's shared [signature verifier](signature-validation.md).
+For a local build, run `npm ci && npm run build` in `client`, then `npm ci`
+in `worker` before starting Wrangler. The deployment workflow performs both
+steps and a Worker dry run before publication.
+
 ## Content and metadata expiry
 
 The relay source assigns `ENVELOPE_TTL_SECONDS` at publication (default seven days, minimum 60 seconds). Reads and receipts do not renew it. Ciphertext still exists temporarily in both Workers KV and Durable Object SQLite; this is a transport buffer, not participant-owned message history.

@@ -208,6 +208,7 @@ See [docs/threat-model.md](docs/threat-model.md) for the full threat model cover
 - Invite link security
 
 For the cryptographic specification, see [docs/QSP-v1.1.md](docs/QSP-v1.1.md).
+This checkout aligns maintained clients and relay code on a [strict signing-key validation profile](docs/signature-validation.md); the guide records its compatibility and deployment boundaries.
 
 ## Project Layout
 

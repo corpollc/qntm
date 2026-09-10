@@ -1,4 +1,5 @@
 import { base64UrlDecode, base64UrlEncode, keyIDFromPublicKey } from '../identity/index.js';
+import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import type { ThresholdRule } from '../types.js';
 import type { GatewayBody, GatewayBodyType, GatewayContext } from './workflow-types.js';
 
@@ -58,6 +59,7 @@ export function gatewayParticipants(value: unknown): Record<string, string> {
   requireGateway(Object.keys(record).length > 0, 'Empty participants');
   for (const [kid, pk] of Object.entries(record)) {
     const bytes = gatewayBytes(pk, 'participant public key', 32);
+    requireGateway(isValidEd25519PublicKey(bytes), 'Invalid participant public key');
     requireGateway(base64UrlEncode(keyIDFromPublicKey(bytes)) === kid, 'Participant key ID mismatch');
   }
   return record as Record<string, string>;
@@ -66,6 +68,7 @@ export function validateGatewayContext(context: GatewayContext): void {
   hex(context.conversationId, 'conversation ID', 32);
   gatewayInteger(context.epoch, 'epoch');
   const pk = gatewayBytes(context.gateway?.publicKey, 'gateway public key', 32);
+  requireGateway(isValidEd25519PublicKey(pk), 'Invalid gateway public key');
   requireGateway(base64UrlEncode(keyIDFromPublicKey(pk)) === context.gateway.kid, 'Gateway key ID mismatch');
   const participants = gatewayParticipants(context.participants);
   requireGateway(!Object.hasOwn(participants, context.gateway.kid), 'Gateway cannot be a participant');
@@ -78,6 +81,7 @@ function members(value: unknown): void {
   for (const item of value) {
     const member = gatewayRecord(item, 'member');
     const pk = gatewayBytes(member.public_key, 'member public key', 32);
+    requireGateway(isValidEd25519PublicKey(pk), 'Invalid member public key');
     const kid = base64UrlEncode(keyIDFromPublicKey(pk));
     requireGateway(member.kid === kid && !seen.has(kid), 'Invalid or duplicate member key ID');
     seen.add(kid);
@@ -189,6 +193,7 @@ export function parseGatewayBody(bodyType: string, data: string | Uint8Array): G
       hex(body.invitation_id, 'invitation ID', 32);
       gatewayInteger(body.conv_epoch, 'epoch');
       const pk = gatewayBytes(body.gateway_public_key, 'gateway public key', 32);
+      requireGateway(isValidEd25519PublicKey(pk), 'Invalid gateway public key');
       requireGateway(base64UrlEncode(keyIDFromPublicKey(pk)) === body.gateway_kid, 'Gateway key ID mismatch');
       if (bodyType === 'gate.promote') {
         gatewayInteger(body.expires_at, 'invitation expiry', 1);

@@ -4,7 +4,7 @@ import {
   sealGatewayBootstrap, DropboxClient, deserializeEnvelope, decryptMessage, matchesGatewayAcceptance,
 } from '@corpollc/qntm';
 import type { Conversation, GatewayInvitation } from '@corpollc/qntm';
-import { createInvitation, acceptInvitation, finishAcceptance } from './handshake.js';
+import { createInvitation, acceptInvitation, finishAcceptance, validInvitationRequest } from './handshake.js';
 import type { ConversationState } from './types.js';
 
 class MemoryStorage {
@@ -15,6 +15,10 @@ class MemoryStorage {
   setAlarm = vi.fn(async () => {});
 }
 const hex = (b: Uint8Array) => Array.from(b, n => n.toString(16).padStart(2, '0')).join('');
+it('rejects a canonical base64url identity-point signing key before creating an invitation', () => {
+  expect(validInvitationRequest({ invitation_id: 'a'.repeat(32),
+    inviter_public_key: base64UrlEncode(new Uint8Array([1, ...new Uint8Array(31)])) })).toBe(false);
+});
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 async function setup(mutate?: (body: Record<string, unknown>) => void) {
   const memory = new MemoryStorage();

@@ -6,11 +6,25 @@
  */
 
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { keyIDFromPublicKey, base64UrlEncode, uint8ArrayEquals } from '../identity/index.js';
 import type { Identity, Conversation, KeyID } from '../types.js';
 
 const suite = new QSP1Suite();
+
+function validMemberKey(key: Uint8Array): void {
+  if (!isValidEd25519PublicKey(key)) throw new Error('Invalid group member public key');
+}
+function validateMembers(members: GroupMember[]): void {
+  if (!Array.isArray(members)) throw new Error('Invalid group members');
+  for (const member of members) {
+    validMemberKey(member?.public_key);
+    if (!(member.key_id instanceof Uint8Array) || !uint8ArrayEquals(member.key_id, keyIDFromPublicKey(member.public_key))) {
+      throw new Error('Group member key ID mismatch');
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,6 +77,8 @@ export function createGroupGenesisBody(
   creatorIdentity: Identity,
   foundingMemberKeys: Uint8Array[],
 ): Uint8Array {
+  validMemberKey(creatorIdentity.publicKey);
+  foundingMemberKeys.forEach(validMemberKey);
   const now = Math.floor(Date.now() / 1000);
   const creatorKid = keyIDFromPublicKey(creatorIdentity.publicKey);
 
@@ -102,7 +118,9 @@ export function createGroupGenesisBody(
 
 /** Parse a CBOR-encoded group_genesis body. */
 export function parseGroupGenesisBody(data: Uint8Array): GroupGenesisBody {
-  return unmarshalCanonical<GroupGenesisBody>(data);
+  const body = unmarshalCanonical<GroupGenesisBody>(data);
+  validateMembers(body.founding_members);
+  return body;
 }
 
 /**
@@ -112,6 +130,8 @@ export function createGroupAddBody(
   adderIdentity: Identity,
   newMemberKeys: Uint8Array[],
 ): Uint8Array {
+  validMemberKey(adderIdentity.publicKey);
+  newMemberKeys.forEach(validMemberKey);
   const now = Math.floor(Date.now() / 1000);
   const adderKid = keyIDFromPublicKey(adderIdentity.publicKey);
 
@@ -136,7 +156,9 @@ export function createGroupAddBody(
 
 /** Parse a CBOR-encoded group_add body. */
 export function parseGroupAddBody(data: Uint8Array): GroupAddBody {
-  return unmarshalCanonical<GroupAddBody>(data);
+  const body = unmarshalCanonical<GroupAddBody>(data);
+  validateMembers(body.new_members);
+  return body;
 }
 
 /**
@@ -226,6 +248,7 @@ export class GroupState {
   // --- Apply operations ---
 
   applyGenesis(parsed: GroupGenesisBody): void {
+    validateMembers(parsed.founding_members);
     this.groupName = parsed.group_name ?? '';
     this.description = parsed.description ?? '';
     this.createdAt = parsed.created_at ?? 0;
@@ -250,6 +273,7 @@ export class GroupState {
   }
 
   applyAdd(parsed: GroupAddBody): void {
+    validateMembers(parsed.new_members);
     for (const member of parsed.new_members ?? []) {
       const kid = new Uint8Array(member.key_id);
       const key = this._kidKey(kid);

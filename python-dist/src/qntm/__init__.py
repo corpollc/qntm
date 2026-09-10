@@ -22,6 +22,7 @@ from .constants import (
     SPEC_VERSION,
     PROTOCOL_VERSION,
 )
+from .ed25519 import is_valid_ed25519_public_key, verify_ed25519_signature
 from .crypto import (
     QSP1Suite,
     ed25519_private_key_to_x25519,

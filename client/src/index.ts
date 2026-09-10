@@ -1,4 +1,5 @@
 export { QSP1Suite } from './crypto/qsp1.js';
+export { isValidEd25519PublicKey, verifyEd25519Signature } from './crypto/ed25519.js';
 export {
   ed25519PublicKeyToX25519, ed25519PrivateKeyToX25519,
   generateX25519Keypair, x25519SharedSecret,

@@ -1,0 +1,165 @@
+{
+  "description": "Canonical nonidentity prime-order public keys; canonical prime-subgroup R (identity allowed), S < L, uncofactored equation. Public test material only.",
+  "cases": [
+    {
+      "name": "ordinary signature",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": true,
+      "valid": true
+    },
+    {
+      "name": "wrong message",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "646966666572656e74",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "identity-key forgery",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "zero-key forgery",
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "message_hex": "626f6479",
+      "signature_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "mixed-order key",
+      "public_key_hex": "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "noncanonical identity",
+      "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "identity with negative zero",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "invalid point",
+      "public_key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "short key",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "long key",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c977873700",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b",
+      "key_valid": false,
+      "valid": false
+    },
+    {
+      "name": "canonical identity R",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "0100000000000000000000000000000000000000000000000000000000000000371d72f7787127cc3de13ea840c5b574088f61dc088254f62b8d11f4d3cd8703",
+      "key_valid": true,
+      "valid": true
+    },
+    {
+      "name": "mixed-order R",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "5252cc0a7f208133b620acbd4537eba2a4123bf0a8c2e4f980c3b31bb69765ea8327e858dfdc6ce4e119919c4f7af538ecf83f854a287842d9044fdaf6672e0f",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "small-order R",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "0000000000000000000000000000000000000000000000000000000000000000ee4917697ddb4e1a4471cbc724380e98b2cbb671dbe2ba17a810168eb4e3d502",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "noncanonical R",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f371d72f7787127cc3de13ea840c5b574088f61dc088254f62b8d11f4d3cd8703",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "negative zero R",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "0100000000000000000000000000000000000000000000000000000000000080371d72f7787127cc3de13ea840c5b574088f61dc088254f62b8d11f4d3cd8703",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "scalar equals order",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1dedd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "scalar plus order",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d1458f7055602d3da0c4bfbf3374e46c77bebfc35b6f6d002054f5b43b21ef21b",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "short signature",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef2",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "long signature",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "message_hex": "716e746d207369676e617475726520616363657074616e63652070726f66696c65",
+      "signature_hex": "dd14d65ebce6feb3e748f016985cc5e7f83634f93e2d3fbd1ea88af3448fae1d278401a93b9fc08236ae0351595467b27bebfc35b6f6d002054f5b43b21ef20b00",
+      "key_valid": true,
+      "valid": false
+    },
+    {
+      "name": "RFC 8032 empty message",
+      "public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "message_hex": "",
+      "signature_hex": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+      "key_valid": true,
+      "valid": true
+    }
+  ]
+}

@@ -62,6 +62,8 @@ jobs:
         working-directory: client
       - name: Verify deterministic charter vectors
         run: node client/scripts/generate-charter-vectors.mjs && git diff --exit-code -- specs/test-vectors/charter-registry-v02.json
+      - name: Verify deterministic Ed25519 acceptance vectors
+        run: node client/scripts/generate-ed25519-vectors.mjs && git diff --exit-code -- specs/test-vectors/ed25519-verification.json
 
   test-aim-ui:
     runs-on: ubuntu-latest

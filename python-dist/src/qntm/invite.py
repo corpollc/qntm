@@ -6,6 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .cbor import marshal_canonical, unmarshal
 from .constants import DEFAULT_SUITE, PROTOCOL_VERSION
 from .crypto import QSP1Suite
+from .ed25519 import is_valid_ed25519_public_key
 from .identity import (
     base64url_decode,
     base64url_encode,
@@ -58,6 +59,8 @@ def validate_invite(invite: dict) -> None:
         inviter_pk = bytes(inviter_pk)
     if len(inviter_pk) != 32:
         raise ValueError(f"invalid inviter public key length: {len(inviter_pk)}")
+    if not is_valid_ed25519_public_key(inviter_pk):
+        raise ValueError("invalid inviter public key")
     invite_salt = invite["invite_salt"]
     if isinstance(invite_salt, memoryview):
         invite_salt = bytes(invite_salt)

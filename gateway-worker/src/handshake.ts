@@ -3,7 +3,7 @@ import {
   generateIdentity, base64UrlEncode, base64UrlDecode, keyIDFromPublicKey,
   DropboxClient, deserializeEnvelope, decryptMessage, createMessage, serializeEnvelope,
   defaultTTL, openSecret, gatewayAccessHash, gatewayInvitationHash, validateGatewayIdentity,
-  GATE_INVITATION_TTL,
+  GATE_INVITATION_TTL, isValidEd25519PublicKey,
 } from '@corpollc/qntm';
 import type { Conversation, GatewayInvitation, GatewayBootstrapRequest, GatewayAccess, GatewayInviteBody } from '@corpollc/qntm';
 import type { ConversationState } from './types.js';
@@ -24,7 +24,8 @@ export function canonicalKey(value: unknown): value is string {
   catch { return false; }
 }
 export function validInvitationRequest(body: InvitationRequest): boolean {
-  return !!body && typeof body.invitation_id === 'string' && /^[0-9a-f]{32}$/.test(body.invitation_id) && canonicalKey(body.inviter_public_key);
+  return !!body && typeof body.invitation_id === 'string' && /^[0-9a-f]{32}$/.test(body.invitation_id) &&
+    canonicalKey(body.inviter_public_key) && isValidEd25519PublicKey(base64UrlDecode(body.inviter_public_key));
 }
 function conversation(s: ConversationState): Conversation {
   return { id: unhex(s.conv_id), type: 'group', keys: { root: new Uint8Array(32), aeadKey: base64UrlDecode(s.conv_aead_key), nonceKey: base64UrlDecode(s.conv_nonce_key) },
