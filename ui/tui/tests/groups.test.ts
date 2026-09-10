@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DropboxClient, generateIdentity, openGroupWelcome, deserializeEnvelope, isGroupWelcomeEnvelope,
-  createMessage, serializeEnvelope, decryptMessage } from '@corpollc/qntm';
+  createMessage, serializeEnvelope, decryptMessage, groupSessionFromWelcome, checkGroupReplayCoverage,
+  checkExpiredGroupControl, receiveGroupEvent, assertGroupCanSend, groupSessionConversation } from '@corpollc/qntm';
 import { Store, bytesToHex } from '../src/lib/store.js';
 import { runGroupCommand } from '../src/lib/group-commands.js';
 import { groupNotice, splitGroupArguments } from '../src/lib/groups.js';
@@ -87,14 +88,28 @@ describe.sequential('terminal contact groups through the real Python receiver', 
     const peer = generateIdentity();
     await runGroupCommand(bob, 'contact', `add Charlie ${bytesToHex(peer.publicKey)}`, id);
     await runGroupCommand(bob, 'group', 'add Charlie', id);
-    const envelopes = relay.conversations.get(id)!.messages.map(message => deserializeEnvelope(Buffer.from(message.envelopeB64, 'base64')));
-    const opened = envelopes.filter(isGroupWelcomeEnvelope).flatMap(envelope => {
-      try { return [openGroupWelcome(peer, serializeEnvelope(envelope), { inviterPublicKey: bob.loadIdentity()!.publicKey, conversationId: Buffer.from(id, 'hex') })]; } catch { return []; }
+    const replay = await new DropboxClient(relay.url).receiveMessages(Buffer.from(id, 'hex'), 0);
+    const envelopes = replay.entries.map(row => ({ seq: row.seq, envelope: deserializeEnvelope(row.envelope) }));
+    const selected = envelopes.filter(row => isGroupWelcomeEnvelope(row.envelope)).flatMap(row => {
+      try { return [{ seq: row.seq, welcome: openGroupWelcome(peer, serializeEnvelope(row.envelope),
+        { inviterPublicKey: bob.loadIdentity()!.publicKey, conversationId: Buffer.from(id, 'hex') }) }]; } catch { return []; }
     }).at(-1)!;
+    const opened = selected.welcome;
+    let state = groupSessionFromWelcome(peer, opened, selected.seq);
+    state = checkGroupReplayCoverage(state, opened.replayFromSequence, replay.sequence, replay.entries.map(row => row.seq));
+    for (const { seq, envelope } of envelopes.filter(row => row.seq > opened.replayFromSequence)) {
+      if (isGroupWelcomeEnvelope(envelope)) continue;
+      state = checkExpiredGroupControl(peer, state, envelope, seq);
+      if (state.recovery || envelope.expiry_ts < Math.floor(Date.now() / 1000) || envelope.conv_epoch < state.epoch) continue;
+      const event = receiveGroupEvent(peer, envelope, state);
+      expect(event.rewound).toBe(false);
+      state = event.state;
+    }
+    assertGroupCanSend(peer, state);
     expect(opened.conversation.currentEpoch).toBe(2);
-    const before = envelopes.find(envelope => envelope.conv_epoch === 1 && !isGroupWelcomeEnvelope(envelope))!;
+    const before = envelopes.find(row => row.envelope.conv_epoch === 1 && !isGroupWelcomeEnvelope(row.envelope))!.envelope;
     expect(() => decryptMessage(before, opened.conversation)).toThrow();
-    const message = createMessage(peer, opened.conversation, 'text', new TextEncoder().encode('hello from TypeScript'));
+    const message = createMessage(peer, groupSessionConversation(state), 'text', new TextEncoder().encode('hello from TypeScript'));
     await new DropboxClient(relay.url).postMessage(opened.conversation.id, serializeEnvelope(message));
     await waitFor(() => bob.loadHistory(id).some(message => message.text === 'hello from TypeScript'));
   });
