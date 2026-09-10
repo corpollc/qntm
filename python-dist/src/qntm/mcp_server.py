@@ -68,7 +68,8 @@ mcp = FastMCP(
         "Use guidance_send only under your host's outbound communication authorization policy. "
         "For ordinary groups, pin a verified address with contact_add, then use group_add_contact "
         "under host authorization and share its public group link. Open received links only from "
-        "a trusted contact using conversation_join. group_retry resumes the exact saved operation."
+        "a trusted contact using conversation_join. group_retry resumes saved delivery and may renew "
+        "current keys for the same verified, completed admission; it never creates a replacement admission."
     ),
 )
 
@@ -687,7 +688,12 @@ def group_remove_contact(conversation: str, contact: str, reason: str = '') -> d
 
 @mcp.tool()
 def group_retry(conversation: str) -> dict:
-    """Retry an authorized contact-group operation or legacy CLI genesis, using exact saved messages.
+    """Resume authorized group delivery or legacy CLI genesis from the saved journal.
+
+    Valid saved ciphertext is retried exactly. A completed contact addition whose
+    delivery expired or was superseded can renew current keys only for that same
+    verified admission. No new membership is granted; unfinished rotation,
+    changed admission, removal or missing history blocks renewal.
 
     Legacy creation stays a bearer-invite group. Its result distinguishes relay
     acknowledgement from exact replay; neither confirms delivery to a peer.
