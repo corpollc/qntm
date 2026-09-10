@@ -13,7 +13,7 @@ import time
 from nacl.exceptions import CryptoError
 
 from . import cli
-from .cbor import unmarshal
+from .cbor import unmarshal, marshal_canonical
 from .crypto import QSP1Suite
 from .ed25519 import is_valid_ed25519_public_key
 from .group import GroupState, create_group_remove_body, create_rekey, create_group_genesis_body, parse_group_genesis_body
@@ -24,6 +24,7 @@ from .group_session import (
     prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
     check_group_replay_coverage, check_group_welcome_replay, check_group_unverifiable_epoch, check_expired_group_control, group_session_from_welcome,
     create_group_control_message,
+    prepare_group_admission_renewal, assert_group_admission_renewal_current,
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
 from .identity import base64url_decode, key_id_from_public_key
@@ -396,7 +397,8 @@ class GroupClient:
             expected = create_group_session(self.identity, operation['conversation'], operation['state'], signed_epoch=record['group_session']['signedEpoch'])
             self._save_operation(record['id'], {'kind': 'add', 'controls': [base64.b64encode(serialize_envelope(operation[name])).decode() for name in ('addition', 'rekey')],
                                                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
-                                                'expected': expected, 'welcomes_sent': 0, 'member': key_id_from_public_key(key).hex()})
+                                                'expected': expected, 'welcomes_sent': 0, 'member': key_id_from_public_key(key).hex(),
+                                                'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None})
             return self._resume(record['id'])
 
     def change(self, conversation_id, member=None, reason=''):
@@ -450,21 +452,121 @@ class GroupClient:
             return retry(self.config_dir, self.identity, self.relay_url, record['id'])
         _, record = self._load(conversation_id)
         with self._operation_lock(record['id']):
-            return self._resume(record['id'])
+            return self._resume(record['id'], reconcile=True)
+
+    def _addition_proof(self, record, operation):
+        """Compare an original local intent with accepted, source-bound evidence."""
+        wire = base64.b64decode(operation['controls'][0], validate=True)
+        addition = deserialize_envelope(wire)
+        if serialize_envelope(addition) != wire or addition['conv_id'].hex() != record['id']:
+            raise ValueError('Invalid saved addition context')
+        expected = {'addId': addition['msg_id'].hex(), 'addDigest': _suite.hash(wire).hex()}
+        state = restore_group_session(self.identity, record['group_session'])
+        admission = state['admissions'].get(operation['member'])
+        if not admission or any(admission[key] != value for key, value in expected.items()):
+            return None
+        recipient = next((member['public_key'] for member in _group(operation['expected']).snapshot()['founding_members']
+                          if member['key_id'].hex() == operation['member']), None)
+        if recipient is None:
+            raise ValueError('Saved addition omits its intended recipient')
+        return state, recipient, expected, admission
+
+    def _addition_challenge(self, operation, recipient):
+        """Older draft journals kept their optional challenge only in the box."""
+        if 'recovery_challenge' in operation:
+            value = operation['recovery_challenge']
+            return None if value is None else _recovery_challenge(value)
+        from .gate import open_secret
+        envelope = deserialize_envelope(base64.b64decode(operation['welcomes'][0], validate=True))
+        plain = open_secret(self.identity['privateKey'], recipient, envelope['ciphertext'])
+        signed = unmarshal(plain)
+        payload = signed['payload']
+        addition = deserialize_envelope(base64.b64decode(operation['controls'][0], validate=True))
+        rekey = deserialize_envelope(base64.b64decode(operation['controls'][1], validate=True))
+        if (plain != marshal_canonical(signed) or payload['inviter_ik_pk'] != self.identity['publicKey']
+                or payload['recipient_ik_pk'] != recipient or payload['proto'] != 'qntm/group-welcome/v1'
+                or envelope['conv_id'] != addition['conv_id'] or payload['addition_id'] != addition['msg_id']
+                or payload['rekey_id'] != rekey['msg_id']
+                or marshal_canonical(payload['envelope']) != marshal_canonical({key: value for key, value in envelope.items() if key != 'ciphertext'})
+                or not _suite.verify(self.identity['publicKey'], marshal_canonical(payload), signed['signature'])):
+            raise ValueError('Invalid saved welcome challenge binding')
+        challenge = payload.get('recovery_challenge')
+        if challenge is not None and (not isinstance(challenge, bytes) or len(challenge) != 32):
+            raise ValueError('Invalid saved welcome recovery challenge')
+        return challenge
+
+    def _prepared_welcome(self, operation):
+        return {'conversation': group_session_conversation(operation['expected']), 'state': _group(operation['expected']),
+                'welcomes': [deserialize_envelope(base64.b64decode(w, validate=True)) for w in operation['welcomes']]}
+
+    def _assert_exact_addition_current(self, record, operation):
+        proof = self._addition_proof(record, operation)
+        if proof is None or proof[3]['completion'] is None:
+            raise ValueError('Original addition is not the current accepted admission')
+        wire = base64.b64decode(operation['controls'][1], validate=True)
+        rekey = deserialize_envelope(wire)
+        if proof[3]['completion'] != {'rekeyId': rekey['msg_id'].hex(), 'rekeyDigest': _suite.hash(wire).hex()}:
+            raise ValueError('Original completing rekey is no longer canonical')
+        assert_group_welcome_refresh_current(self.identity, proof[0], self._prepared_welcome(operation))
+
+    def _reconcile_addition(self, conversation_id, original):
+        # The operation lock excludes other producers; receive.lock additionally
+        # excludes resident receive while comparing and replacing the journal.
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(original):
+                raise ValueError('Pending operation changed before reconciliation; use group retry')
+            proof = self._addition_proof(record, original)
+            if proof is None:
+                source = deserialize_envelope(base64.b64decode(original['controls'][0], validate=True))['conv_epoch']
+                if record['group_session']['epoch'] > source or original['member'] in record['group_session'].get('admissions', {}):
+                    raise ValueError('Original addition is no longer the accepted admission; operation preserved')
+                return record, False
+            if proof[3]['completion'] is None:
+                return record, False  # Exact rotation retry remains available; expired rotation stays blocked.
+            state, recipient, expected, _ = proof
+            assert_group_can_send(self.identity, state)
+            try:
+                self._assert_exact_addition_current(record, original)
+                return record, True
+            except ValueError:
+                pass
+            challenge = self._addition_challenge(original, recipient)
+            renewed = prepare_group_admission_renewal(self.identity, state, recipient, expected,
+                                                       recovery_challenge=challenge, replay_from_sequence=record.get('group_cursor', 0))
+            # Retain original ciphertext and delivery uncertainty once, without
+            # nesting checkpoints or duplicating obsolete plaintext group roots.
+            origin = {key: copy.deepcopy(original[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent', 'member')}
+            origin.update(admission=expected, recipient=recipient.hex(), delivery='unknown')
+            record['group_operation'] = {'kind': 'renewal', 'controls': [],
+                'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in renewed['welcomes']], 'welcomes_sent': 0,
+                'expected': create_group_session(self.identity, renewed['conversation'], renewed['state'],
+                                                signed_epoch=state['signedEpoch'], admissions=renewed['admissions']),
+                'member': original['member'], 'recipient': recipient.hex(), 'admission': renewed['admission'],
+                'recovery_challenge': challenge.hex() if challenge else None, 'origin': origin}
+            cli._save_conversations(self.config_dir, records)
+            return record, False
 
     def link(self, conversation_id):
         _, record = self._load(conversation_id)
         return {'conversation_id': record['id'],
                 'group_link': create_group_link(bytes.fromhex(record['id']), self.identity['publicKey'], self.relay_url)}
 
-    def _resume(self, conversation_id):
+    def _resume(self, conversation_id, *, reconcile=False):
         record = self.sync(conversation_id)
         operation = record.get('group_operation')
         if not operation:
             raise ValueError('No pending group operation')
+        if (operation.get('welcomes') and type(operation.get('welcomes_sent')) is int
+                and operation['welcomes_sent'] == len(operation['welcomes'])):
+            return self._finish_operation(conversation_id, operation)
         if record['group_session'].get('recovery'):
             raise ValueError('Group history is incomplete; open a fresh welcome from a current member before retrying')
-        for encoded in operation['controls']:
+        exact_addition_proof = False
+        if reconcile and operation['kind'] == 'add':
+            record, exact_addition_proof = self._reconcile_addition(conversation_id, operation)
+            operation = record['group_operation']
+        for encoded in ([] if exact_addition_proof else operation['controls']):
             wire = base64.b64decode(encoded, validate=True)
             envelope = deserialize_envelope(wire)
             state = record['group_session']
@@ -488,7 +590,7 @@ class GroupClient:
             record = self.sync(conversation_id)
             if record['group_session']['seen'].get(envelope['msg_id'].hex(), {}).get('digest') != _suite.hash(wire).hex():
                 raise ValueError('Group control is not yet verified in relay replay; use group retry')
-        if operation['kind'] == 'add':
+        if operation['kind'] == 'add' and not exact_addition_proof:
             prepared = {'conversation': group_session_conversation(operation['expected']), 'state': _group(operation['expected']),
                         'addition': deserialize_envelope(base64.b64decode(operation['controls'][0])),
                         'rekey': deserialize_envelope(base64.b64decode(operation['controls'][1]))}
@@ -501,9 +603,23 @@ class GroupClient:
             wire = base64.b64decode(operation['welcomes'][position], validate=True)
             if deserialize_envelope(wire)['expiry_ts'] < int(time.time()):
                 raise ValueError('Saved welcome expired; preserve the operation for reconciliation')
-            receipt = cli._http_send(self.relay_url, conversation_id, wire)
             with self._lock():
                 records, record = self._load(conversation_id)
+                if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                    raise ValueError('Pending operation changed before welcome release; use group retry')
+                if deserialize_envelope(wire)['expiry_ts'] < int(time.time()):
+                    raise ValueError('Saved welcome expired while waiting to release; preserve the operation for reconciliation')
+                if operation['kind'] == 'renewal':
+                    prepared = {**self._prepared_welcome(operation), 'recipient': bytes.fromhex(operation['recipient']),
+                                'admission': operation['admission'], 'admissions': operation['expected']['admissions']}
+                    assert_group_admission_renewal_current(self.identity, record['group_session'], prepared)
+                elif operation['kind'] == 'add' and exact_addition_proof:
+                    self._assert_exact_addition_current(record, operation)
+                elif operation['kind'] == 'add':
+                    assert_group_addition_accepted(self.identity, record['group_session'], prepared)
+                elif operation['kind'] == 'refresh':
+                    assert_group_welcome_refresh_current(self.identity, record['group_session'], self._prepared_welcome(operation))
+                receipt = cli._http_send(self.relay_url, conversation_id, wire)
                 record['group_operation']['welcomes_sent'] = position + 1
                 # Own welcome receipts can fill a future retention hole without
                 # treating an unknown missing membership control as harmless.
@@ -511,8 +627,14 @@ class GroupClient:
                 if type(seq) is int and seq > record.get('group_cursor', 0):
                     record.setdefault('group_delivery_receipts', []).append(seq)
                 cli._save_conversations(self.config_dir, records)
+                operation = copy.deepcopy(record['group_operation'])
+        return self._finish_operation(conversation_id, operation)
+
+    def _finish_operation(self, conversation_id, operation):
         with self._lock():
             records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before completion; use group retry')
             record.pop('group_operation')
             cli._save_conversations(self.config_dir, records)
         return {'conversation_id': conversation_id, 'current_epoch': record['current_epoch'], 'members': len(record['participants']),
