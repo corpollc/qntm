@@ -42,6 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Check monitoring configuration and alert behavior
+        run: |
+          docker run --rm --network none --entrypoint /bin/promtool -v "$PWD/charter-registry/deploy:/etc/prometheus:ro" prom/prometheus:v3.14.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --network none --entrypoint /bin/promtool -v "$PWD/charter-registry/deploy:/etc/prometheus:ro" -w /etc/prometheus prom/prometheus:v3.14.0 test rules alerts.test.yml
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

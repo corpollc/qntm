@@ -29,12 +29,15 @@ The collector runs on `qntm-charter.exe.xyz`, outside Cloudflare and independent
 
 The relay and hosted gateway also share Cloudflare account quotas. Gateway idle runtime can exhaust a Durable Object allowance and stop relay storage while basic HTTPS health still passes. See the [runtime incident and capacity notes](relay-operations.md#machine-clients-and-cloudflare-limits). The encrypted probe covers this failure; account quota/billing collection is not yet part of the dashboard.
 
-- Blackbox exporter verifies public HTTPS, DNS and the served certificate every 15 seconds.
+- Blackbox exporter verifies relay and charter HTTPS, DNS and the served certificate every 15 seconds.
+- The browser addresses `https://chat.corpo.llc/` and `https://web.qntm.corpo.llc/` have separate HTTPS and certificate probes every minute, about 2,880 root-page requests per day in total. They use no profile, invite, conversation ID, cookies or messages. The host sees the monitor's IP, request headers, public root URL and request time. Prometheus stores target labels, probe status, timings and certificate metadata for 30 days, not page bodies. These checks verify availability and TLS; they do not run JavaScript, decrypt a message or measure browser usage.
 - The Python monitor fetches aggregate counters approximately once per minute.
 - Every five minutes, two dedicated synthetic identities authenticate a receive WebSocket, post one encrypted message, verify its live delivery, then reconnect and verify persisted replay. The probe uses the published Python package and retains its own keys and cursor across restarts. It receives only its synthetic conversation.
 - Probe traffic is one envelope per check, about 288 per day. Relay transport retention still applies.
 
 Grafana hides stale traffic totals and displays failing/stale probe state. Prometheus retains 30 days of local samples. Alert rules cover HTTPS failure, a certificate within 14 days of expiry, failed/stale encrypted probes, and unavailable traffic telemetry. **No email or paging recipient is configured yet.** Rules are visible in Prometheus and the dashboard; choose notification delivery separately.
+
+Browser rules also detect an exporter failure or a missing configured hostname. `BrowserHTTPSUnavailable` waits two minutes; `BrowserCertificateExpiring` waits ten minutes. These rules and the `browser_https` series are available in Prometheus; the existing relay dashboard panels retain their relay scope. Alert unit tests cover healthy, failed, missing and stale-success cases and the certificate warning delay.
 
 ## Deployment and operation
 
