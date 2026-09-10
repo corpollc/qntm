@@ -72,3 +72,95 @@ Use one profile in this UI and another process (CLI or your LLM agent runtime) a
 Open **Request guidance** to configure local contacts for legal, moral/ethical, and law-enforcement questions. Review the destination, known audience, and exact message before sending. No contacts ship by default. Pins belong to each browser profile and appear in backups. See [Request guidance](../../docs/guidance.md).
 
 **Settings → Backup & Restore** downloads password-encrypted backups and accepts validated legacy JSON files. Restore previews replacement counts, identities, relays, gateways and guidance destinations before confirmation. Local browser storage remains plaintext. See [backup format and limits](../../docs/browser-backups.md).
+
+## Contact groups (unreleased)
+
+Open **Contacts** in the sidebar to pin a known contact's full Ed25519 public
+key after verifying it with them. A short key ID or a display alias is not enough.
+An existing contact name cannot silently pin a different key. Removing a local
+pin leaves group membership unchanged.
+
+Choose **Create contact group**, select a pinned contact, and choose **Add to
+group**. Addition grants membership, rotates the group keys and posts a signed
+welcome encrypted to that identity. Share the returned **public group link**.
+It contains the group ID, inviter public key and relay URL, with no secret keys
+or expiry. The recipient opens it using their existing identity and confirms the
+contact pin and relay before the browser contacts that relay. Multiple contacts
+may open their links in a different order from their additions. Ordinary members
+may add contacts; the original creator cannot be removed.
+
+**Remove from group** rotates keys for the remaining members. A removed member's
+saved checkpoint stays removed across restarts. Explicit readmission produces a
+new epoch; it does not disclose messages from an interval of exclusion. New
+members receive no earlier epoch keys.
+
+**Refresh welcome** resends current keys to a still-admitted contact who missed
+the welcome's delivery window. It changes no membership. If the recipient reports
+missing history, paste their recovery challenge into the optional challenge
+field before refreshing, then share your returned link. An old welcome reposted
+at a newer relay sequence cannot answer the challenge. Refresh cannot undo a
+saved removal; that requires an explicit new addition.
+
+The browser saves an unfinished operation before posting and verifies its exact
+controls through relay replay before releasing the welcome. **Retry saved
+operation** resumes those exact encrypted messages after an uncertain send.
+Ordinary messaging pauses during an unfinished operation, key rotation, removal,
+or required recovery. Opening a link replays retained decryptable transitions
+both before and after its welcome, including a rekey posted while the welcome was
+being delivered.
+
+Contact groups use a dedicated authenticated receive checkpoint. Legacy invite
+conversations and existing gateway conversations retain their existing flows;
+this browser does not infer a trusted full roster from message senders or migrate
+legacy groups automatically. Gateway promotion and governed welcome delivery for
+new contact groups remain unavailable. If a competing rekey rewinds accepted
+state, the browser preserves the pending operation and requests fresh recovery
+instead of claiming it reconstructed missing descendants. Expired/conflicting
+outbox reconciliation (`qntm-qp22`) and freshness when an intervening pre-welcome
+rotation has expired or disappeared (`qntm-d3th`) remain release prerequisites.
+This source change is not a claim that the hosted 0.6.1 browser includes it.
+
+### Browser storage and metadata
+
+For contact groups, one `localStorage` write saves the current keys, complete
+roster, exclusion/recovery state and challenge, relay cursor, pending ciphertext,
+exact unfinished operation, and local decrypted history together. Web Locks
+serialize writers across tabs; browsers without Web Locks cannot update contact
+groups. Pending ciphertext is limited to 256 envelopes / 4 MiB. The existing
+history limit remains 1,000 messages per conversation. Contact pins and per-group
+relay URLs are saved locally. Password-encrypted backups preserve these fields;
+restore validates the identity/key/roster/cursor relationships and previews pins,
+relays and group status before replacing data. Live browser storage is not
+password encrypted and remains accessible to scripts on the same origin.
+
+The relay sees the existing conversation/message identifiers, sequence order,
+outer timestamps and epoch, envelope sizes and transport metadata, plus the
+`group_welcome` kind. It cannot read contact names, recipient identity, membership
+roster, recovery challenge, keys or message plaintext inside the encrypted
+welcome. This browser feature adds no server metrics or identity labels. The
+public link uses a fragment, which is not part of the HTTP request to the web
+host; opening it subsequently reveals the group ID to its configured relay.
+See [the shared wire and storage design](../../docs/group-welcomes.md).
+
+### Contact-group tests
+
+`npm test` covers browser checkpoint persistence, reverse opening order,
+member-initiated additions, missing/expired controls, replayed stale welcomes,
+delayed welcomes, uncertain-send retries and backup schema validation.
+`npm run test:e2e -- contact-groups.spec.ts` exercises the real browser with
+TypeScript and fresh Python CLI peers, including removal/restart/readmission and
+challenge recovery. Install `python-dist` in Python 3.12 first, or set
+`QNTM_TEST_PYTHON` to that interpreter. Python peers always use this checkout's
+`python-dist/src` via `PYTHONPATH`.
+
+After installing `client`, `worker`, `ui/aim-chat` and `integration` dependencies,
+the repeatable real-worker journey is:
+
+```bash
+cd integration
+QNTM_TEST_PYTHON=/path/to/python npx vitest run browser-contact-welcome.test.ts
+```
+
+The fixture uses isolated local Worker storage, a separate Vite server, synthetic
+identities and no production relay or external contacts. Deterministic missing-row
+recovery is covered separately by the browser relay fixture.

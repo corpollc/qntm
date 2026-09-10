@@ -4,7 +4,7 @@
  */
 
 import {
-  GateClient, createGatewayInviteBody, sealGatewayBootstrap, matchesGatewayAcceptance,
+  parseGroupLink, GateClient, createGatewayInviteBody, sealGatewayBootstrap, matchesGatewayAcceptance,
   generateIdentity as clientGenerateIdentity,
   keyIDFromPublicKey,
   publicKeyToString,
@@ -44,6 +44,7 @@ import {
 import type { DropboxSubscription, GatewayContext, GateRequestBody, GatewayProposalBody } from '@corpollc/qntm'
 
 import * as store from './store'
+import * as contactGroups from './contact-groups'
 import { rawBackup, importBackup as importValidatedBackup } from './backup'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
 
@@ -204,6 +205,7 @@ export function bytesToHex(bytes: Uint8Array): string {
 export function parseInviteConvId(token: string): string | null {
   if (!token) return null
   try {
+    try { return contactGroups.hex(parseGroupLink(token).conversationId) } catch { /* Legacy invite below. */ }
     const invite = inviteFromURL(token)
     return bytesToHex(invite.conv_id).toLowerCase()
   } catch {
@@ -354,6 +356,7 @@ function formatConversation(conv: store.StoredConversation): Conversation {
   return {
     id: conv.id,
     gateway: conv.gateway,
+    contactGroup: conv.group ? { removed: conv.group.session.removed, needsRekey: conv.group.session.needsRekey, recovery: !!conv.group.session.recovery, pending: !!conv.group.operation } : undefined,
     name: conv.name || `${conv.type || 'chat'}-${conv.id.slice(0, 8)}`,
     type: conv.type || 'direct',
     participants: conv.participants || [],
@@ -583,6 +586,7 @@ type ConvCrypto = NonNullable<ReturnType<typeof getConvCrypto>>
 export interface ConversationSubscriptionHandlers {
   onMessage?: (message: ChatMessage) => void | Promise<void>
   onOpen?: () => void
+  onState?: () => void
   onClose?: () => void
   onError?: (error: Error) => void
   onReconnect?: (attempt: number, delayMs: number) => void
@@ -697,6 +701,7 @@ async function applyReceivedEnvelope(
 export async function sendMessageToConversation(
   profileId: string, profileName: string, conversationId: string, text: string, bodyType = 'text'
 ): Promise<ChatMessage> {
+  if (store.findConversation(profileId, conversationId)?.group) return resolveMessageSender(profileId, await contactGroups.sendContactGroupMessage(profileId, conversationId, text, bodyType))
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
 
@@ -733,6 +738,7 @@ export async function sendMessageToConversation(
 export async function receiveMessages(
   profileId: string, profileName: string, conversationId: string
 ): Promise<{ messages: ChatMessage[] }> {
+  if (store.findConversation(profileId, conversationId)?.group) return { messages: (await contactGroups.syncContactGroup(profileId, conversationId)).map(message => resolveMessageSender(profileId, message)) }
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
 
@@ -790,6 +796,22 @@ export function subscribeToConversation(
   conversationId: string,
   handlers: ConversationSubscriptionHandlers = {},
 ): DropboxSubscription {
+  const contactGroup = store.findConversation(profileId, conversationId)?.group
+  if (contactGroup) {
+    let replay: Array<{ seq: number; envelope: Uint8Array }> = [], ready = false
+    const dispatch = async (rows: typeof replay, head: number) => {
+      const messages = await contactGroups.withGroupLock(profileId, conversationId, async () => contactGroups.applyGroupBatch(profileId, conversationId, rows, head))
+      handlers.onState?.()
+      for (const message of messages) await handlers.onMessage?.(resolveMessageSender(profileId, message))
+    }
+    return new DropboxClient(contactGroup.relayUrl).subscribeMessages(contactGroups.bytes(conversationId), contactGroup.cursor, {
+      getCursor: () => store.findConversation(profileId, conversationId)?.group?.cursor ?? 0,
+      onOpen: () => { ready = false; replay = [] },
+      onMessage: async row => { if (ready) await dispatch([row], row.seq); else replay.push(row) },
+      onReady: async head => { await dispatch(replay, head); replay = []; ready = true; handlers.onOpen?.() },
+      onClose: handlers.onClose, onError: handlers.onError, onReconnect: handlers.onReconnect,
+    })
+  }
   const identity = loadIdentityKeys(profileId)
   if (!identity) throw new Error('No identity found')
 
@@ -1060,6 +1082,7 @@ export async function gatePromoteRequest(
   profileId: string, profileName: string, conversationId: string,
   gateServerUrl: string, threshold: number,
 ): Promise<ChatMessage> {
+  if (store.findConversation(profileId, conversationId)?.group) throw new Error('Gateway handoff for contact groups is not available yet; existing gateway conversations keep their governance flow')
   const identity = loadIdentityKeys(profileId)
   const conv = store.findConversation(profileId, conversationId)
   const convCrypto = getConvCrypto(profileId, conversationId)

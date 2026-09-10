@@ -1,4 +1,5 @@
 import { FormEvent, useState, useCallback, useRef, useImperativeHandle, forwardRef } from 'react'
+import type { ReactNode } from 'react'
 import type { Conversation, IdentityInfo, Profile } from '../types'
 import { IdentityPanel } from './IdentityPanel'
 import { InvitePanel } from './InvitePanel'
@@ -7,6 +8,7 @@ import { ContactList } from './ContactList'
 import { CollapsiblePanel } from './CollapsiblePanel'
 
 export interface SidebarProps {
+  contactGroupPanel?: ReactNode
   profiles: Profile[]
   activeProfileId: string
   identity: IdentityInfo
@@ -50,6 +52,7 @@ export interface SidebarHandle {
 }
 
 export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar({
+  contactGroupPanel,
   profiles,
   activeProfileId,
   identity,
@@ -206,6 +209,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(function Sidebar(
         expanded={expandedPanels.has('contacts')}
         onToggle={() => toggle('contacts')}
       >
+        {contactGroupPanel}
         <ContactList
           visibleContactKeys={visibleContactKeys}
           contactDrafts={contactDrafts}

@@ -54,6 +54,7 @@ export function InvitePanel({
   }
 
   function handleJoin() {
+    // Public group links need the contact/relay confirmation shown by JoinModal.
     onAcceptInvite(joinName)
   }
 
