@@ -84,6 +84,13 @@ authenticates the original recipient and optional recovery challenge, retains
 the earlier ciphertext as bounded private evidence, and checks current membership
 before posting. Still-valid uncertain delivery keeps its exact bytes. A generic
 refresh remains generic and cannot undo saved removal.
+Retry of a saved rekey, remove, or create may finish from private authenticated
+history after the bounded replay cache forgets that ID: exact ciphertext digest,
+source epoch, positive verified sequence, and a still-valid branch binding.
+A losing rekey, its descendants, or a replacement welcome leave invalidated
+history, which overrides a leftover cache entry and is not completion proof.
+HTTP acknowledgements, message IDs alone, expected roots, and application text
+are not used.
 See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)
