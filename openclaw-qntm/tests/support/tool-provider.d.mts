@@ -4,6 +4,7 @@ export interface ToolPlan {
   action?: string;
   options?: Record<string, unknown>;
   initialStatus?: string;
+  finishRotation?: boolean;
   expectedStatus?: string;
   expectedCode?: string;
   single?: Record<string, unknown>;

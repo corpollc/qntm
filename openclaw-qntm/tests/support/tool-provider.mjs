@@ -39,9 +39,17 @@ export async function createToolProvider() {
       } else if (results.length === 2) {
         assert.equal(results[1].status, 'review_required', JSON.stringify(results[1]));
         args = { operation: 'commit', reviewToken: results[1].reviewToken, reviewHash: results[1].reviewHash };
+      } else if (plan.finishRotation && results.length === 3) {
+        assert.equal(results[2].status, 'rotation_verified', JSON.stringify(results[2]));
+        assert.equal(results[2].welcomePending, true);
+        args = { operation: 'prepare', action: 'retry' };
+      } else if (plan.finishRotation && results.length === 4) {
+        assert.equal(results[3].status, 'review_required', JSON.stringify(results[3]));
+        assert.equal(results[3].review.welcomePurpose, 'renewal');
+        args = { operation: 'commit', reviewToken: results[3].reviewToken, reviewHash: results[3].reviewHash };
       } else {
-        assert.equal(results.length, 3);
-        assert.equal(results[2].status, plan.expectedStatus ?? 'submitted', JSON.stringify(results[2]));
+        assert.equal(results.length, plan.finishRotation ? 5 : 3);
+        assert.equal(results.at(-1).status, plan.expectedStatus ?? 'submitted', JSON.stringify(results.at(-1)));
         outcomes.set(plan.id, results);
       }
       const delta = args ? { role: 'assistant', tool_calls: [{ index: 0, id: `call_${plan.id}_${results.length}`, type: 'function',

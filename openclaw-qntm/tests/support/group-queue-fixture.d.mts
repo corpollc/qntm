@@ -3,6 +3,6 @@ export function stageGroupDelivery(config: unknown, stateDir: string, messageId:
 }>;
 export function stageAcceptedGroupSend(config: unknown, stateDir: string): Promise<{ messageId: string }>;
 
-export function stageCompletedGroupAddition(config: unknown, stateDir: string, contact: string, ttl?: number): Promise<{
+export function stageCompletedGroupAddition(config: unknown, stateDir: string, contact: string, ttl?: number, partial?: boolean): Promise<{
   expiry: number; original: { controls: string[]; welcomes: string[] }; currentRoot: string;
 }>;

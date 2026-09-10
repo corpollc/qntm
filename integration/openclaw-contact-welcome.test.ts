@@ -315,4 +315,37 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python joined through native reviewed pending admission retry', 'Python reply after pending native admission recovery');
   }, TIMEOUT);
 
+  it('finishes an expired partial native admission through rotation and welcome reviews in one real agent turn', async () => {
+    await action('remove-dave-before-partial-retry', 'remove', { contact: 'Dave' });
+    await h.dave.run(['recv', convId]);
+    const removed = h.dave.readConversation(convId).group_session as GroupSessionState;
+    expect(removed.removed).toBe(true);
+    let original: { controls: string[]; welcomes: string[] }, originalRoot: string;
+    const reviewed = await host.journey(h.alice,
+      { id: 'retry-partial-native-add', tool: 'qntm_group', action: 'retry', initialStatus: 'ready', finishRotation: true }, async () => {
+        const staged = await stageCompletedGroupAddition(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'Dave', 5, true);
+        original = staged.original; originalRoot = staged.currentRoot;
+        await h.alice.run(['recv', convId]);
+        expect(checkpoint().session.needsRekey).toBe(true);
+        await delay(Math.max(0, (staged.expiry + 1) * 1000 - Date.now()));
+      });
+    expect(reviewed[1].review!.recoveryPhase).toBe('addition_rekey');
+    expect(reviewed[1].review!.retryMode).toBe('replacement_rotation');
+    expect(reviewed[1].review!.effect).toContain('does not deliver contact keys');
+    expect(reviewed[2]).toMatchObject({ status: 'rotation_verified', welcomePending: true });
+    expect(reviewed[3].review!.welcomePurpose).toBe('renewal');
+    expect(reviewed[3].review!.retryMode).toBe('replacement_renewal'); expect(reviewed[4].status).toBe('submitted');
+    expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).not.toBe(originalRoot!);
+    const result = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, 0);
+    const wires = result.entries.map(row => Buffer.from(row.envelope).toString('base64url'));
+    expect(wires.filter(wire => wire === original!.controls[0])).toHaveLength(1);
+    expect(wires).not.toContain(original!.controls[1]); expect(wires).not.toContain(original!.welcomes[0]);
+    await h.dave.run(['group', 'join', checkpointLink()]);
+    const dave = h.dave.readConversation(convId).group_session as GroupSessionState;
+    expect(dave.removed).toBe(false); expect(dave.recovery).toBeNull(); expect(dave.rekeys).toEqual([]);
+    expect(dave.admissions[h.dave.readIdentity().key_id].sourceEpoch).toBeGreaterThan(removed.removedAtEpoch!);
+    await h.dave.run(['send', convId, 'Python joined after native repaired admission rotation']);
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python joined after native repaired admission rotation', 'Python reply after two native recovery reviews');
+  }, TIMEOUT);
+
 });
