@@ -109,11 +109,29 @@ admission cannot undo a later removal.
 
 The browser saves an unfinished operation before posting and verifies its exact
 controls through relay replay before releasing the welcome. **Retry saved
-operation** resumes those exact encrypted messages after an uncertain send.
+operation** checks accepted admission evidence before posting old controls. A
+completed addition with a still-current, unexpired welcome retries its exact
+ciphertext, even if the bounded replay cache has evicted its controls. If the
+delivery window expired or another accepted rotation changed the current keys,
+retry sends a renewal only when the same exact addition still proves the
+recipient's completed admission. It changes no membership and does not repeat
+the obsolete controls. Removal, another readmission, recovery or an unfinished
+rotation blocks this renewal.
 Saved renewals include the recipient's full key, exact admission proof and
 complete expected admission map; retry checks them against the current state
 before posting. Encrypted backups preserve this evidence and the original
 challenge. Older generic refresh journals remain exact generic retries.
+When retry replaces an old addition's welcome, it retains the original encrypted
+controls and welcome, recipient, challenge, exact admission ID/digest and delivery
+uncertainty once. This archive contains no old expected checkpoint or plaintext
+group roots. The new expected checkpoint uses current keys and no earlier key
+archive. A failed renewal send retries that same new ciphertext; a second expiry
+or conflicting renewal remains preserved and blocked pending further
+reconciliation. Fully acknowledged welcome journals can be cleared even after
+later removal, recovery or expiry, without another network request.
+Older draft addition journals without enough exact recipient admission evidence
+remain importable but cannot use this recovery path; retry preserves them rather
+than inferring whom to admit from roster differences.
 Ordinary messaging pauses during an unfinished operation, key rotation, removal,
 or required recovery. The welcome signs the sender’s fully processed relay cursor as a replay anchor.
 Opening its link verifies coverage from that anchor and replays retained

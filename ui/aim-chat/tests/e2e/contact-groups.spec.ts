@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
 import { generateIdentity, DropboxClient, openGroupWelcome, parseGroupLink, createGroupSession, receiveGroupEvent, groupSessionConversation,
-  createMessage, serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, prepareGroupSessionAddition, assertGroupAdditionAccepted,
+  createMessage, serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, prepareGroupSessionAddition, assertGroupAdditionAccepted, base64UrlEncode,
   createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, createGroupLink, prepareGroupWelcomeRefresh } from '@corpollc/qntm'
 import type { Identity, GroupSessionState } from '@corpollc/qntm'
 import { WebSocket } from 'ws'
@@ -238,6 +238,67 @@ test('browser welcomes a fresh Python CLI peer and renews its later readmission 
     await command('command', 'recv', id)
     await expect(command('command', 'group', 'join', link)).rejects.toThrow()
     expect((await checkpoint()).removedAtEpoch).toBe(4)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('browser retries a completed addition after its original welcome expires and a fresh Python process opens the renewal', async ({ page }) => {
+  test.setTimeout(60_000)
+  const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-expired-python-'))
+  const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
+    [resolve('tests/e2e/fixtures/python-group-peer.py'), directory, ...args], {
+      env: { ...process.env, PYTHONPATH: resolve('../../python-dist/src') }, timeout: 45_000,
+    })).stdout)
+  try {
+    const peer = await command('identity')
+    await page.goto('/'); await contacts(page)
+    await page.getByLabel('Group name', { exact: true }).fill('Expired delivery window')
+    await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+    const saved = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return { profile: data.activeProfileId, record: data.conversations[data.activeProfileId][0] }
+    })
+    const id = saved.record.id, sender = saved.record.group.session as GroupSessionState, recipient = new Uint8Array(Buffer.from(peer.public_key, 'hex'))
+    const operation = prepareGroupSessionAddition(browserIdentity, sender, [recipient], 12, new Uint8Array(32).fill(0x53), saved.record.group.cursor)
+    let expected = sender
+    for (const envelope of [operation.addition, operation.rekey]) expected = receiveGroupEvent(browserIdentity, envelope, expected).state
+    // Private journal staging models a browser crash after the controls were
+    // committed. The actual browser receive path must authenticate their replay.
+    await page.evaluate(({ profile, id, pending }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const record = data.conversations[profile].find((row: { id: string }) => row.id === id)
+      record.group.operation = pending; record.group.revision++
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { profile: saved.profile, id, pending: { kind: 'addition', expected, controls: [operation.addition, operation.rekey].map(e => base64UrlEncode(serializeEnvelope(e))), welcomes: operation.welcomes.map(e => base64UrlEncode(serializeEnvelope(e))), delivered: 0 } })
+    await page.reload(); await contacts(page)
+    const client = new DropboxClient(relay.url), cid = operation.conversation.id
+    for (const envelope of [operation.addition, operation.rekey]) await client.postMessage(cid, serializeEnvelope(envelope))
+    await expect(page.getByText('2 members · key epoch 1')).toBeVisible()
+    const accepted = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return data.conversations[data.activeProfileId][0].group
+    })
+    expect(accepted.session.admissions[peer.key_id].completion).not.toBeNull()
+    expect(accepted.cursor).toBeGreaterThanOrEqual(3)
+    const delay = Math.max(0, (operation.welcomes[0].expiry_ts + 1) * 1000 - Date.now())
+    await new Promise(resolve => setTimeout(resolve, delay))
+    const posted: Uint8Array[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(new Uint8Array(Buffer.from(request.postDataJSON().envelope_b64, 'base64')))
+    })
+    await page.getByRole('button', { name: 'Retry saved operation', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Saved operation completed' })).toBeVisible()
+    expect(posted).toHaveLength(1)
+    expect(isGroupWelcomeEnvelope(deserializeEnvelope(posted[0]))).toBe(true)
+    expect(base64UrlEncode(posted[0])).not.toBe(base64UrlEncode(serializeEnvelope(operation.welcomes[0])))
+    const link = await page.getByLabel('Public group link', { exact: true }).inputValue()
+    await command('command', 'group', 'join', link)
+    const record = JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8')).find((row: { id: string }) => row.id === id)
+    expect(record.group_session.epoch).toBe(1)
+    expect(record.group_session.rekeys).toEqual([])
+    expect(record.group_session.admissions[peer.key_id]).toEqual(expected.admissions[peer.key_id])
+    await command('command', 'send', id, 'Python received the retried admission renewal')
+    await expect(page.locator('.message-body', { hasText: 'Python received the retried admission renewal' })).toBeVisible()
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 

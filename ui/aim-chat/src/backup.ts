@@ -1,5 +1,6 @@
-import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody } from '@corpollc/qntm'
-import type { StoreData, StoredConversation } from './store'
+import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
+import type { StoreData, StoredConversation, StoredGroupOperation } from './store'
+import { groupAdditionIntent, groupAdditionChallenge } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -139,7 +140,7 @@ export function validateBackup(json: string): StoreData {
         if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
         for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
         if (host.operation !== null) {
-          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission'])
+          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin'])
           if (!['addition', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
           const expected = restoreGroupSession(localIdentity, op.expected)
           if (expected.conversationId !== conv.id) fail('group operation conversation mismatch')
@@ -156,7 +157,40 @@ export function validateBackup(json: string): StoreData {
               || !accepted?.completion || admission.addId !== accepted.addId || admission.addDigest !== accepted.addDigest
               || admission.sourceEpoch !== accepted.sourceEpoch || completion.rekeyId !== accepted.completion.rekeyId
               || completion.rekeyDigest !== accepted.completion.rekeyDigest) fail('renewal admission binding')
-          } else if (op.recipient !== undefined || op.admission !== undefined) fail('unexpected renewal fields')
+            if (op.origin !== undefined) {
+              const origin = object(op.origin, 'original addition fields', ['kind', 'controls', 'welcomes', 'delivered', 'recipient', 'admission', 'recoveryChallenge', 'delivery'])
+              if (origin.kind !== 'addition' || origin.delivery !== 'unknown' || origin.recipient !== recipient) fail('original addition context')
+              const originalControls = list(origin.controls, 'original addition controls', 2), originalWelcomes = list(origin.welcomes, 'original addition welcomes', 1)
+              if (originalControls.length !== 2 || originalWelcomes.length !== 1) fail('original addition shape')
+              integer(origin.delivered, 'original delivered welcome count')
+              if (origin.delivered > originalWelcomes.length) fail('original delivered welcome count')
+              const proof = object(origin.admission, 'original addition proof', ['addId', 'addDigest'])
+              const wire = b64(originalControls[0], 'original addition wire'), addition = deserializeEnvelope(wire)
+              if (proof.addId !== accepted.addId || proof.addDigest !== accepted.addDigest
+                || proof.addId !== encodedHex(addition.msg_id) || proof.addDigest !== encodedHex(new QSP1Suite().hash(wire))
+                || addition.conv_epoch !== accepted.sourceEpoch) fail('original addition proof binding')
+              if (origin.recoveryChallenge !== null) hex(origin.recoveryChallenge, 32, 'original recovery challenge')
+              for (const wire of [...originalControls, ...originalWelcomes]) {
+                if (encodedHex(deserializeEnvelope(b64(wire, 'original encrypted envelope')).conv_id) !== conv.id) fail('original addition envelope context')
+              }
+              groupAdditionChallenge(localIdentity, { kind: 'addition', controls: originalControls, welcomes: originalWelcomes,
+                expected, delivered: origin.delivered, recipient, recoveryChallenge: origin.recoveryChallenge })
+            }
+          } else {
+            if (op.admission !== undefined || op.origin !== undefined) fail('unexpected renewal fields')
+            if (op.kind === 'addition') {
+              if (op.recipient !== undefined) {
+                const recipient = hex(op.recipient, 32, 'addition recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
+                if (!expected.admissions[kid]?.completion) fail('addition recipient provenance')
+              }
+              if (op.recoveryChallenge !== undefined && op.recoveryChallenge !== null) hex(op.recoveryChallenge, 32, 'addition recovery challenge')
+              if (op.recipient !== undefined || op.recoveryChallenge !== undefined) {
+                const addition = op as Extract<StoredGroupOperation, { kind: 'addition' }>
+                groupAdditionChallenge(localIdentity, addition, groupAdditionIntent(localIdentity, addition))
+              }
+            } else if (op.recipient !== undefined || op.recoveryChallenge !== undefined) fail('unexpected addition fields')
+          }
+          if (op.kind === 'renewal' && op.recoveryChallenge !== undefined) fail('unexpected renewal challenge field')
           for (const wire of [...controls, ...welcomes]) {
             const envelope = deserializeEnvelope(b64(wire, 'saved group wire'))
             if (encodedHex(envelope.conv_id) !== conv.id) fail('saved operation envelope conversation mismatch')

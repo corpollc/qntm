@@ -37,13 +37,24 @@ export interface StoredGatewayIdentity {
   keyId: string     // base64url
 }
 
+export interface StoredGroupAdditionOrigin {
+  kind: 'addition'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  recipient: string
+  admission: Pick<GroupAdmission, 'addId' | 'addDigest'>
+  recoveryChallenge: string | null
+  delivery: 'unknown'
+}
 export type StoredGroupOperation = {
   controls: string[]
   welcomes: string[]
   delivered: number
   expected: GroupSessionState
-} & ({ kind: 'addition' | 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never }
-  | { kind: 'renewal'; recipient: string; admission: GroupAdmission })
+} & ({ kind: 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never; recoveryChallenge?: never; origin?: never }
+  | { kind: 'addition'; recipient?: string; recoveryChallenge?: string | null; admission?: never; origin?: never }
+  | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; recoveryChallenge?: never })
 
 export interface StoredGroup {
   session: GroupSessionState
