@@ -125,10 +125,18 @@ an already completed admission.
 Saved renewals include the recipient's full key, exact admission proof and
 complete expected admission map; retry checks them against the current state
 before posting. Encrypted backups preserve this evidence and the original
-challenge. Older generic refresh journals remain exact generic retries.
+challenge. A saved generic refresh also retries its exact valid ciphertext. If it
+expires or its keys become stale, Retry authenticates its original signed box,
+recipient and challenge, then saves a generic refresh of the current keys for that
+same current member. It remains generic even when admission evidence is now known;
+it cannot undo a recipient's saved removal. New journals record the full recipient
+and optional challenge explicitly. Older single-welcome journals recover them only
+from a unique authenticated box over the saved roster; ambiguous or malformed
+journals remain blocked and preserved. Sender removal, recipient absence, required
+recovery or an unfinished key rotation prevents replacement.
 When retry replaces an old addition's welcome, it retains the original encrypted
 controls and welcome, recipient, challenge, exact admission ID/digest and delivery
-uncertainty once. Superseded repairs and renewals are retained as a flat list of
+uncertainty once. Superseded repairs, renewals and generic refreshes are retained as a flat list of
 exact encrypted envelopes and delivery counts. The evidence is limited to 256
 superseded revisions and 4 MiB including the original admission archive; reaching
 either limit preserves the operation and stops further sends. The archive contains

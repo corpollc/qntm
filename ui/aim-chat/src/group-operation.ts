@@ -21,7 +21,7 @@ export function assertGroupOperationEvidenceBudget(origin: StoredGroupAdditionOr
   requireValue(marshalCanonical({ ...(origin ? { origin } : {}), superseded }).length <= MAX_GROUP_OPERATION_EVIDENCE_BYTES,
     'Saved recovery evidence reached its byte limit; operation preserved')
 }
-export function appendGroupOperationEvidence(op: Extract<StoredGroupOperation, { kind: 'addition_rekey' | 'renewal' }>) {
+export function appendGroupOperationEvidence(op: Extract<StoredGroupOperation, { kind: 'addition_rekey' | 'renewal' | 'refresh' }>) {
   const evidence: StoredGroupOperationEvidence[] = [...structuredClone(op.superseded ?? []),
     { kind: op.kind, controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered, delivery: 'unknown' }]
   assertGroupOperationEvidenceBudget(op.origin, evidence)
@@ -98,4 +98,58 @@ export function groupRenewalChallenge(identity: Identity, op: Extract<StoredGrou
   const value = challenge === undefined ? null : hex(challenge as Uint8Array)
   requireValue(!op.origin || value === op.origin.recoveryChallenge, 'Saved renewal differs from its original recovery challenge')
   return value
+}
+
+/** Recover the reviewed recipient from one authenticated sender-side refresh box.
+ * Older browser journals omitted explicit metadata; never infer it from changes
+ * in membership, and never reinterpret this generic purpose as admission.
+ */
+export function groupRefreshIntent(identity: Identity, op: Extract<StoredGroupOperation, { kind: 'refresh' }>) {
+  requireValue(op.controls.length === 0 && op.welcomes.length === 1, 'Saved refresh must have one uniquely authenticated recipient; operation preserved')
+  const expected = restoreGroupSession(identity, op.expected), snapshot = parseGroupGenesisBody(base64UrlDecode(expected.snapshot))
+  const wire = base64UrlDecode(op.welcomes[0]), envelope = deserializeEnvelope(wire), { ciphertext: _ciphertext, ...header } = envelope
+  const fromHex = (value: string) => Uint8Array.from(value.match(/../g)!, byte => parseInt(byte, 16))
+  requireValue(wire.length <= 65536 && sameGroupOperationValue(serializeEnvelope(envelope), wire)
+    && Object.keys(envelope).sort().join(',') === 'ciphertext,conv_epoch,conv_id,created_ts,expiry_ts,kind,msg_id,suite,v'
+    && header.msg_id instanceof Uint8Array && header.msg_id.length === 16
+    && Number.isSafeInteger(header.created_ts) && header.created_ts > 0 && Number.isSafeInteger(header.expiry_ts)
+    && header.expiry_ts > header.created_ts && header.expiry_ts - header.created_ts <= 604800
+    && envelope.ciphertext instanceof Uint8Array && envelope.ciphertext.length >= 40
+    && header.v === 1 && header.suite === 'QSP-1' && (header as { kind?: string }).kind === 'group_welcome'
+    && hex(header.conv_id) === expected.conversationId && header.conv_epoch === expected.epoch,
+  'Invalid saved refresh header')
+  const admissions = Object.fromEntries(Object.entries(expected.admissions).map(([kid, admission]) => {
+    requireValue(admission.completion, 'Invalid saved refresh admission completion')
+    return [kid, { add_id: fromHex(admission.addId), add_hash: fromHex(admission.addDigest), source_epoch: admission.sourceEpoch,
+      rekey_id: fromHex(admission.completion.rekeyId), rekey_hash: fromHex(admission.completion.rekeyDigest) }]
+  }))
+  requireValue(op.recipient === undefined || /^[a-f0-9]{64}$/.test(op.recipient), 'Invalid saved refresh recipient')
+  const matches: { recipient: Uint8Array; challenge: string | null }[] = []
+  for (const member of snapshot.founding_members) {
+    if (op.recipient !== undefined && hex(member.public_key) !== op.recipient) continue
+    try {
+      const plain = openSecret(identity.privateKey, member.public_key, envelope.ciphertext)
+      const signed = unmarshalCanonical<{ payload: Record<string, unknown>; signature: Uint8Array }>(plain), payload = signed?.payload
+      const fields = ['proto', 'envelope', 'inviter_ik_pk', 'recipient_ik_pk', 'group_key', 'group_state',
+        ...(payload?.replay_from_seq !== undefined ? ['replay_from_seq'] : []),
+        ...(payload?.admissions !== undefined ? ['admissions'] : []), ...(payload?.recovery_challenge !== undefined ? ['recovery_challenge'] : [])]
+      requireValue(payload && Object.keys(signed).sort().join(',') === 'payload,signature'
+        && Object.keys(payload).sort().join(',') === fields.sort().join(',')
+        && sameGroupOperationValue(plain, marshalCanonical(signed)) && payload.proto === 'qntm/group-refresh/v1'
+        && sameGroupOperationValue(payload.envelope, header) && sameGroupOperationValue(payload.inviter_ik_pk, identity.publicKey)
+        && sameGroupOperationValue(payload.recipient_ik_pk, member.public_key)
+        && sameGroupOperationValue(payload.group_key, fromHex(expected.root)) && sameGroupOperationValue(payload.group_state, snapshot)
+        && (payload.admissions === undefined || sameGroupOperationValue(payload.admissions, admissions))
+        && (payload.replay_from_seq === undefined || Number.isSafeInteger(payload.replay_from_seq) && (payload.replay_from_seq as number) >= 0)
+        && signed.signature instanceof Uint8Array && suite.verify(identity.publicKey, marshalCanonical(payload), signed.signature),
+      'Invalid signed refresh context')
+      const challenge = payload.recovery_challenge
+      requireValue(challenge === undefined || challenge instanceof Uint8Array && challenge.length === 32, 'Invalid signed refresh challenge')
+      const value = challenge === undefined ? null : hex(challenge as Uint8Array)
+      requireValue(op.recoveryChallenge === undefined || op.recoveryChallenge === value, 'Saved refresh challenge mismatch')
+      matches.push({ recipient: member.public_key, challenge: value })
+    } catch { /* Only a fully authenticated box establishes the reviewed recipient. */ }
+  }
+  requireValue(matches.length === 1, 'Saved refresh lacks a unique authenticated recipient or challenge; operation preserved')
+  return matches[0]
 }

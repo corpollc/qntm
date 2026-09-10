@@ -1,6 +1,6 @@
 import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
 import type { StoreData, StoredConversation, StoredGroupOperation } from './store'
-import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS } from './group-operation'
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
 const STORE_KEY = 'aim-store'
@@ -185,20 +185,9 @@ export function validateBackup(json: string): StoreData {
               groupAdditionChallenge(localIdentity, { kind: 'addition', controls: originalControls, welcomes: originalWelcomes,
                 expected, delivered: origin.delivered, recipient, recoveryChallenge: origin.recoveryChallenge })
             }
-            const superseded = op.superseded === undefined ? [] : list(op.superseded, 'superseded operations', MAX_GROUP_OPERATION_REVISIONS)
-            for (const value of superseded) {
-              const item = object(value, 'superseded operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
-              if (!['addition_rekey', 'renewal'].includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
-              const oldControls = list(item.controls, 'superseded controls', 1), oldWelcomes = list(item.welcomes, 'superseded welcomes', 1)
-              if (oldControls.length !== (item.kind === 'addition_rekey' ? 1 : 0) || oldWelcomes.length !== (item.kind === 'renewal' ? 1 : 0)) fail('superseded operation shape')
-              if (integer(item.delivered, 'superseded delivered count') > oldWelcomes.length) fail('superseded delivered count')
-              for (const wire of [...oldControls, ...oldWelcomes]) {
-                if (encodedHex(deserializeEnvelope(b64(wire, 'superseded ciphertext')).conv_id) !== conv.id) fail('superseded operation conversation')
-              }
-            }
-            assertGroupOperationEvidenceBudget(op.origin, superseded)
+
           } else {
-            if (op.admission !== undefined || op.origin !== undefined || op.superseded !== undefined) fail('unexpected renewal fields')
+            if (op.admission !== undefined || op.origin !== undefined || op.kind !== 'refresh' && op.superseded !== undefined) fail('unexpected renewal fields')
             if (op.kind === 'addition') {
               if (op.recipient !== undefined) {
                 const recipient = hex(op.recipient, 32, 'addition recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
@@ -209,7 +198,25 @@ export function validateBackup(json: string): StoreData {
                 const addition = op as Extract<StoredGroupOperation, { kind: 'addition' }>
                 groupAdditionChallenge(localIdentity, addition, groupAdditionIntent(localIdentity, addition))
               }
+            } else if (op.kind === 'refresh') {
+              if (op.recipient !== undefined) hex(op.recipient, 32, 'refresh recipient')
+              if (op.recoveryChallenge !== undefined && op.recoveryChallenge !== null) hex(op.recoveryChallenge, 32, 'refresh recovery challenge')
+              groupRefreshIntent(localIdentity, op as Extract<StoredGroupOperation, { kind: 'refresh' }>)
             } else if (op.recipient !== undefined || op.recoveryChallenge !== undefined) fail('unexpected addition fields')
+          }
+          if (['renewal', 'addition_rekey', 'refresh'].includes(op.kind)) {
+            const superseded = op.superseded === undefined ? [] : list(op.superseded, 'superseded operations', MAX_GROUP_OPERATION_REVISIONS)
+            for (const value of superseded) {
+              const item = object(value, 'superseded operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
+              if (!(op.kind === 'refresh' ? ['refresh'] : ['addition_rekey', 'renewal']).includes(item.kind) || item.delivery !== 'unknown') fail('superseded operation kind')
+              const oldControls = list(item.controls, 'superseded controls', 1), oldWelcomes = list(item.welcomes, 'superseded welcomes', 1)
+              if (oldControls.length !== (item.kind === 'addition_rekey' ? 1 : 0) || oldWelcomes.length !== (item.kind === 'addition_rekey' ? 0 : 1)) fail('superseded operation shape')
+              if (integer(item.delivered, 'superseded delivered count') > oldWelcomes.length) fail('superseded delivered count')
+              for (const wire of [...oldControls, ...oldWelcomes]) {
+                if (encodedHex(deserializeEnvelope(b64(wire, 'superseded ciphertext')).conv_id) !== conv.id) fail('superseded operation conversation')
+              }
+            }
+            assertGroupOperationEvidenceBudget(op.origin, superseded)
           }
           if (['renewal', 'addition_rekey'].includes(op.kind) && op.recoveryChallenge !== undefined) fail('unexpected recovery challenge field')
           for (const wire of [...controls, ...welcomes]) {
