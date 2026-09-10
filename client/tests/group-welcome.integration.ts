@@ -10,8 +10,10 @@ import {
   createGroupRemoveBody, createRekey, prepareGroupWelcomeRefresh, groupSessionFromWelcome,
   checkGroupReplayCoverage, assertGroupCanSend,
   checkGroupWelcomeReplay,
+  prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent,
+  groupSessionConversation,
 } from '../src/index.js';
-import type { Identity } from '../src/index.js';
+import type { Identity, GroupSessionState, GroupAddition } from '../src/index.js';
 
 const suite = new QSP1Suite();
 const hex = (value: Uint8Array) => Buffer.from(value).toString('hex');
@@ -29,6 +31,71 @@ function python(request: Record<string, unknown>): any {
 }
 
 describe('fresh Python / TypeScript contact addition interoperability', () => {
+  for (const issuer of ['TypeScript', 'Python']) it(`${issuer} renews expired readmission delivery after later rekeys without restoring an older admission`, () => {
+    const owner = generateIdentity(), late = generateIdentity();
+    const invite = createInvite(owner, 'group');
+    const conversation = createConversation(invite, deriveConversationKeys(invite));
+    const group = new GroupState();
+    group.applyGenesis(parseGroupGenesisBody(createGroupGenesisBody('Renewal team', '', owner, [])));
+    conversation.participants = group.listMembers();
+    const accept = (state: GroupSessionState, addition: GroupAddition) => [addition.addition, addition.rekey]
+      .reduce((current, envelope) => receiveGroupEvent(owner, envelope, current).state, state);
+    let state = createGroupSession(owner, conversation, group);
+    const first = prepareGroupSessionAddition(owner, state, [late.publicKey]);
+    state = accept(state, first);
+    const pin = { conversationId: conversation.id, inviterPublicKey: owner.publicKey };
+    const firstWelcome = openGroupWelcome(late, marshalCanonical(first.welcomes[0]), pin);
+    let removed = groupSessionFromWelcome(late, firstWelcome, 3);
+    const removal = createGroupControlMessage(owner, groupSessionConversation(state), 'group_remove', createGroupRemoveBody([late.keyID]));
+    state = receiveGroupEvent(owner, removal, state).state;
+    removed = receiveGroupEvent(late, removal, removed).state;
+    const rotation = prepareGroupSessionRekey(owner, state).rekey;
+    state = receiveGroupEvent(owner, rotation, state).state;
+    removed = receiveGroupEvent(late, rotation, removed).state;
+    expect(removed.removedAtEpoch).toBe(1);
+    const excluded = createMessage(owner, groupSessionConversation(state), 'text', new TextEncoder().encode('during exclusion'));
+    const readmission = prepareGroupSessionAddition(owner, state, [late.publicKey], 1);
+    state = accept(state, readmission);
+    expect(() => openGroupWelcome(late, marshalCanonical(readmission.welcomes[0]),
+      pin, readmission.welcomes[0].expiry_ts + 1)).toThrow('expired');
+    for (let i = 0; i < 2; i++) state = receiveGroupEvent(owner, prepareGroupSessionRekey(owner, state).rekey, state).state;
+    state.seen = {};
+    state = restoreGroupSession(owner, JSON.parse(JSON.stringify(state)));
+    const admission = state.admissions[hex(late.keyID)];
+    const expected = { addId: admission.addId, addDigest: admission.addDigest };
+    let wire: Uint8Array;
+    if (issuer === 'Python') {
+      const result = python({ action: 'admission_renewal', identity: Object.fromEntries(Object.entries(owner).map(([k, v]) => [k, hex(v)])),
+        state, recipient: hex(late.publicKey), expected, anchor: 20 });
+      expect(result.admission).toEqual(admission);
+      expect(restoreGroupSession(owner, result.state)).toEqual(state);
+      wire = bytes(result.welcome);
+    } else {
+      const operation = prepareGroupAdmissionRenewal(owner, state, late.publicKey, expected, undefined, undefined, 20);
+      assertGroupAdmissionRenewalCurrent(owner, state, operation);
+      wire = marshalCanonical(operation.welcomes[0]);
+    }
+    const opened = openGroupWelcome(late, wire, pin);
+    expect(opened.purpose).toBe('renewal');
+    expect(opened).not.toHaveProperty('rekeyId');
+    expect(opened.admissions).toEqual(state.admissions);
+    const ts = groupSessionFromWelcome(late, opened, 21, removed);
+    const result = python({ action: 'session_recover', identity: Object.fromEntries(Object.entries(late).map(([k, v]) => [k, hex(v)])),
+      state: removed, welcome: hex(wire), sequence: 21,
+      link: createGroupLink({ ...pin, relayUrl: 'https://inbox.qntm.corpo.llc' }) });
+    expect(restoreGroupSession(late, result.state)).toEqual(ts);
+    expect(ts.removed).toBe(false);
+    expect(ts.removedAtEpoch).toBe(1);
+    expect(ts.epoch).toBe(5);
+    expect(ts.admissions[hex(late.keyID)].sourceEpoch).toBe(2);
+    expect(ts.rekeys).toEqual([]);
+    expect(() => decryptMessage(excluded, opened.conversation)).toThrow();
+    const secondRemoval = createGroupControlMessage(owner, groupSessionConversation(state), 'group_remove', createGroupRemoveBody([late.keyID]));
+    const excludedAgain = receiveGroupEvent(late, secondRemoval, ts).state;
+    expect(excludedAgain.removedAtEpoch).toBe(5);
+    expect(() => groupSessionFromWelcome(late, opened, 22, excludedAgain)).toThrow();
+  });
+
   it('preserves a missing-history barrier and welcome recovery across languages', () => {
     const owner = generateIdentity(), peer = generateIdentity();
     const invite = createInvite(owner, 'group');

@@ -216,7 +216,7 @@ supplied checkpoint. A current noncreator member can add contacts, preserving
 the existing ordinary-group policy rather than introducing an admin-only gate;
 the creator's identity in the snapshot stays unchanged.
 
-Addition and refresh preparation take an optional final `replayFromSequence`
+Addition and refresh preparation take an optional `replayFromSequence`
 argument in TypeScript or `replay_from_sequence` in Python. Hosts pass the relay
 cursor fully processed into the supplied checkpoint, before preparing the
 operation. Never substitute a later POST receipt or a head whose messages have
@@ -285,9 +285,58 @@ no invite token, old keys or invented admission/rekey references.
 rejects release after expiry or a change to the checkpoint's keys or roster.
 Both helpers refuse a removed sender or an unfinished membership rotation.
 Both also refuse a sender whose checkpoint requires missing-history recovery.
-Addition and refresh preparation accept an optional final `recoveryChallenge`
+Addition and refresh preparation accept an optional `recoveryChallenge`
 argument in TypeScript or `recovery_challenge` in Python: exactly 32 bytes,
 restricted to a single recipient per operation.
+
+### Renewing delivery for the same admission
+
+The library also provides `prepareGroupAdmissionRenewal` /
+`prepare_group_admission_renewal` for an accepted admission whose original welcome
+has expired, including a readmission followed by later rotations. It takes the
+current private checkpoint, recipient public key, and the expected original
+`{addId, addDigest}`. The member must still be present with that exact accepted
+admission and a verified completing rekey. Preparation returns a signed,
+recipient-encrypted welcome with current keys; it neither adds a member nor
+rotates keys. `assertGroupAdmissionRenewalCurrent` /
+`assert_group_admission_renewal_current` rechecks the admission, roster, keys and
+expiry immediately before publication. Hosts still persist the exact operation
+and finish replay before release. CLI, browser, terminal and OpenClaw recovery
+commands do not yet invoke this helper; pending-operation reconciliation remains
+under `qntm-qp22`.
+
+Private checkpoints keep an `admissions` map keyed by current member ID. Each
+entry identifies the accepted add ID, exact ciphertext digest and signed source
+epoch, plus its first canonical completing rekey's ID and digest. Pending entries
+have `completion: null` until rotation finishes. Later rotations retain the
+completed record; a competing rekey restores the source map and removes
+descendant admissions. Removal deletes that member's entry. The map is bounded
+by the 128-member roster, with copies in the existing bounded rekey archive; it
+does not depend on the 8,192-entry replay cache.
+
+An authenticated removal of the local identity also records `removedAtEpoch`.
+This local removal boundary survives restart, rewinds and subsequent readmission.
+A removed receiver accepts a renewal only when its attested original admission
+source epoch is strictly later than that saved removal. Advancing the renewal's
+current epoch cannot make an older admission valid. A generic refresh still
+cannot undo removal. Existing explicit addition/readmission behavior is unchanged.
+The existing saved recovery challenge is required when recovery is pending;
+renewal introduces no separate request, nonce or provisional membership step.
+
+Old private checkpoints without these fields restore with unknown provenance
+and an unknown removal boundary. Legacy controls without a signed source epoch
+cannot establish either value. Renewal fails closed when the required evidence
+is unknown. Signed welcomes carry completed current-member provenance so a newly
+added member can later renew another member's delivery. This is an attestation by
+the pinned current member, like the welcome roster; it is not an independent
+historical proof. No old group roots or historical control ciphertext are sent.
+Same-epoch welcomes can fill previously unknown entries but cannot silently
+replace conflicting known provenance outside the existing recovery flow.
+
+`createGroupSession` accepts trusted completed provenance as `options.admissions`;
+Python exposes the matching `admissions=` keyword. Prefer
+`groupSessionFromWelcome` / `group_session_from_welcome` when installing a welcome
+so saved removal and recovery checks are preserved.
 
 `checkGroupReplayCoverage` / `check_group_replay_coverage` takes the saved cursor,
 captured replay head and every received sequence, including unreadable rows.
@@ -356,12 +405,16 @@ authenticated governance flow.
 The private checkpoint contains the conversation and local identity IDs,
 current group root, full member public keys and group metadata, exclusion and
 rotation status, recovery boundary/reason/challenge, up to 8192 message
-IDs/digests, and the bounded rekey archive.
+IDs/digests, current-member admission provenance, the local removal epoch, and
+the bounded rekey archive (including its source admission maps).
 It contains no message plaintext. It must receive the same private or encrypted
 storage protection as identity keys. Archive eligibility expires by time, but
 disk copies are pruned only when the host persists a successful receive update;
 there is no background erasure job in the library. Backups can retain copies.
-None of this checkpoint is sent to the relay or added to telemetry.
+The private checkpoint is not uploaded as a record. Current keys, roster and
+completed admission provenance are carried inside recipient-encrypted welcomes;
+the relay stores that ciphertext. The local removal boundary, replay cache and
+source-key archive stay local. No checkpoint fields become telemetry labels.
 
 ## Wire representation
 
@@ -394,8 +447,24 @@ A refresh uses the same outer envelope and signature/box construction with
 and hashes; the signed domain identifies recovery of existing membership.
 The hashes cover the complete canonical serialized control envelopes.
 `openGroupWelcome` / `open_group_welcome` returns `purpose: "addition"` or
-`purpose: "refresh"`, and admission references exist only for an addition.
-Either payload may also contain `recovery_challenge: bytes(32)` inside its
+`purpose: "refresh"`; top-level admission references exist only for an addition.
+Both payloads may include a signed, encrypted `admissions` map keyed by lowercase
+member ID hex, with completed entries:
+
+```
+{add_id: bytes(16), add_hash: bytes(32), source_epoch: uint,
+ rekey_id: bytes(16), rekey_hash: bytes(32)}
+```
+
+An addition's recipient entry must match its top-level control IDs and hashes,
+with `source_epoch + 1` equal to the welcome epoch. A renewal uses
+`proto: "qntm/group-renewal/v1"`, requires this map and the recipient's complete
+entry, omits top-level control IDs/hashes, and opens as `purpose: "renewal"`.
+Its historical rekey reference never determines current-epoch candidate order
+or exempts old-source ciphertext from bootstrap checks. `removedAtEpoch` stays
+local and is never included in the welcome.
+
+Any payload may also contain `recovery_challenge: bytes(32)` inside its
 signed and encrypted content. It is absent for ordinary welcomes. Opened data
 exposes it as `recoveryChallenge` in TypeScript and `recovery_challenge` in Python.
 
@@ -418,7 +487,7 @@ Normal relay retention still applies independently.
 The relay can inspect its existing group ID, message ID, ordering, timestamps,
 epoch, ciphertext size and transport metadata, plus the `group_welcome` kind.
 It cannot read the recipient's identity, inviter's identity, roster, recovery
-challenge, signed replay position or group key
+challenge, signed replay position, admission provenance or group key
 from the welcome. This extension adds no metrics or recipient labels. A link
 holder can see its group locator and inviter pin. Keeping the locator in a URL
 fragment avoids including it in the normal HTTP request to the browser host;
