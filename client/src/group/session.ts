@@ -195,12 +195,13 @@ export function checkExpiredGroupControl(identity: Identity, previous: GroupSess
   return previous;
 }
 
-/** Install already authenticated, pinned welcome data. Hosts replay everything
- * after its sequence before enabling actions; an old welcome cannot clear a gap.
+/** Install already authenticated, pinned welcome data. Hosts check coverage from
+ * its signed replay anchor before enabling actions; an old welcome cannot clear a gap.
  */
 export function groupSessionFromWelcome(identity: Identity, welcome: GroupWelcome, sequence: number,
   previous?: GroupSessionState): GroupSessionState {
   requireValue(uint(sequence) && sequence > 0, 'Invalid welcome sequence');
+  requireValue(uint(welcome.replayFromSequence) && welcome.replayFromSequence < sequence, 'Invalid welcome replay anchor');
   if (previous) {
     const saved = restoreGroupSession(identity, previous);
     requireValue(saved.conversationId === hex(welcome.conversation.id), 'Welcome belongs to a different group');
@@ -242,9 +243,9 @@ export function assertGroupCanSend(identity: Identity, state: GroupSessionState)
 /** Prepare using the authenticated local checkpoint, including its exclusion
  * and unfinished-rotation guards. Save the exact operation before publishing. */
 export function prepareGroupSessionAddition(identity: Identity, state: GroupSessionState,
-  recipients: Uint8Array[], ttl?: number, recoveryChallenge?: Uint8Array): GroupAddition {
+  recipients: Uint8Array[], ttl?: number, recoveryChallenge?: Uint8Array, replayFromSequence = 0): GroupAddition {
   assertGroupCanSend(identity, state);
-  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl, recoveryChallenge);
+  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl, recoveryChallenge, replayFromSequence);
 }
 
 /** Refresh current keys for existing members without admission or rotation.
@@ -252,11 +253,12 @@ export function prepareGroupSessionAddition(identity: Identity, state: GroupSess
  * immediately before release. Gateway-governed groups use their own reducer.
  */
 export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSessionState,
-  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array): GroupWelcomeRefresh {
+  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array, replayFromSequence = 0): GroupWelcomeRefresh {
   const state = restoreGroupSession(identity, previous);
   assertGroupCanSend(identity, state);
   const conversation = groupSessionConversation(state), group = roster(state.snapshot);
   requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
+  requireValue(uint(replayFromSequence), 'Invalid welcome replay anchor');
   requireValue(Array.isArray(recipients) && recipients.length > 0 && recipients.length <= 128,
     'Invalid refresh recipient count');
   requireValue(recoveryChallenge === undefined || recoveryChallenge instanceof Uint8Array
@@ -271,7 +273,7 @@ export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSe
   }
   const at = Math.floor(Date.now() / 1000);
   return { conversation, state: group,
-    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl, undefined, recoveryChallenge)) };
+    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl, undefined, recoveryChallenge, replayFromSequence)) };
 }
 
 /** Any remaining ordinary-group member can finish an interrupted rotation.
