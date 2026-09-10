@@ -560,6 +560,36 @@ class GroupClient:
                 self._assert_pending_rotation_current(record, operation, proof)
             cli._http_send(self.relay_url, conversation_id, wire)
 
+    def _post_group_control(self, conversation_id, operation, wire):
+        """Serialize ordinary control release with resident receive commits."""
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before control release; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            envelope = deserialize_envelope(wire)
+            known = state['seen'].get(envelope['msg_id'].hex())
+            if known:
+                if known['digest'] != _suite.hash(wire).hex():
+                    raise ValueError('Pending group message conflicts with accepted state')
+                return
+            assert_group_can_send(self.identity, {**state, 'needsRekey': False})
+            if operation['kind'] == 'create':
+                if not _creation_message(self.identity, record, envelope):
+                    raise ValueError('Invalid saved group creation')
+            else:
+                if envelope['conv_epoch'] != state['epoch']:
+                    raise ValueError('Saved control no longer targets the current epoch; preserve it for reconciliation')
+                receive_group_event(self.identity, envelope, state)
+            receipt = cli._http_send(self.relay_url, conversation_id, wire)
+            if operation['kind'] == 'create':
+                # Only locally authenticated genesis receipts can bridge their
+                # own delivery gap. Other controls require verified replay.
+                seq = receipt.get('seq')
+                if type(seq) is int and seq > record.get('group_cursor', 0):
+                    record.setdefault('group_delivery_receipts', []).append(seq)
+                cli._save_conversations(self.config_dir, records)
+
     def _addition_challenge(self, operation, recipient):
         """Older draft journals kept their optional challenge only in the box."""
         if 'recovery_challenge' in operation:
@@ -723,28 +753,12 @@ class GroupClient:
         for encoded in controls:
             wire = base64.b64decode(encoded, validate=True)
             envelope = deserialize_envelope(wire)
-            state = record['group_session']
-            known = state['seen'].get(envelope['msg_id'].hex())
             if operation['kind'] == 'addition_rekey':
                 self._post_addition_rekey(conversation_id, operation)
             elif operation['kind'] == 'add':
                 self._post_addition_control(conversation_id, operation, encoded)
-            elif not known:
-                if operation['kind'] == 'create':
-                    if not _creation_message(self.identity, record, envelope):
-                        raise ValueError('Invalid saved group creation')
-                else:
-                    receive_group_event(self.identity, envelope, state)  # preflight against the latest accepted state
-                receipt = cli._http_send(self.relay_url, conversation_id, wire)
-                if operation['kind'] == 'create':
-                    with self._lock():
-                        records, record = self._load(conversation_id)
-                        seq = receipt.get('seq')
-                        if type(seq) is int and seq > record.get('group_cursor', 0):
-                            record.setdefault('group_delivery_receipts', []).append(seq)
-                        cli._save_conversations(self.config_dir, records)
-            elif known['digest'] != _suite.hash(wire).hex():
-                raise ValueError('Pending group message conflicts with accepted state')
+            else:
+                self._post_group_control(conversation_id, operation, wire)
             record = self.sync(conversation_id)
             if operation['kind'] in ('add', 'addition_rekey'):
                 proof = self._addition_proof(record, operation)
