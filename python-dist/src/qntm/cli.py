@@ -1417,6 +1417,12 @@ def cmd_group_create(args):
     if not identity:
         _error("no identity found; run 'qntm identity generate' first")
 
+    if getattr(args, 'contact', False):
+        from .group_client import GroupClient
+        _group_output('group.create', lambda: GroupClient(config_dir, identity, dropbox_url).create(
+            args.name, getattr(args, 'description', '') or ''))
+        return
+
     group_name = args.name
 
     # Create group invite and conversation
@@ -2481,6 +2487,8 @@ def cmd_gate_promote(args):
     conv_record = _resolve_conversation(conversations, args.conversation)
     if not conv_record:
         _error(f"conversation {args.conversation} not found")
+    if conv_record.get('group_session'):
+        _error('Gateway promotion for contact groups is not implemented yet', code='group_state_error')
     conv_id_hex = conv_record["id"]
     dropbox_url = _conversation_relay(args, conv_record)
     conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
@@ -3141,6 +3149,7 @@ claude code channel:
     group_create_p = group_sub.add_parser("create", help="Create a new group")
     group_create_p.add_argument("name", help="Group name")
     group_create_p.add_argument("--description", default="", help="Group description")
+    group_create_p.add_argument('--contact', action='store_true', help='Create a durable contact group with a public link and no bearer invite')
 
     group_join_p = group_sub.add_parser("join", help="Open a group link or legacy invite")
     group_join_p.add_argument("token", help="Public group link for this identity, or a legacy invite token")

@@ -386,7 +386,7 @@ options:
 ## `qntm group create`
 
 ```text
-usage: qntm group create [-h] [--description DESCRIPTION] name
+usage: qntm group create [-h] [--description DESCRIPTION] [--contact] name
 
 positional arguments:
   name                  Group name
@@ -395,6 +395,8 @@ options:
   -h, --help            show this help message and exit
   --description DESCRIPTION
                         Group description
+  --contact             Create a durable contact group with a public link and no
+                        bearer invite
 ```
 
 ## `qntm group join`

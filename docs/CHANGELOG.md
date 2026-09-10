@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added durable ordinary-group creation with `group create --contact` and MCP `group_create`. The client saves its checkpoint and exact signed genesis before sending, reports uncertain delivery, and resumes with `group retry`. It returns a public link containing no encryption keys; contacts must be added explicitly. Legacy creation remains separate while gateway and migration support are completed.
+
 - TypeScript relay replay now exposes each envelope's sequence and the captured head. Subscriptions provide a serialized, awaitable `onReady` callback so clients can validate complete backlog before acting. Failed ready callbacks replay the uncommitted backlog; asynchronous frame decoding preserves relay order.
 
 - Added matching Python/TypeScript safeguards for missing group history. Clients preserve a recovery requirement across restart, block sends and hooks while state is incomplete, and require a fresh welcome bound to the receiving client's random challenge. Replaying an old welcome at a newer relay sequence cannot clear the requirement. CLI/MCP addition and refresh accept that challenge without changing admission policy. Tests cover expired controls, exclusion, both language directions and recovery after actual relay retention. Conflicting or expired pending operations still need reconciliation before release.

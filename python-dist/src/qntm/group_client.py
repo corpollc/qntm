@@ -16,7 +16,7 @@ from . import cli
 from .cbor import unmarshal
 from .crypto import QSP1Suite
 from .ed25519 import is_valid_ed25519_public_key
-from .group import GroupState, create_group_remove_body, create_rekey
+from .group import GroupState, create_group_remove_body, create_rekey, create_group_genesis_body, parse_group_genesis_body
 from .group_link import create_group_link, parse_group_link
 from .group_session import (
     create_group_session, restore_group_session, receive_group_event, group_session_conversation,
@@ -27,7 +27,7 @@ from .group_session import (
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
 from .identity import base64url_decode, key_id_from_public_key
-from .message import deserialize_envelope, serialize_envelope
+from .message import deserialize_envelope, serialize_envelope, decrypt_message
 from .receive import create_receive_event
 from .storage import private_lock
 
@@ -139,6 +139,22 @@ def _history_entry(message, sequence, order):
     return entry
 
 
+def _creation_message(identity, record, envelope):
+    """Recognize only the exact locally prepared genesis, never a new genesis."""
+    operation = record.get('group_operation') or {}
+    wire = serialize_envelope(envelope)
+    if operation.get('kind') != 'create' or operation.get('controls') != [base64.b64encode(wire).decode()]:
+        return None
+    state = record['group_session']
+    message = decrypt_message(envelope, group_session_conversation(state))
+    body = unmarshal(message['inner']['body'])
+    if (message['inner']['body_type'] != 'group_genesis' or message['inner']['sender_kid'] != identity['keyID']
+            or state['epoch'] != 0 or not isinstance(body, dict) or type(body.get('group_epoch')) is not int
+            or body['group_epoch'] != 0 or {key: value for key, value in body.items() if key != 'group_epoch'} != _group(state).snapshot()):
+        raise ValueError('Saved creation differs from its local group state')
+    return message
+
+
 def receive_batch(record, identity, raw_messages, head):
     """Stage a whole batch in a detached record, including recoverable ciphertext.
 
@@ -195,7 +211,13 @@ def receive_batch(record, identity, raw_messages, head):
             if state['recovery']:
                 continue
             try:
-                event = receive_group_event(identity, envelope, state)
+                creation = _creation_message(identity, {**result, 'group_session': state}, envelope)
+                if creation:
+                    mid = envelope['msg_id'].hex()
+                    event = {'state': state, 'duplicate': mid in state['seen'], 'message': creation}
+                    state['seen'][mid] = {'digest': _suite.hash(serialize_envelope(envelope)).hex(), 'epoch': 0}
+                else:
+                    event = receive_group_event(identity, envelope, state)
             except CryptoError:
                 if not state['removed']:
                     retry.append(raw)
@@ -302,6 +324,31 @@ class GroupClient:
     def _operation_lock(self, conversation_id):
         return private_lock(os.path.join(self.config_dir, 'groups', conversation_id + '.operation.lock'))
 
+    def create(self, name, description=''):
+        """Persist a new contact group and its exact genesis before any network write."""
+        invite = cli.create_invite(self.identity, 'group')
+        conversation = cli.create_conversation(invite, cli.derive_conversation_keys(invite))
+        body = create_group_genesis_body(name, description, self.identity, [])
+        group = GroupState()
+        group.apply_genesis(parse_group_genesis_body(body))
+        conversation['participants'] = group.list_members()
+        state = create_group_session(self.identity, conversation, group)
+        genesis = create_group_control_message(self.identity, conversation, 'group_genesis', body)
+        cid = conversation['id'].hex()
+        record = {'id': cid, 'type': 'group', 'name': name, 'relay_url': self.relay_url,
+                  'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                  'group_cursor': 0, 'group_pending': [], 'group_history': [],
+                  'group_operation': {'kind': 'create', 'controls': [base64.b64encode(serialize_envelope(genesis)).decode()],
+                                      'welcomes': [], 'welcomes_sent': 0, 'expected': state}}
+        _install(record, state)
+        with self._operation_lock(cid):
+            with self._lock():
+                records = cli._load_conversations(self.config_dir)
+                records.append(record)
+                cli._save_conversations(self.config_dir, records)
+            result = self._resume(cid)
+        return {**result, 'type': 'group', 'name': name}
+
     def add(self, conversation_id, address, challenge=''):
         recovery_challenge = _recovery_challenge(challenge)
         key = resolve_contact(self.config_dir, address)
@@ -383,7 +430,11 @@ class GroupClient:
             state = record['group_session']
             known = state['seen'].get(envelope['msg_id'].hex())
             if not known:
-                receive_group_event(self.identity, envelope, state)  # preflight against the latest accepted state
+                if operation['kind'] == 'create':
+                    if not _creation_message(self.identity, record, envelope):
+                        raise ValueError('Invalid saved group creation')
+                else:
+                    receive_group_event(self.identity, envelope, state)  # preflight against the latest accepted state
                 cli._http_send(self.relay_url, conversation_id, wire)
             elif known['digest'] != _suite.hash(wire).hex():
                 raise ValueError('Pending group message conflicts with accepted state')
