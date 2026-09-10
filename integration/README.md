@@ -36,4 +36,9 @@ Idle-boundary diagnostics retain the underlying fetch error, Node/Undici version
 and complete relay replay before asserting success, so an ambiguous response can
 be compared with stored delivery. Native callback diagnostics distinguish the
 injected application failure from transport errors and record callback attempts,
-successful delivery and close events.
+successful delivery, the Close frames the client sent and the close events it
+observed. The observed code can be 1006 on Node's bundled undici even though the
+relay echoed 4000: the relay compresses frames, undici inflates them
+asynchronously, and a Close echo still queued behind that inflate when the TCP
+connection ends is never parsed. The acceptance check therefore asserts the
+code the client sent, not the echo.

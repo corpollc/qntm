@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Relay acceptance now verifies the Close frame the TypeScript client sends after a callback failure, and records sent and observed close events. Node's bundled undici can report 1006 for a compressed relay socket when the relay's Close echo is still queued behind asynchronous inflate as the connection ends; wire captures confirm the relay completes the handshake.
+
 - Python group control sends now reload the saved operation and current authority under the receive lock immediately before publication. Removal, missing history, changed journals and superseded source epochs stop stale creation/removal/rekey POSTs; exact already-accepted ciphertext is recognized without reposting. Resident-receive race tests cover these checks.
 
 - Browser, Python CLI/MCP, terminal and OpenClaw retry actions can now finish an accepted add whose original key rotation expired or no longer matches the current roster. They save a replacement rotation, verify canonical completion through relay replay, then renew current-key delivery. OpenClaw reviews the rotation and resulting welcome in two successive prepare/commit cycles. Restart keeps uncertain ciphertext and never repeats the add. Later expiry or supersession can be reconciled again for the same admission, with bounded private delivery evidence. Removal and missing history block release.
