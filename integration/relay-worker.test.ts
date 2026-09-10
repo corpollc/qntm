@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildSignedReceipt, generateIdentity, base64UrlEncode, keyIDFromPublicKey, QSP1Suite } from '@corpollc/qntm';
 import { GroupState, createInvite, createConversation, deriveConversationKeys, createGroupGenesisBody,
   parseGroupGenesisBody, createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
@@ -14,8 +16,11 @@ import { GroupState, createInvite, createConversation, deriveConversationKeys, c
   createGroupSession, restoreGroupSession, receiveGroupEvent, assertGroupAdditionAccepted,
   createGroupControlMessage, createGroupRemoveBody, createRekey, assertGroupCanSend,
   groupSessionFromWelcome, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch,
+  groupSessionConversation, prepareGroupSessionAddition, prepareGroupSessionRekey, serializeEnvelope,
   DropboxClient } from '@corpollc/qntm';
+import type { GroupSessionState } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
+import { recordingRelay } from './src/recording-relay.js';
 
 interface RelayFrame {
   type: string;
@@ -503,6 +508,164 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(sawExcludedMessage).toBe(true);
     expect(checkpoint.removed).toBe(true);
   }, 90_000);
+
+  for (const surface of ['CLI', 'MCP']) for (const stale of ['expired', 'rotated']) {
+    it(`recovers ${stale} generic founder refresh through fresh ${surface} processes and a lost ACK`, async () => {
+      type Journal = { kind: string; controls: string[]; welcomes: string[]; welcomes_sent: number;
+        recipient?: string; recovery_challenge?: string; expected: GroupSessionState;
+        superseded_operations?: Array<Record<string, unknown>> };
+      type RecordState = { id: string; group_session: GroupSessionState; group_operation?: Journal };
+      const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+      const profile = join(stateDir, `${surface.toLowerCase()}-${stale}-generic-refresh`);
+      const python = process.env.QNTM_MONITOR_PYTHON || 'python3';
+      const env = { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') };
+      const readRecord = (id: string): RecordState => JSON.parse(readFileSync(join(profile, 'conversations.json'), 'utf8'))
+        .find((record: RecordState) => record.id === id);
+      const beforePost: Journal[] = [];
+      let capture = false;
+      const proxy = await recordingRelay(relayUrl, { onSend(send) {
+        if (capture) beforePost.push(structuredClone(readRecord(send.conv_id).group_operation!));
+      } });
+      const command = async (...args: string[]) => {
+        const { stdout } = await promisify(execFile)(python, ['-m', 'qntm.cli', '--config-dir', profile,
+          '--dropbox-url', proxy.url, ...args], { env, timeout: 30_000, maxBuffer: 1024 * 1024 });
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(JSON.stringify(result));
+        return result.data;
+      };
+      const retry = async (id: string): Promise<Record<string, unknown>> => {
+        if (surface === 'CLI') return command('group', 'retry', id);
+        const client = new Client({ name: 'fresh-generic-refresh-retry', version: '1' });
+        try {
+          await client.connect(new StdioClientTransport({ command: python, args: ['-m', 'qntm.mcp_server'],
+            env: { ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+              QNTM_CONFIG_DIR: profile, QNTM_RELAY_URL: proxy.url }, stderr: 'pipe' }));
+          const response = await client.callTool({ name: 'group_retry', arguments: { conversation: id } });
+          const result = response.structuredContent as Record<string, unknown>
+            ?? JSON.parse((response.content as Array<{ text: string }>)[0].text);
+          if (response.isError || result.error) throw new Error(JSON.stringify(result));
+          return result;
+        } finally { await client.close(); }
+      };
+      try {
+        const issuer = await command('identity', 'generate');
+        const issuerKey = Buffer.from(issuer.public_key, 'base64url');
+        const founder = generateIdentity();
+        const invite = createInvite(founder, 'group');
+        const conversation = createConversation(invite, deriveConversationKeys(invite));
+        const genesisBody = createGroupGenesisBody(`${surface} ${stale} founder refresh`, '', founder, []);
+        const group = new GroupState(); group.applyGenesis(parseGroupGenesisBody(genesisBody));
+        conversation.participants = group.listMembers();
+        let founderState = createGroupSession(founder, conversation, group);
+        const oldRoot = founderState.root, id = hex(conversation.id);
+        const transport = new DropboxClient(proxy.url);
+        const genesis = createGroupControlMessage(founder, conversation, 'group_genesis', genesisBody);
+        const genesisSeq = await transport.postMessage(conversation.id, serializeEnvelope(genesis));
+        const oldMessage = createMessage(founder, conversation, 'text', new TextEncoder().encode('history before Python admission'));
+        const oldMessageSeq = await transport.postMessage(conversation.id, serializeEnvelope(oldMessage));
+        founderState = receiveGroupEvent(founder, oldMessage, founderState).state;
+        expect(oldMessageSeq).toBe(genesisSeq + 1);
+        const addition = prepareGroupSessionAddition(founder, founderState, [issuerKey], undefined, undefined, oldMessageSeq);
+        for (const envelope of [addition.addition, addition.rekey]) {
+          await transport.postMessage(conversation.id, serializeEnvelope(envelope));
+          founderState = receiveGroupEvent(founder, envelope, founderState).state;
+        }
+        assertGroupAdditionAccepted(founder, founderState, addition);
+        await transport.postMessage(conversation.id, serializeEnvelope(addition.welcomes[0]));
+        await command('convo', 'join', createGroupLink({ conversationId: conversation.id, inviterPublicKey: founder.publicKey, relayUrl: proxy.url }));
+        expect(readRecord(id).group_session.admissions[hex(founder.keyID)]).toBeUndefined();
+        expect(readRecord(id).group_session.admissions[issuer.key_id].completion).not.toBeNull();
+        const challenge = new Uint8Array(32).fill(stale === 'expired' ? 41 : 42);
+        // Legacy journals authenticate their missing recipient/challenge from
+        // the original sender-encrypted box, without inventing membership.
+        const shape = stale === 'expired' ? 'current' : 'legacy';
+        const staged = await promisify(execFile)(python, [join(REPO_ROOT, 'integration/src/stage-generic-refresh.py'),
+          profile, proxy.url, id, hex(founder.publicKey), hex(challenge), shape], { env, timeout: 30_000 });
+        const stage = JSON.parse(staged.stdout) as { expires_at: number; cursor: number; epoch: number };
+        const original = readRecord(id).group_operation!;
+        expect(original).toMatchObject({ kind: 'refresh', controls: [], welcomes_sent: 0 });
+        expect(original.recipient).toBe(shape === 'current' ? hex(founder.publicKey) : undefined);
+        const locator = parseGroupLink(createGroupLink({ conversationId: conversation.id, inviterPublicKey: issuerKey, relayUrl: proxy.url }));
+        const originalWelcome = openGroupWelcome(founder, Buffer.from(original.welcomes[0], 'base64'), locator);
+        expect(originalWelcome.purpose).toBe('refresh');
+        expect(originalWelcome.replayFromSequence).toBe(stage.cursor);
+        const previousRoot = founderState.root;
+        let anchor = stage.cursor;
+        if (stale === 'expired') {
+          const wait = Math.max(0, stage.expires_at * 1000 - Date.now() + 1100);
+          expect(wait).toBeLessThanOrEqual(10_000);
+          await delay(wait);
+          expect(Math.floor(Date.now() / 1000)).toBeGreaterThan(stage.expires_at);
+        } else {
+          const rotation = prepareGroupSessionRekey(founder, founderState);
+          anchor = await transport.postMessage(conversation.id, serializeEnvelope(rotation.rekey));
+          founderState = receiveGroupEvent(founder, rotation.rekey, founderState).state;
+        }
+
+        const beforeRetry = proxy.sends.length;
+        capture = true;
+        proxy.loseNextSendAcknowledgement({ pauseReplay: true });
+        await expect(retry(id)).rejects.toThrow();
+        capture = false;
+        expect(proxy.droppedAcknowledgements).toBe(1);
+        expect(proxy.blockedReplays).toBeGreaterThan(0);
+        expect(proxy.sends.slice(beforeRetry)).toHaveLength(1);
+        const pending = readRecord(id).group_operation!;
+        expect(pending).toMatchObject({ kind: 'refresh', controls: [], welcomes_sent: 0,
+          recipient: hex(founder.publicKey), recovery_challenge: hex(challenge) });
+        expect(pending.welcomes).toEqual([proxy.sends.at(-1)!.envelope_b64]);
+        expect(pending.welcomes).not.toEqual(original.welcomes);
+        expect(beforePost).toEqual([pending]); // Exact old wire was saved before the replacement POST.
+        expect(pending.superseded_operations).toEqual([{ kind: 'refresh', controls: [],
+          welcomes: original.welcomes, welcomes_sent: 0, delivery: 'unknown' }]);
+        expect(pending.expected.root).toBe(founderState.root);
+        expect(readRecord(id).group_session.root).toBe(founderState.root);
+        expect(pending).not.toHaveProperty('admission');
+        expect(pending).not.toHaveProperty('origin');
+
+        proxy.resumeReplay();
+        capture = true;
+        const result = await retry(id);
+        capture = false;
+        expect(result.current_epoch).toBe(stale === 'rotated' ? 2 : 1);
+        expect(readRecord(id).group_operation).toBeUndefined();
+        expect(proxy.sends.slice(beforeRetry).map(send => send.envelope_b64)).toEqual([pending.welcomes[0], pending.welcomes[0]]);
+        expect(beforePost).toEqual([pending, pending]); // A fresh process retries the same wire, without resealing.
+        const replay = await transport.receiveMessages(conversation.id);
+        const renewedWire = Buffer.from(pending.welcomes[0], 'base64');
+        const matches = replay.entries.filter(row => Buffer.from(row.envelope).equals(renewedWire));
+        expect(matches).toHaveLength(1); // Two exact attempts, one real relay effect.
+        expect(replay.entries.some(row => Buffer.from(row.envelope).toString('base64') === original.welcomes[0])).toBe(false);
+        const row = matches[0];
+        expect(row.seq).toBe(anchor + 1);
+        const welcome = openGroupWelcome(founder, row.envelope, locator);
+        expect(welcome.purpose).toBe('refresh');
+        expect(hex(welcome.recoveryChallenge!)).toBe(hex(challenge));
+        expect(welcome.replayFromSequence).toBe(anchor);
+        expect(welcome.admissions[hex(founder.keyID)]).toBeUndefined();
+        expect(welcome.admissions).toEqual(founderState.admissions);
+        const fresh = checkGroupWelcomeReplay(groupSessionFromWelcome(founder, welcome, row.seq), welcome, replay.sequence, replay.entries);
+        assertGroupCanSend(founder, fresh);
+        expect(fresh).toMatchObject({ root: founderState.root, epoch: founderState.epoch, rekeys: [] });
+        expect(JSON.stringify(fresh)).not.toContain(oldRoot);
+        if (stale === 'rotated') expect(JSON.stringify(fresh)).not.toContain(previousRoot);
+        expect(() => decryptMessage(oldMessage, groupSessionConversation(fresh))).toThrow();
+        const text = `${surface} ${stale} founder recovered reply`;
+        await transport.postMessage(conversation.id, serializeEnvelope(createMessage(founder, groupSessionConversation(fresh), 'text', new TextEncoder().encode(text))));
+        const received = await command('recv', id);
+        expect(received.messages.filter((message: { unsafe_body?: string }) => message.unsafe_body === text)).toHaveLength(1);
+        writeFileSync(join(artifactDir, `${surface.toLowerCase()}-${stale}-generic-refresh.json`), JSON.stringify({
+          conversation: id, surface, stale, journalShape: shape,
+          originalWelcome: hex(deserializeEnvelope(Buffer.from(original.welcomes[0], 'base64')).msg_id),
+          replacementWelcome: hex(deserializeEnvelope(renewedWire).msg_id),
+          replacementAttempts: 2, replacementEffects: matches.length, evidenceRecordsBeforePost: pending.superseded_operations!.length,
+          lostAcknowledgements: proxy.droppedAcknowledgements, blockedReplays: proxy.blockedReplays,
+          purpose: welcome.purpose, currentEpoch: fresh.epoch, replayAnchor: welcome.replayFromSequence,
+          replaySequences: replay.entries.map(entry => entry.seq), receivedReply: true,
+        }, null, 2));
+      } finally { await proxy.stop(); }
+    }, 90_000);
+  }
 
   it('posts exactly once across the native runtime idle-connection boundary', async () => {
     // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
