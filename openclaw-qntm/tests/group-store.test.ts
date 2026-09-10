@@ -129,6 +129,33 @@ describe('OpenClaw durable ordinary groups', () => {
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(original.welcomes[0])).expiry_ts + 1) * 1000);
     expect(() => member.prepareRetry()).toThrow(); expect(member.load().operation).toEqual(operation); expect(f.rows).toHaveLength(0);
   });
+  it.each(['extra', 'missing', 'altered', 'rekeyed', 'absent'] as const)('compares a validly signed old generic refresh admissions map (%s) against its saved checkpoint', async changed => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const original = genericPending(member, 'Owner', 1, '77'.repeat(32));
+    const state = member.load(), operation = state.operation!, kid = toHex(f.late.keyID);
+    const outer = deserializeEnvelope(base64UrlDecode(operation.welcomes[0]));
+    const signed = unmarshalCanonical<any>(openSecret(f.member.privateKey, f.owner.publicKey, outer.ciphertext));
+    expect(Object.keys(signed.payload.admissions)).toEqual([kid]);
+    const admissions = signed.payload.admissions as Record<string, any>;
+    if (changed === 'extra') admissions[toHex(f.owner.keyID)] = { ...admissions[kid] };
+    else if (changed === 'missing') delete admissions[kid];
+    else if (changed === 'altered') admissions[kid].source_epoch += 1;
+    else if (changed === 'rekeyed') admissions[kid].rekey_hash = new Uint8Array(32).fill(0x12);
+    else delete signed.payload.admissions; // Older generic journal without provenance stays compatible.
+    // Re-sign so only the admissions comparison, not the signature, can reject it.
+    signed.signature = new QSP1Suite().sign(f.member.privateKey, marshalCanonical(signed.payload));
+    outer.ciphertext = sealSecret(f.member.privateKey, f.owner.publicKey, marshalCanonical(signed));
+    operation.welcomes = [base64UrlEncode(serializeEnvelope(outer))]; member.save(state);
+    const count = f.rows.length;
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(original.welcomes[0])).expiry_ts + 1) * 1000);
+    if (changed === 'absent') {
+      const retry = member.prepareRetry();
+      expect(retry.welcomePurpose).toBe('refresh'); expect(retry.recoveryChallenge).toBe('77'.repeat(32));
+      expect(retry.superseded![0].welcomes).toEqual(operation.welcomes);
+    } else expect(() => member.prepareRetry()).toThrow('Saved generic refresh admissions differ from its original checkpoint');
+    expect(member.load().operation).toEqual(operation); expect(f.rows).toHaveLength(count);
+  });
   it.each(['recipient', 'sender', 'recovery'] as const)('blocks generic refresh reconciliation after %s is unavailable', async changed => {
     const f = fixture(), member = f.store(f.owner), original = genericPending(member, 'Member');
     if (changed === 'recipient') {

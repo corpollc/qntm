@@ -403,6 +403,17 @@ export class QntmGroupStore {
       && oldRoster.founding_members.some(member => same(member.public_key, identity.publicKey)), 'Saved generic refresh differs from its original checkpoint');
     requireValue(payload.replay_from_seq === undefined || Number.isSafeInteger(payload.replay_from_seq) && (payload.replay_from_seq as number) >= 0,
       'Invalid saved refresh replay anchor');
+    if (payload.admissions !== undefined) {
+      // Older generic journals omit provenance; when present it must equal the
+      // validated checkpoint map in its completed wire form, entry for entry.
+      const unhex = (text: string) => new Uint8Array(Buffer.from(text, 'hex'));
+      const wired = Object.fromEntries(Object.entries(expected.admissions).map(([kid, record]) => {
+        requireValue(record.completion, 'Saved generic refresh admissions differ from its original checkpoint');
+        return [kid, { add_id: unhex(record.addId), add_hash: unhex(record.addDigest), source_epoch: record.sourceEpoch,
+          rekey_id: unhex(record.completion.rekeyId), rekey_hash: unhex(record.completion.rekeyDigest) }];
+      }));
+      requireValue(same(payload.admissions, wired), 'Saved generic refresh admissions differ from its original checkpoint');
+    }
     const value = payload.recovery_challenge;
     requireValue(value === undefined || value instanceof Uint8Array && value.length === 32, 'Invalid saved refresh recovery challenge');
     const challenge = value === undefined ? undefined : toHex(value as Uint8Array);
