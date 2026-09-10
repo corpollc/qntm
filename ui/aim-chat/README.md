@@ -165,6 +165,25 @@ later removal, recovery or expiry, without another network request.
 Older draft addition journals without enough exact recipient admission evidence
 remain importable but cannot use this recovery path; retry preserves them rather
 than inferring whom to admit from roster differences.
+When a saved removal is proven accepted through that private receipt evidence
+but its completing rekey expired, was never posted, or no longer fits the verified
+roster, **Retry saved operation** saves a fresh rotation for the current
+membership (including a sole surviving creator) before posting it. The original
+removal and rekey ciphertext stay as bounded flat evidence under the same limits,
+and the original receipt remains pinned while the repair is pending. A helper
+member's verified rotation, a later readmission, or another removal that already
+left the removal's epoch finishes the operation without posting; nothing is ever
+re-removed. New removal journals pin the target's full public key, canonical
+member record and admission provenance, so an exact retry refuses a later
+readmission of the same identity; older journals without the pin refuse a target
+admitted at the current epoch. A removal that was never proven accepted stays
+preserved when it expires or its epoch is superseded. A saved **rekey** journal
+retries its exact bytes while they still apply, is replaced from current
+membership when they expired or belong to another branch or roster, and finishes
+without posting once any verified rotation left its source epoch. Every release
+rechecks the journal, current authority, replay and the removal proof under the
+group lock. Encrypted backups validate the pinned target, original removal
+evidence and superseded rotations before replacing local data.
 Ordinary messaging pauses during an unfinished operation, key rotation, removal,
 or required recovery. The welcome signs the sender’s fully processed relay cursor as a replay anchor.
 Opening its link verifies coverage from that anchor and replays retained

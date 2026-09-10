@@ -6,11 +6,12 @@ import { resolve, join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
 import { generateIdentity, DropboxClient, openGroupWelcome, parseGroupLink, createGroupSession, receiveGroupEvent, groupSessionConversation,
   createMessage, serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, prepareGroupSessionAddition, assertGroupAdditionAccepted, base64UrlEncode,
-  createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, createGroupLink, prepareGroupWelcomeRefresh } from '@corpollc/qntm'
+  createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, createGroupLink, prepareGroupWelcomeRefresh, assertGroupCanSend } from '@corpollc/qntm'
 import type { Identity, GroupSessionState } from '@corpollc/qntm'
 import { WebSocket } from 'ws'
 import { RelayStub } from './fixtures/relay-stub'
 import { gatewayResultFixture } from './fixtures/gateway-result'
+import { groupRemovalTarget } from '../../src/group-operation'
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex')
 let relay: Pick<RelayStub, 'url' | 'stop' | 'expire'>
 let browserIdentity: Identity
@@ -529,6 +530,147 @@ test('browser retries a completed rekey after synthetic cache pressure, authenti
       return data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group.session.root
     }, id)
     expect(finalRoot).not.toBe(ts.state.root)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('browser finishes an accepted removal whose rekey expired through a dropped ACK and restart, excluding the Python peer and keeping the TypeScript peer readable', async ({ page }) => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-removal-recovery-'))
+  const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
+    [resolve('tests/e2e/fixtures/python-group-peer.py'), directory, ...args], {
+      env: { ...process.env, PYTHONPATH: resolve('../../python-dist/src') }, timeout: 45_000,
+    })).stdout)
+  const group = (cid: string) => page.evaluate(cid => {
+    const data = JSON.parse(localStorage.getItem('aim-store')!)
+    const record = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid)
+    return { profile: data.activeProfileId as string, participants: record.participants as string[], group: record.group }
+  }, cid)
+  try {
+    const python = await command('identity'), other = generateIdentity()
+    await page.goto('/'); await contacts(page)
+    await page.getByLabel('Contact name', { exact: true }).fill('Python colleague')
+    await page.getByLabel('Full public key', { exact: true }).fill(python.public_key)
+    await page.getByLabel('I checked this key with the contact').check()
+    await page.getByRole('button', { name: 'Pin contact', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Contact pinned' })).toBeVisible()
+    await pin(page, 'TypeScript colleague', other)
+    await page.getByLabel('Group name', { exact: true }).fill('Removal recovery journey')
+    await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+    const link = await add(page, 'TypeScript colleague')
+    expect(await add(page, 'Python colleague')).toBe(link)
+    await command('command', 'group', 'join', link)
+    await expect(page.getByText('3 members · key epoch 2')).toBeVisible()
+    const ts = await peerOpen(other, link)
+    expect(ts.state.epoch).toBe(2)
+    const before = await group(hex(parseGroupLink(link).conversationId))
+    const id = hex(parseGroupLink(link).conversationId), cid = parseGroupLink(link).conversationId, current = before.group.session as GroupSessionState
+    // Production intent with a short-lived completing rotation. The journal is
+    // staged as if the browser crashed after its accepted removal POST; the
+    // browser's own receive path must authenticate that removal from replay.
+    const remove = createGroupControlMessage(browserIdentity, groupSessionConversation(current), 'group_remove', createGroupRemoveBody([new Uint8Array(Buffer.from(python.key_id, 'hex'))], 'journey removal'))
+    const afterRemove = receiveGroupEvent(browserIdentity, remove, current).state
+    const rotation = prepareGroupSessionRekey(browserIdentity, afterRemove, 12)
+    const expected = receiveGroupEvent(browserIdentity, rotation.rekey, afterRemove).state
+    const target = groupRemovalTarget(current, python.key_id)
+    const controls = [remove, rotation.rekey].map(envelope => base64UrlEncode(serializeEnvelope(envelope)))
+    await page.evaluate(({ profile, id, operation }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const record = data.conversations[profile].find((row: { id: string }) => row.id === id)
+      record.group.operation = operation; record.group.revision++
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { profile: before.profile, id, operation: { kind: 'remove', controls, welcomes: [], delivered: 0, expected, target } })
+    const client = new DropboxClient(relay.url)
+    await client.postMessage(cid, serializeEnvelope(remove))
+    await page.reload(); await contacts(page)
+    await expect(page.getByText('2 members · key epoch 2')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Retry saved operation', exact: true })).toBeVisible()
+    const accepted = await group(id)
+    expect(accepted.group.session.needsRekey).toBe(true); expect(accepted.group.session.root).toBe(current.root)
+    expect(accepted.participants).not.toContain(python.key_id)
+    expect(accepted.group.controlReceipts.find((row: { id: string }) => row.id === hex(remove.msg_id))).toMatchObject({ valid: true, bodyType: 'group_remove', epoch: 2 })
+    expect(accepted.group.operation).toMatchObject({ kind: 'remove', controls, target })
+    await catchUpPeer(other, ts)
+    expect(ts.state.needsRekey).toBe(true); expect(() => assertGroupCanSend(other, ts.state)).toThrow()
+    await command('command', 'recv', id)
+    const checkpoint = async () => JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8')).find((record: { id: string }) => record.id === id).group_session
+    expect((await checkpoint()).removed).toBe(true)
+    await expect(command('command', 'send', id, 'removed peer cannot send')).rejects.toThrow(/removed/i)
+    await new Promise(done => setTimeout(done, Math.max(0, (rotation.rekey.expiry_ts + 1) * 1000 - Date.now())))
+    await page.reload(); await contacts(page)
+    const posted: Uint8Array[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(new Uint8Array(Buffer.from(request.postDataJSON().envelope_b64, 'base64')))
+    })
+    // Real dropped ACK: the first repair POST reaches the relay and commits,
+    // but the browser never sees its response. The durable state is read at
+    // the moment the request leaves, before any replay can observe the row.
+    let dropped = 0, prePost: Awaited<ReturnType<typeof group>> | undefined
+    await page.route('**/v1/send', async route => {
+      if (dropped++ > 0) return route.continue()
+      prePost = await group(id)
+      await route.fetch(); await route.abort('failed')
+    })
+    const retry = page.getByRole('button', { name: 'Retry saved operation', exact: true })
+    await retry.scrollIntoViewIfNeeded(); await expect(retry).toBeEnabled()
+    await page.screenshot({ path: '/tmp/qntm-claude-browser-removal-retry-before.png' })
+    await test.info().attach('removal-repair-retry-before', { body: await page.screenshot(), contentType: 'image/png' })
+    await retry.click()
+    await expect(page.getByRole('alert')).toBeVisible()
+    expect(posted).toHaveLength(1)
+    const repair = deserializeEnvelope(posted[0])
+    expect(repair.conv_epoch).toBe(2); expect(hex(repair.msg_id)).not.toBe(hex(rotation.rekey.msg_id)); expect(hex(repair.msg_id)).not.toBe(hex(remove.msg_id))
+    // The repair was durable before its POST, with no predicted keys installed.
+    expect(prePost!.group.operation).toMatchObject({ kind: 'removal_rekey', controls: [base64UrlEncode(posted[0])], welcomes: [], delivered: 0,
+      origin: { kind: 'remove', controls, welcomes: [], delivered: 0, target, delivery: 'unknown' } })
+    expect(prePost!.group.operation.expected.epoch).toBe(3)
+    expect(prePost!.group.session.epoch).toBe(2); expect(prePost!.group.session.root).toBe(current.root); expect(prePost!.group.session.needsRekey).toBe(true)
+    const uncertain = await group(id)
+    expect(uncertain.group.operation).toEqual(prePost!.group.operation) // The lost ACK changed nothing in the journal.
+    // Only authenticated replay may install the new keys; the live subscription
+    // may already have verified the committed row by now.
+    expect([current.root, prePost!.group.operation.expected.root]).toContain(uncertain.group.session.root)
+    if (uncertain.group.session.root !== current.root) expect(uncertain.group.session.epoch).toBe(3)
+    await page.unroute('**/v1/send')
+    await page.reload(); await contacts(page)
+    await expect(page.getByText('2 members · key epoch 3')).toBeVisible()
+    const replayed = await group(id)
+    expect(replayed.group.operation.kind).toBe('removal_rekey'); expect(replayed.group.session.needsRekey).toBe(false)
+    expect(replayed.group.controlReceipts.find((row: { id: string }) => row.id === hex(remove.msg_id))).toMatchObject({ valid: true })
+    await page.getByRole('button', { name: 'Retry saved operation', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Saved operation completed' })).toBeVisible({ timeout: 15_000 })
+    expect(posted).toHaveLength(1) // Verified replay proved the repair; nothing was reposted.
+    const settled = await group(id)
+    expect(settled.group.operation).toBeNull(); expect(settled.group.session).toMatchObject({ epoch: 3, needsRekey: false, recovery: null, removed: false })
+    expect(settled.participants).toHaveLength(2); expect(settled.participants).not.toContain(python.key_id)
+    const rows = (await client.receiveMessages(cid, 0)).entries.map(row => deserializeEnvelope(row.envelope))
+    expect(rows.filter(envelope => hex(envelope.msg_id) === hex(repair.msg_id))).toHaveLength(1)
+    expect(rows.filter(envelope => hex(envelope.msg_id) === hex(remove.msg_id))).toHaveLength(1)
+    expect(rows.some(envelope => hex(envelope.msg_id) === hex(rotation.rekey.msg_id))).toBe(false)
+    await catchUpPeer(other, ts)
+    expect(ts.state).toMatchObject({ epoch: 3, needsRekey: false, removed: false, root: settled.group.session.root })
+    assertGroupCanSend(other, ts.state)
+    await ts.relayClient.postMessage(cid, serializeEnvelope(createMessage(other, groupSessionConversation(ts.state), 'text', new TextEncoder().encode('TypeScript survivor reply'))))
+    await expect(page.locator('.message-body', { hasText: 'TypeScript survivor reply' })).toBeVisible()
+    await page.getByPlaceholder('Type a message').fill('Browser text after the repaired removal')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.locator('.message-body', { hasText: 'Browser text after the repaired removal' })).toBeVisible()
+    const batch = await ts.relayClient.receiveMessages(cid, ts.cursor)
+    const texts: string[] = []
+    for (const row of batch.entries) {
+      const envelope = deserializeEnvelope(row.envelope)
+      if (isGroupWelcomeEnvelope(envelope)) continue
+      const event = receiveGroupEvent(other, envelope, ts.state); ts.state = event.state
+      if (!event.duplicate && event.message.inner.body_type === 'text') texts.push(new TextDecoder().decode(event.message.inner.body))
+    }
+    ts.cursor = batch.sequence
+    expect(texts).toContain('Browser text after the repaired removal')
+    const excluded = await command('command', 'recv', id)
+    expect(excluded.messages.some((message: { unsafe_body?: string }) => message.unsafe_body === 'Browser text after the repaired removal')).toBe(false)
+    expect((await checkpoint()).removed).toBe(true)
+    await expect(command('command', 'group', 'join', link)).rejects.toThrow()
+    await page.screenshot({ path: '/tmp/qntm-claude-browser-removal-retry-after.png' })
+    await test.info().attach('removal-repair-retry-after', { body: await page.screenshot(), contentType: 'image/png' })
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 

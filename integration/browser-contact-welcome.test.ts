@@ -23,12 +23,12 @@ describe('browser contact welcomes through the relay worker', () => {
     if (relay) await relay.stop()
     if (state) rmSync(state, { recursive: true, force: true })
   })
-  it('runs real browser addition, reverse opening, replies, refresh, removal and readmission with TS and CLI peers', async () => {
+  it('runs real browser addition, reverse opening, replies, refresh, removal, removal repair and readmission with TS and CLI peers', async () => {
     const result = await promisify(execFile)('npm', ['run', 'test:e2e', '--', 'contact-groups.spec.ts'], {
-      cwd: join(root, 'ui/aim-chat'), timeout: 240_000, maxBuffer: 4 * 1024 * 1024,
+      cwd: join(root, 'ui/aim-chat'), timeout: 330_000, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, QNTM_UI_BASE_URL: uiUrl, QNTM_BROWSER_RELAY_URL: relayUrl },
     })
-    expect(result.stdout).toContain('11 passed')
+    expect(result.stdout).toContain('12 passed')
     expect(result.stdout).toContain('1 skipped')
-  }, 250_000)
+  }, 340_000)
 })
