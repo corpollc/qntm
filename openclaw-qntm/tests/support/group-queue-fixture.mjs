@@ -88,6 +88,23 @@ export async function stageAcceptedGroupRotation(config, stateDir) {
   });
 }
 
+/** Leave the durable state of a host that saved an exact rotation and died
+ * before its first POST, with the host stopped. Production prepare and journal
+ * code only; nothing is posted, so the later reviewed retry must publish once. */
+export async function stagePendingGroupRotation(config, stateDir) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    if (ordinary.load().operation) throw new Error('Fixture found an unexpected pending operation');
+    const operation = ordinary.prepare('rekey', {});
+    ordinary.saveOperation(operation);
+    const outer = deserializeEnvelope(base64UrlDecode(operation.controls[0]));
+    return { messageId: Buffer.from(outer.msg_id).toString('hex'), control: operation.controls[0], epoch: outer.conv_epoch,
+      expectedRoot: restoreGroupSession(account.identity, operation.expected).root, cursor: ordinary.load().cursor };
+  });
+}
+
 /** Stage an old generic delivery during an already admitted native model turn. */
 export async function stageGenericGroupRefresh(config, stateDir, contact, ttl = 1, challenge) {
   const account = resolveQntmAccount({ cfg: config });

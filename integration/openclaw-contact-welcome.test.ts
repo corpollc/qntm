@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, CliAgent, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation, stagePendingGroupRotation } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -413,6 +413,55 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(new TextDecoder().decode(decryptMessage(deserializeEnvelope(after[0].envelope), alice).inner.body)).toContain('gateway-tool-complete:');
     await action('after-accepted-cleanup', 'send', { text: 'native finished an accepted rotation without reposting it' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native finished an accepted rotation without reposting it', 'native reply after accepted-control cleanup');
+  }, TIMEOUT);
+
+  it('recovers a crash before POST through an operator-initiated turn from a fresh CLI process after host restart, while inbound messages stay deferred', async () => {
+    await host.stop();
+    // Durable state of a host that saved its exact rotation and died before publishing it.
+    const staged = await stagePendingGroupRotation(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir);
+    expect(checkpoint().operation.controls).toEqual([staged.control]);
+    await host.start();
+    await host.waitFor(() => checkpoint().cursor >= staged.cursor, 'host replayed the relay after restart');
+    // Untrusted inbound group traffic cannot start a turn through the pending-operation barrier.
+    const deferredPlan = { id: 'deferred-behind-pending-rotation', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    const deferredMarker = 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(deferredPlan)).toString('base64url');
+    await h.alice.run(['send', convId, deferredMarker]);
+    await host.waitFor(() => checkpoint().cursor > staged.cursor, 'host received the deferred inbound message');
+    await delay(3000);
+    expect((host as unknown as { provider: { outcomes: Map<string, unknown> } }).provider.outcomes.has(deferredPlan.id)).toBe(false);
+    expect(checkpoint().operation.controls).toEqual([staged.control]); expect(checkpoint().session.epoch).toBe(staged.epoch);
+    const conversationId = parseGroupLink(checkpointLink()).conversationId;
+    const before = await relay.receiveMessages(conversationId, 0);
+    expect(before.entries.some(row => Buffer.from(row.envelope).toString('base64url') === staged.control)).toBe(false);
+    // A route that names no configured conversation of this account hides the tool and changes nothing.
+    const wrong = await host.localAgentTurn({ id: 'operator-wrong-conversation', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' },
+      'ff'.repeat(16), { expectToolAbsent: true });
+    expect(wrong.results).toEqual([]); expect(wrong.toolAbsent || wrong.code !== 0).toBe(true);
+    expect(checkpoint().operation.controls).toEqual([staged.control]);
+    expect((await relay.receiveMessages(conversationId, 0)).sequence).toBe(before.sequence);
+    // The documented local entry point: a normal agent turn in the group's own session, started by the operator.
+    const recovered = await host.localAgentTurn({ id: 'operator-retry-after-restart', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' }, 'test');
+    expect(recovered.code).toBe(0);
+    // The turn's reply returns to the operator's terminal as CLI JSON, not to the group.
+    expect(JSON.parse(recovered.stdout)).toBeTypeOf('object');
+    expect(recovered.stdout).toContain('gateway-tool-complete:operator-retry-after-restart');
+    expect(recovered.results[1].review!.retryMode).toBe('exact'); expect(recovered.results[1].review!.acceptedControls).toBe(0);
+    expect(recovered.results[2].status).toBe('submitted');
+    await host.waitFor(() => !checkpoint().operation && checkpoint().session.epoch === staged.epoch + 1, 'reviewed retry published the exact rotation once');
+    expect(checkpoint().session.root).toBe(staged.expectedRoot);
+    const after = await relay.receiveMessages(conversationId, 0);
+    expect(after.entries.filter(row => Buffer.from(row.envelope).toString('base64url') === staged.control)).toHaveLength(1);
+    // Delivery resumes: the deferred inbound message now runs exactly once.
+    await host.waitFor(() => (host as unknown as { provider: { outcomes: Map<string, unknown> } }).provider.outcomes.has(deferredPlan.id), 'deferred inbound turn released after recovery');
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === `gateway-tool-complete:${deferredPlan.id}`, 'deferred turn completion');
+    await h.alice.run(['recv', convId]);
+    const alice = groupSessionConversation(restoreGroupSession(aliceIdentity(), h.alice.readConversation(convId).group_session));
+    const completions = (await relay.receiveMessages(conversationId, 0)).entries.filter(row => {
+      try { return new TextDecoder().decode(decryptMessage(deserializeEnvelope(row.envelope), alice).inner.body) === `gateway-tool-complete:${deferredPlan.id}`; } catch { return false; }
+    });
+    expect(completions).toHaveLength(1);
+    await action('after-operator-recovery', 'send', { text: 'native delivery resumed after operator-initiated recovery' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native delivery resumed after operator-initiated recovery', 'native reply after local recovery');
   }, TIMEOUT);
 
 });

@@ -6,7 +6,7 @@ import { generateIdentity, createGroupLink, base64UrlEncode, serializeIdentity, 
 import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/core';
 import { resolveQntmAccount } from '../src/accounts.js';
 import { QntmConfigSchema } from '../src/config-schema.js';
-import { QntmGroupActions, createQntmGroupTool } from '../src/group-tool.js';
+import { QntmGroupActions, createQntmGroupTool, resolveGroupToolScope } from '../src/group-tool.js';
 import type { QntmRootConfig } from '../src/types.js';
 function fixture() {
   const identity = generateIdentity(), inviter = generateIdentity(), id = generateIdentity().keyID;
@@ -51,5 +51,35 @@ describe('OpenClaw contact group configuration and native scope', () => {
     expect(createQntmGroupTool(ctx, cfg, service)).toBeNull();
     cfg.channels!.qntm!.conversations!.team!.gatewayActions = ['approve'];
     expect(QntmConfigSchema.safeParse(cfg.channels!.qntm).success).toBe(false);
+  });
+  it('scopes an operator-initiated turn only through its Gateway-resolved qntm delivery route', async () => {
+    const { cfg, ctx } = fixture(), service = new QntmGroupActions(), conversation = ctx.nativeChannelId!;
+    const { nativeChannelId: _native, ...bare } = ctx;
+    const routed = { ...bare, senderIsOwner: true, deliveryContext: { channel: 'qntm', to: `qntm:${conversation}`, accountId: 'default' } } as OpenClawPluginToolContext;
+    expect(createQntmGroupTool(bare as OpenClawPluginToolContext, cfg, service)).toBeNull();
+    expect(createQntmGroupTool(routed, cfg, service)?.name).toBe('qntm_group');
+    expect(resolveGroupToolScope(routed, cfg).store.binding.conversationId).toBe(conversation);
+    // Only an owner-initiated run addressed to this channel may use the delivery route; a
+    // host-scheduled turn in the same session carries neither the native id nor that marking.
+    expect(createQntmGroupTool({ ...routed, senderIsOwner: false }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, senderIsOwner: undefined }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, messageChannel: undefined }, cfg, service)).toBeNull();
+    // The route is runtime-provided and must name a configured qntm conversation of this account.
+    expect(createQntmGroupTool({ ...routed, deliveryContext: { channel: 'slack', to: `qntm:${conversation}` } }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, deliveryContext: { channel: 'qntm', to: conversation } }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, deliveryContext: { channel: 'qntm', to: `qntm:${'ff'.repeat(16)}` } }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, deliveryContext: { channel: 'qntm', to: `qntm:${conversation}`, accountId: 'other' } }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, agentAccountId: 'other' }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...routed, sessionId: undefined }, cfg, service)).toBeNull();
+    // A native inbound turn whose delivery route disagrees with its platform conversation is refused.
+    expect(createQntmGroupTool({ ...ctx, deliveryContext: { channel: 'qntm', to: `qntm:${'ff'.repeat(16)}` } }, cfg, service)).toBeNull();
+    expect(createQntmGroupTool({ ...ctx, deliveryContext: { channel: 'qntm', to: `qntm:${conversation}` } }, cfg, service)?.name).toBe('qntm_group');
+    // Reviews stay bound to the initiating route: an inbound requester's review cannot be committed by the operator route.
+    const inbound = resolveGroupToolScope({ ...ctx, requesterSenderId: 'ab'.repeat(16) }, cfg);
+    expect(resolveGroupToolScope(routed, cfg).key).not.toBe(inbound.key);
+    await expect(service.execute(resolveGroupToolScope(routed, cfg), { operation: 'commit', reviewToken: '00'.repeat(16), reviewHash: '00'.repeat(32) }))
+      .rejects.toThrow('Review unavailable, expired or mismatched');
+    // Local initiation grants no action the binding does not permit.
+    await expect(service.execute(resolveGroupToolScope(routed, cfg), { operation: 'prepare', action: 'retry' })).rejects.toThrow('not permitted');
   });
 });

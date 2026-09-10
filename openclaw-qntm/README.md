@@ -228,7 +228,8 @@ Contact pins are local configuration; inbound text cannot add or replace one.
 Changing a pin also invalidates any outstanding action review.
 
 `qntm_group` is optional and only available in that account's native qntm
-conversation, with a host session and nonempty `groupActions`. An incoming message
+conversation, with a host session and nonempty `groupActions`; an operator can
+also reach it through the [local recovery entry point](#local-recovery-entry-point). An incoming message
 is context, never authorization. Use `status` to inspect verified members, pinned
 contacts, pending operation, recovery challenge and public link. For a change,
 call `prepare`, inspect its complete effect under the host's instructions, then
@@ -282,7 +283,10 @@ any challenge encrypted to the recipient; the relay and its metrics cannot read
 those contents.
 Tool status and reviews expose their displayed contact/member metadata to the host
 transcript and configured model provider, including welcome purpose and any
-displayed recovery challenge. Prepared encryption keys and full admission proofs
+displayed recovery challenge. An operator-initiated recovery turn adds its
+command text and the resulting reply to that same group session transcript and
+provider call; nothing from it reaches the relay unless the reviewed operation
+itself publishes or `--deliver` is requested. Prepared encryption keys and full admission proofs
 stay in private plugin state and are omitted from tool review output.
 See [metadata boundaries](../docs/group-welcomes.md#metadata-and-security-boundaries).
 
@@ -364,10 +368,44 @@ offline cleanup path. An acknowledgement alone is not proof the recipient receiv
 
 New group messages remain deferred while an operation is pending. An agent turn
 already running can review retry, but inbound messages cannot start a recovery
-turn through that barrier after restart. A separate local recovery entry point
-has not yet shipped; the native journeys stage interruptions inside an already
-admitted agent turn through a test-only hook, which does not demonstrate that a
-restarted host wakes an agent for a pending operation. Expired messages without authenticated acceptance and
+turn through that barrier, including after a restart. A restarted host does not
+wake an agent for a pending operation by itself.
+
+### Local recovery entry point
+
+The operator starts the recovery turn from the host machine with OpenClaw's
+documented Gateway-backed agent command, addressed to the group binding:
+
+```sh
+openclaw agent --channel qntm --to team --message "Review the pending qntm group operation: call qntm_group status, prepare retry, assess the complete effect, then commit." --json
+```
+
+This starts one normal agent turn in the group's own session
+(`agent:<agent>:qntm:group:<conversation>`) inside the running Gateway process.
+It does not commit anything itself: the model must still call `qntm_group`
+`prepare`, assess the complete effect under host instructions, and `commit` the
+exact `reviewToken` and `reviewHash`, with the same action permissions, contact
+pins, writer lock, relay replay, membership, removal, recovery, expiry and
+review-fingerprint checks as an inbound turn. The turn's reply is printed to
+the terminal; add `--deliver` only if the reply should be posted to the group,
+which is refused while the operation is still pending. The command uses the
+existing authenticated Gateway RPC; no new endpoint, approval protocol or
+interception is added, and `--local` embedded runs are not covered.
+
+The tool resolves its conversation only from runtime-provided context, never
+from tool arguments. A native inbound turn supplies the platform conversation
+id; an operator-initiated turn supplies only the Gateway-resolved delivery
+route (`qntm:<conversation>` for this plugin's channel and account) together
+with OpenClaw's owner-initiated run marking, and the two ids must agree when
+both are present. Host-scheduled turns such as heartbeats carry neither signal
+and stay outside the tool. A route naming no configured conversation of the
+account hides the tool. Reviews stay bound to the
+initiating route and session, so a review prepared for an inbound requester
+cannot be committed from the operator route. Inbound group messages that
+arrived behind the barrier stay deferred until the reviewed operation clears,
+then the existing drain dispatches each of them once. The local operator is
+trusted to start a turn; that grants no group permission the binding does not
+list and never accepts unreviewed model-supplied changes. Expired messages without authenticated acceptance and
 removed or superseded admission identities remain preserved and blocked.
 
 When the ADD is already authenticated but its completing rotation expired or

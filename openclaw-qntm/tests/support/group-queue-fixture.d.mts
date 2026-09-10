@@ -11,6 +11,10 @@ export function stageGenericGroupRefresh(config: unknown, stateDir: string, cont
   expiry: number; original: { welcomes: string[] }; cursor: number; currentRoot: string;
 }>;
 
+export function stagePendingGroupRotation(config: unknown, stateDir: string): Promise<{
+  messageId: string; control: string; epoch: number; expectedRoot: string; cursor: number;
+}>;
+
 export function stageAcceptedGroupRotation(config: unknown, stateDir: string): Promise<{
   messageId: string; control: string; sequence: number; epoch: number; expectedRoot: string;
 }>;
