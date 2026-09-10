@@ -3,7 +3,10 @@ import { createServer, request } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { once } from 'node:events';
 
-export async function recordingRelay(upstreamUrl: string) {
+export async function recordingRelay(upstreamUrl: string, options: {
+  /** Observe durable client state before the exact request reaches the relay. */
+  onSend?: (send: { conv_id: string; envelope_b64: string }) => void;
+} = {}) {
   const relay = new URL(upstreamUrl), sockets = new Set<Socket>();
   const sends: Array<{ conv_id: string; envelope_b64: string }> = [];
   let dropAcknowledgement = false;
@@ -16,7 +19,11 @@ export async function recordingRelay(upstreamUrl: string) {
     for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
     const body = Buffer.concat(chunks);
     const isSend = incoming.method === 'POST' && incoming.url === '/v1/send';
-    if (isSend) sends.push(JSON.parse(body.toString()));
+    if (isSend) {
+      const send = JSON.parse(body.toString());
+      sends.push(send);
+      options.onSend?.(send);
+    }
     const drop = isSend && dropAcknowledgement;
     if (drop) dropAcknowledgement = false;
     const upstream = request(new URL(incoming.url!, relay), {
