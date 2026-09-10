@@ -24,6 +24,8 @@ const InboundSchema = z.object({
   senderPublicKey: z.string().max(44), epoch, createdAt: sequence,
   bodyType: z.string().min(1).max(128), text: z.string().max(65536),
   gatewayVerified: z.boolean(),
+  // Private ordinary-group delivery authority; never part of a qntm event ID.
+  groupDispatch: z.object({ generation: hex16, digest }).strict().optional(),
 }).strict();
 export type QntmInbound = z.infer<typeof InboundSchema>;
 export interface QntmCheckpoint {
@@ -62,7 +64,8 @@ export function validateInbound(value: unknown): QntmInbound {
   return message;
 }
 export function inboundId(message: QntmInbound): string {
-  return `${message.conversationId}:${message.messageId}`;
+  const id = `${message.conversationId}:${message.messageId}`;
+  return message.groupDispatch ? `${id}:group:${message.groupDispatch.generation}:${message.groupDispatch.digest}` : id;
 }
 function conversationJSON(conversation: Conversation) {
   return {
