@@ -574,7 +574,9 @@ export default function App() {
       const stillExists = conversationsResponse.conversations.some(c => c.id === previousId)
       // Startup/refresh may finish after navigation. Keep non-chat pages open,
       // including the settings route used after a confirmed backup restore.
-      if (['/settings', '/help', '/guidance'].includes(pathnameRef.current)) {
+      // A just-arrived invite may precede the router's hashchange effect. Its
+      // fragment belongs to the join flow, not this older profile read.
+      if (parseInviteConvId(window.location.href) || ['/settings', '/help', '/guidance'].includes(pathnameRef.current)) {
         setSelectedConversationId(stillExists ? previousId : conversationsResponse.conversations[0]?.id || '')
         setError('')
         return
