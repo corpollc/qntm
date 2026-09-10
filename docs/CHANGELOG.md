@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed relay WebSocket shutdown: the server now completes the close handshake, avoiding timeout delays after one-shot receives and during reconnects. TypeScript callback failures use a valid client close code. Real relay tests cover native-client failure/replay and Python-to-TypeScript messaging.
+
 - TypeScript relay replay now exposes each envelope's sequence and the captured head. Subscriptions provide a serialized, awaitable `onReady` callback so clients can validate complete backlog before acting. Failed ready callbacks replay the uncommitted backlog; asynchronous frame decoding preserves relay order.
 
 - Added matching Python/TypeScript safeguards for missing group history. Clients preserve a recovery requirement across restart, block sends and hooks while state is incomplete, and require a fresh welcome bound to the receiving client's random challenge. Replaying an old welcome at a newer relay sequence cannot clear the requirement. CLI/MCP addition and refresh accept that challenge without changing admission policy. Tests cover expired controls, exclusion, both language directions and recovery after actual relay retention. Conflicting or expired pending operations still need reconciliation before release.
