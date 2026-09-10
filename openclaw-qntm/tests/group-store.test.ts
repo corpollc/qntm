@@ -44,7 +44,119 @@ function fixture() {
 async function run(store: QntmGroupStore, action: Parameters<QntmGroupStore['prepare']>[0], options: Parameters<QntmGroupStore['prepare']>[1] = {}) {
   await store.exclusive(async () => { await store.sync(); store.saveOperation(store.prepare(action, options)); await store.resume(); });
 }
+async function completedPending(f: ReturnType<typeof fixture>, store: QntmGroupStore, options: { ttl?: number; challenge?: string; competing?: boolean } = {}) {
+  await store.sync();
+  const before = store.load(), value = prepareGroupSessionAddition(f.member, before.session!, [f.late.publicKey], options.ttl,
+    options.challenge ? new Uint8Array(Buffer.from(options.challenge, 'hex')) : undefined, before.cursor);
+  const operation = store.prepare('add', { contact: 'Late', challenge: options.challenge });
+  operation.controls = [value.addition, value.rekey].map(wire => base64UrlEncode(serializeEnvelope(wire)));
+  operation.welcomes = value.welcomes.map(wire => base64UrlEncode(serializeEnvelope(wire)));
+  operation.expected = createGroupSession(f.member, value.conversation, value.state);
+  store.saveOperation(operation);
+  await f.client.postMessage(f.conversation.id, serializeEnvelope(value.addition));
+  let rekey = value.rekey;
+  if (options.competing) {
+    const admitted = receiveGroupEvent(f.owner, value.addition, f.store(f.owner).load().session!).state;
+    do { rekey = prepareGroupSessionRekey(f.owner, admitted).rekey; } while (toHex(rekey.msg_id) >= toHex(value.rekey.msg_id));
+  }
+  await f.client.postMessage(f.conversation.id, serializeEnvelope(rekey));
+  await store.sync();
+  const state = store.load(); state.session!.seen = {}; store.save(state);
+  return operation;
+}
 describe('OpenClaw durable ordinary groups', () => {
+  it('reviews the exact completed original welcome after lost control ACKs, seen eviction and restart', async () => {
+    const f = fixture(), member = f.store(f.member), original = await completedPending(f, member);
+    const restarted = f.store(f.member), service = new QntmGroupActions(), scope = { key: 'completed-exact', store: restarted };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(reviewed.review.effect).toContain('exact saved'); expect(reviewed.review.welcomePurpose).toBeUndefined();
+    expect(restarted.load().operation).toEqual(original); expect(f.rows).toHaveLength(2);
+    await service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash });
+    expect(f.rows).toHaveLength(3); expect(f.rows[2].envelope).toEqual(base64UrlDecode(original.welcomes[0]));
+    expect(restarted.load().operation).toBeNull();
+  });
+  it.each(['expired', 'later rotation', 'competing completion'] as const)('reviews a current renewal for %s without replacing original intent before commit', async reason => {
+    const f = fixture(), member = f.store(f.member), challenge = '81'.repeat(32);
+    const original = await completedPending(f, member, { challenge, competing: reason === 'competing completion' });
+    // Draft compatibility: authenticate the original signed ciphertext to recover its challenge.
+    delete original.recoveryChallenge; const saved = member.load(); saved.operation = original; member.save(saved);
+    if (reason === 'later rotation') { await run(f.store(f.owner), 'rekey'); await member.sync(); }
+    if (reason === 'expired') { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(original.welcomes[0])).expiry_ts + 1) * 1000); }
+    const before = member.load(), count = f.rows.length, service = new QntmGroupActions(), scope = { key: 'completed-renewal', store: f.store(f.member) };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(reviewed.review.welcomePurpose).toBe('renewal'); expect(reviewed.review.effect).toContain('same verified completed admission');
+    expect(reviewed.review.recoveryChallenge).toBe(challenge); expect(JSON.stringify(reviewed)).not.toContain(before.session!.root);
+    expect(member.load().operation).toEqual(original); expect(f.rows).toHaveLength(count);
+    f.ambiguous();
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash })).rejects.toThrow('ambiguous POST');
+    const staged = member.load().operation!;
+    expect(staged.origin).toMatchObject({ controls: original.controls, welcomes: original.welcomes, sentControls: 0, sentWelcomes: 0, delivery: 'unknown' });
+    expect(staged.origin).not.toHaveProperty('expected'); expect(staged.controls).toEqual([]); expect(staged.sentWelcomes).toBe(0);
+    expect(staged.welcomes).not.toEqual(original.welcomes);
+    const opened = openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('renewal'); expect(opened.conversation.currentEpoch).toBe(before.session!.epoch);
+    expect(opened.replayFromSequence).toBe(before.cursor); expect(opened.recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+    const restarted = f.store(f.member); expect(restarted.prepareRetry()).toEqual(staged);
+    await restarted.exclusive(() => restarted.resume());
+    expect(f.rows.slice(count).map(row => base64UrlEncode(row.envelope))).toEqual([staged.welcomes[0], staged.welcomes[0]]);
+    expect(restarted.load().operation).toBeNull();
+  });
+  it('preserves an uncertain renewal after its own expiry without another replacement', async () => {
+    const f = fixture(), member = f.store(f.member); await completedPending(f, member, { competing: true });
+    const renewal = member.prepareRetry(); member.saveRetry(renewal); f.ambiguous();
+    await expect(member.resume()).rejects.toThrow('ambiguous POST');
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(renewal.welcomes[0])).expiry_ts + 1) * 1000);
+    const restarted = f.store(f.member), count = f.rows.length;
+    expect(restarted.prepareRetry()).toEqual(renewal);
+    await expect(restarted.exclusive(() => restarted.resume())).rejects.toThrow('expired');
+    expect(restarted.load().operation).toEqual(renewal); expect(f.rows).toHaveLength(count);
+  });
+  it.each(['removal', 'readmission', 'recovery', 'journal'] as const)('invalidates reviewed recovery after %s changes', async changed => {
+    const f = fixture(), member = f.store(f.member); await completedPending(f, member, { competing: true });
+    const original = member.load().operation!, service = new QntmGroupActions(), scope = { key: 'recovery-cas', store: member };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    if (changed === 'removal' || changed === 'readmission') {
+      const owner = f.store(f.owner); await run(owner, 'remove', { contact: 'Late' });
+      if (changed === 'readmission') await run(owner, 'add', { contact: 'Late' });
+    } else {
+      const state = member.load();
+      if (changed === 'journal') state.operation!.welcomes[0] = member.prepareRetry().welcomes[0];
+      else state.session!.recovery = { afterSequence: state.cursor, reason: 'missing_history', challenge: '63'.repeat(32) };
+      member.save(state);
+    }
+    const count = f.rows.length;
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash })).rejects.toThrow('configuration changed');
+    expect(f.rows).toHaveLength(count); expect(member.load().operation!.id).toBe(original.id);
+    if (changed === 'removal' || changed === 'readmission') {
+      expect(member.prepareRetry().origin).toBeUndefined();
+      await expect(member.exclusive(() => member.resume())).rejects.toThrow('no longer safe');
+      expect(f.rows).toHaveLength(count);
+    }
+  });
+  it('preserves the original intent and posts nothing when reviewed renewal staging fails', async () => {
+    const f = fixture(), member = f.store(f.member); await completedPending(f, member, { competing: true });
+    const original = member.load().operation!, service = new QntmGroupActions(), scope = { key: 'staging-failure', store: member };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    const originalSave = member.save.bind(member), count = f.rows.length;
+    const save = vi.spyOn(member, 'save').mockImplementation(state => {
+      if (state.operation?.origin) throw new Error('simulated disk full');
+      originalSave(state);
+    });
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash })).rejects.toThrow('disk full');
+    save.mockRestore(); expect(member.load().operation).toEqual(original); expect(f.rows).toHaveLength(count);
+  });
+  it('clears fully acknowledged welcome journals after removal and changed pins without a POST', async () => {
+    const f = fixture(), member = f.store(f.member), original = await completedPending(f, member);
+    await f.client.postMessage(f.conversation.id, base64UrlDecode(original.welcomes[0]));
+    const state = member.load(); state.operation!.sentControls = 2; state.operation!.sentWelcomes = 1; member.save(state);
+    await run(f.store(f.owner), 'remove', { contact: 'Member' });
+    member.account.config.contacts!.Late = base64UrlEncode(generateIdentity().publicKey);
+    const service = new QntmGroupActions(), scope = { key: 'acknowledged-cleanup', store: member }, count = f.rows.length;
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(reviewed.review.effect).toContain('already acknowledged');
+    await service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash });
+    expect(member.load().operation).toBeNull(); expect(member.load().session!.removed).toBe(true); expect(f.rows).toHaveLength(count);
+  });
   it('reviews admission renewal through refresh without exposing keys or sending before commit', async () => {
     const f = fixture(), store = f.store(f.member);
     await run(store, 'add', { contact: 'Late' });

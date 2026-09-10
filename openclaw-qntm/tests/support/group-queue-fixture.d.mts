@@ -2,3 +2,7 @@ export function stageGroupDelivery(config: unknown, stateDir: string, messageId:
   messageId: string; queueId: string; generation: string;
 }>;
 export function stageAcceptedGroupSend(config: unknown, stateDir: string): Promise<{ messageId: string }>;
+
+export function stageCompletedGroupAddition(config: unknown, stateDir: string, contact: string, ttl?: number): Promise<{
+  expiry: number; original: { controls: string[]; welcomes: string[] }; currentRoot: string;
+}>;

@@ -37,7 +37,7 @@ export function resolveGroupToolScope(ctx: OpenClawPluginToolContext, fallback: 
 function fingerprint(store: QntmGroupStore): string {
   const state = store.load(), session = state.session;
   return digest({ seed: state.seed, epoch: session?.epoch, root: session?.root, snapshot: session?.snapshot, removed: session?.removed,
-    rotation: session?.needsRekey, recovery: session?.recovery, operation: state.operation?.id, contacts: store.account.config.contacts,
+    rotation: session?.needsRekey, recovery: session?.recovery, operation: state.operation, contacts: store.account.config.contacts,
     admissions: session?.admissions, removedAtEpoch: session?.removedAtEpoch,
     actions: store.binding.groupActions, enabled: store.binding.enabled });
 }
@@ -61,7 +61,7 @@ export class QntmGroupActions {
           : args.action === 'send' ? ['text'] : args.action === 'open' ? ['link'] : [];
         if (Object.keys(options).some(key => !allowed.includes(key))) throw new Error('Options do not match the reviewed group action');
         if (args.action !== 'open') await store.sync();
-        const operation = args.action === 'retry' ? store.load().operation ?? undefined : args.action === 'open' ? undefined : store.prepare(args.action, options);
+        const operation = args.action === 'retry' ? store.prepareRetry() : args.action === 'open' ? undefined : store.prepare(args.action, options);
         if (args.action === 'retry' && !operation) throw new Error('No saved group operation to retry');
         if (args.action === 'retry' && !store.binding.groupActions?.includes(operation!.action)) throw new Error('Original pending action is no longer locally permitted');
         const expiresAt = Date.now() + 300_000;
@@ -70,7 +70,8 @@ export class QntmGroupActions {
           contact: operation?.contact, recipientPublicKey: operation?.publicKey, text: operation?.text,
           welcomePurpose: operation?.welcomePurpose,
           recoveryChallenge: operation?.recoveryChallenge ?? options.challenge, link: options.link ?? (args.action === 'open' ? store.binding.groupLink : undefined),
-          savedOperation: args.action === 'retry' ? { id: operation!.id, action: operation!.action } : undefined, expiresAt,
+          savedOperation: args.action === 'retry' ? { id: operation!.id, action: operation!.action,
+            recovery: operation!.origin ? 'completed_admission_renewal' : undefined } : undefined, expiresAt,
           effect: args.action === 'add' ? 'Admit this pinned contact, rotate keys, and deliver a recipient-encrypted welcome. They receive no earlier keys.'
             : args.action === 'remove' ? 'Remove this contact and rotate keys for remaining members. Previously learned keys cannot be erased.'
             : args.action === 'refresh' ? operation?.welcomePurpose === 'renewal'
@@ -78,7 +79,10 @@ export class QntmGroupActions {
               : 'Send current keys only to this already admitted contact. This generic refresh cannot undo saved removal.'
             : args.action === 'open' ? 'Fetch the configured group stream and install a welcome signed by the pinned contact. Replay and recovery guards remain mandatory.'
             : args.action === 'send' ? 'Post this complete text to the current group.'
-            : args.action === 'retry' ? 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
+            : args.action === 'retry' ? operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
+              ? 'Clear the already acknowledged welcome journal locally. No messages will be posted.'
+              : operation!.origin ? 'Deliver current keys for the same verified completed admission using the reviewed renewal. Preserve original uncertain ciphertext; do not re-add or rotate. The original recovery challenge remains bound.'
+                : 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
             : 'Rotate keys for the complete current roster and verify the accepted transition.' };
         const reviewToken = randomUUID().replaceAll('-', ''), reviewHash = digest(review);
         this.reviews.set(reviewToken, { scope: scope.key, fingerprint: fingerprint(store), expiresAt, hash: reviewHash,
@@ -93,7 +97,7 @@ export class QntmGroupActions {
       if (fingerprint(store) !== pending.fingerprint) throw new Error('Group state or contact configuration changed; prepare a new review');
       this.reviews.delete(args.reviewToken);
       if (pending.action === 'open') await store.open(pending.link);
-      else { if (pending.action !== 'retry') store.saveOperation(pending.operation!); await store.resume(); }
+      else { if (pending.action !== 'retry') store.saveOperation(pending.operation!); else store.saveRetry(pending.operation!); await store.resume(); }
       return { ...store.status(), status: 'submitted', operation: pending.action };
     });
   }
@@ -108,7 +112,7 @@ export function createQntmGroupTool(ctx: OpenClawPluginToolContext, fallback: Qn
       + 'Actions/options: add or refresh {contact,challenge?}; remove {contact}; rekey {}; retry {}; open {link?}; send {text}. '
       + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh uses renewal proof for a known accepted admission; '
       + 'it can deliver a later readmission without changing membership, but cannot undo a newer removal. Generic refresh cannot undo saved removal. '
-      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry resumes only saved ciphertext. '
+      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. '
       + 'Tools are scoped to the native host session. Reviews expire after five minutes or restart; configuration/membership changes require another review. '
       + 'Text and contact metadata in tool arguments/results may remain in local host transcripts.',
     parameters: { type: 'object', additionalProperties: false, properties: {
