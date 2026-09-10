@@ -124,7 +124,9 @@ def _history_entry(message, sequence, order):
     kind, body = inner['body_type'], inner['body']
     entry = {'msg_id': envelope['msg_id'].hex(), 'direction': 'incoming', 'sender_kid': sender,
              'body_type': kind, 'created_ts': envelope['created_ts'], 'verified': True,
-             'sequence': sequence, 'receive_order': order, 'receive_event': create_receive_event(message, sequence)}
+             'sequence': sequence, 'receive_order': order, 'receive_event': create_receive_event(message, sequence),
+             'receive_binding': {'digest': _suite.hash(serialize_envelope(envelope)).hex(),
+                                 'epoch': envelope['conv_epoch'], 'valid': True}}
     group_text = cli._decode_group_body(kind, body)
     if group_text is not None:
         entry['unsafe_body'] = group_text
@@ -246,6 +248,12 @@ def receive_batch(record, identity, raw_messages, head, *, bootstrap=False):
                              and str(error) == 'Stale, future or superseded group epoch')):
                     retry.append(raw)
                 continue
+            if event.get('rewound'):
+                superseded = {frame['messageId'] for frame in state['rekeys'] if frame['epoch'] >= envelope['conv_epoch']}
+                for entry in history:
+                    binding = entry.get('receive_binding')
+                    if binding and (binding['epoch'] > envelope['conv_epoch'] or entry['msg_id'] in superseded):
+                        binding['valid'] = False
             state = event['state']
             if event['duplicate']:
                 continue
@@ -255,7 +263,10 @@ def receive_batch(record, identity, raw_messages, head, *, bootstrap=False):
                 result['group_removed_sequence'] = max(result.get('group_removed_sequence', 0), raw['seq'])
             mid = envelope['msg_id'].hex()
             previous_entry = known_history.get(mid)
-            if previous_entry is None or 'receive_event' not in previous_entry:
+            digest = _suite.hash(serialize_envelope(envelope)).hex()
+            if (previous_entry is None or 'receive_event' not in previous_entry
+                    or previous_entry.get('receive_binding', {}).get('digest') != digest
+                    or not previous_entry.get('receive_binding', {}).get('valid')):
                 order = max(order + 1, raw['seq'])
                 entry = _history_entry(message, raw['seq'], order)
                 if previous_entry is None:
@@ -264,9 +275,11 @@ def receive_batch(record, identity, raw_messages, head, *, bootstrap=False):
                 else:
                     # A sent message already has a local history row, but its
                     # verified relay echo must still reach --include-self hooks.
+                    if 'receive_event' in previous_entry:
+                        previous_entry.clear()
                     previous_entry.update(entry)
-                output.append({'conversation_id': result['id'], 'message_id': mid, 'sender': entry['sender_kid'][:3],
-                               **{key: value for key, value in entry.items() if key not in {'msg_id', 'direction', 'receive_event', 'receive_order'}}})
+                output.append((mid, digest, {'conversation_id': result['id'], 'message_id': mid, 'sender': entry['sender_kid'][:3],
+                               **{key: value for key, value in entry.items() if key not in {'msg_id', 'direction', 'receive_event', 'receive_order', 'receive_binding'}}}))
         remaining = retry
         if not changed:
             break
@@ -277,7 +290,9 @@ def receive_batch(record, identity, raw_messages, head, *, bootstrap=False):
     result['group_cursor'] = max(result.get('group_cursor', 0), head)
     result['group_delivery_receipts'] = [seq for seq in receipts if seq > head]
     result['group_order'] = order
-    return result, output
+    return result, ([] if state['recovery'] else [row for mid, digest, row in output
+        if known_history[mid].get('receive_binding', {}).get('valid')
+        and known_history[mid]['receive_binding']['digest'] == digest])
 
 
 def receive_batch_locked(config_dir, identity, records, record, raw, head):
@@ -564,6 +579,11 @@ def join(config_dir, identity, link, name=''):
                   'group_cursor': welcome['replay_from_sequence'], 'group_bootstrap_sequence': welcome_sequence,
                   'group_pending': [], 'group_history': copy.deepcopy(cli._load_history(config_dir, conversation_id)) if previous else [],
                   'inviter_public_key': locator['inviter_public_key'].hex()}
+        # A fresh checkpoint establishes current authority, not the validity of
+        # undelivered plaintext from the replaced checkpoint's branch.
+        for entry in record['group_history']:
+            if entry.get('receive_binding'):
+                entry['receive_binding']['valid'] = False
         if previous and 'group_revision' in previous:
             record['group_revision'] = previous['group_revision']
         if previous and previous.get('group_operation'):

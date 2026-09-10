@@ -167,6 +167,13 @@ Pending undecryptable ciphertext is limited to 256 messages and 4 MiB of decoded
 wire data. Exceeding that bound fails the receive update without advancing its
 saved cursor. Late-decrypted messages keep their original public relay sequence;
 a private delivery order makes them available to hooks after catch-up.
+Each received history row also stores a verified ciphertext digest, source epoch
+and delivery-validity flag. Competing-branch descendants and superseded rekeys
+lose delivery eligibility; installing a replacement welcome invalidates prior
+queued events without erasing their plaintext history. Ordinary replay-cache
+eviction does not discard valid pending hook deliveries. The resident receiver
+waits for complete replay before dispatch, with an additional 8,192-message /
+16 MiB frame buffer bound. See [receive-hook semantics](receive-hooks.md#delivery-and-restart-semantics).
 
 These files use restrictive local permissions, not password encryption. Local
 message history has no automatic expiry. Migrating a legacy group copies its
