@@ -622,6 +622,7 @@ def contact_remove(name: str) -> dict:
 
 def _group_action(conversation, action, *args):
     from .group_client import GroupClient
+    from .legacy_group import LegacyCreationError
     from .cli import SendDeliveryUnknown
     config_dir = _config_dir()
     identity = _load_identity(config_dir)
@@ -633,6 +634,8 @@ def _group_action(conversation, action, *args):
     try:
         client = GroupClient(config_dir, identity, _conversation_relay(record))
         return getattr(client, action)(record['id'], *args)
+    except LegacyCreationError as error:
+        return {'error': str(error), 'code': 'legacy_group_creation_incomplete', **error.data}
     except SendDeliveryUnknown as error:
         return {'error': 'Group delivery is uncertain; use group_retry to resume the saved operation',
                 'message_id': error.message_id, 'delivery': 'unknown'}
@@ -684,7 +687,11 @@ def group_remove_contact(conversation: str, contact: str, reason: str = '') -> d
 
 @mcp.tool()
 def group_retry(conversation: str) -> dict:
-    """Resume an authorized saved group operation using its exact encrypted messages."""
+    """Retry an authorized contact-group operation or legacy CLI genesis, using exact saved messages.
+
+    Legacy creation stays a bearer-invite group. Its result distinguishes relay
+    acknowledgement from exact replay; neither confirms delivery to a peer.
+    """
     return _group_action(conversation, 'retry')
 
 
