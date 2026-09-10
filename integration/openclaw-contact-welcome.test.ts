@@ -2,13 +2,14 @@
  * is the deterministic loopback tool caller used by the existing host suite. */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
-import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { createLongHarness, waitForCliHistory, CliAgent, type LongHarness } from './src/runtime.js';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -346,6 +347,37 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(dave.admissions[h.dave.readIdentity().key_id].sourceEpoch).toBeGreaterThan(removed.removedAtEpoch!);
     await h.dave.run(['send', convId, 'Python joined after native repaired admission rotation']);
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'Python joined after native repaired admission rotation', 'Python reply after two native recovery reviews');
+  }, TIMEOUT);
+
+  it('recovers an expired generic founder refresh through native review and a fresh Python identity restore', async () => {
+    const challenge = '51'.repeat(32);
+    let original: { welcomes: string[] }, root: string, anchor: number;
+    const reviewed = await host.journey(h.alice,
+      { id: 'retry-generic-founder-refresh', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' }, async () => {
+        const staged = await stageGenericGroupRefresh(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'Alice', 5, challenge);
+        original = staged.original; root = staged.currentRoot; anchor = staged.cursor;
+        await delay(Math.max(0, (staged.expiry + 1) * 1000 - Date.now()));
+      });
+    expect(reviewed[1].review!.retryMode).toBe('replacement_refresh');
+    expect(reviewed[1].review!.welcomePurpose).toBe('refresh'); expect(reviewed[1].review!.recoveryChallenge).toBe(challenge);
+    expect(checkpoint().operation).toBeNull(); expect(checkpoint().session.root).toBe(root!);
+    const messages = await relay.receiveMessages(parseGroupLink(checkpointLink()).conversationId, anchor!);
+    expect(messages.entries.some(row => Buffer.from(row.envelope).toString('base64url') === original!.welcomes[0])).toBe(false);
+    const welcomes = messages.entries.flatMap(row => {
+      try { return [openGroupWelcome(aliceIdentity(), row.envelope, { inviterPublicKey: host.identity.publicKey, conversationId: parseGroupLink(checkpointLink()).conversationId })]; }
+      catch { return []; }
+    });
+    expect(welcomes).toHaveLength(1); expect(welcomes[0].purpose).toBe('refresh');
+    expect(welcomes[0].replayFromSequence).toBeGreaterThanOrEqual(anchor!);
+    expect(welcomes[0].recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+    const restored = new CliAgent('restored-founder', h.alice.qntmBin, h.relayUrl, h.recipeCatalogPath,
+      fileURLToPath(new URL('../', import.meta.url)), h.rootDir);
+    writeFileSync(join(restored.configDir, 'identity.json'), JSON.stringify(h.alice.readIdentity()), { mode: 0o600 });
+    await restored.run(['group', 'join', checkpointLink()]);
+    const state = restored.readConversation(convId).group_session as GroupSessionState;
+    expect(state.root).toBe(root!); expect(state.rekeys).toEqual([]); expect(state.recovery).toBeNull();
+    await restored.run(['send', convId, 'Python restored founder from native generic refresh retry']);
+    await waitForCliHistory(h.dave, convId, row => row.unsafe_body === 'Python restored founder from native generic refresh retry', 'Python peer reply after generic native refresh');
   }, TIMEOUT);
 
 });

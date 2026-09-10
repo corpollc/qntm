@@ -6,3 +6,7 @@ export function stageAcceptedGroupSend(config: unknown, stateDir: string): Promi
 export function stageCompletedGroupAddition(config: unknown, stateDir: string, contact: string, ttl?: number, partial?: boolean): Promise<{
   expiry: number; original: { controls: string[]; welcomes: string[] }; currentRoot: string;
 }>;
+
+export function stageGenericGroupRefresh(config: unknown, stateDir: string, contact: string, ttl?: number, challenge?: string): Promise<{
+  expiry: number; original: { welcomes: string[] }; cursor: number; currentRoot: string;
+}>;

@@ -14,7 +14,7 @@ import {
   receiveGroupEvent, requireGroupRecovery, openGroupWelcome, groupSessionFromWelcome, parseGroupLink, createGroupLink,
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
   assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
-  prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent,
+  prepareGroupAdmissionRenewal, assertGroupAdmissionRenewalCurrent, MAX_GROUP_WELCOME_BYTES, GROUP_WELCOME_TTL,
   createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical, marshalCanonical, openSecret,
   type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupAdmissionRenewal, type GroupWelcome, type OuterEnvelope,
 } from '@corpollc/qntm';
@@ -30,7 +30,7 @@ const rowSchema = z.object({ seq: seq.min(1), wire: z.string().max(128 * 1024) }
 const MAX_OPERATION_REVISIONS = 256;
 const MAX_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024;
 const evidenceSchema = z.object({
-  phase: z.enum(['addition_rekey', 'renewal']), controls: z.array(z.string().max(128 * 1024)).max(2),
+  phase: z.enum(['addition_rekey', 'renewal', 'refresh']), controls: z.array(z.string().max(128 * 1024)).max(2),
   welcomes: z.array(z.string().max(128 * 1024)).max(1), sentControls: seq.max(2), sentWelcomes: seq.max(1), delivery: z.literal('unknown'),
 }).strict();
 const originalAdditionSchema = z.object({
@@ -368,13 +368,76 @@ export class QntmGroupStore {
     requireValue(challenge === undefined || challenge instanceof Uint8Array && challenge.length === 32, 'Invalid saved recovery challenge');
     return challenge === undefined ? undefined : toHex(challenge as Uint8Array);
   }
+  /** Authenticate the old generic intent without treating its expired keys as
+   * current authority. A recipient can open its box but cannot forge our signature. */
+  private genericRefreshContext(operation: GroupOperation): { recipient: Uint8Array; challenge?: string } {
+    requireValue(operation.action === 'refresh' && operation.welcomePurpose !== 'renewal' && !operation.origin && !operation.phase
+      && operation.controls.length === 0 && operation.welcomes.length === 1 && operation.publicKey, 'Invalid saved generic refresh intent');
+    const identity = this.account.identity!, wire = base64UrlDecode(operation.welcomes[0]);
+    const fields = (value: unknown, names: string[]) => value !== null && typeof value === 'object' && !Array.isArray(value)
+      && Object.keys(value).sort().join(',') === names.sort().join(',');
+    const same = (a: unknown, b: unknown) => toHex(marshalCanonical(a)) === toHex(marshalCanonical(b));
+    const outer = deserializeEnvelope(wire), at = Math.floor(Date.now() / 1000);
+    requireValue(wire.length <= MAX_GROUP_WELCOME_BYTES && fields(outer, ['v', 'suite', 'kind', 'conv_id', 'msg_id', 'conv_epoch', 'created_ts', 'expiry_ts', 'ciphertext'])
+      && encode(outer) === operation.welcomes[0] && outer.v === 1 && outer.suite === 'QSP-1'
+      && (outer as OuterEnvelope & { kind?: string }).kind === 'group_welcome'
+      && outer.msg_id instanceof Uint8Array && outer.msg_id.length === 16 && toHex(outer.conv_id) === this.binding.conversationId
+      && Number.isSafeInteger(outer.conv_epoch) && outer.conv_epoch >= 0 && outer.conv_epoch <= 0xffffffff
+      && Number.isSafeInteger(outer.created_ts) && outer.created_ts > 0 && outer.created_ts <= at + 600
+      && Number.isSafeInteger(outer.expiry_ts) && outer.expiry_ts > outer.created_ts
+      && outer.expiry_ts - outer.created_ts <= GROUP_WELCOME_TTL, 'Invalid saved generic refresh envelope');
+    const recipient = base64UrlDecode(operation.publicKey), plain = openSecret(identity.privateKey, recipient, outer.ciphertext);
+    const signed = unmarshalCanonical<{ payload: Record<string, unknown>; signature: Uint8Array }>(plain);
+    requireValue(fields(signed, ['payload', 'signature']) && signed.signature instanceof Uint8Array && signed.signature.length === 64
+      && toHex(plain) === toHex(marshalCanonical(signed)), 'Invalid saved generic refresh signature container');
+    const payload = signed.payload, { ciphertext: _ciphertext, ...header } = outer;
+    const optional = ['replay_from_seq', 'admissions', 'recovery_challenge'].filter(key => payload && Object.hasOwn(payload, key));
+    requireValue(fields(payload, ['proto', 'envelope', 'inviter_ik_pk', 'recipient_ik_pk', 'group_key', 'group_state', ...optional])
+      && payload.proto === 'qntm/group-refresh/v1' && same(payload.envelope, header)
+      && same(payload.inviter_ik_pk, identity.publicKey) && same(payload.recipient_ik_pk, recipient)
+      && new QSP1Suite().verify(identity.publicKey, marshalCanonical(payload), signed.signature), 'Invalid saved generic refresh binding or signature');
+    const expected = restoreGroupSession(identity, operation.expected), oldRoster = group(expected).snapshot();
+    requireValue(expected.conversationId === this.binding.conversationId && outer.conv_epoch === expected.epoch
+      && payload.group_key instanceof Uint8Array && toHex(payload.group_key) === expected.root && same(payload.group_state, oldRoster)
+      && oldRoster.founding_members.some(member => same(member.public_key, recipient))
+      && oldRoster.founding_members.some(member => same(member.public_key, identity.publicKey)), 'Saved generic refresh differs from its original checkpoint');
+    requireValue(payload.replay_from_seq === undefined || Number.isSafeInteger(payload.replay_from_seq) && (payload.replay_from_seq as number) >= 0,
+      'Invalid saved refresh replay anchor');
+    const value = payload.recovery_challenge;
+    requireValue(value === undefined || value instanceof Uint8Array && value.length === 32, 'Invalid saved refresh recovery challenge');
+    const challenge = value === undefined ? undefined : toHex(value as Uint8Array);
+    requireValue(operation.recoveryChallenge === undefined || operation.recoveryChallenge === challenge, 'Saved refresh challenge differs from its signed intent');
+    return { recipient, challenge };
+  }
+  private assertGenericRecipient(state: GroupCheckpoint, recipient: Uint8Array): void {
+    requireValue(state.session, 'Missing group checkpoint');
+    assertGroupCanSend(this.account.identity!, state.session);
+    requireValue(group(state.session).snapshot().founding_members.some(member => toHex(member.public_key) === toHex(recipient)),
+      'Original refresh recipient is no longer a current member');
+  }
+  private prepareGenericRetry(state: GroupCheckpoint, operation: GroupOperation): GroupOperation {
+    const { recipient, challenge } = this.genericRefreshContext(operation);
+    this.assertGenericRecipient(state, recipient);
+    const exact: GroupOperation = { ...operation, welcomePurpose: 'refresh', recoveryChallenge: challenge };
+    try { assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session!, this.welcomeBase(operation) as GroupWelcomeRefresh); return exact; }
+    catch { /* A fresh review may redeliver current keys to the same full member key. */ }
+    // Keep the generic purpose even if this recipient now has known admission
+    // provenance. Only a separately reviewed renewal can recover readmission.
+    const refreshed = prepareGroupWelcomeRefresh(this.account.identity!, state.session!, [recipient], undefined,
+      challenge ? new Uint8Array(Buffer.from(challenge, 'hex')) : undefined, state.cursor);
+    const next: GroupOperation = { ...exact, welcomes: refreshed.welcomes.map(encode), sentWelcomes: 0,
+      expected: createGroupSession(this.account.identity!, refreshed.conversation, refreshed.state,
+        { signedEpoch: state.session!.signedEpoch, admissions: state.session!.admissions }),
+      superseded: this.retainSuperseded(operation) };
+    this.checkEvidence(next); return next;
+  }
   private checkEvidence(operation: GroupOperation): void {
     requireValue((operation.superseded?.length ?? 0) <= MAX_OPERATION_REVISIONS
       && marshalCanonical({ origin: operation.origin ?? null, superseded: operation.superseded ?? [] }).length <= MAX_OPERATION_EVIDENCE_BYTES,
     'Saved recovery evidence reached its limit; preserve the operation');
   }
   private retainSuperseded(operation: GroupOperation): GroupOperation['superseded'] {
-    const superseded = [...operation.superseded ?? [], { phase: operation.phase ?? 'renewal' as const,
+    const superseded = [...operation.superseded ?? [], { phase: operation.phase ?? (operation.welcomePurpose === 'renewal' ? 'renewal' as const : 'refresh' as const),
       controls: [...operation.controls], welcomes: [...operation.welcomes], sentControls: operation.sentControls,
       sentWelcomes: operation.sentWelcomes, delivery: 'unknown' as const }];
     this.checkEvidence({ ...operation, superseded }); return superseded;
@@ -416,6 +479,7 @@ export class QntmGroupStore {
     requireValue(operation, 'No saved group operation to retry');
     if (operation.welcomes.length && operation.sentWelcomes === operation.welcomes.length) return operation;
     this.checkContact(operation);
+    if (operation.action === 'refresh' && operation.welcomePurpose !== 'renewal') return this.prepareGenericRetry(state, operation);
     if (operation.action !== 'add' && operation.welcomePurpose !== 'renewal') return operation;
     requireValue(state.session && operation.publicKey, 'Missing group checkpoint or recipient');
     const recipient = base64UrlDecode(operation.publicKey), kid = toHex(keyIDFromPublicKey(recipient));
@@ -542,7 +606,10 @@ export class QntmGroupStore {
       'Pending group operation no longer matches accepted state; preserve it for reconciliation');
     const base = this.welcomeBase(operation);
     if (operation.welcomePurpose === 'renewal') this.assertRenewal(state, operation);
-    else if (operation.action === 'refresh') assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
+    else if (operation.action === 'refresh') {
+      this.assertGenericRecipient(state, this.genericRefreshContext(operation).recipient);
+      assertGroupWelcomeRefreshCurrent(this.account.identity!, state.session, base as GroupWelcomeRefresh);
+    }
     for (; operation.sentWelcomes < operation.welcomes.length;) {
       const wire = operation.welcomes[operation.sentWelcomes];
       requireValue(envelope(wire).expiry_ts >= Math.floor(Date.now() / 1000), 'Saved welcome expired; preserve the operation for reconciliation');

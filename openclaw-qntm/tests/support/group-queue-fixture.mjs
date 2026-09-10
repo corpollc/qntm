@@ -3,7 +3,7 @@ import { QntmGroupStore } from '../../src/group-store.js';
 import { QntmIngressQueue } from '../../src/ingress-queue.js';
 import { resolveQntmAccount } from '../../src/accounts.js';
 import { inboundId } from '../../src/checkpoint.js';
-import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, createGroupSession } from '@corpollc/qntm';
+import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, createGroupSession } from '@corpollc/qntm';
 
 export async function stageGroupDelivery(config, stateDir, messageId) {
   const account = resolveQntmAccount({ cfg: config });
@@ -56,5 +56,25 @@ export async function stageCompletedGroupAddition(config, stateDir, contact, ttl
     await ordinary.sync();
     if (ordinary.load().session.needsRekey !== partial || ordinary.load().session.epoch !== (partial ? before.session.epoch : prepared.conversation.currentEpoch)) throw new Error('Staged native admission did not complete');
     return { expiry: prepared.welcomes[0].expiry_ts, original: operation, currentRoot: ordinary.load().session.root };
+  });
+}
+
+/** Stage an old generic delivery during an already admitted native model turn. */
+export async function stageGenericGroupRefresh(config, stateDir, contact, ttl = 1, challenge) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    const state = ordinary.load(), operation = ordinary.prepare('refresh', { contact, challenge });
+    if (operation.welcomePurpose !== 'refresh') throw new Error('Generic fixture requires founding or unknown admission');
+    const prepared = prepareGroupWelcomeRefresh(account.identity, state.session, [base64UrlDecode(operation.publicKey)], ttl,
+      challenge ? new Uint8Array(Buffer.from(challenge, 'hex')) : undefined, state.cursor);
+    operation.welcomes = prepared.welcomes.map(value => base64UrlEncode(serializeEnvelope(value)));
+    operation.expected = createGroupSession(account.identity, prepared.conversation, prepared.state,
+      { signedEpoch: state.session.signedEpoch, admissions: state.session.admissions });
+    // Older native drafts kept the challenge only in their signed box.
+    delete operation.welcomePurpose; delete operation.recoveryChallenge;
+    ordinary.saveOperation(operation);
+    return { expiry: prepared.welcomes[0].expiry_ts, original: operation, cursor: state.cursor, currentRoot: state.session.root };
   });
 }
