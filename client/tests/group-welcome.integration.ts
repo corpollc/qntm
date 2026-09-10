@@ -137,15 +137,16 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
       if (epoch) applyRekey(source, suite.generateGroupKey(), epoch);
       const before = createMessage(owner, source, 'text', new TextEncoder().encode('before addition'));
       const challenge = epoch ? suite.generateGroupKey() : undefined;
-      const added = prepareGroupAddition(owner, source, state, [late.publicKey], undefined, challenge);
+      const anchor = epoch ? 47 : 0;
+      const added = prepareGroupAddition(owner, source, state, [late.publicKey], undefined, challenge, anchor);
       let checkpoint = createGroupSession(owner, source, state);
       for (const envelope of [added.addition, added.rekey]) checkpoint = receiveGroupEvent(owner, envelope, checkpoint).state;
-      const welcome = refresh ? prepareGroupWelcomeRefresh(owner, checkpoint, [late.publicKey], undefined, challenge).welcomes[0] : added.welcomes[0];
+      const welcome = refresh ? prepareGroupWelcomeRefresh(owner, checkpoint, [late.publicKey], undefined, challenge, anchor).welcomes[0] : added.welcomes[0];
       const after = createMessage(owner, added.conversation, 'text', new TextEncoder().encode('after addition'));
       const result = python({ action: 'open', identity: Object.fromEntries(Object.entries(late).map(([k, v]) => [k, hex(v)])),
         link: createGroupLink({ conversationId: source.id, inviterPublicKey: owner.publicKey, relayUrl: 'https://inbox.qntm.corpo.llc' }),
         welcome: hex(marshalCanonical(welcome)), conversation_id: hex(source.id), inviter_public_key: hex(owner.publicKey),
-        before: hex(marshalCanonical(before)), after: hex(marshalCanonical(after)), challenge: challenge && hex(challenge) });
+        before: hex(marshalCanonical(before)), after: hex(marshalCanonical(after)), challenge: challenge && hex(challenge), anchor });
       expect(result).toMatchObject({ old_decrypts: false, epoch: epoch + 1, after: 'after addition', purpose: refresh ? 'refresh' : 'addition' });
       const reply = decryptMessage(deserializeEnvelope(bytes(result.reply)), added.conversation);
       expect(new TextDecoder().decode(reply.inner.body)).toBe('Python recipient reply');
@@ -154,13 +155,15 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
 
     it(`TypeScript opens a Python ${refresh ? 'refresh' : 'addition'} after epoch ${epoch} without earlier history`, () => {
       const challenge = epoch ? suite.generateGroupKey() : undefined;
-      const result = python({ action: 'prepare', epoch, refresh, challenge: challenge && hex(challenge) });
+      const anchor = epoch ? 47 : 0;
+      const result = python({ action: 'prepare', epoch, refresh, challenge: challenge && hex(challenge), anchor });
       const late = identity(result.late);
       const locator = parseGroupLink(result.link);
       expect(locator.conversationId).toEqual(bytes(result.conversation_id));
       expect(locator.inviterPublicKey).toEqual(bytes(result.owner.publicKey));
       const joined = openGroupWelcome(late, bytes(result.welcome), locator);
       expect(joined.recoveryChallenge).toEqual(challenge);
+      expect(joined.replayFromSequence).toBe(anchor);
       expect(joined.conversation.currentEpoch).toBe(epoch + 1);
       expect(hex(joined.conversation.keys.root)).toBe(result.root);
       expect(joined.purpose).toBe(refresh ? 'refresh' : 'addition');

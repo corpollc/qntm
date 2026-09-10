@@ -29,11 +29,12 @@ if request["action"] == "prepare":
         apply_rekey(source, suite.generate_group_key(), request["epoch"])
     before = create_message(owner, source, "text", b"before addition")
     challenge = bytes.fromhex(request['challenge']) if request.get('challenge') else None
-    addition = prepare_group_addition(owner, source, state, [late["publicKey"]], recovery_challenge=challenge)
+    anchor = request.get('anchor', 0)
+    addition = prepare_group_addition(owner, source, state, [late["publicKey"]], recovery_challenge=challenge, replay_from_sequence=anchor)
     checkpoint = create_group_session(owner, source, state)
     for envelope in [addition['addition'], addition['rekey']]:
         checkpoint = receive_group_event(owner, envelope, checkpoint)['state']
-    welcome = (prepare_group_welcome_refresh(owner, checkpoint, [late['publicKey']], recovery_challenge=challenge)['welcomes'][0]
+    welcome = (prepare_group_welcome_refresh(owner, checkpoint, [late['publicKey']], recovery_challenge=challenge, replay_from_sequence=anchor)['welcomes'][0]
                if request.get('refresh') else addition['welcomes'][0])
     after = create_message(owner, addition["conversation"], "text", b"after addition")
     print(json.dumps({
@@ -55,6 +56,7 @@ elif request["action"] == "open":
                                 conversation_id=locator["conversation_id"],
                                 inviter_public_key=locator["inviter_public_key"])
     assert joined.get('recovery_challenge') == (bytes.fromhex(request['challenge']) if request.get('challenge') else None)
+    assert joined['replay_from_sequence'] == request.get('anchor', 0)
     old_decrypts = False
     try:
         decrypt_message(unmarshal(bytes.fromhex(request["before"])), joined["conversation"])

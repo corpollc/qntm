@@ -361,7 +361,8 @@ class GroupClient:
             record = self.sync(record['id'])
             if record.get('group_operation'):
                 raise ValueError('A group operation is pending; use group retry')
-            operation = prepare_group_session_addition(self.identity, record['group_session'], [key], recovery_challenge=recovery_challenge)
+            operation = prepare_group_session_addition(self.identity, record['group_session'], [key],
+                recovery_challenge=recovery_challenge, replay_from_sequence=record.get('group_cursor', 0))
             expected = create_group_session(self.identity, operation['conversation'], operation['state'], signed_epoch=record['group_session']['signedEpoch'])
             self._save_operation(record['id'], {'kind': 'add', 'controls': [base64.b64encode(serialize_envelope(operation[name])).decode() for name in ('addition', 'rekey')],
                                                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
@@ -403,7 +404,8 @@ class GroupClient:
         record = self.enable(conversation_id)
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
-            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key], recovery_challenge=recovery_challenge)
+            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key],
+                recovery_challenge=recovery_challenge, replay_from_sequence=record.get('group_cursor', 0))
             expected = create_group_session(self.identity, operation['conversation'], operation['state'],
                                             signed_epoch=record['group_session']['signedEpoch'])
             self._save_operation(record['id'], {'kind': 'refresh', 'controls': [],
@@ -546,7 +548,7 @@ def join(config_dir, identity, link, name=''):
                     raise ValueError('Welcome predates the saved removal')
         record = {'id': conversation_id, 'type': 'group', 'name': name or welcome['state'].group_name,
                   'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'relay_url': relay,
-                  'group_cursor': welcome_sequence, 'group_bootstrap_sequence': welcome_sequence,
+                  'group_cursor': welcome['replay_from_sequence'], 'group_bootstrap_sequence': welcome_sequence,
                   'group_pending': [], 'group_history': copy.deepcopy(cli._load_history(config_dir, conversation_id)) if previous else [],
                   'inviter_public_key': locator['inviter_public_key'].hex()}
         if previous and 'group_revision' in previous:

@@ -5,6 +5,7 @@ import {
   GroupState, createGroupGenesisBody, parseGroupGenesisBody, parseGroupRekeyBody,
   applyRekey, createRekey, base64UrlEncode, prepareGroupAddition, openGroupWelcome,
   isGroupWelcomeEnvelope, GROUP_WELCOME_TTL, MAX_GROUP_WELCOME_BYTES,
+  groupSessionFromWelcome, checkGroupReplayCoverage, assertGroupCanSend,
 } from '../src/index.js';
 import { openSecret, sealSecret } from '../src/crypto/naclbox.js';
 
@@ -22,6 +23,30 @@ function setup(epoch = 0) {
 const pin = (f: ReturnType<typeof setup>) => ({ conversationId: f.conversation.id, inviterPublicKey: f.owner.publicKey });
 
 describe('Contact group welcomes', () => {
+  it('binds the replay interval before welcome delivery and rejects a changed anchor', () => {
+    const f = setup();
+    const envelope = prepareGroupAddition(f.owner, f.conversation, f.state, [f.late.publicKey], undefined, undefined, 12).welcomes[0];
+    const joined = openGroupWelcome(f.late, marshalCanonical(envelope), pin(f));
+    expect(joined.replayFromSequence).toBe(12);
+    const state = groupSessionFromWelcome(f.late, joined, 16);
+    const blocked = checkGroupReplayCoverage(state, joined.replayFromSequence, 16, [13, 14, 16]);
+    expect(blocked.recovery?.afterSequence).toBe(15);
+    expect(() => assertGroupCanSend(f.late, blocked)).toThrow('incomplete');
+    expect(checkGroupReplayCoverage(state, joined.replayFromSequence, 16, [13, 14, 15, 16]).recovery).toBeNull();
+    expect(() => groupSessionFromWelcome(f.late, joined, 12)).toThrow('anchor');
+    const opened = unmarshalCanonical<any>(openSecret(f.late.privateKey, f.owner.publicKey, envelope.ciphertext));
+    opened.payload.replay_from_seq = 15;
+    const forged = { ...envelope, ciphertext: sealSecret(f.late.privateKey, f.owner.publicKey, marshalCanonical(opened)) };
+    expect(() => openGroupWelcome(f.late, marshalCanonical(forged), pin(f))).toThrow('signature');
+    for (const anchor of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => prepareGroupAddition(f.owner, f.conversation, f.state, [f.late.publicKey], undefined, undefined, anchor)).toThrow('anchor');
+    }
+    delete opened.payload.replay_from_seq;
+    opened.signature = suite.sign(f.owner.privateKey, marshalCanonical(opened.payload));
+    const legacy = { ...envelope, ciphertext: sealSecret(f.owner.privateKey, f.late.publicKey, marshalCanonical(opened)) };
+    expect(openGroupWelcome(f.late, marshalCanonical(legacy), pin(f)).replayFromSequence).toBe(0);
+  });
+
   for (const epoch of [0, 7]) it(`adds a contact after epoch ${epoch} without exposing earlier history`, () => {
     const f = setup(epoch);
     const before = structuredClone(f.conversation), roster = f.state.snapshot();

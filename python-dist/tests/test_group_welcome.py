@@ -9,6 +9,7 @@ from qntm import (
     create_group_genesis_body, parse_group_genesis_body, parse_group_rekey_body, apply_rekey, create_rekey,
     base64url_encode, prepare_group_addition, open_group_welcome, is_group_welcome_envelope,
     GROUP_WELCOME_TTL, MAX_GROUP_WELCOME_BYTES,
+    group_session_from_welcome, check_group_replay_coverage, assert_group_can_send,
 )
 from qntm.gate import seal_secret, open_secret
 
@@ -25,6 +26,34 @@ def setup(epoch=0):
     if epoch:
         apply_rekey(conversation, suite.generate_group_key(), epoch)
     return owner, peer, late, conversation, state
+
+
+def test_signed_anchor_covers_the_interval_before_welcome_delivery():
+    owner, _, late, conversation, group = setup()
+    envelope = prepare_group_addition(owner, conversation, group, [late['publicKey']], replay_from_sequence=12)['welcomes'][0]
+    pin = {'conversation_id': conversation['id'], 'inviter_public_key': owner['publicKey']}
+    welcome = open_group_welcome(late, marshal_canonical(envelope), **pin)
+    assert welcome['replay_from_sequence'] == 12
+    state = group_session_from_welcome(late, welcome, 16)
+    blocked = check_group_replay_coverage(state, welcome['replay_from_sequence'], 16, [13, 14, 16])
+    assert blocked['recovery']['afterSequence'] == 15
+    with pytest.raises(ValueError, match='incomplete'):
+        assert_group_can_send(late, blocked)
+    assert check_group_replay_coverage(state, 12, 16, [13, 14, 15, 16])['recovery'] is None
+    with pytest.raises(ValueError, match='anchor'):
+        group_session_from_welcome(late, welcome, 12)
+    opened = unmarshal(open_secret(late['privateKey'], owner['publicKey'], envelope['ciphertext']))
+    opened['payload']['replay_from_seq'] = 15
+    forged = {**envelope, 'ciphertext': seal_secret(late['privateKey'], owner['publicKey'], marshal_canonical(opened))}
+    with pytest.raises(ValueError, match='signature'):
+        open_group_welcome(late, marshal_canonical(forged), **pin)
+    for anchor in [-1, 1.5, True, 9007199254740992]:
+        with pytest.raises(ValueError, match='anchor'):
+            prepare_group_addition(owner, conversation, group, [late['publicKey']], replay_from_sequence=anchor)
+    del opened['payload']['replay_from_seq']
+    opened['signature'] = suite.sign(owner['privateKey'], marshal_canonical(opened['payload']))
+    legacy = {**envelope, 'ciphertext': seal_secret(owner['privateKey'], late['publicKey'], marshal_canonical(opened))}
+    assert open_group_welcome(late, marshal_canonical(legacy), **pin)['replay_from_sequence'] == 0
 
 
 @pytest.mark.parametrize("epoch", [0, 7])

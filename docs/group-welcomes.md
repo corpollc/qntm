@@ -14,6 +14,13 @@ also remove it or a needed rekey. Missing that delivery window does not end
 membership. A member with current state can now send a new welcome containing
 current keys with `group refresh`, without changing membership or rotating keys.
 
+Each welcome signs the sender's fully processed relay position at preparation.
+The recipient checks that every later relay position is present, including the
+interval before the welcome was posted. A rotation can race into that interval;
+if retention has removed it, the recipient pauses and requests a fresh welcome
+instead of treating the older keys as current. History before the signed position
+is not required. The position stays inside the encrypted welcome.
+
 ## CLI and MCP
 
 Pin the contact's full Ed25519 public key after verifying its owner. A short key
@@ -104,7 +111,7 @@ does not grant keys for the interval when that identity was absent.
 
 This increment supports newly created ordinary groups and legacy profiles with
 a complete, trusted local roster. It detects missing relay sequences after a
-saved cursor or welcome, and expired authenticated controls for which it has
+saved cursor or the welcome's signed replay position, and expired authenticated controls for which it has
 keys. It does not reconstruct missing legacy roster history, establish freshness
 against a relay that fabricates a complete-looking replay, recover an addition
 superseded by another rekey, or integrate gateway admission/governance.
@@ -152,6 +159,14 @@ welcome per added contact, and the resulting local state. It never mutates the
 supplied checkpoint. A current noncreator member can add contacts, preserving
 the existing ordinary-group policy rather than introducing an admin-only gate;
 the creator's identity in the snapshot stays unchanged.
+
+Addition and refresh preparation take an optional final `replayFromSequence`
+argument in TypeScript or `replay_from_sequence` in Python. Hosts pass the relay
+cursor fully processed into the supplied checkpoint, before preparing the
+operation. Never substitute a later POST receipt or a head whose messages have
+not been processed. The default is zero, conservatively requiring coverage from
+the beginning. The opened welcome exposes the same field. Older draft welcomes
+without a signed position also use zero.
 
 Hosts publish the addition and rekey before sending any welcome. They must
 persist the exact operation for uncertain-send recovery and commit local state
@@ -236,8 +251,10 @@ recheck unreadable future-epoch controls when their keys become available.
 `groupSessionFromWelcome` / `group_session_from_welcome` installs an already
 opened, pinned welcome. It guards saved removal, older epochs and conflicting
 same-epoch state. Clearing a recovery requirement also requires the signed
-challenge and a sequence beyond the missing-history boundary. Hosts must replay
-everything after that welcome before enabling actions; a later gap blocks again.
+challenge and a sequence beyond the missing-history boundary. The signed replay
+position must precede the welcome's relay sequence. Hosts check coverage and
+replay from that signed position through the captured head before enabling
+actions, including controls posted before the welcome; a later gap blocks again.
 `requireGroupRecovery` / `require_group_recovery` lets a host persist another
 detected missing-history boundary. These checks use transport sequences to
 detect omissions, not to authenticate membership.
@@ -296,7 +313,7 @@ canonical CBOR of the complete payload:
 ```
 {proto: "qntm/group-welcome/v1", envelope: <all outer fields except ciphertext>,
  inviter_ik_pk: bytes(32), recipient_ik_pk: bytes(32), group_key: bytes(32),
- group_state: <creator-first GroupGenesisBody snapshot>,
+ group_state: <creator-first GroupGenesisBody snapshot>, replay_from_seq: uint,
  addition_id: bytes(16), rekey_id: bytes(16)}
 ```
 
@@ -328,7 +345,7 @@ Normal relay retention still applies independently.
 The relay can inspect its existing group ID, message ID, ordering, timestamps,
 epoch, ciphertext size and transport metadata, plus the `group_welcome` kind.
 It cannot read the recipient's identity, inviter's identity, roster, recovery
-challenge or group key
+challenge, signed replay position or group key
 from the welcome. This extension adds no metrics or recipient labels. A link
 holder can see its group locator and inviter pin. Keeping the locator in a URL
 fragment avoids including it in the normal HTTP request to the browser host;

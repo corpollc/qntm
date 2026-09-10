@@ -175,11 +175,12 @@ def check_expired_group_control(identity, previous, envelope, sequence):
 
 
 def group_session_from_welcome(identity, welcome, sequence, previous=None):
-    """Install authenticated, pinned welcome data; replay after it before acting.
+    """Install pinned welcome data; check coverage from its signed anchor before acting.
 
     An old welcome cannot clear a gap. A refresh cannot undo saved removal.
     """
     _require(_uint(sequence) and sequence > 0, 'Invalid welcome sequence')
+    _require(_uint(welcome.get('replay_from_sequence')) and welcome['replay_from_sequence'] < sequence, 'Invalid welcome replay anchor')
     if previous:
         saved = restore_group_session(identity, previous)
         _require(saved['conversationId'] == welcome['conversation']['id'].hex(), 'Welcome belongs to a different group')
@@ -217,15 +218,15 @@ def assert_group_can_send(identity, state):
     _require(_roster(state['snapshot']).is_member(identity['keyID']), 'Local identity is not a current group member')
 
 
-def prepare_group_session_addition(identity, state, recipients, ttl=None, recovery_challenge=None):
+def prepare_group_session_addition(identity, state, recipients, ttl=None, recovery_challenge=None, replay_from_sequence=0):
     """Prepare from the authenticated checkpoint; save before publishing."""
     assert_group_can_send(identity, state)
     options = {} if ttl is None else {'ttl': ttl}
     return prepare_group_addition(identity, group_session_conversation(state), _roster(state['snapshot']), recipients,
-                                  recovery_challenge=recovery_challenge, **options)
+                                  recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence, **options)
 
 
-def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL, recovery_challenge=None):
+def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL, recovery_challenge=None, replay_from_sequence=0):
     """Refresh current keys for members without admission or rotation.
 
     Hosts finish replay first, save the exact operation and recheck before
@@ -235,6 +236,7 @@ def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELC
     assert_group_can_send(identity, state)
     conversation, group = group_session_conversation(state), _roster(state['snapshot'])
     _require(_uint(ttl) and 0 < ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime')
+    _require(_uint(replay_from_sequence), 'Invalid welcome replay anchor')
     _require(isinstance(recipients, list) and 0 < len(recipients) <= 128, 'Invalid refresh recipient count')
     _require(recovery_challenge is None or isinstance(recovery_challenge, bytes)
              and len(recovery_challenge) == 32 and len(recipients) == 1, 'Invalid recovery challenge')
@@ -247,7 +249,7 @@ def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELC
     at = int(time.time())
     return {'conversation': conversation, 'state': group,
             'welcomes': [_seal_welcome(identity, conversation, group, recipient, at, ttl,
-                                      recovery_challenge=recovery_challenge) for recipient in recipients]}
+                                      recovery_challenge=recovery_challenge, replay_from_sequence=replay_from_sequence) for recipient in recipients]}
 
 
 def assert_group_welcome_refresh_current(identity, state, operation):
