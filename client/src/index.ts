@@ -101,3 +101,7 @@ export { prepareGroupAddition, openGroupWelcome, isGroupWelcomeEnvelope,
 export type { GroupAddition, GroupWelcome, GroupWelcomeEnvelope } from './group/welcome.js';
 export { createGroupLink, parseGroupLink, MAX_GROUP_LINK_BYTES } from './group/link.js';
 export type { GroupLocator } from './group/link.js';
+export { createGroupSession, restoreGroupSession, groupSessionConversation, assertGroupCanSend,
+  prepareGroupSessionAddition, assertGroupAdditionAccepted, createGroupControlMessage, receiveGroupEvent,
+  GROUP_REKEY_GRACE_SECONDS, MAX_GROUP_REKEY_CHECKPOINTS } from './group/session.js';
+export type { GroupSessionState, GroupEvent } from './group/session.js';

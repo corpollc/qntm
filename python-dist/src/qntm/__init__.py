@@ -96,6 +96,12 @@ from .group_welcome import (
     GROUP_WELCOME_TTL,
 )
 from .group_link import create_group_link, parse_group_link, MAX_GROUP_LINK_BYTES
+from .group_session import (
+    create_group_session, restore_group_session, group_session_conversation,
+    assert_group_can_send, create_group_control_message, receive_group_event,
+    prepare_group_session_addition, assert_group_addition_accepted,
+    GROUP_REKEY_GRACE_SECONDS, MAX_GROUP_REKEY_CHECKPOINTS,
+)
 from .governance import (
     GOV_MESSAGE_APPLIED,
     GOV_MESSAGE_APPROVE,

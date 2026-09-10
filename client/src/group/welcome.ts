@@ -68,7 +68,7 @@ function header(envelope: GroupWelcomeEnvelope) {
 }
 
 /** Validate a roster before applying any of it. Creator identity stays first. */
-function validateSnapshot(value: unknown): asserts value is GroupGenesisBody {
+export function validateGroupSnapshot(value: unknown): asserts value is GroupGenesisBody {
   requireValue(fields(value, 'group_name,description,created_at,founding_members'), 'Invalid group snapshot');
   const encoder = new TextEncoder();
   requireValue(typeof value.group_name === 'string' && encoder.encode(value.group_name).length <= 256
@@ -101,7 +101,7 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
     && uint(conversation.currentEpoch) && conversation.currentEpoch < MAX_EPOCH,
   'Invalid group addition context');
   const snapshot = state.snapshot();
-  validateSnapshot(snapshot);
+  validateGroupSnapshot(snapshot);
   requireValue(state.isMember(identity.keyID), 'Only a current group member may add contacts');
   requireValue(Array.isArray(recipients) && recipients.length > 0
     && state.memberCount() + recipients.length <= 128, 'Invalid added contact count');
@@ -191,7 +191,7 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   requireValue(equal(marshalCanonical(payload.envelope), marshalCanonical(header(value as unknown as GroupWelcomeEnvelope))),
     'Welcome envelope differs from signed context');
   requireValue(suite.verify(expected.inviterPublicKey, marshalCanonical(payload), opened.signature), 'Invalid group welcome signature');
-  validateSnapshot(payload.group_state);
+  validateGroupSnapshot(payload.group_state);
   const state = new GroupState();
   state.applyGenesis(payload.group_state);
   requireValue(state.isMember(keyIDFromPublicKey(expected.inviterPublicKey)) && state.isMember(identity.keyID),

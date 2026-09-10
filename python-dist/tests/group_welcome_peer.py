@@ -11,6 +11,7 @@ from qntm import (
     derive_conversation_keys, create_group_genesis_body, parse_group_genesis_body,
     apply_rekey, create_message, decrypt_message, marshal_canonical, unmarshal,
     prepare_group_addition, open_group_welcome, create_group_link, parse_group_link,
+    restore_group_session, receive_group_event,
 )
 
 request = json.load(sys.stdin)
@@ -56,5 +57,14 @@ elif request["action"] == "open":
     reply = create_message(identity, joined["conversation"], "text", b"Python recipient reply")
     print(json.dumps({"old_decrypts": old_decrypts, "after": after["inner"]["body"].decode(),
                       "epoch": joined["conversation"]["currentEpoch"], "reply": marshal_canonical(reply).hex()}))
+elif request["action"] == "session_receive":
+    identity = {key: bytes.fromhex(value) for key, value in request["identity"].items()}
+    state = restore_group_session(identity, request["state"])
+    events = []
+    for wire in request["envelopes"]:
+        result = receive_group_event(identity, unmarshal(bytes.fromhex(wire)), state)
+        state = result["state"]
+        events.append({"duplicate": result["duplicate"], "rewound": result["rewound"]})
+    print(json.dumps({"state": state, "events": events}))
 else:
     raise ValueError("Unknown test operation")

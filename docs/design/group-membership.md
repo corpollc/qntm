@@ -3,7 +3,8 @@
 Decision recorded September 9, 2026. This is the agreed product direction;
 automatic welcome delivery in the client interfaces is not yet implemented.
 The unreleased [library helpers](../group-welcomes.md) prepare the encrypted
-addition/rekey/welcome operation and parse public group locator links.
+addition/rekey/welcome operation, parse public group locator links, and replay
+ordinary-group membership through matching private Python/TypeScript checkpoints.
 
 ## Contact addition
 

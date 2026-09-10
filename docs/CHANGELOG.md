@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added matching Python and TypeScript ordinary-group receive checkpoints. The libraries validate membership controls, preserve removal across restart, require complete rekey rosters, and resolve delayed competing rekeys without treating old application traffic as current. A shared private JSON format supports cross-language recovery. Sender helpers require verified acceptance of the exact addition and rekey before releasing welcomes. Client interfaces, durable delivery orchestration and gateway-governed welcomes remain unfinished; these helpers are not yet the complete add-contact flow.
+
 - Added matching Python and TypeScript helpers that prepare an authorized contact addition with fresh group keys, recipient-encrypted welcomes and public group locator links. Tests cover earlier-history exclusion, removal/readmission, member-initiated addition, real relay delivery and fresh cross-language exchanges. Client interface integration and durable recovery remain unfinished; this library layer does not yet provide the complete add-contact workflow.
 - Clarified the group-add design as adding a known contact and sharing a group link, with automatic recipient-encrypted key delivery still to be implemented. Corrected contradictory late-join guidance in the protocol draft and recorded the decision to stop the stranger-entry experiment; released behavior is unchanged.
 - Added independent one-minute HTTPS and certificate checks for both browser hostnames, with tested alert delays, missing-target detection and bounded metadata documentation. These checks do not execute the browser app or replace encrypted messaging tests; outbound paging remains unconfigured.

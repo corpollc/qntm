@@ -11,6 +11,8 @@ import { buildSignedReceipt, generateIdentity, base64UrlEncode, keyIDFromPublicK
 import { GroupState, createInvite, createConversation, deriveConversationKeys, createGroupGenesisBody,
   parseGroupGenesisBody, createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink, isGroupWelcomeEnvelope,
+  createGroupSession, restoreGroupSession, receiveGroupEvent, assertGroupAdditionAccepted,
+  createGroupControlMessage, createGroupRemoveBody, createRekey, assertGroupCanSend,
   DropboxClient } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
@@ -291,6 +293,10 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     await relay.postMessage(source.id, marshalCanonical(before));
     await relay.postMessage(source.id, marshalCanonical(added.addition));
     await relay.postMessage(source.id, marshalCanonical(added.rekey));
+    let senderState = createGroupSession(owner, source, state);
+    const accepted = await relay.receiveMessages(source.id);
+    for (const wire of accepted.messages) senderState = receiveGroupEvent(owner, deserializeEnvelope(wire), senderState).state;
+    assertGroupAdditionAccepted(owner, senderState, added);
     const welcomeSequence = await relay.postMessage(source.id, marshalCanonical(added.welcomes[0]));
     expect(welcomeSequence).toBe(4);
     const link = createGroupLink({ conversationId: source.id, inviterPublicKey: owner.publicKey, relayUrl });
@@ -299,15 +305,43 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const welcomeWire = replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!;
     expect(Buffer.from(welcomeWire).toString('hex')).toBe(Buffer.from(marshalCanonical(added.welcomes[0])).toString('hex'));
     const joined = openGroupWelcome(contact, welcomeWire, locator);
+    let contactState = createGroupSession(contact, joined.conversation, joined.state);
     expect(() => openGroupWelcome(outsider, welcomeWire, locator)).toThrow();
     expect(() => decryptMessage(deserializeEnvelope(replay.messages[0]), joined.conversation)).toThrow();
     const reply = createMessage(contact, joined.conversation, 'text', new TextEncoder().encode('joined from group link'));
     await relay.postMessage(joined.conversation.id, marshalCanonical(reply));
     const received = await relay.receiveMessages(source.id, replay.sequence);
     expect(received.messages).toHaveLength(1);
-    const clear = decryptMessage(deserializeEnvelope(received.messages[0]), added.conversation);
+    const delivered = receiveGroupEvent(owner, deserializeEnvelope(received.messages[0]), senderState);
+    senderState = delivered.state;
+    expect(delivered.duplicate).toBe(false);
+    if (delivered.duplicate) throw new Error('Expected new contact reply');
+    const clear = delivered.message;
     expect(new TextDecoder().decode(clear.inner.body)).toBe('joined from group link');
     expect(clear.inner.sender_ik_pk).toEqual(contact.publicKey);
+    const removal = createGroupControlMessage(owner, added.conversation, 'group_remove', createGroupRemoveBody([contact.keyID]));
+    const remaining = new GroupState(); remaining.applyGenesis(added.state.snapshot());
+    remaining.applyRemove({ removed_at: Math.floor(Date.now() / 1000), removed_members: [contact.keyID], reason: '' });
+    const rekey = createGroupControlMessage(owner, added.conversation, 'group_rekey', createRekey(owner, added.conversation, remaining).bodyBytes);
+    await relay.postMessage(source.id, marshalCanonical(removal));
+    await relay.postMessage(source.id, marshalCanonical(rekey));
+    // Reconnect from a persisted checkpoint and process the same relay controls
+    // as the continuing member. The removed receiver must retain only old keys.
+    contactState = restoreGroupSession(contact, JSON.parse(JSON.stringify(contactState)));
+    const afterRestart = await relay.receiveMessages(source.id, received.sequence);
+    for (const wire of afterRestart.messages) {
+      const envelope = deserializeEnvelope(wire);
+      senderState = receiveGroupEvent(owner, envelope, senderState).state;
+      contactState = receiveGroupEvent(contact, envelope, contactState).state;
+    }
+    expect(contactState.removed).toBe(true);
+    expect(() => assertGroupCanSend(contact, contactState)).toThrow('removed');
+    const continuing = receiveGroupEvent(owner, rekey, senderState).conversation;
+    const privateMessage = createMessage(owner, continuing, 'text', new TextEncoder().encode('after contact removal'));
+    await relay.postMessage(source.id, marshalCanonical(privateMessage));
+    const future = await relay.receiveMessages(source.id, afterRestart.sequence);
+    expect(future.messages).toHaveLength(1);
+    expect(() => receiveGroupEvent(contact, deserializeEnvelope(future.messages[0]), contactState)).toThrow();
   }, 30_000);
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {

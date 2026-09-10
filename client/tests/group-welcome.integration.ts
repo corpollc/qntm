@@ -6,6 +6,8 @@ import {
   deriveConversationKeys, createGroupGenesisBody, parseGroupGenesisBody, applyRekey,
   createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink,
+  createGroupSession, restoreGroupSession, receiveGroupEvent, createGroupControlMessage,
+  createGroupRemoveBody, createRekey,
 } from '../src/index.js';
 import type { Identity } from '../src/index.js';
 
@@ -25,6 +27,53 @@ function python(request: Record<string, unknown>): any {
 }
 
 describe('fresh Python / TypeScript contact addition interoperability', () => {
+  it('exchanges private checkpoints between Python and TypeScript through addition and removal', () => {
+    const owner = generateIdentity(), peer = generateIdentity(), late = generateIdentity();
+    const invite = createInvite(owner, 'group');
+    const conversation = createConversation(invite, deriveConversationKeys(invite));
+    const group = new GroupState();
+    group.applyGenesis(parseGroupGenesisBody(createGroupGenesisBody('Checkpoint team', '', owner, [peer.publicKey])));
+    conversation.participants = group.listMembers();
+    const operation = prepareGroupAddition(peer, conversation, group, [late.publicKey]);
+    const pyIdentity = Object.fromEntries(Object.entries(peer).map(([k, v]) => [k, hex(v)]));
+    const receivedAdd = python({ action: 'session_receive', identity: pyIdentity,
+      state: createGroupSession(peer, conversation, group), envelopes: [hex(marshalCanonical(operation.addition))] });
+    const added = receiveGroupEvent(peer, operation.rekey, restoreGroupSession(peer, receivedAdd.state));
+    expect(added.conversation.keys).toEqual(operation.conversation.keys);
+    const removal = createGroupControlMessage(owner, added.conversation, 'group_remove', createGroupRemoveBody([peer.keyID]));
+    const receivedRemoval = python({ action: 'session_receive', identity: pyIdentity, state: added.state, envelopes: [hex(marshalCanonical(removal))] });
+    expect(receivedRemoval.state.removed).toBe(true);
+    const remaining = new GroupState(); remaining.applyGenesis(added.group.snapshot());
+    remaining.applyRemove({ removed_at: Math.floor(Date.now() / 1000), removed_members: [peer.keyID], reason: '' });
+    const rekey = createGroupControlMessage(owner, added.conversation, 'group_rekey', createRekey(owner, added.conversation, remaining).bodyBytes);
+    const excluded = receiveGroupEvent(peer, rekey, restoreGroupSession(peer, receivedRemoval.state));
+    expect(excluded.state.removed).toBe(true);
+    expect(excluded.state.root).toBe(added.state.root);
+    expect(python({ action: 'session_receive', identity: pyIdentity, state: excluded.state,
+      envelopes: [hex(marshalCanonical(rekey))] }).events).toEqual([{ duplicate: true, rewound: false }]);
+  });
+
+  it('Python resumes a TypeScript rekey checkpoint and selects the lower competing rekey', () => {
+    const owner = generateIdentity(), peer = generateIdentity();
+    const invite = createInvite(owner, 'group');
+    const conversation = createConversation(invite, deriveConversationKeys(invite));
+    const group = new GroupState();
+    group.applyGenesis(parseGroupGenesisBody(createGroupGenesisBody('Rekey team', '', owner, [peer.publicKey])));
+    conversation.participants = group.listMembers();
+    const [low, high] = [owner, peer].map(sender => createGroupControlMessage(sender, conversation, 'group_rekey', createRekey(sender, conversation, group).bodyBytes))
+      .sort((a, b) => hex(a.msg_id).localeCompare(hex(b.msg_id)));
+    const initial = createGroupSession(peer, conversation, group);
+    const higher = receiveGroupEvent(peer, high, initial);
+    const expected = receiveGroupEvent(peer, low, initial);
+    const result = python({ action: 'session_receive', identity: Object.fromEntries(Object.entries(peer).map(([k, v]) => [k, hex(v)])),
+      state: higher.state, envelopes: [hex(marshalCanonical(low))] });
+    const resumed = restoreGroupSession(peer, result.state);
+    expect(result.events).toEqual([{ duplicate: false, rewound: true }]);
+    expect(resumed.root).toBe(expected.state.root);
+    expect(resumed.snapshot).toBe(expected.state.snapshot);
+    expect(resumed.rekeys[0].messageId).toBe(hex(low.msg_id));
+  });
+
   for (const epoch of [0, 7]) {
     it(`Python opens a TypeScript welcome after epoch ${epoch} and replies without old keys`, () => {
       const owner = generateIdentity(), late = generateIdentity();
