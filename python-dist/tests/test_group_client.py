@@ -412,7 +412,11 @@ def test_missing_membership_history_blocks_all_sends_and_hooks_until_fresh_welco
     refreshed = f.command(f.owner_dir, 'group', 'refresh', f.cid, 'Colleague', '--challenge', result['recovery']['challenge'])
     assert join(f.contact_dir, f.contact, refreshed['group_link'])['current_epoch'] == 2
     assert cli._load_conversations(f.contact_dir)[0]['group_session']['recovery'] is None
-    assert delivery_events(f.contact_dir, f.cid)
+    # A replacement checkpoint cannot vouch for previously queued plaintext.
+    assert not delivery_events(f.contact_dir, f.cid)
+    f.command(f.owner_dir, 'send', f.cid, 'fresh after recovery')
+    f.command(f.contact_dir, 'recv', f.cid)
+    assert [event['data']['message']['unsafe_body'] for _, event in delivery_events(f.contact_dir, f.cid)] == ['fresh after recovery']
     f.command(f.contact_dir, 'send', f.cid, 'recovered safely')
     assert any(row.get('unsafe_body') == 'recovered safely' for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
 
@@ -765,3 +769,312 @@ def test_first_join_blocks_competing_source_rekey_and_recovers_same_epoch(setup,
     f.command(f.contact_dir, 'send', f.cid, 'recovered the winning branch')
     assert any(row.get('unsafe_body') == 'recovered the winning branch'
                for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
+
+
+@pytest.mark.parametrize('mode', ['complete', 'reconnect', 'message_bound', 'byte_bound'])
+def test_watch_does_not_dispatch_incomplete_subscription_replay(setup, monkeypatch, mode):
+    import threading
+    from qntm import prepare_group_session_rekey, watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    saved = owner.sync(f.cid)['group_session']
+    source = copy.deepcopy(saved)
+    frame = source['rekeys'][0]
+    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+    competing = prepare_group_session_rekey(f.owner, source)['rekey']
+    text = create_message(f.owner, group_session_conversation(saved), 'text', b'text before replay is validated')
+    f.send(f.relay, f.cid, serialize_envelope(text))
+    f.send(f.relay, f.cid, serialize_envelope(competing))
+    cursor = cli._load_conversations(f.contact_dir)[0]['group_cursor']
+    rows, head = f.receive(f.relay, f.cid, cursor)
+    replay = [dict(row, type='message') for row in rows] + [{'type': 'ready', 'head_seq': head}]
+    stop = threading.Event()
+    ready = threading.Event()
+    delivered, connections = [], []
+    before = cli._load_conversations(f.contact_dir)
+    if mode == 'message_bound':
+        monkeypatch.setattr(watch, 'MAX_GROUP_REPLAY_MESSAGES', 1)
+    if mode == 'byte_bound':
+        monkeypatch.setattr(watch, 'MAX_GROUP_REPLAY_BYTES', 1)
+    monkeypatch.setattr(stop, 'wait', lambda *_: stop.is_set())
+
+    class Socket:
+        def __init__(self, interrupted):
+            self.frames = iter(replay[:1] if interrupted else replay)
+
+        def recv(self, timeout):
+            try:
+                frame = next(self.frames)
+            except StopIteration:
+                assert cli._load_conversations(f.contact_dir) == before
+                assert not delivered and not ready.is_set()
+                raise watch.WebSocketException('interrupted before ready')
+            assert not ready.is_set()
+            if frame['type'] == 'ready':
+                stop.set()
+            return json.dumps(frame)
+
+    @contextlib.contextmanager
+    def subscription(url, options):
+        connections.append(url)
+        assert f'from_seq={cursor}' in url
+        yield Socket(mode == 'reconnect' and len(connections) == 1)
+
+    monkeypatch.setattr(watch, 'subscription', subscription)
+    monkeypatch.setattr(watch, 'status', lambda *args, **kwargs: None)
+
+    class Wake:
+        def set(self):
+            # Deterministically exercise a consumer scheduled immediately after
+            # the receiver wakes it, before the next network frame is read.
+            delivered.extend(watch.delivery_events(f.contact_dir, f.cid))
+
+    def receive():
+        watch.receive(f.contact_dir, f.relay, f.cid, f.contact, stop, [SimpleNamespace(wake=Wake())], ready)
+
+    if mode.endswith('_bound'):
+        with pytest.raises(watch.WatchError, match='local bound'):
+            receive()
+        assert cli._load_conversations(f.contact_dir) == before
+    else:
+        receive()
+        state = cli._load_conversations(f.contact_dir)[0]['group_session']
+        assert state['recovery']
+    assert len(connections) == (2 if mode == 'reconnect' else 1)
+    assert not ready.is_set()
+    assert not delivered, 'Watch dispatched application text before validating the complete ready/head replay'
+
+
+@pytest.mark.parametrize('invalidation', ['removed', 'needsRekey', 'group_operation', 'binding'])
+def test_watch_rechecks_queued_events_before_each_delivery(setup, monkeypatch, invalidation):
+    import threading
+    from pathlib import Path
+    from qntm import watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    f.command(f.owner_dir, 'send', f.cid, 'first')
+    f.command(f.owner_dir, 'send', f.cid, 'second')
+    f.command(f.contact_dir, 'recv', f.cid)
+    assert len(delivery_events(f.contact_dir, f.cid)) == 2
+    target = watch.Target('exec', ('adapter',))
+    state = watch.ConsumerState(Path(f.contact_dir) / 'test-watch.json', f.relay, [target], 0)
+    stop, ready = threading.Event(), threading.Event()
+    consumer = watch.Consumer(target, state, f.contact_dir, f.cid, f.contact['keyID'].hex(), 1, stop, ready)
+    delivered, waits = [], []
+
+    def deliver(target, event, timeout):
+        delivered.append(event['data']['message']['unsafe_body'])
+        assert ready.is_set()
+        records = cli._load_conversations(f.contact_dir)
+        if invalidation == 'group_operation':
+            records[0]['group_operation'] = {'kind': 'refresh'}
+        elif invalidation == 'binding':
+            for entry in records[0]['group_history']:
+                entry['receive_binding']['valid'] = False
+        else:
+            records[0]['group_session'][invalidation] = True
+        cli._save_conversations(f.contact_dir, records)
+
+    def wait(timeout):
+        waits.append(timeout)
+        if len(waits) == 1:
+            assert not delivered  # Even an existing queue waits for first ready.
+            ready.set()
+        else:
+            stop.set()
+
+    monkeypatch.setattr(watch, 'deliver', deliver)
+    monkeypatch.setattr(consumer.wake, 'wait', wait)
+    consumer.run()
+    assert consumer.error is None
+    assert delivered == ['first']
+    assert not delivery_events(f.contact_dir, f.cid)
+
+
+def test_watch_pauses_cached_queue_during_reconnect(setup, monkeypatch):
+    import threading
+    from pathlib import Path
+    from qntm import watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    f.command(f.owner_dir, 'send', f.cid, 'first')
+    f.command(f.owner_dir, 'send', f.cid, 'second')
+    f.command(f.contact_dir, 'recv', f.cid)
+    target = watch.Target('exec', ('adapter',))
+    state = watch.ConsumerState(Path(f.contact_dir) / 'test-watch.json', f.relay, [target], 0)
+    stop, ready = threading.Event(), threading.Event()
+    ready.set()
+    consumer = watch.Consumer(target, state, f.contact_dir, f.cid, f.contact['keyID'].hex(), 1, stop, ready)
+    delivered, waits = [], []
+
+    def deliver(target, event, timeout):
+        delivered.append(event['data']['message']['unsafe_body'])
+        assert ready.is_set()
+        if len(delivered) == 1:
+            ready.clear()  # Receiver detects disconnect while this sink runs.
+        else:
+            stop.set()
+
+    def wait(timeout):
+        if stop.is_set():
+            return
+        waits.append(timeout)
+        assert delivered == ['first']
+        if len(waits) == 2:
+            ready.set()  # Only a completed reconnect replay releases the rest.
+
+    monkeypatch.setattr(watch, 'deliver', deliver)
+    monkeypatch.setattr(consumer.wake, 'wait', wait)
+    consumer.run()
+    assert consumer.error is None
+    assert delivered == ['first', 'second']
+    assert len(waits) == 2
+
+
+def test_reused_id_does_not_resurrect_losing_branch_queued_plaintext(setup, monkeypatch):
+    from qntm import prepare_group_session_rekey, watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    member = GroupClient(f.contact_dir, f.contact, f.relay)
+    with monkeypatch.context() as fixed:
+        ids = iter([b'\x80' * 16, b'\xf0' * 16])
+        fixed.setattr('qntm.message.generate_message_id', lambda: next(ids))
+        link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    saved = owner.sync(f.cid)['group_session']
+    with monkeypatch.context() as fixed:
+        fixed.setattr('qntm.message.generate_message_id', lambda: b'\xaa' * 16)
+        old = create_message(f.owner, group_session_conversation(saved), 'text', b'old losing branch plaintext')
+    f.send(f.relay, f.cid, serialize_envelope(old))
+    member.sync(f.cid)
+    assert any(event['data']['message'].get('unsafe_body') == 'old losing branch plaintext'
+               for _, event in watch.delivery_events(f.contact_dir, f.cid))
+
+    source = copy.deepcopy(saved)
+    frame = source['rekeys'][0]
+    source.update(epoch=frame['epoch'], root=frame['root'], snapshot=frame['snapshot'], rekeys=[], seen={})
+    with monkeypatch.context() as fixed:
+        fixed.setattr('qntm.message.generate_message_id', lambda: b'\x01' * 16)
+        competing = prepare_group_session_rekey(f.owner, source)['rekey']
+    f.send(f.relay, f.cid, serialize_envelope(competing))
+    blocked = member.sync(f.cid)['group_session']
+    assert blocked['recovery']
+    winning = owner.sync(f.cid)['group_session']
+    assert winning['root'] != saved['root']
+    owner.refresh(f.cid, 'Colleague', blocked['recovery']['challenge'])
+    join(f.contact_dir, f.contact, link)
+    assert not watch.delivery_events(f.contact_dir, f.cid)
+
+    # Reusing a message ID after replacement does not mean the old ciphertext
+    # digest (and its saved plaintext event) belongs to the accepted branch.
+    with monkeypatch.context() as fixed:
+        fixed.setattr('qntm.message.generate_message_id', lambda: b'\xaa' * 16)
+        fresh = create_message(f.owner, group_session_conversation(winning), 'text', b'fresh winning branch plaintext')
+    f.send(f.relay, f.cid, serialize_envelope(fresh))
+    member.sync(f.cid)
+    bodies = [event['data']['message'].get('unsafe_body') for _, event in watch.delivery_events(f.contact_dir, f.cid)]
+    assert 'old losing branch plaintext' not in bodies
+    assert 'fresh winning branch plaintext' in bodies
+
+
+def test_valid_undelivered_history_survives_replay_cache_eviction(setup, monkeypatch):
+    from qntm import prepare_group_session_rekey, watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    source = owner.sync(f.cid)['group_session']
+    monkeypatch.setattr('qntm.group_session._MAX_SEEN', 4)
+    ids = []
+    for index in range(8):
+        message = create_message(f.owner, group_session_conversation(source), 'text', f'queued {index}'.encode())
+        ids.append(message['msg_id'].hex())
+        f.send(f.relay, f.cid, serialize_envelope(message))
+    GroupClient(f.contact_dir, f.contact, f.relay).sync(f.cid)
+    saved = cli._load_conversations(f.contact_dir)[0]
+    assert len(saved['group_session']['seen']) == 4
+    assert ids[0] not in saved['group_session']['seen']
+    assert len(saved['group_history']) == 8
+    delivered = watch.delivery_events(f.contact_dir, f.cid)
+    assert [event['data']['message']['unsafe_body'] for _, event in delivered] == [f'queued {i}' for i in range(8)]
+
+
+@pytest.mark.parametrize('split_replay', [False, True])
+def test_watch_invalidates_superseded_history_but_preserves_source_events(setup, monkeypatch, split_replay):
+    from qntm import prepare_group_session_rekey, watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    source = owner.sync(f.cid)['group_session']
+
+    def text(state, body):
+        f.send(f.relay, f.cid, serialize_envelope(create_message(
+            f.owner, group_session_conversation(state), 'text', body.encode())))
+
+    def rekey(state, mid):
+        with monkeypatch.context() as fixed:
+            fixed.setattr('qntm.message.generate_message_id', lambda: bytes([mid]) * 16)
+            envelope = prepare_group_session_rekey(f.owner, state)['rekey']
+        f.send(f.relay, f.cid, serialize_envelope(envelope))
+        return receive_group_event(f.owner, envelope, state)['state']
+
+    text(source, 'valid source message')
+    losing = rekey(source, 240)
+    text(losing, 'losing branch message')
+    descendant = rekey(losing, 128)
+    text(descendant, 'losing descendant message')
+    if split_replay:
+        f.command(f.contact_dir, 'recv', f.cid)
+        assert any(event['data']['message'].get('unsafe_body') == 'losing branch message'
+                   for _, event in watch.delivery_events(f.contact_dir, f.cid))
+    winner = rekey(source, 1)
+    text(winner, 'winning branch message')
+    result = f.command(f.contact_dir, 'recv', f.cid)
+    assert not result.get('recovery_required')
+    assert all(row.get('unsafe_body') not in {'losing branch message', 'losing descendant message'}
+               for row in result['messages'])
+    # Ordinary dedup eviction must not revive invalidated rows or discard valid
+    # pending hook deliveries, even across a fresh process/checkpoint load.
+    monkeypatch.setattr('qntm.group_session._MAX_SEEN', 4)
+    for index in range(8):
+        text(winner, f'later {index}')
+    GroupClient(f.contact_dir, f.contact, f.relay).sync(f.cid)
+    bodies = [event['data']['message'].get('unsafe_body')
+              for _, event in watch.delivery_events(f.contact_dir, f.cid)]
+    assert 'valid source message' in bodies
+    assert 'winning branch message' in bodies
+    assert 'losing branch message' not in bodies
+    assert 'losing descendant message' not in bodies
+    assert all(f'later {index}' in bodies for index in range(8))
+
+
+def test_new_watch_target_baseline_ignores_temporary_delivery_pause(setup, monkeypatch):
+    from qntm import watch
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    join(f.contact_dir, f.contact, owner.add(f.cid, 'Colleague')['group_link'])
+    f.command(f.owner_dir, 'send', f.cid, 'already in local history')
+    f.command(f.contact_dir, 'recv', f.cid)
+    records = cli._load_conversations(f.contact_dir)
+    expected = records[0]['group_history'][-1]['receive_order']
+    records[0]['group_operation'] = {'kind': 'refresh'}
+    cli._save_conversations(f.contact_dir, records)
+    assert not watch.delivery_events(f.contact_dir, f.cid)
+    targets = []
+
+    def receive(config_dir, relay, cid, identity, stop, consumers, ready):
+        for consumer in consumers:
+            targets.append(consumer.target)
+            assert consumer.state.cursor(consumer.target) == expected
+            assert consumer.replay_ready is ready and not ready.is_set()
+        stop.set()
+
+    monkeypatch.setattr(watch, 'receive', receive)
+    monkeypatch.setattr(watch.Consumer, 'start', lambda self: None)
+    monkeypatch.setattr(watch.Consumer, 'join', lambda self: None)
+    watch.watch(SimpleNamespace(config_dir=f.contact_dir, conversation=f.cid, dropbox_url=f.relay,
+                                webhook=[], on_receive=[], include_self=False, hook_timeout=1))
+    assert len(targets) == 1

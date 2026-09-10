@@ -137,6 +137,23 @@ replays subsequent updates, delivery resumes. See the
 [recovery workflow](group-welcomes.md#cli-and-mcp). This does not add automatic
 outbound recovery requests or confer permission to admit a contact.
 
+On every connection, stdout and hooks wait for the relay's `ready` frame. The
+ordinary-group watcher buffers that connection's complete replay before checking
+coverage and membership; it commits the result before waking consumers. The
+buffer is bounded to 8,192 messages and 16 MiB of subscription frame data.
+Exceeding either limit stops the watch without committing that replay. A
+disconnect before `ready` discards the buffer and reconnects from the saved
+cursor. Existing pending deliveries also wait while the watch reconnects.
+
+Ordinary-group history binds each queued event to its verified ciphertext digest,
+source epoch and a private validity flag. A competing rekey invalidates queued
+descendants and the superseded rekey; a replacement welcome invalidates all
+previously queued events. Those plaintext records remain in local history, but
+cannot trigger hooks merely because their message ID reappears. Valid pending
+events survive normal replay-cache eviction. Older unreleased history without
+these bindings remains readable locally and is excluded from hook delivery.
+An already running hook cannot be recalled after a later state change.
+
 A newly configured destination starts after already saved history and receives
 unread relay backlog plus subsequent arrivals. Existing destinations retain their
 pending progress across watch restarts. Changing a URL, command, or `--include-self`
@@ -149,7 +166,8 @@ slow hook blocks neither the subscription nor another hook. Hooks must durably
 enqueue and deduplicate by `data.event_id` before acknowledging; HTTP requests
 also carry this ID in `Idempotency-Key`. If acceptance succeeds but the response
 or local acknowledgement write is lost, the same event can arrive again. Delivery
-is **at least once**, and acceptance does not mean an agent finished or replied.
+is **at least once** for events that remain eligible under the checks above,
+and acceptance does not mean an agent finished or replied.
 
 Stdout advances after a successful flush; a pipe has no acknowledgement from its
 consumer. A harness that needs durable acceptance should use a hook or own its
