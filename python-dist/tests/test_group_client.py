@@ -609,3 +609,79 @@ def test_mcp_creates_contact_group_with_shared_cli_state(setup, monkeypatch):
     assert result['name'] == 'MCP contacts' and 'invite_token' not in result
     record = cli._find_conversation(cli._load_conversations(f.owner_dir), result['conversation_id'])
     assert record['group_session'] and not record.get('group_operation')
+
+
+def test_contact_creation_requires_exact_replay_after_a_post_acknowledgement(setup, monkeypatch):
+    f = setup
+    hidden = True
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return ([] if hidden else rows), head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    with pytest.raises(ValueError, match='not yet verified'):
+        GroupClient(f.owner_dir, f.owner, f.relay).create('Withheld genesis')
+    record = next(record for record in cli._load_conversations(f.owner_dir) if record['name'] == 'Withheld genesis')
+    assert record['group_operation']['kind'] == 'create' and not record['group_session']['seen']
+    assert record['group_session']['recovery'] is None  # Its own ACK accounts for that row, not its acceptance.
+    attempted = len(f.attempted)
+    hidden = False
+    result = GroupClient(f.owner_dir, f.owner, f.relay).retry(record['id'])
+    assert result['current_epoch'] == 0 and len(f.attempted) == attempted
+    assert 'group_operation' not in cli._find_conversation(cli._load_conversations(f.owner_dir), record['id'])
+
+
+def test_expired_admission_welcome_is_not_posted_or_marked_delivered(setup, monkeypatch):
+    f = setup
+
+    def withhold_welcome(url, cid, wire):
+        if deserialize_envelope(wire).get('kind') == 'group_welcome':
+            raise cli.SendDeliveryUnknown(cid, deserialize_envelope(wire)['msg_id'].hex(), OSError())
+        return f.send(url, cid, wire)
+
+    monkeypatch.setattr(cli, '_http_send', withhold_welcome)
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    with pytest.raises(cli.SendDeliveryUnknown):
+        owner.add(f.cid, 'Colleague')
+    saved = cli._load_conversations(f.owner_dir)[0]['group_operation']
+    expiry = deserialize_envelope(base64.b64decode(saved['welcomes'][0]))['expiry_ts']
+    monkeypatch.setattr('time.time', lambda: expiry + 1)
+    monkeypatch.setattr(cli, '_http_send', f.send)
+    before = len(f.attempted)
+    with pytest.raises(ValueError, match='expired'):
+        owner.retry(f.cid)
+    assert len(f.attempted) == before
+    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == saved
+
+
+@pytest.mark.parametrize('expired', [False, True])
+def test_join_replays_a_rekey_that_raced_before_welcome_publication(setup, monkeypatch, expired):
+    from qntm import prepare_group_session_rekey
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    racing = []
+
+    def race(url, cid, wire):
+        if deserialize_envelope(wire).get('kind') == 'group_welcome' and not racing:
+            record = cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
+            rekey = prepare_group_session_rekey(f.owner, record['group_session'], ttl=1 if expired else 3600)['rekey']
+            racing.append(rekey)
+            f.send(url, cid, serialize_envelope(rekey))
+        return f.send(url, cid, wire)
+
+    monkeypatch.setattr(cli, '_http_send', race)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    assert owner.sync(f.cid)['current_epoch'] == 2
+    if expired:
+        monkeypatch.setattr('time.time', lambda: racing[0]['expiry_ts'] + 1)
+    result = join(f.contact_dir, f.contact, link)
+    if expired:
+        assert result['recovery_required']
+        recovery = cli._find_conversation(cli._load_conversations(f.contact_dir), f.cid)['group_session']['recovery']
+        assert recovery['reason'] == 'expired_control'
+        owner.refresh(f.cid, 'Colleague', recovery['challenge'])
+        result = join(f.contact_dir, f.contact, link)
+    assert not result['recovery_required'] and result['current_epoch'] == 2
+    f.command(f.contact_dir, 'send', f.cid, 'joined after the racing rekey')
+    assert any(row.get('unsafe_body') == 'joined after the racing rekey' for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])

@@ -247,7 +247,14 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       expect(response.headers.get('Cache-Control')).toBe('no-store');
       return await response.json() as { traffic: Array<{ traffic: string; messages: number; active_conversations_7d: number }> };
     };
-    // Previous tests have posted exactly five envelopes to the same conversation.
+    const baseline = await getMetrics();
+    const application = baseline.traffic.find(row => row.traffic === 'application');
+    const probe = baseline.traffic.find(row => row.traffic === 'probe');
+    const applicationMessages = (application?.messages ?? 0) + 16;
+    const applicationConversations = (application?.active_conversations_7d ?? 0) + 16;
+    const probeMessages = (probe?.messages ?? 0) + 1;
+    const probeConversations = (probe?.active_conversations_7d ?? 0) + 1;
+    // These conversations are unique to this test; earlier journeys may post freely.
     const rows = Array.from({ length: 16 }, (_, i) => (i + 100).toString(16).padStart(32, '0'));
     await Promise.all([...rows, 'fe'.repeat(16)].map(async conv_id => {
       const response = await fetch(`${relayUrl}/v1/send`, {
@@ -256,15 +263,16 @@ describe.sequential('real relay worker subscribe acceptance', () => {
       });
       expect(response.status).toBe(201);
     }));
-    await expect.poll(async () => (await getMetrics()).traffic.find(x => x.traffic === 'application')?.messages, { timeout: 10_000 }).toBe(21);
+    await expect.poll(async () => (await getMetrics()).traffic.find(x => x.traffic === 'application')?.messages, { timeout: 10_000 }).toBe(applicationMessages);
+    await expect.poll(async () => (await getMetrics()).traffic.find(x => x.traffic === 'probe')?.messages, { timeout: 10_000 }).toBe(probeMessages);
     const result = await getMetrics();
     expect(result.traffic).toEqual(expect.arrayContaining([
-      expect.objectContaining({ traffic: 'application', messages: 21, active_conversations_7d: 17 }),
-      expect.objectContaining({ traffic: 'probe', messages: 1, active_conversations_7d: 1 }),
+      expect.objectContaining({ traffic: 'application', messages: applicationMessages, active_conversations_7d: applicationConversations }),
+      expect.objectContaining({ traffic: 'probe', messages: probeMessages, active_conversations_7d: probeConversations }),
     ]));
     expect(JSON.stringify(result)).not.toContain(CONV_ID);
     const stats = await (await fetch(`${relayUrl}/v1/stats`)).json();
-    expect(stats).toMatchObject({ active_conversations_7d: 18 });
+    expect(stats).toMatchObject({ active_conversations_7d: applicationConversations + probeConversations });
     expect(stats).not.toHaveProperty('traffic');
     expect((await fetch(`${relayUrl}/record`, { method: 'POST', body: '[]' })).status).toBe(404);
   }, 30_000);
