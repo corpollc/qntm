@@ -5,7 +5,7 @@ import {
   receiveGroupEvent, prepareGroupWelcomeRefresh, openGroupWelcome, marshalCanonical,
   checkGroupReplayCoverage, restoreGroupSession, groupSessionFromWelcome, assertGroupCanSend,
   prepareGroupSessionRekey, createGroupControlMessage, createGroupRemoveBody, createMessage,
-  checkExpiredGroupControl,
+  checkExpiredGroupControl, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, groupSessionConversation,
 } from '../src/index.js';
 
 function setup() {
@@ -21,10 +21,55 @@ function setup() {
   state = receiveGroupEvent(owner, addition.rekey, state).state;
   const pin = { conversationId: conversation.id, inviterPublicKey: owner.publicKey };
   const welcome = openGroupWelcome(peer, marshalCanonical(addition.welcomes[0]), pin);
-  return { owner, peer, state, welcome, pin, peerState: groupSessionFromWelcome(peer, welcome, 3) };
+  return { owner, peer, state, welcome, pin, initial, addition, conversation, peerState: groupSessionFromWelcome(peer, welcome, 3) };
 }
 
 describe('group recovery after missing history', () => {
+  it('pauses unknown older-source ciphertext before dispatch, exempting only exact signed controls', () => {
+    const f = setup();
+    const rows = [f.addition.addition, f.addition.rekey, f.addition.welcomes[0]].map((envelope, i) => ({ seq: i + 1, envelope: marshalCanonical(envelope) }));
+    expect(checkGroupWelcomeReplay(f.peerState, f.welcome, 3, rows).recovery).toBeNull();
+    const oldText = createMessage(f.owner, f.conversation, 'text', new TextEncoder().encode('racing old traffic'), undefined, 1);
+    const extra = { seq: 4, envelope: marshalCanonical(oldText) };
+    const blocked = checkGroupWelcomeReplay(f.peerState, f.welcome, 4, [...rows, extra]);
+    expect(blocked.recovery?.afterSequence).toBe(4);
+    expect(() => assertGroupCanSend(f.peer, blocked)).toThrow('incomplete');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((oldText.expiry_ts + 2) * 1000);
+    try { expect(checkGroupWelcomeReplay(f.peerState, f.welcome, 4, [...rows, extra]).recovery).not.toBeNull(); }
+    finally { clock.mockRestore(); }
+    const substituted = { ...f.addition.rekey, ciphertext: new Uint8Array(f.addition.rekey.ciphertext.length) };
+    expect(checkGroupWelcomeReplay(f.peerState, f.welcome, 3, [rows[0], { seq: 2, envelope: marshalCanonical(substituted) }, rows[2]]).recovery).not.toBeNull();
+    expect(checkGroupWelcomeReplay(f.peerState, { ...f.welcome, replayFromSequence: 4 }, 4, [...rows, extra]).recovery).toBeNull();
+    expect(checkGroupUnverifiableEpoch(f.peerState, oldText, 4).recovery?.afterSequence).toBe(4);
+    expect(checkGroupUnverifiableEpoch(f.state, oldText, 4).recovery).toBeNull(); // Has the source-key archive.
+    expect(checkGroupUnverifiableEpoch({ ...f.state, rekeys: [] }, f.addition.rekey, 4).recovery).toBeNull(); // Exact verified duplicate.
+  });
+
+  it('recovers a different root at the same epoch only with the persisted challenge', () => {
+    const f = setup();
+    const source = { ...f.initial, snapshot: f.state.snapshot };
+    const winning = prepareGroupSessionRekey(f.owner, source);
+    const winningState = createGroupSession(f.owner, winning.conversation, winning.state);
+    expect(winningState.epoch).toBe(f.peerState.epoch);
+    expect(winningState.root).not.toBe(f.peerState.root);
+    const blocked = checkGroupReplayCoverage(f.peerState, 3, 4, []);
+    const plain = prepareGroupWelcomeRefresh(f.owner, winningState, [f.peer.publicKey], undefined, undefined, 4);
+    expect(() => groupSessionFromWelcome(f.peer, openGroupWelcome(f.peer, marshalCanonical(plain.welcomes[0]), f.pin), 5, blocked)).toThrow('challenge');
+    const challenge = new Uint8Array(Buffer.from(blocked.recovery!.challenge, 'hex'));
+    const fresh = prepareGroupWelcomeRefresh(f.owner, winningState, [f.peer.publicKey], undefined, challenge, 4);
+    const opened = openGroupWelcome(f.peer, marshalCanonical(fresh.welcomes[0]), f.pin);
+    expect(() => groupSessionFromWelcome(f.peer, opened, 5, f.peerState)).toThrow('epoch');
+    expect(() => groupSessionFromWelcome(f.peer, opened, 5, { ...blocked, removed: true })).toThrow('removal');
+    const recovered = checkGroupWelcomeReplay(groupSessionFromWelcome(f.peer, opened, 5, blocked), opened, 5,
+      [{ seq: 5, envelope: marshalCanonical(fresh.welcomes[0]) }]);
+    expect(recovered.root).toBe(winningState.root);
+    expect(recovered.rekeys).toEqual([]);
+    expect(recovered.seen).toEqual({});
+    assertGroupCanSend(f.peer, recovered);
+    const reply = createMessage(f.peer, groupSessionConversation(recovered), 'text', new TextEncoder().encode('winning branch'));
+    expect(receiveGroupEvent(f.owner, reply, winningState).message.inner.body_type).toBe('text');
+  });
+
   it('detects leading, interior and trailing omissions and never clears them on later replay', () => {
     const f = setup();
     for (const [sequences, boundary] of [[[5, 6], 4], [[4, 6], 5], [[4, 5], 6], [[], 6]] as const) {
