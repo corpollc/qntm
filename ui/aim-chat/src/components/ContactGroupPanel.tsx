@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { changeContactGroup, createContactGroup, pinContact, publicGroupLink, retryContactGroup } from '../contact-groups'
+import { changeContactGroup, createContactGroup, pinContact, publicGroupLink, retryContactGroup, releaseContactGroupRetry } from '../contact-groups'
 import * as store from '../store'
 import { base64UrlDecode, parseGroupGenesisBody } from '@corpollc/qntm'
 import { shortId } from '../utils'
@@ -8,6 +8,7 @@ export function ContactGroupPanel({ profileId, conversationId, onChange }: { pro
   const [name, setName] = useState(''), [publicKey, setPublicKey] = useState(''), [verified, setVerified] = useState(false)
   const [groupName, setGroupName] = useState(''), [selected, setSelected] = useState(''), [challenge, setChallenge] = useState('')
   const [working, setWorking] = useState(false), [error, setError] = useState(''), [link, setLink] = useState(''), [notice, setNotice] = useState('')
+  const [releaseUnderstood, setReleaseUnderstood] = useState(false)
   const pins = store.listContactPins(profileId), conversation = store.findConversation(profileId, conversationId), host = conversation?.group
   const blocked = !!host && (host.session.removed || !!host.session.recovery || !!host.operation)
   async function run(action: () => Promise<void> | void) {
@@ -43,6 +44,11 @@ export function ContactGroupPanel({ profileId, conversationId, onChange }: { pro
       {host.session.removed && <p role="status">You were removed from this group. New messages and membership changes are disabled.</p>}
       {host.session.recovery && <div role="status"><strong>Group recovery required</strong><p>Ask a current member to refresh your welcome with this challenge, then open their returned group link.</p><code className="contact-full-key">{host.session.recovery.challenge}</code><button className="button" onClick={() => void run(async () => { await navigator.clipboard.writeText(host.session.recovery!.challenge); setNotice('Recovery challenge copied') })}>Copy recovery challenge</button></div>}
       {host.operation && <><p>A group operation is saved. Retry checks delivery progress. An already admitted contact may receive a new welcome with current keys.</p><button className="button" disabled={working || ((!!host.session.recovery || host.session.removed) && !(host.operation.welcomes.length > 0 && host.operation.delivered === host.operation.welcomes.length))} onClick={() => void run(async () => { setLink(await retryContactGroup(profileId, conversationId)); setNotice('Saved operation completed') })}>Retry saved operation</button></>}
+      {host.operation && (host.operation.kind === 'remove' || host.operation.kind === 'removal_rekey') && <div className="contact-group-release">
+        <p>If this saved removal was never verified in replay and can no longer be retried exactly, you can release the local retry. Release checks the relay again first. It stops only this browser’s retry, keeps the uncertain encrypted controls as private evidence, does not undo anything already delivered, and does not change membership. Nothing is sent. Remove the contact again later if you still want them out.</p>
+        <label className="contact-verification"><input type="checkbox" checked={releaseUnderstood} onChange={e => setReleaseUnderstood(e.target.checked)} /> I understand this only stops the local retry</label>
+        <button className="button button-secondary" disabled={working || !releaseUnderstood} onClick={() => void run(async () => { const result = await releaseContactGroupRetry(profileId, conversationId); setReleaseUnderstood(false); setNotice(`Local retry released (${result.reason.replace(/_/g, ' ')}). The saved removal was never verified; membership is unchanged and its ciphertext is kept privately.`) })}>Release saved retry</button>
+      </div>}
       {host.session.needsRekey && <button className="button" disabled={working || blocked} onClick={() => void run(async () => { await changeContactGroup(profileId, conversationId, 'rekey'); setNotice('Group keys rotated') })}>Finish key rotation</button>}
       <label>Recipient recovery challenge (optional)<input className="input" value={challenge} onChange={e => setChallenge(e.target.value)} placeholder="64 hexadecimal characters" spellCheck={false} /></label>
       <div className="contact-action-buttons">

@@ -14,4 +14,14 @@ describe('commands', () => {
     expect(matchCommands('gr').map((command) => command.name)).toEqual(['group', 'search']);
     expect(matchCommands('co').map((command) => command.name)).toEqual(['contact', 'confirm', 'conversations', 'settings']);
   });
+
+  it('documents explicit local release without changing default retry help', () => {
+    const group = findCommand('group')!;
+    expect(group.usage).toContain('retry [--release-unproven]');
+    expect(group.description).toContain('/group retry --release-unproven');
+    expect(group.description).toMatch(/sends nothing/);
+    expect(group.description).toMatch(/reports no removal/);
+    expect(group.description).not.toMatch(/cancell?ed|undone|successful removal/i);
+    expect(group.description).toContain('/group retry checks current group state and continues the saved operation');
+  });
 });

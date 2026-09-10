@@ -44,12 +44,20 @@ export async function runGroupCommand(store: Store, command: string, args: strin
   if (!activeId || !store.findConversation(activeId)?.managedGroup) throw new Error('Select a contact group first, or use /group create <name>. Legacy and gateway conversations keep their existing commands.');
   if (action === 'status' && !tokens.length) return { text: store.groups.status(activeId) };
   let cliArgs: string[];
-  if (['link', 'retry', 'rekey'].includes(action) && !tokens.length) cliArgs = ['group', action, activeId];
+  if (action === 'retry' && tokens.length === 1 && tokens[0] === '--release-unproven') {
+    // Explicit local release of a stale, unverified saved removal. Grammar
+    // matches the Python CLI: `group retry <conversation> --release-unproven`.
+    cliArgs = ['group', 'retry', activeId, '--release-unproven'];
+  } else if (['link', 'retry', 'rekey'].includes(action) && !tokens.length) cliArgs = ['group', action, activeId];
   else if (['add', 'refresh'].includes(action) && (tokens.length === 1 || (tokens.length === 3 && tokens[1] === '--challenge'))) {
     const challenge = tokens.length === 3 ? ['--challenge', tokens[2]] : [];
     cliArgs = ['group', action, ...challenge, '--', activeId, tokens[0]];
   } else if (action === 'remove' && tokens.length === 1) cliArgs = ['group', action, '--', activeId, tokens[0]];
-  else throw new Error('Use /group add|remove|refresh <contact>, /group link|retry|rekey|status, or /help group. Quote contact names containing spaces.');
+  else throw new Error('Use /group add|remove|refresh <contact>, /group link|retry|rekey|status, /group retry --release-unproven, or /help group. Quote contact names containing spaces.');
   const data = await store.groups.run(cliArgs);
+  if (data.released === true) {
+    return { text: [`Local retry released (${String(data.reason).replace(/_/g, ' ')}). The saved removal was never verified; membership is unchanged and its ciphertext stays in the private profile.`,
+      'Use /group remove <contact> if you still want them out.', store.groups.status(activeId)].join('\n') };
+  }
   return { text: [`Group ${action} complete${tokens[0] ? ` for ${tokens[0]}` : ''}.`, data.group_link ? `Public group link (no keys, no expiry):\n${data.group_link}` : '', store.groups.status(activeId)].filter(Boolean).join('\n') };
 }

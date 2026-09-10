@@ -15,6 +15,8 @@
 .contact-groups form, .contact-group-actions { display: grid; gap: 9px; }
 .contact-groups label { display: grid; gap: 5px; font-size: 12px; }
 .contact-groups .contact-verification { display: flex; align-items: flex-start; gap: 7px; }
+.contact-group-release { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
+.contact-group-release p { margin: 0; }
 .contact-full-key { display: block; overflow-wrap: anywhere; font-size: 11px; padding: 8px; background: var(--surface-3); color: var(--text-primary); border-radius: 4px; }
 .contact-action-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .contact-groups textarea { width: 100%; box-sizing: border-box; overflow-wrap: anywhere; font-size: 11px; }

@@ -85,6 +85,22 @@ export type StoredGroupOperation = {
   | { kind: 'addition_rekey'; recipient: string; origin: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; admission?: never; recoveryChallenge?: never; target?: never }
   | { kind: 'renewal'; recipient: string; admission: GroupAdmission; origin?: StoredGroupAdditionOrigin; superseded?: StoredGroupOperationEvidence[]; recoveryChallenge?: never; target?: never })
 
+export const GROUP_RELEASE_REASONS = ['expired', 'superseded', 'wrong_branch', 'target_absent', 'inapplicable', 'incarnation_changed', 'legacy_same_epoch_admission'] as const
+export type StoredGroupReleaseReason = typeof GROUP_RELEASE_REASONS[number]
+/** A removal journal whose local retry was explicitly given up. Its uncertain
+ * ciphertext stays as evidence; nothing here records a remote outcome. */
+export interface StoredGroupReleasedOperation {
+  kind: 'remove' | 'removal_rekey'
+  controls: string[]
+  welcomes: string[]
+  delivered: number
+  target?: StoredGroupRemovalTarget
+  origin?: StoredGroupRemovalOrigin
+  superseded?: StoredGroupOperationEvidence[]
+  delivery: 'unknown'
+  releasedReason: StoredGroupReleaseReason
+  releasedAt: number
+}
 export type StoredGroupControlBody = 'group_genesis' | 'group_add' | 'group_remove' | 'group_rekey'
 export const MAX_GROUP_CONTROL_RECEIPTS = 64
 /** Private exact pending-control receive proof. Missing entries stay unknown. */
@@ -104,6 +120,7 @@ export interface StoredGroup {
   pending: Array<{ seq: number; wire: string }>
   receipts: number[]
   controlReceipts?: StoredGroupControlReceipt[]
+  releasedOperations?: StoredGroupReleasedOperation[]
   operation: StoredGroupOperation | null
   relayUrl: string
   inviterPublicKey: string

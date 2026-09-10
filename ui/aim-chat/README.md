@@ -177,10 +177,23 @@ re-removed. New removal journals pin the target's full public key, canonical
 member record and admission provenance, so an exact retry refuses a later
 readmission of the same identity; older journals without the pin refuse a target
 admitted at the current epoch. A removal that was never proven accepted stays
-preserved when it expires or its epoch is superseded. A saved **rekey** journal
+preserved when it expires or its epoch is superseded; Retry never mints a
+replacement removal. For exactly that case the panel offers **Release saved
+retry** behind an explicit acknowledgement: after a full replay under the group
+lock it refuses when history is incomplete, when the removal is verified (Retry
+finishes or repairs it), when its exact bytes still apply to the pinned
+incarnation, when the journal is another kind, or when the journal changed
+meanwhile. Release sends nothing, claims nothing was removed, leaves received
+membership, removal, rotation and recovery state as they are, and moves the
+uncertain controls, target pin and prior evidence into a flat private archive
+under the same 256-entry and 4 MiB limits; when that archive cannot hold the
+entry, release refuses and the journal stays. The archive survives receive,
+restart, encrypted backups (validated strictly on import) and a challenged
+welcome replacement. Remove the contact again afterwards to exclude them with
+current keys. A saved **rekey** journal
 retries its exact bytes while they still apply, is replaced from current
 membership when they expired or belong to another branch or roster, and finishes
-without posting once any verified rotation left its source epoch. Every release
+without posting once any verified rotation left its source epoch. Every retry
 rechecks the journal, current authority, replay and the removal proof under the
 group lock. Encrypted backups validate the pinned target, original removal
 evidence and superseded rotations before replacing local data.

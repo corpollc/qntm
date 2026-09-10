@@ -77,6 +77,7 @@ export class GroupBridge {
         'from qntm.group_session import group_session_from_welcome, prepare_group_welcome_refresh, check_group_welcome_replay, check_group_unverifiable_epoch',
         'from qntm.watch import GROUP_RECEIVE_CONTRACT_VERSION',
         'assert "challenge" in inspect.signature(GroupClient.refresh).parameters',
+        'assert "release_unproven" in inspect.signature(GroupClient.retry).parameters',
         'assert "replay_from_sequence" in inspect.signature(prepare_group_welcome_refresh).parameters',
         'assert GROUP_RECEIVE_CONTRACT_VERSION == 1',
       ].join('\n'),
@@ -96,6 +97,7 @@ export class GroupBridge {
     for (let i = 0; i < positional.length; i++) {
       if (positional[i] === '--') { id = positional[i + 1]; break; }
       if (['--challenge', '--reason'].includes(positional[i])) { i++; continue; }
+      if (positional[i] === '--release-unproven') continue;
       if (!positional[i].startsWith('--')) { id = positional[i]; break; }
     }
     if (args[0] === 'contact' || (args[0] === 'group' && ['create', 'join'].includes(args[1]))) id = undefined;

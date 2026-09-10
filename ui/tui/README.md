@@ -51,6 +51,7 @@ receive no pre-admission keys or history.
 | `/group link` | Show your public locator for contacts whose welcomes you issued |
 | `/group status` | Show epoch, member count, relay, unfinished operation and recovery challenge |
 | `/group retry` | Check current group state and continue a saved operation |
+| `/group retry --release-unproven` | Give up the local retry of a saved removal that was never verified and can no longer be retried exactly; sends nothing and changes no membership |
 | `/group rekey` | Finish an interrupted membership rotation |
 | `/contact list` | Show full locally pinned addresses |
 | `/contact remove <name>` | Delete a local pin without changing group membership |
@@ -82,7 +83,15 @@ block sends in the receiver, even if a terminal view is stale. A failed operatio
 keeps its saved ciphertext for `/group retry`; do not delete the profile to retry.
 If creation was interrupted, select its group from the sidebar and inspect
 `/group status`. Conflicting or expired operations may require further recovery;
-retry does not invent a new membership decision.
+retry does not invent a new membership decision. If a saved removal was never
+verified in replay and can no longer be retried exactly (expired, superseded,
+another branch, or the target was readmitted), `/group retry --release-unproven`
+asks the Python client to give up that local retry after a full replay. It
+posts nothing, reports "Local retry released" rather than a removal, leaves
+received membership, removal, rotation and recovery state unchanged, and keeps
+the uncertain ciphertext in the private profile. A verified or still exactly
+retryable removal is refused; use plain `/group retry`. Issue `/group remove
+<contact>` again afterwards if you still want them out.
 
 One resident `recv --watch` process keeps a WebSocket subscription open per
 contact group. It reconnects on network failures and shares locked state with

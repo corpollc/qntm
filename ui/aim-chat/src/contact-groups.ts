@@ -8,12 +8,13 @@ import {
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, assertGroupAdmissionRenewalCurrent, assertGroupCanSend,
   receiveGroupEvent, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl, requireGroupRecovery,
   createGroupLink, parseGroupLink, openGroupWelcome, groupSessionFromWelcome,
-  serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, createMessage, defaultTTL, DropboxClient,
+  serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, createMessage, defaultTTL, DropboxClient, marshalCanonical,
 } from '@corpollc/qntm'
 import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
 import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, sameGroupOperationValue,
-  appendGroupOperationEvidence, assertGroupOperationEvidenceBudget, groupRemovalTarget, assertGroupRemovalTargetCurrent } from './group-operation'
+  appendGroupOperationEvidence, assertGroupOperationEvidenceBudget, groupRemovalTarget, assertGroupRemovalTargetCurrent,
+  MAX_GROUP_OPERATION_REVISIONS, MAX_GROUP_OPERATION_EVIDENCE_BYTES } from './group-operation'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 export function bytes(value: string): Uint8Array {
@@ -402,6 +403,80 @@ function shouldPostRemovalRekey(identity: Identity, record: ReturnType<typeof lo
   assertRotationCurrent(identity, state, op.controls[0], op.expected)
   return true
 }
+/** Classify why the saved removal can no longer be retried exactly. Throws when
+ * the exact bytes still apply at this epoch to their pinned incarnation, whatever
+ * journal kind holds them; nothing here infers acceptance. */
+function staleRemovalReason(identity: Identity, state: GroupSessionState, intent: store.StoredGroupRemovalOrigin | Extract<store.StoredGroupOperation, { kind: 'remove' }>): store.StoredGroupReleaseReason {
+  const wire = base64UrlDecode(intent.controls[0]), removal = deserializeEnvelope(wire)
+  if (state.epoch !== removal.conv_epoch) return 'superseded'
+  if (removal.expiry_ts < Math.floor(Date.now() / 1000)) return 'expired'
+  let applied: ReturnType<typeof receiveGroupEvent>
+  try { applied = receiveGroupEvent(identity, removal, state) } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/removed member/.test(message)) return 'target_absent'
+    if (/Stale|epoch|member|Invalid|control|genesis|Conflicting/.test(message)) return 'inapplicable'
+    return 'wrong_branch'
+  }
+  if (applied.duplicate || applied.message.inner.body_type !== 'group_remove') throw new Error('The saved removal does not match its pending journal; use Retry saved operation')
+  try { assertGroupRemovalTargetCurrent(state, intent.target, parseGroupRemoveBody(applied.message.inner.body).removed_members.map(hex)) } catch (error) {
+    return /later admission/.test(error instanceof Error ? error.message : '') ? 'legacy_same_epoch_admission' : 'incarnation_changed'
+  }
+  throw new Error('The saved removal is still exactly retryable; use Retry saved operation')
+}
+/** Check the flat private archive of released removals; malformed rows never grow. */
+export function validateReleasedOperations(value: unknown): store.StoredGroupReleasedOperation[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_GROUP_OPERATION_REVISIONS) throw new Error('Invalid saved release archive')
+  for (const row of value as Array<Record<string, unknown>>) {
+    if (!row || typeof row !== 'object' || !['remove', 'removal_rekey'].includes(row.kind as string) || 'expected' in row
+      || row.delivery !== 'unknown' || !store.GROUP_RELEASE_REASONS.includes(row.releasedReason as store.StoredGroupReleaseReason)
+      || !Number.isSafeInteger(row.releasedAt) || (row.releasedAt as number) < 0
+      || !Array.isArray(row.controls) || !row.controls.every(wire => typeof wire === 'string')
+      || !Array.isArray(row.welcomes) || !Number.isSafeInteger(row.delivered)) throw new Error('Invalid saved release archive')
+  }
+  return structuredClone(value as store.StoredGroupReleasedOperation[])
+}
+/** Give up local retry of a stale, unproven saved removal. Publishes nothing,
+ * claims nothing about the remote group, and leaves received membership,
+ * removal, rotation and recovery state exactly as they are. */
+async function releaseUnlocked(profile: string, id: string) {
+  // Snapshot the journal before replay. A concurrent writer (or the receive
+  // path itself) that mutates it must not be released from a stale copy.
+  const previous = structuredClone(load(profile, id).group.operation)
+  await syncUnlocked(profile, id)
+  const record = load(profile, id)
+  if (!sameGroupOperationValue(record.group.operation ?? null, previous ?? null)) {
+    throw new Error('The saved operation changed before release; use Retry saved operation')
+  }
+  const op = record.group.operation
+  if (!op) throw new Error('No saved group operation')
+  if (op.kind !== 'remove' && op.kind !== 'removal_rekey') throw new Error('The saved operation is not an unproven removal; use Retry saved operation')
+  const identity = identityFor(profile), state = record.group.session
+  if (state.recovery) throw new Error('Recover missing group history before releasing this operation')
+  const proof = removalProof(record, op)
+  if (proof.accepted) throw new Error('The saved removal is verified in current history; use Retry saved operation')
+  const reason = staleRemovalReason(identity, state, op.kind === 'removal_rekey' ? op.origin : op)
+  const archive = validateReleasedOperations(record.group.releasedOperations)
+  const row: store.StoredGroupReleasedOperation = { kind: op.kind, controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered,
+    ...(op.kind === 'remove' && op.target ? { target: structuredClone(op.target) } : {}),
+    ...(op.kind === 'removal_rekey' ? { origin: structuredClone(op.origin) } : {}),
+    ...(op.superseded ? { superseded: structuredClone(op.superseded) } : {}),
+    delivery: 'unknown', releasedReason: reason, releasedAt: Math.floor(Date.now() / 1000) }
+  archive.push(row)
+  // Never drop retained uncertain evidence to make room: refuse instead.
+  if (archive.length > MAX_GROUP_OPERATION_REVISIONS || marshalCanonical(archive).length > MAX_GROUP_OPERATION_EVIDENCE_BYTES) {
+    throw new Error('The private release archive reached its limit; the saved operation is preserved')
+  }
+  if (!sameGroupOperationValue(load(profile, id).group.operation ?? null, op)) {
+    throw new Error('The saved operation changed before release; use Retry saved operation')
+  }
+  record.group.releasedOperations = archive
+  record.group.operation = null
+  save(profile, record)
+  return { released: true as const, reason, epoch: state.epoch, members: record.participants.length, removed: state.removed,
+    needsRekey: state.needsRekey, releasedOperations: archive.length }
+}
+export function releaseContactGroupRetry(profile: string, id: string) { return withGroupLock(profile, id, () => releaseUnlocked(profile, id)) }
 function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation | null {
   if (op.kind === 'refresh') return reconcileRefresh(profile, id, op)
   if (op.kind === 'renewal') return reconcileRenewal(profile, id, op)
@@ -635,6 +710,7 @@ export async function openContactGroup(profile: string, link: string, name = '')
         const group: store.StoredGroup = { session, cursor: welcome.replayFromSequence, bootstrapSequence: welcome.replayFromSequence, removedSequence: previous?.group?.removedSequence,
           pending: [], receipts: previous?.group?.receipts ?? [],
           controlReceipts: (previous?.group?.controlReceipts ?? []).map(row => ({ ...row, valid: false })),
+          ...(previous?.group?.releasedOperations ? { releasedOperations: structuredClone(previous.group.releasedOperations) } : {}),
           operation: previous?.group?.operation ?? null,
           relayUrl: locator.relayUrl, inviterPublicKey: hex(locator.inviterPublicKey), revision: (previous?.group?.revision ?? -1) + 1 }
         const record: store.StoredConversation = { id, name: name.trim() || previous?.name || welcome.state.snapshot().group_name, type: 'group',

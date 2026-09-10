@@ -1,5 +1,5 @@
-import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
-import { MAX_GROUP_CONTROL_RECEIPTS, type StoreData, type StoredConversation, type StoredGroupOperation } from './store'
+import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite, marshalCanonical } from '@corpollc/qntm'
+import { MAX_GROUP_CONTROL_RECEIPTS, GROUP_RELEASE_REASONS, type StoreData, type StoredConversation, type StoredGroupOperation } from './store'
 import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS,
   validateGroupRemovalTarget } from './group-operation'
 
@@ -121,7 +121,7 @@ export function validateBackup(json: string): StoreData {
         const identity = data.identities[pid]
         if (!identity) fail('contact group identity missing')
         const localIdentity = { privateKey: hexBytes(identity.privateKey), publicKey: hexBytes(identity.publicKey), keyID: hexBytes(identity.keyId) }
-        const host = object(conv.group, 'group host fields', ['session', 'cursor', 'bootstrapSequence', 'removedSequence', 'pending', 'receipts', 'controlReceipts', 'operation', 'relayUrl', 'inviterPublicKey', 'revision'])
+        const host = object(conv.group, 'group host fields', ['session', 'cursor', 'bootstrapSequence', 'removedSequence', 'pending', 'receipts', 'controlReceipts', 'releasedOperations', 'operation', 'relayUrl', 'inviterPublicKey', 'revision'])
         const checkpoint = restoreGroupSession(localIdentity, host.session)
         if (checkpoint.conversationId !== conv.id) fail('group checkpoint conversation mismatch')
         const crypto = groupSessionConversation(checkpoint)
@@ -152,6 +152,47 @@ export function validateBackup(json: string): StoreData {
             identities.push(`${item.id}:${item.digest}`)
           }
           unique(identities, 'duplicate control receipt identity')
+        }
+        if (host.releasedOperations !== undefined) {
+          // Released removals keep only uncertain ciphertext and its pin: no
+          // predicted checkpoint, no delivery claim, one flat bounded list.
+          const archive = list(host.releasedOperations, 'released group operations', MAX_GROUP_OPERATION_REVISIONS)
+          const conversationWire = (value: unknown, path: string) => {
+            if (encodedHex(deserializeEnvelope(b64(value, path)).conv_id) !== conv.id) fail(`${path} conversation`)
+          }
+          const removalTarget = (value: unknown, path: string) => {
+            const target = object(value, path, ['keyId', 'publicKey', 'record', 'admission'])
+            try { validateGroupRemovalTarget(target as Parameters<typeof validateGroupRemovalTarget>[0]) } catch { fail(path) }
+          }
+          for (const value of archive) {
+            const row = object(value, 'released operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'target', 'origin', 'superseded', 'delivery', 'releasedReason', 'releasedAt'])
+            if (!['remove', 'removal_rekey'].includes(row.kind) || row.delivery !== 'unknown' || !GROUP_RELEASE_REASONS.includes(row.releasedReason)) fail('released operation kind')
+            integer(row.releasedAt, 'released operation time')
+            const controls = list(row.controls, 'released controls', 2)
+            integer(row.delivered, 'released delivered count')
+            if (controls.length !== (row.kind === 'remove' ? 2 : 1) || list(row.welcomes, 'released welcomes', 0).length) fail('released operation shape')
+            for (const wire of controls) conversationWire(wire, 'released control')
+            if (row.kind === 'remove') {
+              if (row.origin !== undefined) fail('released removal origin')
+              if (row.target !== undefined) removalTarget(row.target, 'released removal target')
+            } else {
+              if (row.target !== undefined) fail('released repair target')
+              const origin = object(row.origin, 'released repair origin fields', ['kind', 'controls', 'welcomes', 'delivered', 'target', 'delivery'])
+              integer(origin.delivered, 'released origin delivered count')
+              if (origin.kind !== 'remove' || origin.delivery !== 'unknown' || list(origin.controls, 'released origin controls', 2).length !== 2
+                || list(origin.welcomes, 'released origin welcomes', 0).length) fail('released repair origin')
+              for (const wire of origin.controls) conversationWire(wire, 'released origin control')
+              if (origin.target !== undefined) removalTarget(origin.target, 'released origin target')
+            }
+            for (const item of row.superseded === undefined ? [] : list(row.superseded, 'released superseded operations', MAX_GROUP_OPERATION_REVISIONS)) {
+              const old = object(item, 'released superseded fields', ['kind', 'controls', 'welcomes', 'delivered', 'delivery'])
+              integer(old.delivered, 'released superseded delivered count')
+              if (old.kind !== row.kind || old.delivery !== 'unknown' || list(old.controls, 'released superseded controls', 1).length !== 1
+                || list(old.welcomes, 'released superseded welcomes', 0).length) fail('released superseded shape')
+              conversationWire(old.controls[0], 'released superseded control')
+            }
+          }
+          if (marshalCanonical(archive).length > 4 * 1024 * 1024) fail('released group operations exceed 4 MiB')
         }
         if (host.operation !== null) {
           const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded', 'target'])

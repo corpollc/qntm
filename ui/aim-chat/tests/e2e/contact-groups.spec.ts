@@ -6,7 +6,8 @@ import { resolve, join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
 import { generateIdentity, DropboxClient, openGroupWelcome, parseGroupLink, createGroupSession, receiveGroupEvent, groupSessionConversation,
   createMessage, serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, prepareGroupSessionAddition, assertGroupAdditionAccepted, base64UrlEncode,
-  createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, createGroupLink, prepareGroupWelcomeRefresh, assertGroupCanSend } from '@corpollc/qntm'
+  createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, createGroupLink, prepareGroupWelcomeRefresh, assertGroupCanSend,
+  restoreGroupSession, decryptMessage } from '@corpollc/qntm'
 import type { Identity, GroupSessionState } from '@corpollc/qntm'
 import { WebSocket } from 'ws'
 import { RelayStub } from './fixtures/relay-stub'
@@ -671,6 +672,129 @@ test('browser finishes an accepted removal whose rekey expired through a dropped
     await expect(command('command', 'group', 'join', link)).rejects.toThrow()
     await page.screenshot({ path: '/tmp/qntm-claude-browser-removal-retry-after.png' })
     await test.info().attach('removal-repair-retry-after', { body: await page.screenshot(), contentType: 'image/png' })
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test('browser releases an expired unposted removal without posting or excluding, then a later remove excludes the Python peer with its current keys', async ({ page }) => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-removal-release-'))
+  const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
+    [resolve('tests/e2e/fixtures/python-group-peer.py'), directory, ...args], {
+      env: { ...process.env, PYTHONPATH: resolve('../../python-dist/src') }, timeout: 45_000,
+    })).stdout)
+  const group = (cid: string) => page.evaluate(cid => {
+    const data = JSON.parse(localStorage.getItem('aim-store')!)
+    const record = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid)
+    return { profile: data.activeProfileId as string, participants: record.participants as string[], group: record.group }
+  }, cid)
+  try {
+    const python = await command('identity'), other = generateIdentity()
+    await page.goto('/'); await contacts(page)
+    await page.getByLabel('Contact name', { exact: true }).fill('Python colleague')
+    await page.getByLabel('Full public key', { exact: true }).fill(python.public_key)
+    await page.getByLabel('I checked this key with the contact').check()
+    await page.getByRole('button', { name: 'Pin contact', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Contact pinned' })).toBeVisible()
+    await pin(page, 'TypeScript colleague', other)
+    await page.getByLabel('Group name', { exact: true }).fill('Removal release journey')
+    await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+    const link = await add(page, 'TypeScript colleague')
+    expect(await add(page, 'Python colleague')).toBe(link)
+    await command('command', 'group', 'join', link)
+    await expect(page.getByText('3 members · key epoch 2')).toBeVisible()
+    const ts = await peerOpen(other, link)
+    expect(ts.state.epoch).toBe(2)
+    const before = await group(hex(parseGroupLink(link).conversationId))
+    const id = hex(parseGroupLink(link).conversationId), cid = parseGroupLink(link).conversationId, current = before.group.session as GroupSessionState
+    const remove = createGroupControlMessage(browserIdentity, groupSessionConversation(current), 'group_remove',
+      createGroupRemoveBody([new Uint8Array(Buffer.from(python.key_id, 'hex'))], 'unposted release'), 12)
+    const afterRemove = receiveGroupEvent(browserIdentity, remove, current).state
+    const rotation = prepareGroupSessionRekey(browserIdentity, afterRemove, 12)
+    const expected = receiveGroupEvent(browserIdentity, rotation.rekey, afterRemove).state
+    const target = groupRemovalTarget(current, python.key_id)
+    const controls = [remove, rotation.rekey].map(envelope => base64UrlEncode(serializeEnvelope(envelope)))
+    await page.evaluate(({ profile, id, operation }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const record = data.conversations[profile].find((row: { id: string }) => row.id === id)
+      record.group.operation = operation; record.group.revision++
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { profile: before.profile, id, operation: { kind: 'remove', controls, welcomes: [], delivered: 0, expected, target } })
+    await new Promise(done => setTimeout(done, Math.max(0, (remove.expiry_ts + 1) * 1000 - Date.now())))
+    await page.reload(); await contacts(page)
+    await expect(page.getByRole('button', { name: 'Retry saved operation', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Release saved retry', exact: true })).toBeVisible()
+    const posted: string[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(request.postDataJSON().envelope_b64)
+    })
+    await page.getByRole('button', { name: 'Retry saved operation', exact: true }).click()
+    await expect(page.getByRole('alert')).toContainText(/expired before its acceptance/)
+    expect(posted).toEqual([])
+    await page.screenshot({ path: '/tmp/qntm-grok-browser-removal-release-before.png' })
+    await test.info().attach('removal-release-before', { body: await page.screenshot(), contentType: 'image/png' })
+    await expect(page.getByText(/stops only this browser’s retry/)).toBeVisible()
+    await page.getByLabel('I understand this only stops the local retry').check()
+    await page.getByRole('button', { name: 'Release saved retry', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Local retry released' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('status').filter({ hasText: 'membership is unchanged' })).toBeVisible()
+    expect(posted).toEqual([])
+    const settled = await group(id)
+    expect(settled.group.operation).toBeNull()
+    expect(settled.participants).toContain(python.key_id)
+    expect(settled.group.session).toMatchObject({ epoch: 2, needsRekey: false, recovery: null, removed: false })
+    expect(settled.group.releasedOperations).toEqual([{ kind: 'remove', controls, welcomes: [], delivered: 0, target, delivery: 'unknown',
+      releasedReason: 'expired', releasedAt: expect.any(Number) }])
+    expect(settled.group.releasedOperations[0]).not.toHaveProperty('expected')
+    const rows = (await new DropboxClient(relay.url).receiveMessages(cid, 0)).entries.map(row => deserializeEnvelope(row.envelope))
+    expect(rows.some(envelope => hex(envelope.msg_id) === hex(remove.msg_id) || hex(envelope.msg_id) === hex(rotation.rekey.msg_id))).toBe(false)
+    await page.getByPlaceholder('Type a message').fill('after local release')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.locator('.message-body', { hasText: 'after local release' })).toBeVisible()
+    await command('command', 'recv', id)
+    const pythonHistory = async () => JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8')).find((record: { id: string }) => record.id === id)
+    expect((await pythonHistory()).group_history.some((row: { unsafe_body?: string }) => row.unsafe_body === 'after local release')).toBe(true)
+    await command('command', 'send', id, 'python still present')
+    await expect(page.locator('.message-body', { hasText: 'python still present' })).toBeVisible()
+    await catchUpPeer(other, ts)
+    expect(ts.state).toMatchObject({ epoch: 2, removed: false, needsRekey: false })
+    assertGroupCanSend(other, ts.state)
+    const pythonIdentityFile = JSON.parse(await readFile(join(directory, 'identity.json'), 'utf8'))
+    const pythonIdentity = { privateKey: new Uint8Array(Buffer.from(pythonIdentityFile.private_key, 'hex')),
+      publicKey: new Uint8Array(Buffer.from(pythonIdentityFile.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(pythonIdentityFile.key_id, 'hex')) }
+    const prior = restoreGroupSession(pythonIdentity, (await pythonHistory()).group_session)
+    const priorConversation = groupSessionConversation(prior)
+    await page.getByLabel('Pinned contact', { exact: true }).selectOption({ label: 'Python colleague' })
+    posted.length = 0
+    await page.getByRole('button', { name: 'Remove from group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Python colleague removed' })).toBeVisible()
+    expect(posted).toHaveLength(2)
+    expect(posted).not.toContain(controls[0]); expect(posted).not.toContain(controls[1])
+    await page.getByPlaceholder('Type a message').fill('survivor after explicit removal')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.locator('.message-body', { hasText: 'survivor after explicit removal' })).toBeVisible()
+    const after = await new DropboxClient(relay.url).receiveMessages(cid, 0)
+    const exclusion = after.entries.map(row => deserializeEnvelope(row.envelope)).find(envelope => {
+      if (isGroupWelcomeEnvelope(envelope)) return false
+      try { return new TextDecoder().decode(decryptMessage(envelope, priorConversation).inner.body) === 'survivor after explicit removal' }
+      catch { return false }
+    })
+    expect(exclusion).toBeUndefined()
+    expect(() => {
+      for (const row of after.entries) {
+        const envelope = deserializeEnvelope(row.envelope)
+        if (!isGroupWelcomeEnvelope(envelope) && envelope.conv_epoch > prior.epoch) decryptMessage(envelope, priorConversation)
+      }
+    }).toThrow()
+    await command('command', 'recv', id)
+    expect((await pythonHistory()).group_session.removed).toBe(true)
+    await expect(command('command', 'send', id, 'removed peer cannot send')).rejects.toThrow(/removed/i)
+    await catchUpPeer(other, ts)
+    assertGroupCanSend(other, ts.state)
+    await ts.relayClient.postMessage(cid, serializeEnvelope(createMessage(other, groupSessionConversation(ts.state), 'text', new TextEncoder().encode('TypeScript survivor after release'))))
+    await expect(page.locator('.message-body', { hasText: 'TypeScript survivor after release' })).toBeVisible()
+    await page.screenshot({ path: '/tmp/qntm-grok-browser-removal-release-after.png' })
+    await test.info().attach('removal-release-after', { body: await page.screenshot(), contentType: 'image/png' })
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 

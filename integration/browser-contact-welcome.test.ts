@@ -28,7 +28,7 @@ describe('browser contact welcomes through the relay worker', () => {
       cwd: join(root, 'ui/aim-chat'), timeout: 330_000, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, QNTM_UI_BASE_URL: uiUrl, QNTM_BROWSER_RELAY_URL: relayUrl },
     })
-    expect(result.stdout).toContain('12 passed')
+    expect(result.stdout).toContain('13 passed')
     expect(result.stdout).toContain('1 skipped')
   }, 340_000)
 })

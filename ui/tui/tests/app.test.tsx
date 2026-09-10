@@ -2,6 +2,7 @@ import React from 'react';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { DropboxClient, createGateRequestBody, deserializeEnvelope } from '@corpollc/qntm';
@@ -82,7 +83,7 @@ describe('App integration', () => {
     let acknowledge!: (sequence: number) => void;
     const posted = vi.spyOn(DropboxClient.prototype, 'postMessage').mockReturnValue(new Promise(resolve => { acknowledge = resolve; }));
     const app = render(<App configDir={f.dir} dropboxUrl={relay.url} />);
-    const text = () => (app.lastFrame() ?? '').replace(/[│\s]/g, '');
+    const text = () => stripVTControlCharacters(app.lastFrame() ?? '').replace(/[│\s]/g, '');
     try {
       await waitFor(() => !!composerState.current?.activeConversation);
       composerState.current!.onCommand('approve', request.request_id);
