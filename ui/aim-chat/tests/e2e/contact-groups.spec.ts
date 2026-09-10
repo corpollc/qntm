@@ -85,6 +85,9 @@ test('browser adds two pinned TypeScript contacts; reverse opening order, reply,
   await page.getByRole('button', { name: 'Send', exact: true }).click()
   const link = await add(page, 'Bob')
   expect(await add(page, 'Carol')).toBe(link)
+  const layout = await page.evaluate(() => ({ sidebarBottom: document.querySelector('.sidebar')!.getBoundingClientRect().bottom, footerTop: document.querySelector('.status-bar')!.getBoundingClientRect().top, pageHeight: document.documentElement.scrollHeight, viewport: window.innerHeight }))
+  expect(layout.sidebarBottom).toBeLessThanOrEqual(layout.footerTop + 1)
+  expect(layout.pageHeight).toBeLessThanOrEqual(layout.viewport)
   const carolPeer = await peerOpen(carol, link), bobPeer = await peerOpen(bob, link)
   expect(carolPeer.state.epoch).toBe(2); expect(bobPeer.state.epoch).toBe(2)
   const reply = createMessage(bob, groupSessionConversation(bobPeer.state), 'text', new TextEncoder().encode('TypeScript contact reply'))
@@ -202,7 +205,7 @@ test('browser pauses on retained-history loss and recovers only with its new sig
     const data = JSON.parse(localStorage.getItem('aim-store')!)
     return data.conversations[data.activeProfileId].find((conv: { id: string }) => conv.id === cid).group.session.recovery.challenge
   }, id)
-  const refresh = prepareGroupWelcomeRefresh(peer, opened.state, [browserIdentity.publicKey], undefined, new Uint8Array(Buffer.from(challenge, 'hex')))
+  const refresh = prepareGroupWelcomeRefresh(peer, opened.state, [browserIdentity.publicKey], undefined, new Uint8Array(Buffer.from(challenge, 'hex')), sequence)
   await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(refresh.welcomes[0]))
   const link = createGroupLink({ ...opened.locator, inviterPublicKey: peer.publicKey })
   await browserOpen(page, link)
