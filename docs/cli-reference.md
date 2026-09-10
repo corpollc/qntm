@@ -458,13 +458,16 @@ options:
 ## `qntm group retry`
 
 ```text
-usage: qntm group retry [-h] conversation
+usage: qntm group retry [-h] [--release-unproven] conversation
 
 positional arguments:
-  conversation  Conversation ID or prefix
+  conversation        Conversation ID or prefix
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help          show this help message and exit
+  --release-unproven  Give up local retry of a saved removal that was never verified
+                      and can no longer be retried exactly; posts nothing and keeps
+                      its ciphertext as private evidence
 ```
 
 ## `qntm group refresh`

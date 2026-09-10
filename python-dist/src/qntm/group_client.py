@@ -37,6 +37,8 @@ MAX_PENDING_MESSAGES = 256
 MAX_PENDING_BYTES = 4 * 1024 * 1024
 MAX_OPERATION_REVISIONS = 256
 MAX_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024
+RELEASE_REASONS = frozenset(['expired', 'superseded', 'wrong_branch', 'target_absent', 'inapplicable',
+                             'incarnation_changed', 'legacy_same_epoch_admission', 'proof_invalidated'])
 
 
 def _recovery_challenge(value):
@@ -199,6 +201,22 @@ def _assert_removal_target_current(state, operation, removed_members):
     current = _removal_target(state, kid)
     if marshal_canonical(current) != marshal_canonical(target):
         raise ValueError('Saved removal no longer targets its original admission; operation preserved')
+
+
+def _validate_released_operations(value):
+    """Check the flat private archive of released removals; malformed rows never grow."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_OPERATION_REVISIONS:
+        raise ValueError('Invalid saved release archive')
+    for row in value:
+        if (not isinstance(row, dict) or row.get('kind') not in ('remove', 'removal_rekey') or 'expected' in row
+                or row.get('delivery') != 'unknown' or row.get('released_reason') not in RELEASE_REASONS
+                or type(row.get('released_at')) is not int or row['released_at'] < 0
+                or not isinstance(row.get('controls'), list) or not all(isinstance(wire, str) for wire in row['controls'])
+                or not isinstance(row.get('welcomes'), list) or type(row.get('welcomes_sent')) is not int):
+            raise ValueError('Invalid saved release archive')
+    return copy.deepcopy(value)
 
 
 def _creation_message(identity, record, envelope):
@@ -460,11 +478,12 @@ class GroupClient:
                                                 'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None})
             return self._resume(record['id'])
 
-    def prepare_change(self, record, member=None, reason='', ttl=None):
+    def prepare_change(self, record, member=None, reason='', ttl=None, removal_ttl=None):
         """Build the exact remove/rekey journal from a synced record; save before POST.
 
         A removal journal pins its target's full member record and admission
         incarnation so an exact retry can never remove a later readmission.
+        ttl bounds the rotation; removal_ttl bounds the removal control itself.
         """
         state = record['group_session']
         if member is not None:
@@ -473,7 +492,7 @@ class GroupClient:
         controls, target = [], None
         if member is not None:
             kid = bytes.fromhex(member) if re.fullmatch('[0-9a-fA-F]{32}', member) else key_id_from_public_key(resolve_contact(self.config_dir, member))
-            envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason))
+            envelope = create_group_control_message(self.identity, conversation, 'group_remove', create_group_remove_body([kid], reason), removal_ttl)
             applied = receive_group_event(self.identity, envelope, state)
             target = _removal_target(state, kid)
             group = applied['group']
@@ -525,14 +544,88 @@ class GroupClient:
                                                    if admission and admission['completion'] else {})})
             return self._resume(record['id'])
 
-    def retry(self, conversation_id):
+    def retry(self, conversation_id, release_unproven=False):
         from .legacy_group import has_creation, retry
+        if release_unproven:
+            _, record = self._load(conversation_id)
+            with self._operation_lock(record['id']):
+                return self._release_unproven_removal(record['id'])
         record = cli._resolve_conversation(cli._load_conversations(self.config_dir), conversation_id)
         if record and record.get('type') == 'group' and not record.get('group_session') and has_creation(self.config_dir, record['id']):
             return retry(self.config_dir, self.identity, self.relay_url, record['id'])
         _, record = self._load(conversation_id)
         with self._operation_lock(record['id']):
             return self._resume(record['id'], reconcile=True)
+
+    def _stale_removal_reason(self, state, intent, kind):
+        """Classify why the saved removal can no longer be retried exactly.
+
+        Raises when the exact bytes still apply at this epoch to their pinned
+        incarnation: plain retry owns that case. Nothing here infers acceptance.
+        """
+        wire = base64.b64decode(intent['controls'][0], validate=True)
+        removal = deserialize_envelope(wire)
+        if state['epoch'] != removal['conv_epoch']:
+            return 'superseded'
+        if removal['expiry_ts'] < int(time.time()):
+            return 'expired'
+        try:
+            applied = receive_group_event(self.identity, removal, state)
+        except CryptoError:
+            return 'wrong_branch'
+        except ValueError as error:
+            return 'target_absent' if 'removed member' in str(error) else 'inapplicable'
+        if applied.get('duplicate') or applied['message']['inner']['body_type'] != 'group_remove':
+            raise ValueError('Saved removal does not match its pending journal; use group retry')
+        try:
+            _assert_removal_target_current(state, intent, unmarshal(applied['message']['inner']['body'])['removed_members'])
+        except ValueError as error:
+            return 'legacy_same_epoch_admission' if 'later admission' in str(error) else 'incarnation_changed'
+        if kind == 'removal_rekey':
+            # Its original proof was invalidated by a later verified replacement;
+            # plain retry never republishes an origin removal without that proof.
+            return 'proof_invalidated'
+        raise ValueError('Saved removal is still exact-retryable; use group retry')
+
+    def _release_unproven_removal(self, conversation_id):
+        """Give up local retry ownership of a stale, unproven removal; publish nothing.
+
+        The uncertain ciphertext, target pin and prior evidence move to a flat
+        bounded private archive with the reason. Received membership, removal,
+        rotation and recovery state are untouched; nothing is claimed accepted.
+        """
+        record = self.sync(conversation_id)
+        operation = record.get('group_operation')
+        if not operation:
+            raise ValueError('No pending group operation')
+        if operation.get('kind') not in ('remove', 'removal_rekey'):
+            raise ValueError('Pending operation is not an unproven removal; use group retry')
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(operation):
+                raise ValueError('Pending operation changed before release; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            if state['recovery']:
+                raise ValueError('Group history is incomplete; open a fresh welcome from a current member before releasing')
+            accepted, _ = self._removal_proof(record, operation)
+            if accepted:
+                raise ValueError('Removal is verified in current history; use group retry')
+            intent = operation['origin'] if operation['kind'] == 'removal_rekey' else operation
+            reason = self._stale_removal_reason(state, intent, operation['kind'])
+            archive = _validate_released_operations(record.get('released_group_operations'))
+            row = {key: copy.deepcopy(operation[key]) for key in ('kind', 'controls', 'welcomes', 'welcomes_sent')}
+            row.update({key: copy.deepcopy(operation[key]) for key in ('target', 'origin', 'superseded_operations') if key in operation})
+            row.update(delivery='unknown', released_reason=reason, released_at=int(time.time()))
+            archive.append(row)
+            # Never drop retained uncertain evidence to make room: refuse instead.
+            if len(archive) > MAX_OPERATION_REVISIONS or len(marshal_canonical(archive)) > MAX_OPERATION_EVIDENCE_BYTES:
+                raise ValueError('Saved release archive reached its limit; operation preserved')
+            record['released_group_operations'] = archive
+            record.pop('group_operation')
+            cli._save_conversations(self.config_dir, records)
+        return {'conversation_id': conversation_id, 'released': True, 'reason': reason,
+                'current_epoch': record['current_epoch'], 'members': len(record['participants']),
+                'removed': state['removed'], 'needs_rekey': state['needsRekey'], 'released_operations': len(archive)}
 
     def _addition_proof(self, record, operation):
         """Compare an original local intent with accepted, source-bound evidence."""
@@ -1198,6 +1291,8 @@ def join(config_dir, identity, link, name=''):
             record['group_revision'] = previous['group_revision']
         if previous and previous.get('group_operation'):
             record['group_operation'] = copy.deepcopy(previous['group_operation'])
+        if previous and previous.get('released_group_operations'):
+            record['released_group_operations'] = copy.deepcopy(previous['released_group_operations'])
         state = group_session_from_welcome(identity, welcome, welcome_sequence, saved)
         state = check_group_welcome_replay(state, welcome, head,
             [{'seq': row['seq'], 'envelope': base64.b64decode(row['envelope_b64'])} for row in raw])

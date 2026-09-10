@@ -1061,6 +1061,201 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     }, 90_000);
   }
 
+  for (const surface of ['CLI', 'MCP']) {
+    const stale = surface === 'CLI' ? 'expired' : 'superseded';
+    it(`releases an unproven ${stale} removal through fresh ${surface} processes without excluding anyone, then a new explicit removal excludes the target`, async () => {
+      type Journal = { kind: string; controls: string[]; welcomes: string[]; welcomes_sent: number; expected?: GroupSessionState; target?: Record<string, unknown> };
+      type RecordState = { id: string; current_epoch: number; participants: string[]; group_cursor: number;
+        group_session: GroupSessionState; group_operation?: Journal; released_group_operations?: Array<Journal & { delivery: string; released_reason: string; released_at: number }> };
+      const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+      const profile = join(stateDir, `${surface.toLowerCase()}-removal-release`);
+      const python = process.env.QNTM_MONITOR_PYTHON || 'python3';
+      const env = { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') };
+      const readRecord = (id: string): RecordState => JSON.parse(readFileSync(join(profile, 'conversations.json'), 'utf8'))
+        .find((record: RecordState) => record.id === id);
+      const proxy = await recordingRelay(relayUrl);
+      const command = async (...args: string[]) => {
+        const { stdout } = await promisify(execFile)(python, ['-m', 'qntm.cli', '--config-dir', profile,
+          '--dropbox-url', proxy.url, ...args], { env, timeout: 30_000, maxBuffer: 1024 * 1024 });
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(JSON.stringify(result));
+        return result.data;
+      };
+      const mcp = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        const client = new Client({ name: 'fresh-removal-release', version: '1' });
+        try {
+          await client.connect(new StdioClientTransport({ command: python, args: ['-m', 'qntm.mcp_server'],
+            env: { ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+              QNTM_CONFIG_DIR: profile, QNTM_RELAY_URL: proxy.url }, stderr: 'pipe' }));
+          const response = await client.callTool({ name, arguments: args });
+          const result = response.structuredContent as Record<string, unknown>
+            ?? JSON.parse((response.content as Array<{ text: string }>)[0].text);
+          if (response.isError || result.error) throw new Error(JSON.stringify(result));
+          return result;
+        } finally { await client.close(); }
+      };
+      const retry = (id: string, release = false) => surface === 'CLI'
+        ? command('group', 'retry', id, ...(release ? ['--release-unproven'] : []))
+        : mcp('group_retry', { conversation: id, release_unproven: release });
+      const transport = new DropboxClient(proxy.url);
+      type Peer = { identity: ReturnType<typeof generateIdentity>; state: GroupSessionState; cursor: number };
+      const advance = async (peer: Peer, conversationId: Uint8Array, bootstrap?: Awaited<ReturnType<DropboxClient['receiveMessages']>>) => {
+        const result = bootstrap ?? await transport.receiveMessages(conversationId, peer.cursor);
+        if (!bootstrap) {
+          peer.state = checkGroupReplayCoverage(peer.state, peer.cursor, result.sequence, result.entries.map(row => row.seq));
+          for (const row of result.entries) peer.state = checkGroupUnverifiableEpoch(peer.state, deserializeEnvelope(row.envelope), row.seq);
+        }
+        const texts: string[] = [], rejected: string[] = [];
+        for (const row of [...result.entries].filter(row => row.seq > peer.cursor).sort((a, b) => a.seq - b.seq)) {
+          const envelope = deserializeEnvelope(row.envelope);
+          if (isGroupWelcomeEnvelope(envelope)) continue;
+          if (bootstrap && envelope.conv_epoch < peer.state.epoch) continue;
+          peer.state = checkExpiredGroupControl(peer.identity, peer.state, envelope, row.seq);
+          if (peer.state.recovery || envelope.expiry_ts < Math.floor(Date.now() / 1000)) continue;
+          try {
+            const event = receiveGroupEvent(peer.identity, envelope, peer.state);
+            peer.state = event.state;
+            if (!event.duplicate && event.message.inner.body_type === 'text') texts.push(new TextDecoder().decode(event.message.inner.body));
+          } catch (error) {
+            if (!peer.state.removed) throw error;
+            rejected.push(hex(envelope.msg_id));
+          }
+        }
+        peer.cursor = result.sequence;
+        return { texts, rejected };
+      };
+      const open = async (identity: ReturnType<typeof generateIdentity>, link: string): Promise<Peer> => {
+        const locator = parseGroupLink(link);
+        const replay = await transport.receiveMessages(locator.conversationId);
+        const welcomes = replay.entries.flatMap(row => {
+          try { return [{ seq: row.seq, welcome: openGroupWelcome(identity, row.envelope, locator) }]; } catch { return []; }
+        });
+        const { welcome, seq } = welcomes.at(-1)!;
+        const state = checkGroupWelcomeReplay(groupSessionFromWelcome(identity, welcome, seq), welcome, replay.sequence, replay.entries);
+        const peer: Peer = { identity, state, cursor: welcome.replayFromSequence };
+        await advance(peer, locator.conversationId, replay);
+        expect(peer.state.recovery).toBeNull();
+        assertGroupCanSend(identity, peer.state);
+        return peer;
+      };
+      const say = async (peer: Peer, conversationId: Uint8Array, text: string) => {
+        await advance(peer, conversationId);
+        assertGroupCanSend(peer.identity, peer.state);
+        await transport.postMessage(conversationId, serializeEnvelope(createMessage(peer.identity, groupSessionConversation(peer.state), 'text', new TextEncoder().encode(text))));
+        expect((await advance(peer, conversationId)).texts).toEqual([text]); // Consume the peer's own row.
+      };
+      try {
+        await command('identity', 'generate');
+        const survivor = generateIdentity(), target = generateIdentity();
+        const created = await command('group', 'create', `${surface} ${stale} removal release`);
+        const id: string = created.conversation_id, conversationId = Buffer.from(id, 'hex');
+        await command('contact', 'add', 'Survivor', hex(survivor.publicKey));
+        await command('contact', 'add', 'Target', hex(target.publicKey));
+        expect((await command('group', 'add', id, 'Survivor')).current_epoch).toBe(1);
+        const admitted = await command('group', 'add', id, 'Target');
+        expect(admitted.current_epoch).toBe(2);
+        const survivorPeer = await open(survivor, admitted.group_link), targetPeer = await open(target, admitted.group_link);
+        expect(survivorPeer.state.epoch).toBe(2); expect(targetPeer.state.epoch).toBe(2);
+
+        // Real crash window: the removal journal is saved with its target pin and
+        // short-lived controls, and nothing is ever posted for it.
+        const stagedSends = proxy.sends.length;
+        const staged = await promisify(execFile)(python, [join(REPO_ROOT, 'integration/src/stage-unposted-removal.py'),
+          profile, proxy.url, id, hex(target.keyID), '8'], { env, timeout: 30_000 });
+        const stage = JSON.parse(staged.stdout) as { cursor: number; epoch: number; removal_id: string; rekey_id: string; removal_expires_at: number; target: Record<string, unknown> };
+        expect(proxy.sends.slice(stagedSends)).toHaveLength(0);
+        const original = readRecord(id).group_operation!;
+        expect(original).toMatchObject({ kind: 'remove', welcomes: [], welcomes_sent: 0, target: stage.target });
+        expect(original.controls).toHaveLength(2);
+        expect(original.target).toMatchObject({ key_id: hex(target.keyID), public_key: hex(target.publicKey) });
+        let newcomerPeer: Peer | undefined;
+        const survivorRotations: string[] = [];
+        if (stale === 'expired') {
+          const wait = Math.max(0, stage.removal_expires_at * 1000 - Date.now() + 1100);
+          expect(wait).toBeLessThanOrEqual(10_000);
+          await delay(wait);
+          expect(Math.floor(Date.now() / 1000)).toBeGreaterThan(stage.removal_expires_at);
+        } else {
+          // A later admission by the surviving peer leaves the removal's source epoch behind.
+          const newcomer = generateIdentity();
+          await advance(survivorPeer, conversationId);
+          const addition = prepareGroupSessionAddition(survivor, survivorPeer.state, [newcomer.publicKey], undefined, undefined, survivorPeer.cursor);
+          for (const control of [addition.addition, addition.rekey]) {
+            await transport.postMessage(conversationId, serializeEnvelope(control));
+            survivorPeer.state = receiveGroupEvent(survivor, control, survivorPeer.state).state;
+          }
+          survivorRotations.push(hex(addition.rekey.msg_id));
+          assertGroupAdditionAccepted(survivor, survivorPeer.state, addition);
+          await transport.postMessage(conversationId, serializeEnvelope(addition.welcomes[0]));
+          survivorPeer.cursor = (await transport.receiveMessages(conversationId, survivorPeer.cursor)).sequence;
+          newcomerPeer = await open(newcomer, createGroupLink({ conversationId, inviterPublicKey: survivor.publicKey, relayUrl: proxy.url }));
+          expect(newcomerPeer.state.epoch).toBe(3);
+        }
+
+        // Plain retry preserves the stale journal; release gives up local retry only.
+        const beforeRetry = proxy.sends.length;
+        await expect(retry(id)).rejects.toThrow(stale === 'expired' ? /expired before its acceptance/ : /superseded before its acceptance/);
+        expect(readRecord(id).group_operation).toEqual(original);
+        const released = await retry(id, true);
+        expect(released).toMatchObject({ released: true, reason: stale, removed: false, needs_rekey: false, released_operations: 1,
+          current_epoch: stale === 'expired' ? 2 : 3, members: stale === 'expired' ? 3 : 4 });
+        expect(released).not.toHaveProperty('cancelled'); expect(released).not.toHaveProperty('accepted');
+        const postsDuringRelease = proxy.sends.slice(beforeRetry).length;
+        expect(postsDuringRelease).toBe(0);
+        const settled = readRecord(id);
+        expect(settled.group_operation).toBeUndefined();
+        expect(settled.released_group_operations).toEqual([{ kind: 'remove', controls: original.controls, welcomes: [], welcomes_sent: 0,
+          target: original.target, delivery: 'unknown', released_reason: stale, released_at: expect.any(Number) }]);
+        expect(settled.released_group_operations![0]).not.toHaveProperty('expected');
+        expect(settled.participants).toContain(hex(target.keyID));
+        expect(settled.group_session).toMatchObject({ needsRekey: false, removed: false, recovery: null });
+        const rows = (await transport.receiveMessages(conversationId, 0)).entries.map(row => deserializeEnvelope(row.envelope));
+        expect(rows.some(envelope => hex(envelope.msg_id) === stage.removal_id || hex(envelope.msg_id) === stage.rekey_id)).toBe(false);
+
+        // No false exclusion: the target still reads and replies on current keys.
+        const text = `${surface} text after release`;
+        await command('send', id, text);
+        expect((await advance(targetPeer, conversationId)).texts).toEqual([text]);
+        expect((await advance(survivorPeer, conversationId)).texts).toEqual([text]);
+        if (newcomerPeer) expect((await advance(newcomerPeer, conversationId)).texts).toEqual([text]);
+        await say(targetPeer, conversationId, `${surface} target still present`);
+        const received = await command('recv', id);
+        expect(received.messages.filter((message: { unsafe_body?: string }) => message.unsafe_body === `${surface} target still present`)).toHaveLength(1);
+        expect((await advance(survivorPeer, conversationId)).texts).toEqual([`${surface} target still present`]);
+        if (newcomerPeer) expect((await advance(newcomerPeer, conversationId)).texts).toEqual([`${surface} target still present`]);
+
+        // A separate explicit removal is a fresh current-epoch decision with its own pin.
+        const beforeRemoval = proxy.sends.length;
+        const removed = surface === 'CLI' ? await command('group', 'remove', id, 'Target') : await mcp('group_remove_contact', { conversation: id, contact: 'Target' });
+        expect(removed).toMatchObject({ current_epoch: stale === 'expired' ? 3 : 4, members: stale === 'expired' ? 2 : 3 });
+        const removalPosts = proxy.sends.slice(beforeRemoval).map(send => deserializeEnvelope(Buffer.from(send.envelope_b64, 'base64')));
+        expect(removalPosts).toHaveLength(2);
+        expect(removalPosts.map(envelope => hex(envelope.msg_id))).not.toContain(stage.removal_id);
+        expect(removalPosts.every(envelope => envelope.conv_epoch === (stale === 'expired' ? 2 : 3))).toBe(true);
+        const after = readRecord(id);
+        expect(after.group_operation).toBeUndefined();
+        expect(after.participants).not.toContain(hex(target.keyID));
+        expect(after.released_group_operations).toEqual(settled.released_group_operations);
+        const exclusion = `${surface} text after the explicit removal`;
+        await command('send', id, exclusion);
+        expect((await advance(survivorPeer, conversationId)).texts).toEqual([exclusion]);
+        const excluded = await advance(targetPeer, conversationId);
+        expect(targetPeer.state.removed).toBe(true); expect(excluded.texts).toEqual([]); expect(excluded.rejected.length).toBeGreaterThan(0);
+        if (newcomerPeer) expect((await advance(newcomerPeer, conversationId)).texts).toEqual([exclusion]);
+        await say(survivorPeer, conversationId, `${surface} survivor reply after exclusion`);
+        const finalRecv = await command('recv', id);
+        expect(finalRecv.messages.filter((message: { unsafe_body?: string }) => message.unsafe_body === `${surface} survivor reply after exclusion`)).toHaveLength(1);
+        writeFileSync(join(artifactDir, `${surface.toLowerCase()}-removal-release.json`), JSON.stringify({
+          conversation: id, surface, stale, releasedRemoval: stage.removal_id, releasedRekey: stage.rekey_id,
+          postsDuringRelease, releaseReason: released.reason,
+          explicitRemovalPosts: removalPosts.map(envelope => hex(envelope.msg_id)), survivorRotations,
+          targetRemovedAfterExplicitRemoval: targetPeer.state.removed, finalEpoch: after.group_session.epoch,
+          archive: after.released_group_operations!.length,
+        }, null, 2));
+      } finally { await proxy.stop(); }
+    }, 90_000);
+  }
+
   it('posts exactly once across the native runtime idle-connection boundary', async () => {
     // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
     // Waiting five seconds *after* responses would miss the stale-socket race.

@@ -687,8 +687,15 @@ def group_remove_contact(conversation: str, contact: str, reason: str = '') -> d
 
 
 @mcp.tool()
-def group_retry(conversation: str) -> dict:
+def group_retry(conversation: str, release_unproven: bool = False) -> dict:
     """Resume authorized group delivery or legacy CLI genesis from the saved journal.
+
+    release_unproven=True instead gives up local retry of a saved removal that
+    was never verified in replay and can no longer be retried exactly (expired,
+    superseded, other branch, changed or readmitted target). It posts nothing,
+    claims nothing was removed, keeps the ciphertext and target pin as bounded
+    private evidence, and leaves removal, rotation and recovery state as received.
+    A verified or still exact-retryable removal is refused; use plain retry.
 
     Valid saved ciphertext is retried exactly. A completed contact addition whose
     delivery expired or was superseded can renew current keys only for that same
@@ -706,7 +713,7 @@ def group_retry(conversation: str) -> dict:
     Legacy creation stays a bearer-invite group. Its result distinguishes relay
     acknowledgement from exact replay; neither confirms delivery to a peer.
     """
-    return _group_action(conversation, 'retry')
+    return _group_action(conversation, 'retry', bool(release_unproven))
 
 
 @mcp.tool()
