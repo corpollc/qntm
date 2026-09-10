@@ -643,6 +643,29 @@ def _group_action(conversation, action, *args):
 
 
 @mcp.tool()
+def group_create(name: str, description: str = '') -> dict:
+    """Create an ordinary contact group under host authorization, with no bearer invite.
+
+    Saves its exact genesis before sending. Use group_retry with the returned
+    conversation ID if delivery is uncertain; then add known contacts explicitly.
+    """
+    from .group_client import GroupClient
+    config_dir = _config_dir()
+    identity = _load_identity(config_dir)
+    if not identity:
+        return {'error': 'No identity found. Call identity_generate first.'}
+    try:
+        return GroupClient(config_dir, identity, _relay_url()).create(name, description)
+    except SendDeliveryUnknown as error:
+        return {'error': 'Group creation delivery is uncertain; use group_retry', 'delivery': 'unknown',
+                'conversation_id': error.conversation_id, 'message_id': error.message_id}
+    except ValueError as error:
+        return {'error': str(error)}
+    except Exception as error:
+        return {'error': f'Group creation did not complete ({type(error).__name__}); preserve local state and use group_retry'}
+
+
+@mcp.tool()
 def group_add_contact(conversation: str, contact: str, challenge: str = '') -> dict:
     """Add a known contact under host authorization, rotate keys and send their encrypted welcome.
 

@@ -21,6 +21,7 @@ ID is insufficient to add someone. An existing contact name cannot silently
 change its pinned key.
 
 ```bash
+qntm group create "Team" --contact
 qntm contact add Colleague FULL_PUBLIC_KEY
 qntm group add GROUP_ID Colleague
 # Share the group_link from this command's JSON result.
@@ -32,6 +33,14 @@ qntm send GROUP_ID "Hello"
 # Remove the contact and rotate the remaining members' keys:
 qntm group remove GROUP_ID Colleague
 ```
+
+`group create --contact` creates the ordinary-group checkpoint and saves its
+exact signed genesis before posting. It returns a public group link, with no
+bearer invite or implicit admission. Creation is complete only after the exact
+genesis appears in relay replay; uncertain delivery leaves the operation saved
+for `group retry`. Sends and additions wait for that operation to finish. The
+existing `group create` command without `--contact` retains legacy creation and
+invite behavior; legacy creation delivery handling remains a migration follow-up.
 
 For a still-admitted contact who missed the welcome's delivery window:
 
@@ -80,7 +89,7 @@ identity, for contacts whose welcomes you issued. It does not add anyone or
 deliver a replacement welcome. `contact list` and `contact remove NAME` manage
 local pins; deleting a contact pin does not remove that person from any group.
 
-MCP exposes `contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
+MCP exposes `group_create`, `contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
 `group_remove_contact`, `group_rekey`, `group_refresh`, `group_retry` and `group_link`.
 `conversation_join` opens the public link. These tools share the CLI profile,
 receiver and recovery state. Membership changes and sends require the host's

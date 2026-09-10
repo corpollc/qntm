@@ -26,7 +26,7 @@ def command(*args):
 
 if phase == 'prepare':
     cli._save_identity(profile, generate_identity())
-    created = command('--dropbox-url', relay, 'group', 'create', 'CLI and TypeScript')
+    created = command('--dropbox-url', relay, 'group', 'create', 'CLI and TypeScript', '--contact')
     cid = created['conversation_id']
     command('--dropbox-url', relay, 'send', cid, 'before TypeScript admission')
     command('contact', 'add', 'TypeScript peer', sys.argv[4])

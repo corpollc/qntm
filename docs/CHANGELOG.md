@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fixed relay WebSocket shutdown: the server now completes the close handshake, avoiding timeout delays after one-shot receives and during reconnects. TypeScript callback failures use a valid client close code. Real relay tests cover native-client failure/replay and Python-to-TypeScript messaging.
+- Added durable ordinary-group creation with `group create --contact` and MCP `group_create`. The client saves its checkpoint and exact signed genesis before sending, reports uncertain delivery, and resumes with `group retry`. It returns a public link containing no encryption keys; contacts must be added explicitly. Legacy creation remains separate while gateway and migration support are completed.
 
 - TypeScript relay replay now exposes each envelope's sequence and the captured head. Subscriptions provide a serialized, awaitable `onReady` callback so clients can validate complete backlog before acting. Failed ready callbacks replay the uncommitted backlog; asynchronous frame decoding preserves relay order.
 

@@ -538,3 +538,74 @@ def test_mcp_challenge_refresh_recovers_and_invalid_challenges_send_nothing(setu
     refreshed = mcp.group_refresh(f.cid, 'Colleague', status['recovery']['challenge'])
     assert refreshed['group_link'] == link
     assert not join(f.contact_dir, f.contact, link)['recovery_required']
+
+
+def test_contact_group_creation_is_durable_and_has_no_bearer_invite(setup):
+    f = setup
+    created = f.command(f.owner_dir, '--dropbox-url', f.relay, 'group', 'create', 'New contact group', '--contact')
+    cid = created['conversation_id']
+    assert '#group=' in created['group_link'] and 'invite_token' not in created
+    record = cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
+    assert record['group_session']['signedEpoch'] and record['current_epoch'] == 0
+    assert record['group_cursor'] == 1 and 'group_operation' not in record and 'invite_token' not in record
+    assert len(record['group_session']['seen']) == 1
+    sent = len(f.attempted)
+    with pytest.raises(SystemExit):
+        f.command(f.owner_dir, 'gate-promote', '-c', cid, '--gateway-url', 'http://gateway.test')
+    assert len(f.attempted) == sent
+    f.command(f.owner_dir, 'send', cid, 'before anyone is added')
+    added = f.command(f.owner_dir, 'group', 'add', cid, 'Colleague')
+    join(f.contact_dir, f.contact, added['group_link'])
+    assert all(row.get('unsafe_body') != 'before anyone is added' for row in cli._load_history(f.contact_dir, cid))
+    f.command(f.contact_dir, 'send', cid, 'first contact reply')
+    assert any(row.get('unsafe_body') == 'first contact reply' for row in f.command(f.owner_dir, 'recv', cid)['messages'])
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_contact_creation_retries_exact_genesis_after_uncertain_delivery(setup, monkeypatch, accepted):
+    f = setup
+    attempted = []
+
+    def uncertain(url, cid, wire):
+        record = cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
+        assert record['group_operation']['kind'] == 'create'
+        assert record['group_operation']['controls'] == [base64.b64encode(wire).decode()]
+        attempted.append(wire)
+        if accepted:
+            f.send(url, cid, wire)
+        raise cli.SendDeliveryUnknown(cid, deserialize_envelope(wire)['msg_id'].hex(), OSError())
+
+    monkeypatch.setattr(cli, '_http_send', uncertain)
+    with pytest.raises(cli.SendDeliveryUnknown) as failed:
+        GroupClient(f.owner_dir, f.owner, f.relay).create('Uncertain creation')
+    cid = failed.value.conversation_id
+    monkeypatch.setattr(cli, '_http_send', f.send)
+    with pytest.raises(SystemExit):
+        f.command(f.owner_dir, 'send', cid, 'must wait for genesis completion')
+    result = GroupClient(f.owner_dir, f.owner, f.relay).retry(cid)
+    assert result['current_epoch'] == 0 and f.rows[cid] == attempted
+    assert 'group_operation' not in cli._find_conversation(cli._load_conversations(f.owner_dir), cid)
+
+
+def test_contact_creation_does_not_post_when_its_atomic_save_fails(setup, monkeypatch):
+    f = setup
+    before = len(f.attempted)
+
+    def fail(*args):
+        raise OSError('disk full')
+
+    monkeypatch.setattr(cli, '_save_conversations', fail)
+    with pytest.raises(OSError):
+        GroupClient(f.owner_dir, f.owner, f.relay).create('Cannot persist')
+    assert len(f.attempted) == before
+
+
+def test_mcp_creates_contact_group_with_shared_cli_state(setup, monkeypatch):
+    from qntm import mcp_server as mcp
+    f = setup
+    monkeypatch.setenv('QNTM_CONFIG_DIR', f.owner_dir)
+    monkeypatch.setenv('QNTM_RELAY_URL', f.relay)
+    result = mcp.group_create('MCP contacts')
+    assert result['name'] == 'MCP contacts' and 'invite_token' not in result
+    record = cli._find_conversation(cli._load_conversations(f.owner_dir), result['conversation_id'])
+    assert record['group_session'] and not record.get('group_operation')

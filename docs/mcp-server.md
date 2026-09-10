@@ -84,6 +84,7 @@ Add to your `.cursor/mcp.json`:
 | `guidance_prepare` | Prepare the exact question, recipient, and audience for review without sending |
 | `guidance_send` | Send a matching reviewed request under the host authorization policy |
 | `contact_add`, `contact_list`, `contact_remove` | Pin, inspect or remove local contact names and full public keys (unreleased) |
+| `group_create` | Create a durable ordinary contact group; verify exact genesis delivery and return a public link with no bearer invite (unreleased) |
 | `group_add_contact`, `group_remove_contact` | Change ordinary-group membership and rotate keys; addition delivers an encrypted welcome and returns a public group link (unreleased) |
 | `group_rekey`, `group_retry` | Rotate ordinary-group keys or resume the exact saved operation after uncertain delivery (unreleased) |
 | `group_refresh` | Send a current-key welcome to an existing member without admission or rotation (unreleased) |
