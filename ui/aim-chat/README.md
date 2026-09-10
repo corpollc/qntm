@@ -35,6 +35,8 @@ The checked-in lockfile includes platform-specific Rollup packages. Local builds
 
 For the production Pages project, credentials, deployment triggers, preview behavior and rollback, see the [AIM deployment runbook](../../docs/aim-deploy.md).
 
+The hosted app is available at `https://chat.corpo.llc` and `https://web.qntm.corpo.llc`. Each address has separate browser storage. Existing users can stay at their original address or intentionally transfer a password-encrypted backup; see [custom domains and existing profiles](../../docs/aim-deploy.md#custom-domains-and-existing-profiles).
+
 ## Storage
 
 - Identities, conversation keys, history, and contact aliases are stored in browser `localStorage`.

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `web.qntm.corpo.llc` as a verified HTTPS address for the existing Pages browser app. `chat.corpo.llc` remains available. The deployment guide explains DNS, certificate checks and deliberate encrypted-backup migration between browser origins; profiles do not transfer automatically.
 - Fixed two remaining invite-secret URL exposures: Python's `convo invite` and the terminal's `/invite` now emit fragment links. Python adds `invite_to_url`; both library URL builders discard old queries. Tests exercise real CLI/terminal output and cross-client parsing. The hosted browser fix alone did not protect links produced by older clients.
 - Acceptance tests now require successful HTTP health responses, bound stalled startup requests and report Worker output on failure. Fixtures isolate Wrangler discovery and use OS-assigned Worker/browser listeners, including an HTTP server for Vite's middleware mode. Restart checks retain the established endpoint; shutdown cancels stale timers and stops owned process groups so wrappers cannot leave servers behind. Failed setup no longer masks its diagnostics with a teardown error. Real-server regressions cover concurrent Vite instances and descendant cleanup.
 - Collapsed browser sidebar panels now exclude their controls from keyboard focus and agent/screen-reader navigation while preserving unsent form drafts. Panel headers identify the content they expand, and browser tests cover Tab, Enter and Space navigation.

@@ -9,6 +9,7 @@ The browser is a static Cloudflare Pages application. Its deployment is independ
 | Pages project | `qntm-aim` |
 | Production branch in the upload command | `main` |
 | Public browser | `https://chat.corpo.llc` |
+| Additional public browser address | `https://web.qntm.corpo.llc` |
 | Pages production address | `https://qntm-aim.pages.dev` |
 | Source and output | `ui/aim-chat/` and `ui/aim-chat/dist/` |
 | Cloudflare account | GitHub repository secret `CLOUDFLARE_ACCOUNT_ID`; use the account that owns `qntm-aim` |
@@ -17,7 +18,17 @@ The browser is a static Cloudflare Pages application. Its deployment is independ
 
 The upload token needs **Account → Cloudflare Pages → Edit** for that account. Cloudflare documents where to find the account ID and configure the two GitHub secrets in its [Direct Upload CI guide](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/). Keep credential values in the secret store; none belong in the static build. The browser does not need the gateway vault key or metrics-read token.
 
-As of September 9, 2026, the two production addresses above serve the application. `web.qntm.corpo.llc` remains a separate, unfinished custom-domain cutover. Uploading assets does not configure DNS or attach that hostname. Account-side Git integration/build settings require a separate audit; the behavior below describes the checked-in GitHub workflows.
+As of September 10, 2026 UTC, all three production addresses above serve the same application. Both custom domains are attached to `qntm-aim` and have proxied CNAME records pointing to `qntm-aim.pages.dev`. Uploading assets alone does not configure DNS or attach a new hostname. Account-side Git integration/build settings require a separate audit; the behavior below describes the checked-in GitHub workflows.
+
+## Custom domains and existing profiles
+
+The additional `web.qntm.corpo.llc` address does not redirect existing users from `chat.corpo.llc`. Browser identities, conversation keys and history belong to each origin's local storage; opening another address starts with separate storage. Keep using the address where your profile lives. To move intentionally, export a password-encrypted backup there, import it at the new address, review the replacement preview and verify your conversations before removing the original profile. The Pages server does not copy or synchronize profiles between addresses.
+
+Add a hostname through **Workers & Pages → qntm-aim → Custom domains** before changing DNS. Cloudflare creates the CNAME for a zone in the same account and provisions its certificate. Follow the [Pages custom-domain guide](https://developers.cloudflare.com/pages/configuration/custom-domains/); do not treat DNS resolution alone as successful TLS activation.
+
+At activation on September 10, 2026, `web.qntm.corpo.llc` returned verified HTTPS 200 from the operator Mac and the exe.dev monitor host. HTML, JavaScript and CSS hashes matched the existing production addresses. HTTP redirected to HTTPS; HTML required revalidation and versioned JS/CSS responses on the custom domains used a four-hour cache lifetime. The served certificate was from Let's Encrypt YE1, covered the exact hostname and expired December 8, 2026. These are observed deployment properties, not permanent provider guarantees.
+
+If issuance or renewal fails, inspect the actual issuer, challenge status and CAA records at the hostname and its ancestors. `qntm.corpo.llc` points to GitHub Pages, whose CAA policy permits Let's Encrypt but excludes Google Trust Services. No additional CAA record was needed for this Pages certificate. A future issuer change may require explicit authorization; see the [relay TLS incident and checks](relay-operations.md#certificate-authority-authorization) and Cloudflare's CAA guidance in the custom-domain guide. Avoid repeatedly detaching and reattaching a domain while validation is pending.
 
 ## Deploy a tested commit
 
@@ -49,7 +60,7 @@ Cloudflare supports separate preview deployments, but those are not configured b
 
 ## Verify production
 
-1. Record the GitHub run URL, successful deployment, source SHA and Pages deployment URL. Compare the live HTML and referenced JavaScript/CSS with the build from that commit; check both production addresses over verified HTTPS.
+1. Record the GitHub run URL, successful deployment, source SHA and Pages deployment URL. Compare the live HTML and referenced JavaScript/CSS with the build from that commit; check all three production addresses over verified HTTPS.
 2. Inspect response headers, including the content-security policy, against `ui/aim-chat/public/_headers`. An HTTP 200 alone does not verify that the expected application or policy is served.
 3. In a disposable browser profile, exercise the changed feature and an encrypted round trip with a separate CLI or TypeScript identity. For invite changes, confirm the copied link uses a fragment, review the join, reload and verify receive/replay. Keep real invite secrets out of screenshots, URLs supplied to HTTP tools and logs.
 4. Check the browser console and the [relay dashboard](relay-monitoring.md). The external relay probe verifies transport; it does not exercise the deployed browser bundle.

@@ -80,6 +80,8 @@ The CLI defaults to JSON output for easy integration with LLM runtimes and agent
 
 Visit [chat.corpo.llc](https://chat.corpo.llc) — no install needed. Create a conversation, copy the invite link, share it with agents or humans.
 
+The same app is also available at [web.qntm.corpo.llc](https://web.qntm.corpo.llc). Profiles are stored separately for each address; keep using your original address or [transfer an encrypted backup](docs/aim-deploy.md#custom-domains-and-existing-profiles).
+
 ### Accept an Invite
 
 ```bash
