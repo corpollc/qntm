@@ -275,7 +275,19 @@ export async function openContactGroup(profile: string, link: string, name = '')
     for (const entry of batch.entries) {
       try { candidates.push({ entry, welcome: openGroupWelcome(identity, entry.envelope, locator) }) } catch { /* Other recipients, invalid signatures, expired welcomes. */ }
     }
-    candidates.sort((a, b) => b.welcome.conversation.currentEpoch - a.welcome.conversation.currentEpoch || b.entry.seq - a.entry.seq)
+    candidates.sort((a, b) => {
+      const epoch = b.welcome.conversation.currentEpoch - a.welcome.conversation.currentEpoch
+      if (epoch) return epoch
+      const aAddition = a.welcome.purpose === 'addition', bAddition = b.welcome.purpose === 'addition'
+      if (aAddition !== bAddition) return aAddition ? 1 : -1
+      // Only an addition's own top-level rekey ID participates in canonical
+      // ordering. Refresh/renewal provenance describes an older admission.
+      if (a.welcome.purpose === 'addition' && b.welcome.purpose === 'addition') {
+        const rekey = hex(a.welcome.rekeyId).localeCompare(hex(b.welcome.rekeyId))
+        if (rekey) return rekey
+      }
+      return b.entry.seq - a.entry.seq
+    })
     let error: unknown
     for (const { entry, welcome } of candidates) {
       try {
