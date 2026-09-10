@@ -1,3 +1,4 @@
+import { QntmGroupStore } from "./group-store.js";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
 import { DropboxClient } from "@corpollc/qntm";
 import {
@@ -49,6 +50,11 @@ async function sendOutbound(params: {
       conversationId: binding.conversationId,
       meta: { target: binding.target },
     };
+  }
+  if (binding.ordinaryGroup) {
+    const result = await new QntmGroupStore(account, binding).send(text);
+    patchQntmRuntimeStatus(account.accountId, { lastOutboundAt: Date.now(), lastError: null });
+    return { messageId: result.messageId, conversationId: binding.conversationId, meta: { sequence: result.sequence, target: binding.target } };
   }
   const latest = new QntmCheckpointStore(account).load(binding);
   if (latest.session.removed) throw new Error("qntm identity has been removed from this conversation");

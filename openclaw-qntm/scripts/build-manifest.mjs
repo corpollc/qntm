@@ -21,6 +21,9 @@ try {
   for (const prefix of ['', 'accounts.*.']) {
     uiHints[`${prefix}identity`] = { sensitive: true, help: 'Private signing identity. Prefer identityFile or identityDir.' };
     uiHints[`${prefix}conversations.*.invite`] = { sensitive: true, help: 'Contains conversation encryption keys.' };
+    uiHints[`${prefix}contacts`] = { help: "Locally verified full Ed25519 public keys keyed by contact name. Incoming messages cannot create or replace pins." };
+    uiHints[`${prefix}conversations.*.groupLink`] = { help: "Public key-free locator from a configured contact. Configuring this link authorizes fetching its encrypted welcome from the configured relay." };
+    uiHints[`${prefix}conversations.*.groupActions`] = { help: "Optional reviewed ordinary-group actions; also allow qntm_group in host tool policy. Empty disables the tool." };
     uiHints[`${prefix}conversations.*.gatewayActions`] = { help: 'Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy.' };
   }
   manifest.channelConfigs = { qntm: { schema, uiHints } };

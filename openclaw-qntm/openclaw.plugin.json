@@ -2,11 +2,15 @@
   "id": "qntm",
   "contracts": {
     "tools": [
-      "qntm_gateway"
+      "qntm_gateway",
+      "qntm_group"
     ]
   },
   "toolMetadata": {
     "qntm_gateway": {
+      "optional": true
+    },
+    "qntm_group": {
       "optional": true
     }
   },
@@ -45,6 +49,18 @@
           "defaultTo": {
             "type": "string"
           },
+          "contacts": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-fA-F]{64}|[A-Za-z0-9_-]{43})$"
+            }
+          },
           "conversations": {
             "type": "object",
             "propertyNames": {
@@ -61,6 +77,26 @@
                 },
                 "invite": {
                   "type": "string"
+                },
+                "groupLink": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "groupActions": {
+                  "maxItems": 7,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "remove",
+                      "refresh",
+                      "rekey",
+                      "retry",
+                      "open",
+                      "send"
+                    ]
+                  }
                 },
                 "gatewayActions": {
                   "maxItems": 8,
@@ -128,6 +164,18 @@
                 "defaultTo": {
                   "type": "string"
                 },
+                "contacts": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-fA-F]{64}|[A-Za-z0-9_-]{43})$"
+                  }
+                },
                 "conversations": {
                   "type": "object",
                   "propertyNames": {
@@ -144,6 +192,26 @@
                       },
                       "invite": {
                         "type": "string"
+                      },
+                      "groupLink": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "groupActions": {
+                        "maxItems": 7,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "add",
+                            "remove",
+                            "refresh",
+                            "rekey",
+                            "retry",
+                            "open",
+                            "send"
+                          ]
+                        }
                       },
                       "gatewayActions": {
                         "maxItems": 8,
@@ -201,6 +269,15 @@
           "sensitive": true,
           "help": "Contains conversation encryption keys."
         },
+        "contacts": {
+          "help": "Locally verified full Ed25519 public keys keyed by contact name. Incoming messages cannot create or replace pins."
+        },
+        "conversations.*.groupLink": {
+          "help": "Public key-free locator from a configured contact. Configuring this link authorizes fetching its encrypted welcome from the configured relay."
+        },
+        "conversations.*.groupActions": {
+          "help": "Optional reviewed ordinary-group actions; also allow qntm_group in host tool policy. Empty disables the tool."
+        },
         "conversations.*.gatewayActions": {
           "help": "Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy."
         },
@@ -211,6 +288,15 @@
         "accounts.*.conversations.*.invite": {
           "sensitive": true,
           "help": "Contains conversation encryption keys."
+        },
+        "accounts.*.contacts": {
+          "help": "Locally verified full Ed25519 public keys keyed by contact name. Incoming messages cannot create or replace pins."
+        },
+        "accounts.*.conversations.*.groupLink": {
+          "help": "Public key-free locator from a configured contact. Configuring this link authorizes fetching its encrypted welcome from the configured relay."
+        },
+        "accounts.*.conversations.*.groupActions": {
+          "help": "Optional reviewed ordinary-group actions; also allow qntm_group in host tool policy. Empty disables the tool."
         },
         "accounts.*.conversations.*.gatewayActions": {
           "help": "Optional native gateway tool permissions for this conversation. Empty disables all actions. Also allow qntm_gateway in the host tool policy."

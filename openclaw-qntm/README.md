@@ -167,3 +167,127 @@ Protocol state, cursor and pending delivery commit together before queue admissi
 This is durable, at-least-once handoff, not exactly-once external effects. After OpenClaw adopts a turn, its recovery owns that turn. A crash around adoption, expired deduplication records, or an uncertain relay POST can still require reconciliation. An unknown reply-send outcome is reported as such.
 
 Existing `cursors/<conv_id>.json` files are read as migration hints. Without `OPENCLAW_STATE_DIR`, their old location is `~/.openclaw/state/plugins/qntm/...`. Available protocol history is replayed to establish keys/membership, while deliveries at or below the legacy cursor do not wake the agent. If required rekey history has expired, a cursor cannot reconstruct it; provide a current conversation profile. Malformed state and identity/configuration mismatches fail closed rather than resetting the cursor. Keep one writer per profile, and preserve both checkpoint and queue when moving state.
+
+## Contact groups (unreleased)
+
+Ordinary groups now use the shared TypeScript membership/checkpoint helpers.
+Adding a known contact is admission: the inviter rotates keys, verifies replay
+of the exact addition/rekey, then sends a welcome encrypted to that contact's
+identity. The public group link contains no encryption keys and has no expiry.
+Contacts can open in a different order from their additions. Legacy `invite`
+bindings and gateway tools retain their existing behavior.
+
+First verify full Ed25519 public keys through your existing contact channel.
+A short key ID cannot be used as a contact pin. Add the host identity from a
+current client, then configure the returned `group_link` and inviter's pin:
+
+```json
+{
+  "tools": { "alsoAllow": ["qntm_group"] },
+  "channels": {
+    "qntm": {
+      "identityFile": "/private/openclaw-qntm/identity.json",
+      "relayUrl": "https://inbox.qntm.corpo.llc",
+      "contacts": {
+        "Colleague": "FULL_ED25519_PUBLIC_KEY_HEX_OR_BASE64URL"
+      },
+      "conversations": {
+        "team": {
+          "groupLink": "PUBLIC_GROUP_LINK_FROM_COLLEAGUE",
+          "groupActions": ["add", "remove", "refresh", "rekey", "retry", "open", "send"],
+          "trigger": "mention",
+          "triggerNames": ["my-agent"]
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the placeholder values; they intentionally are not working credentials.
+Configuring the public link explicitly authorizes fetching its encrypted welcome.
+The link's inviter must match a configured contact, and its relay must exactly
+match `relayUrl`. The adapter uses its existing identity, finishes relay replay
+and persists the verified checkpoint before permitting messages or agent wakeups.
+It also replays available decryptable controls posted before welcome delivery,
+so a concurrently posted rekey is not skipped merely because the welcome arrived later.
+Contact pins are local configuration; inbound text cannot add or replace one.
+Changing a pin also invalidates any outstanding action review.
+
+`qntm_group` is optional and only available in that account's native qntm
+conversation, with a host session and nonempty `groupActions`. An incoming message
+is context, never authorization. Use `status` to inspect verified members, pinned
+contacts, pending operation, recovery challenge and public link. For a change,
+call `prepare`, inspect its complete effect under the host's instructions, then
+`commit` with the exact returned `reviewToken` and `reviewHash`. Reviews expire
+after five minutes, host restart, native session changes or relevant membership,
+contact or permission changes. Cancel a review with `cancel` and `reviewToken`.
+
+| Action | Options | Effect |
+| --- | --- | --- |
+| `add` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Admit a pinned identity, rotate, deliver welcome. Any current ordinary member may add. |
+| `remove` | `{ "contact": "Colleague" }` | Remove and rotate for remaining members; creator removal is rejected. |
+| `refresh` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Deliver current keys to an existing member without rotation. |
+| `rekey` | `{}` | Complete a pending rotation or rotate the current roster. |
+| `retry` | `{}` | Resume the exact saved operation; never generate replacement ciphertext. |
+| `open` | `{ "link": "optional public link" }` | Reopen a pinned link for this configured group/relay. |
+| `send` | `{ "text": "Complete text to review" }` | Review and send explicit text. Normal native replies retain existing host authorization. |
+
+A missing relay sequence, expired authenticated control or competing-rekey rewind
+pauses sends and agent dispatch. The checkpoint records a fresh `recovery.challenge`;
+give it to a current member, who can run:
+
+```sh
+qntm group refresh GROUP_ID Colleague --challenge RECOVERY_CHALLENGE
+```
+
+A running host watches for the response on its configured public link. On restart
+it also retries that pinned welcome. The challenge is signed and encrypted inside
+the welcome, so reposting an older welcome at a newer relay sequence does not
+clear recovery. A refresh cannot undo saved removal: explicit readmission needs
+a new `add` welcome. For a blocked host whose agent cannot be awakened, the local
+operator can inspect the `session.recovery` field in the private checkpoint below.
+No unsolicited guidance request or message to another party is sent automatically.
+
+Private checkpoints live under
+`<OPENCLAW_STATE_DIR>/plugins/qntm/accounts/<account>/groups/<conversation>.json`.
+They atomically store current keys, full roster, replay cursor, recovery challenge,
+bounded pending ciphertext, exact unfinished outgoing operation, and **plaintext
+messages awaiting host dispatch**. Files are mode `0600` in private directories;
+this is filesystem protection, not password encryption. Host transcripts and the
+existing durable ingress queue can retain plaintext after dispatch. These records,
+contact names and recovery challenges are not uploaded or added to relay metrics.
+See [metadata boundaries](../docs/group-welcomes.md#metadata-and-security-boundaries).
+
+Local writers serialize with a per-group lock and revision check. Pending
+ciphertext is bounded to 256 entries/4 MiB, and pending dispatch to 64 entries.
+An ambiguous POST retains the operation; retry verifies the exact signed control
+before publishing anything else or releasing a welcome. Expired or superseded
+operations remain blocked and preserved for reconciliation. Do not delete the
+profile to clear a blocked operation. Full competing-branch reconciliation remains
+unfinished: this adapter instead requires a fresh challenged welcome and discards
+undispatched plaintext from the superseded state. Already queued host jobs are
+checked again before entering the agent and discarded if absent from the recovered
+checkpoint. No operation can retract an agent turn that already started.
+
+A `convId`/`identityDir` binding can also import a trusted CLI `group_session`
+checkpoint after the CLI has finished its pending operation and receive backlog.
+Provision from a dedicated profile copy and retain that seed unchanged; OpenClaw
+then owns its separate private checkpoint. Legacy groups without a complete
+trusted checkpoint are not silently migrated. Ordinary `groupActions` cannot be
+combined with `gatewayActions`; admission into gateway-governed groups and
+ordinary-to-gateway handoff remain separate work.
+
+Validation includes real cryptographic unit tests, the installed OpenClaw host's
+existing gateway/restart smoke, and a real relay/Python/TypeScript/native-host
+journey:
+
+```sh
+# Use supported Node 24.16+ (below 25), or Node 26.1+.
+cd openclaw-qntm
+npm test
+npm run typecheck
+npm run test:host
+cd ../integration
+npx vitest run --maxWorkers=1 openclaw-contact-welcome.test.ts
+```
