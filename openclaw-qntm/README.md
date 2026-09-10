@@ -280,7 +280,13 @@ ciphertext is bounded to 256 entries/4 MiB, and pending dispatch to 64 entries.
 An ambiguous POST retains the operation; retry verifies the exact signed control
 before publishing anything else or releasing a welcome. A saved authenticated
 receipt still counts after that message expires, and an already accepted text
-finishes without reposting after a later key rotation. Expired messages without
+finishes without reposting after a later key rotation. On startup and receive,
+the monitor clears a pending text send only when retained authenticated replay
+matches its exact ciphertext, so a crash after relay acceptance cannot leave
+agent dispatch blocked behind a completed reply. This does not automatically
+POST uncertain sends or retry membership changes. Challenged welcomes are
+checked after subscription backlog replay as well as on live arrival.
+Expired messages without
 acceptance evidence and superseded membership operations remain blocked and
 preserved for reconciliation. Do not delete the
 profile to clear a blocked operation. Full competing-branch reconciliation remains

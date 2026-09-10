@@ -1,12 +1,12 @@
 /** Installed, actual OpenClaw host and real relay worker. The only model double
  * is the deterministic loopback tool caller used by the existing host suite. */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -25,6 +25,19 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     return { privateKey: new Uint8Array(Buffer.from(raw.private_key, 'hex')), publicKey: new Uint8Array(Buffer.from(raw.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(raw.key_id, 'hex')) };
   };
   const checkpoint = () => JSON.parse(readFileSync(join(host.stateDir, 'plugins/qntm/accounts/default/groups', `${convId}.json`), 'utf8'));
+  afterEach(({ task }) => {
+    if (task.result?.state !== 'fail' || !h || !host) return;
+    const state = checkpoint();
+    let lock: unknown = null;
+    try { lock = JSON.parse(readFileSync(join(host.stateDir, 'plugins/qntm/accounts/default/groups', `${convId}.json.lock`), 'utf8')); } catch {}
+    const diagnostic = { test: task.name, cursor: state.cursor, epoch: state.session?.epoch,
+      recovery: state.session?.recovery?.reason, needsRekey: state.session?.needsRekey, removed: state.session?.removed,
+      operation: state.operation && { action: state.operation.action, sentControls: state.operation.sentControls, sentWelcomes: state.operation.sentWelcomes },
+      pending: state.pending.length, outbox: state.outbox.length, lock };
+    mkdirSync(h.artifactDir, { recursive: true });
+    writeFileSync(join(h.artifactDir, `openclaw-contact-${task.id}.json`), JSON.stringify(diagnostic));
+    console.error('OpenClaw contact checkpoint:', JSON.stringify(diagnostic));
+  });
   const action = async (id: string, action: string, options: Record<string, unknown> = {}) => host.journey(h.alice,
     { id, tool: 'qntm_group', action, options, initialStatus: 'ready' });
   beforeAll(async () => {
@@ -133,8 +146,17 @@ describe.sequential('native OpenClaw contact welcomes with Python and TypeScript
     await action('refresh-dave', 'refresh', { contact: 'Dave' });
     expect(checkpoint().session.root).toBe(before);
     await action('rotate', 'rekey');
-    await host.stop('SIGKILL'); await host.start();
+    await host.stop('SIGKILL');
+    // Force the real crash window instead of depending on the race between
+    // relay receipt and the host's final local send-journal write.
+    const interrupted = await stageAcceptedGroupSend(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir);
+    expect(checkpoint().operation.action).toBe('send');
+    await host.start();
+    await host.waitFor(() => !checkpoint().operation, 'accepted pre-crash send finalized without another POST');
     expect(checkpoint().session.epoch).toBe(4);
+    await waitForCliHistory(h.alice, convId, row => row.msg_id === interrupted.messageId, 'exact accepted pre-crash text');
+    const replay = await relay.receiveMessages(new Uint8Array(Buffer.from(convId, 'hex')));
+    expect(replay.entries.filter(row => { try { return Buffer.from(deserializeEnvelope(row.envelope).msg_id).toString('hex') === interrupted.messageId; } catch { return false; } })).toHaveLength(1);
     await action('after-restart', 'send', { text: 'restored native checkpoint' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'restored native checkpoint', 'restored host reply');
   }, TIMEOUT);
