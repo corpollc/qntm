@@ -242,7 +242,7 @@ contact or permission changes. Cancel a review with `cancel` and `reviewToken`.
 | `remove` | `{ "contact": "Colleague" }` | Remove and rotate for remaining members; creator removal is rejected. |
 | `refresh` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Deliver current keys without rotation. Include renewal proof when this member has a known completed admission; otherwise use generic refresh. |
 | `rekey` | `{}` | Complete a pending rotation or rotate the current roster. |
-| `retry` | `{}` | Review exact retry, acknowledged-welcome cleanup, replacement rotation for the same pending admission, or current-key renewal. Original and superseded ciphertext remain retained. |
+| `retry` | `{}` | Review exact retry, acknowledged-welcome cleanup, replacement rotation for the same pending admission, current-key renewal, or generic refresh for the same current recipient. Original and superseded ciphertext remain retained. |
 | `open` | `{ "link": "optional public link" }` | Reopen a pinned link for this configured group/relay. |
 | `send` | `{ "text": "Complete text to review" }` | Review and send explicit text. Normal native replies retain existing host authorization. |
 
@@ -308,7 +308,18 @@ has complete current admission proof. Founding members and older checkpoints
 without that proof keep generic refresh. The review identifies which form will
 be sent; admission changes invalidate it. A pending renewal also checks the full
 current admission map before release, and restart retries keep its exact bytes
-and challenge. Older pending generic-refresh journals remain retryable as written.
+and challenge. Generic refresh retry verifies the original sender signature, canonical signed
+payload and header, full pinned recipient, original checkpoint and optional
+challenge. Older drafts can recover that challenge from their signed box. The
+review identifies `exact_refresh` or `replacement_refresh`. Valid uncertain
+ciphertext stays exact; an expired or stale refresh can be replaced only while
+the sender is healthy and the same full recipient key is still a current member.
+The replacement carries current keys and the fully processed replay cursor, with
+the original challenge. It stays generic even if the recipient's admission
+history has since become known, and cannot undo saved removal. Original refresh
+ciphertext and counters enter the same flat, bounded superseded history before
+replacement POST; no obsolete expected roots are retained. A changed contact
+pin, mismatched signed intent or full evidence limit blocks replacement.
 The existing reviewed `retry` can also finish a pending addition whose exact
 current admission and completing rotation are durably authenticated. A valid
 original welcome is sent unchanged even after deduplication-cache eviction. If

@@ -7,7 +7,7 @@ import {
   createGroupGenesisBody, parseGroupGenesisBody, createGroupSession, base64UrlEncode, base64UrlDecode, serializeEnvelope, deserializeEnvelope,
   openGroupWelcome, groupSessionFromWelcome, createMessage, groupSessionConversation, prepareGroupWelcomeRefresh,
   receiveGroupEvent, createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, restoreGroupSession,
-  prepareGroupAdmissionRenewal, prepareGroupSessionAddition,
+  prepareGroupAdmissionRenewal, prepareGroupSessionAddition, openSecret, sealSecret, marshalCanonical, unmarshalCanonical, QSP1Suite,
   type Identity, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { QntmGroupStore, groupDispatchDisposition, type GroupTransport } from '../src/group-store.js';
@@ -64,7 +64,102 @@ async function completedPending(f: ReturnType<typeof fixture>, store: QntmGroupS
   const state = store.load(); state.session!.seen = {}; store.save(state);
   return operation;
 }
+function genericPending(store: QntmGroupStore, contact = 'Owner', ttl = 604800, challenge?: string) {
+  const state = store.load(), operation = store.prepare('refresh', { contact, challenge });
+  const prepared = prepareGroupWelcomeRefresh(store.account.identity!, state.session!, [base64UrlDecode(operation.publicKey!)], ttl,
+    challenge ? new Uint8Array(Buffer.from(challenge, 'hex')) : undefined, state.cursor);
+  operation.welcomes = prepared.welcomes.map(wire => base64UrlEncode(serializeEnvelope(wire)));
+  operation.expected = createGroupSession(store.account.identity!, prepared.conversation, prepared.state,
+    { signedEpoch: state.session!.signedEpoch, admissions: state.session!.admissions });
+  operation.welcomePurpose = 'refresh'; store.saveOperation(operation); return operation;
+}
 describe('OpenClaw durable ordinary groups', () => {
+  it.each(['expiry', 'rotation'] as const)('reviews generic founder refresh replacement after %s with its authenticated original challenge', async reason => {
+    const f = fixture(), member = f.store(f.member), challenge = '84'.repeat(32);
+    const original = genericPending(member, 'Owner', 1, challenge);
+    delete original.welcomePurpose; delete original.recoveryChallenge;
+    const saved = member.load(); saved.operation = original; member.save(saved); // Earlier native journal.
+    if (reason === 'expiry') { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(original.welcomes[0])).expiry_ts + 1) * 1000); }
+    else { await run(f.store(f.owner), 'rekey'); await member.sync(); }
+    const count = f.rows.length, current = member.load(), service = new QntmGroupActions(), scope = { key: 'generic-replacement', store: f.store(f.member) };
+    const review = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(review.review.retryMode).toBe('replacement_refresh'); expect(review.review.welcomePurpose).toBe('refresh');
+    expect(review.review.recoveryChallenge).toBe(challenge); expect(review.review.effect).toContain('cannot undo saved removal');
+    expect(member.load().operation).toEqual(original); expect(f.rows).toHaveLength(count);
+    f.ambiguous(); await expect(service.execute(scope, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash })).rejects.toThrow('ambiguous POST');
+    const revised = member.load().operation!;
+    expect(revised.superseded![0]).toMatchObject({ phase: 'refresh', welcomes: original.welcomes, delivery: 'unknown' });
+    expect(revised.superseded![0]).not.toHaveProperty('expected'); expect(revised.origin).toBeUndefined();
+    const opened = openGroupWelcome(f.owner, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('refresh'); expect(opened.replayFromSequence).toBe(current.cursor);
+    expect(toHex(opened.conversation.keys.root)).toBe(current.session!.root);
+    const restarted = f.store(f.member), retry = restarted.prepareRetry();
+    expect(retry.welcomes).toEqual(revised.welcomes); await restarted.exclusive(() => restarted.resume());
+    expect(f.rows.slice(count).map(row => base64UrlEncode(row.envelope))).toEqual([revised.welcomes[0], revised.welcomes[0]]);
+  });
+  it('keeps a valid uncertain generic refresh byte-for-byte exact across restart and shows its signed challenge', async () => {
+    const f = fixture(), member = f.store(f.member), challenge = '81'.repeat(32), original = genericPending(member, 'Owner', 604800, challenge);
+    delete original.welcomePurpose; delete original.recoveryChallenge; const state = member.load(); state.operation = original; member.save(state);
+    f.ambiguous(); await expect(member.resume()).rejects.toThrow('ambiguous POST');
+    const service = new QntmGroupActions(), scope = { key: 'generic-exact', store: f.store(f.member) };
+    const review = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(review.review.retryMode).toBe('exact_refresh'); expect(review.review.recoveryChallenge).toBe(challenge);
+    expect(scope.store.load().operation).toEqual(original);
+    await service.execute(scope, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash });
+    expect(f.rows.map(row => base64UrlEncode(row.envelope))).toEqual([original.welcomes[0], original.welcomes[0]]);
+  });
+  it.each(['challenge', 'header', 'signature', 'purpose', 'recipient', 'checkpoint'] as const)('rejects an old generic refresh with mismatched %s before creating replacement evidence', async changed => {
+    const f = fixture(), member = f.store(f.member), original = genericPending(member, 'Owner', 1, '77'.repeat(32));
+    const state = member.load(), operation = state.operation!;
+    if (changed === 'challenge') operation.recoveryChallenge = '78'.repeat(32);
+    else if (changed === 'checkpoint') (operation.expected as any).root = '41'.repeat(32);
+    else {
+      const outer = deserializeEnvelope(base64UrlDecode(operation.welcomes[0]));
+      if (changed === 'header') outer.msg_id = generateIdentity().keyID;
+      else {
+        const signed = unmarshalCanonical<any>(openSecret(f.member.privateKey, f.owner.publicKey, outer.ciphertext));
+        if (changed === 'purpose') signed.payload.proto = 'qntm/group-renewal/v1';
+        if (changed === 'recipient') signed.payload.recipient_ik_pk = f.late.publicKey;
+        signed.signature = changed === 'signature' ? new Uint8Array(64) : new QSP1Suite().sign(f.member.privateKey, marshalCanonical(signed.payload));
+        outer.ciphertext = sealSecret(f.member.privateKey, f.owner.publicKey, marshalCanonical(signed));
+      }
+      operation.welcomes = [base64UrlEncode(serializeEnvelope(outer))];
+    }
+    member.save(state);
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((deserializeEnvelope(base64UrlDecode(original.welcomes[0])).expiry_ts + 1) * 1000);
+    expect(() => member.prepareRetry()).toThrow(); expect(member.load().operation).toEqual(operation); expect(f.rows).toHaveLength(0);
+  });
+  it.each(['recipient', 'sender', 'recovery'] as const)('blocks generic refresh reconciliation after %s is unavailable', async changed => {
+    const f = fixture(), member = f.store(f.owner), original = genericPending(member, 'Member');
+    if (changed === 'recipient') {
+      const removal = createGroupControlMessage(f.owner, f.conversation, 'group_remove', createGroupRemoveBody([f.member.keyID]));
+      await f.client.postMessage(f.conversation.id, serializeEnvelope(removal)); await member.sync();
+    } else {
+      const state = member.load();
+      if (changed === 'sender') state.session!.removed = true;
+      else state.session!.recovery = { afterSequence: 1, reason: 'missing_history', challenge: '11'.repeat(32) };
+      member.save(state);
+    }
+    const count = f.rows.length; expect(() => member.prepareRetry()).toThrow();
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow();
+    expect(member.load().operation).toEqual(original); expect(f.rows).toHaveLength(count);
+  });
+  it('keeps generic purpose after admission provenance becomes known and still cannot undo recipient removal', async () => {
+    const f = fixture(), member = f.store(f.member), owner = f.store(f.owner);
+    await run(member, 'add', { contact: 'Late' }); const late = f.store(f.late, undefined, member.link()); await late.open();
+    const unknown = member.load(); unknown.session!.admissions = {}; member.save(unknown);
+    const original = genericPending(member, 'Late');
+    await run(owner, 'remove', { contact: 'Late' }); await late.sync();
+    expect(late.load().session!.removed).toBe(true);
+    await run(owner, 'add', { contact: 'Late' }); await member.sync();
+    expect(member.load().session!.admissions[toHex(f.late.keyID)].completion).not.toBeNull();
+    const generic = member.prepareRetry(); expect(generic.welcomePurpose).toBe('refresh');
+    expect(generic.superseded![0].welcomes).toEqual(original.welcomes);
+    member.saveRetry(generic); await member.resume();
+    const opened = openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('refresh');
+    expect(() => groupSessionFromWelcome(f.late, opened, f.rows.at(-1)!.seq, late.load().session!)).toThrow('removal');
+  });
   it('requires separate concrete rotation and welcome reviews after partial-add expiry and restart', async () => {
     const f = fixture(), member = f.store(f.member), challenge = '86'.repeat(32);
     const original = await completedPending(f, member, { partial: true, ttl: 1, challenge });

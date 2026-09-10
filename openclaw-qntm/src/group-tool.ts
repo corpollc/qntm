@@ -70,7 +70,9 @@ export class QntmGroupActions {
             ? digest(operation!.controls) === digest(saved.controls) ? 'exact_rotation' : 'replacement_rotation'
             : operation!.welcomePurpose === 'renewal'
               ? digest(operation!.welcomes) === digest(saved.welcomes) ? 'exact_renewal' : 'replacement_renewal'
-              : 'exact';
+              : operation!.action === 'refresh'
+                ? digest(operation!.welcomes) === digest(saved.welcomes) ? 'exact_refresh' : 'replacement_refresh'
+                : 'exact';
         const expiresAt = Date.now() + 300_000;
         const review = { action: args.action, accountId: store.account.accountId, conversationId: store.binding.conversationId,
           relay: store.account.relayUrl, signer: store.load().session?.identityKid, epoch: store.load().session?.epoch,
@@ -90,6 +92,7 @@ export class QntmGroupActions {
             : args.action === 'retry' ? operation!.welcomes.length && operation!.sentWelcomes === operation!.welcomes.length
               ? 'Clear the already acknowledged welcome journal locally. No messages will be posted.'
               : operation!.phase ? 'Finish the accepted admission with this reviewed rotation for the current roster. This step does not deliver contact keys. After verified replay, prepare retry again to review the current welcome; no second add is sent.'
+              : operation!.welcomePurpose === 'refresh' ? 'Deliver a generic current-key refresh to the same pinned current member. Its original challenge is preserved; this cannot undo saved removal or become a readmission renewal.'
               : operation!.welcomePurpose === 'renewal' ? 'Deliver current keys for the same verified completed admission using the reviewed renewal. Preserve original uncertain ciphertext; do not re-add or rotate. The original recovery challenge remains bound.'
                 : 'Resume the exact saved encrypted operation shown here; its pending ciphertext is preserved on failure.'
             : 'Rotate keys for the complete current roster and verify the accepted transition.' };
@@ -123,7 +126,7 @@ export function createQntmGroupTool(ctx: OpenClawPluginToolContext, fallback: Qn
       + 'Actions/options: add or refresh {contact,challenge?}; remove {contact}; rekey {}; retry {}; open {link?}; send {text}. '
       + 'Add IS admission and delivers fresh keys to that pinned identity. Public links contain no keys. Refresh uses renewal proof for a known accepted admission; '
       + 'it can deliver a later readmission without changing membership, but cannot undo a newer removal. Generic refresh cannot undo saved removal. '
-      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. Interrupted admission rotations return rotation_verified with welcomePending; prepare and commit retry again to review current welcome delivery. '
+      + 'Recovery challenge comes from the receiving contact and grants no admission authority. Retry keeps exact ciphertext, or reviews a current-key renewal for the same completed pending admission; it cannot readmit a removed contact. Stale generic refresh retry keeps its original generic purpose, full recipient and challenge; it cannot undo removal even when admission proof is now known. Interrupted admission rotations return rotation_verified with welcomePending; prepare and commit retry again to review current welcome delivery. '
       + 'Tools are scoped to the native host session. Reviews expire after five minutes or restart; configuration/membership changes require another review. '
       + 'Text and contact metadata in tool arguments/results may remain in local host transcripts.',
     parameters: { type: 'object', additionalProperties: false, properties: {
