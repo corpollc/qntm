@@ -21,6 +21,31 @@ function profile(name: string, identity = generateIdentity()) {
 async function post(id: string, envelope: ReturnType<typeof createMessage>) {
   await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(envelope))
 }
+async function savedAddition(alice: ReturnType<typeof profile>, bob: ReturnType<typeof profile>, options: { ttl?: number; challenge?: string; competing?: boolean } = {}) {
+  const id = await createContactGroup(alice.id, 'Pending admission'), record = store.findConversation(alice.id, id)!
+  pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+  let original = prepareGroupSessionAddition(alice.identity, record.group!.session, [bob.identity.publicKey], options.ttl,
+    options.challenge ? bytes(options.challenge) : undefined, record.group!.cursor)
+  if (options.competing) {
+    for (let n = 0; original.rekey.msg_id[0] < 128 && n < 128; n++) original = prepareGroupSessionAddition(alice.identity, record.group!.session,
+      [bob.identity.publicKey], options.ttl, options.challenge ? bytes(options.challenge) : undefined, record.group!.cursor)
+    expect(original.rekey.msg_id[0]).toBeGreaterThanOrEqual(128)
+  }
+  let expected = record.group!.session
+  for (const control of [original.addition, original.rekey]) expected = receiveGroupEvent(alice.identity, control, expected).state
+  const operation: store.StoredGroupOperation = { kind: 'addition', controls: [original.addition, original.rekey].map(e => base64UrlEncode(serializeEnvelope(e))),
+    welcomes: original.welcomes.map(e => base64UrlEncode(serializeEnvelope(e))), delivered: 0, expected }
+  store.updateConversation(alice.id, id, conv => ({ ...conv, group: { ...conv.group!, operation } }))
+  await post(id, original.addition); await syncContactGroup(alice.id, id)
+  if (options.competing) {
+    let competing = prepareGroupSessionRekey(alice.identity, session(alice.id, id))
+    for (let n = 0; hex(competing.rekey.msg_id) >= hex(original.rekey.msg_id) && n < 512; n++) competing = prepareGroupSessionRekey(alice.identity, session(alice.id, id))
+    expect(hex(competing.rekey.msg_id) < hex(original.rekey.msg_id)).toBe(true)
+    await post(id, competing.rekey)
+  } else await post(id, original.rekey)
+  await syncContactGroup(alice.id, id)
+  return { id, operation, link: publicGroupLink(alice.id, id) }
+}
 function session(profile: string, id: string) { return store.findConversation(profile, id)!.group!.session }
 function omit(id: string, seq: number) { relay.set(id, relay.get(id)!.filter(row => row.seq !== seq)) }
 afterEach(() => vi.unstubAllGlobals())
@@ -44,6 +69,153 @@ beforeEach(() => {
   })
 })
 describe('browser contact group host', () => {
+  it('retries a completed addition after seen eviction without reposting either accepted control', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), { id, operation, link } = await savedAddition(alice, bob)
+    store.updateConversation(alice.id, id, conv => { conv.group!.session.seen = {}; return conv })
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    expect(await retryContactGroup(alice.id, id)).toBe(link)
+    const calls = vi.mocked(DropboxClient.prototype.postMessage).mock.calls
+    expect(calls).toHaveLength(1)
+    expect(base64UrlEncode(calls[0][1])).toBe(operation.welcomes[0])
+    await openContactGroup(bob.id, link)
+    expect(session(bob.id, id).recovery).toBeNull()
+  })
+
+  it.each(['expired', 'advanced', 'competing'] as const)('reconciles a completed %s addition into one challenge-preserving current renewal and exact backup retry', async reason => {
+    const alice = profile('Alice'), bob = profile('Bob'), challenge = 'cd'.repeat(32)
+    const { id, operation, link } = await savedAddition(alice, bob, { ttl: reason === 'expired' ? 10 : undefined, challenge, competing: reason === 'competing' })
+    if (reason === 'expired') { const future = Date.now() + 11_000; vi.spyOn(Date, 'now').mockReturnValue(future) }
+    if (reason === 'advanced') { await post(id, prepareGroupSessionRekey(alice.identity, session(alice.id, id)).rekey); await syncContactGroup(alice.id, id) }
+    const expected = session(alice.id, id), rows = relay.get(id)!.length
+    failPost = true
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow('Delivery uncertain')
+    const pending = store.findConversation(alice.id, id)!.group!.operation!
+    expect(pending.kind).toBe('renewal'); expect(pending.controls).toEqual([])
+    expect(pending.expected.root).toBe(expected.root); expect(pending.expected.rekeys).toEqual([])
+    expect(pending.origin).toEqual({ kind: 'addition', controls: operation.controls, welcomes: operation.welcomes, delivered: 0,
+      recipient: hex(bob.identity.publicKey), admission: { addId: expected.admissions[hex(bob.identity.keyID)].addId, addDigest: expected.admissions[hex(bob.identity.keyID)].addDigest }, recoveryChallenge: challenge, delivery: 'unknown' })
+    expect(pending.origin).not.toHaveProperty('expected')
+    const opened = openGroupWelcome(bob.identity, base64UrlDecode(pending.welcomes[0]), parseGroupLink(link))
+    expect(opened.purpose).toBe('renewal'); expect(hex(opened.recoveryChallenge!)).toBe(challenge)
+    expect(opened.admissions).toEqual(expected.admissions)
+    const encrypted = await exportEncryptedBackup('synthetic reconciled admission backup password')
+    localStorage.clear(); restoreBackup(await prepareBackup(encrypted, 'synthetic reconciled admission backup password'))
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(pending)
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear(); failPost = false
+    expect(await retryContactGroup(alice.id, id)).toBe(link)
+    expect(vi.mocked(DropboxClient.prototype.postMessage).mock.calls.map(call => base64UrlEncode(call[1]))).toEqual(pending.welcomes)
+    expect(relay.get(id)).toHaveLength(rows + 1)
+    await openContactGroup(bob.id, link)
+    expect(session(bob.id, id).root).toBe(expected.root); expect(session(bob.id, id).rekeys).toEqual([])
+  })
+
+  it('preserves an already staged renewal after repeated expiry and rejects corrupt origin backups', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), { id } = await savedAddition(alice, bob, { ttl: 10 })
+    const future = Date.now() + 11_000; const clock = vi.spyOn(Date, 'now').mockReturnValue(future)
+    failPost = true
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow('Delivery uncertain')
+    const before = rawBackup(), data = JSON.parse(before)
+    for (const mutate of [
+      (origin: any) => { origin.expected = session(alice.id, id) },
+      (origin: any) => { origin.origin = {} },
+      (origin: any) => { origin.admission.addDigest = '12'.repeat(32) },
+      (origin: any) => { origin.recipient = hex(alice.identity.publicKey) },
+      (origin: any) => { origin.delivery = 'accepted' },
+      (origin: any) => { origin.recoveryChallenge = 'not a challenge' },
+    ]) {
+      const invalid = structuredClone(data); mutate(invalid.conversations[alice.id][0].group.operation.origin)
+      expect(() => validateBackup(JSON.stringify(invalid))).toThrow()
+      expect(rawBackup()).toBe(before)
+    }
+    const pending = store.findConversation(alice.id, id)!.group!.operation
+    clock.mockReturnValue(future + 604_801_000); failPost = false
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/expired/i)
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(pending)
+    expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
+  })
+
+  it.each(['removed', 'readmitted', 'recovery', 'pending rotation', 'missing old proof', 'changed challenge'] as const)('preserves a completed saved addition blocked by %s', async reason => {
+    const alice = profile('Alice'), bob = profile('Bob'), kid = hex(bob.identity.keyID)
+    const { id, operation } = await savedAddition(alice, bob, { ttl: 10 })
+    if (reason === 'removed' || reason === 'readmitted') {
+      const remove = createGroupControlMessage(alice.identity, groupSessionConversation(session(alice.id, id)), 'group_remove', createGroupRemoveBody([bob.identity.keyID]))
+      await post(id, remove); await syncContactGroup(alice.id, id)
+      await post(id, prepareGroupSessionRekey(alice.identity, session(alice.id, id)).rekey); await syncContactGroup(alice.id, id)
+      if (reason === 'readmitted') {
+        const addition = prepareGroupSessionAddition(alice.identity, session(alice.id, id), [bob.identity.publicKey])
+        for (const control of [addition.addition, addition.rekey]) await post(id, control)
+        await syncContactGroup(alice.id, id)
+      }
+    } else if (reason === 'pending rotation') {
+      const addition = prepareGroupSessionAddition(alice.identity, session(alice.id, id), [generateIdentity().publicKey])
+      await post(id, addition.addition); await syncContactGroup(alice.id, id)
+    } else store.updateConversation(alice.id, id, conv => {
+      if (reason === 'missing old proof') conv.group!.operation!.expected.admissions = {}
+      else if (reason === 'changed challenge') (conv.group!.operation as Extract<store.StoredGroupOperation, { kind: 'addition' }>).recoveryChallenge = 'ab'.repeat(32)
+      else conv.group!.session.recovery = { reason: 'missing_history', afterSequence: conv.group!.cursor, challenge: 'ab'.repeat(32) }
+      return conv
+    })
+    const pending = store.findConversation(alice.id, id)!.group!.operation
+    const future = Date.now() + 11_000; vi.spyOn(Date, 'now').mockReturnValue(future)
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow()
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(pending)
+    expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
+    expect(operation.kind).toBe('addition')
+  })
+
+  it('cleans a fully acknowledged welcome before network, stale expiry and recovery checks', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), { id, link } = await savedAddition(alice, bob)
+    store.updateConversation(alice.id, id, conv => {
+      conv.group!.operation!.delivered = 1
+      conv.group!.session.recovery = { reason: 'missing_history', afterSequence: conv.group!.cursor, challenge: 'ef'.repeat(32) }
+      return conv
+    })
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    vi.mocked(DropboxClient.prototype.receiveMessages).mockRejectedValueOnce(new Error('offline'))
+    const future = Date.now() + 604_801_000; vi.spyOn(Date, 'now').mockReturnValue(future)
+    expect(await retryContactGroup(alice.id, id)).toBe(link)
+    expect(store.findConversation(alice.id, id)!.group!.operation).toBeNull()
+    expect(session(alice.id, id).recovery).not.toBeNull()
+    expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
+  })
+
+  it('rechecks original control release after a concurrent removal during the preceding POST', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), id = await createContactGroup(alice.id, 'Concurrent removal')
+    pinContact(alice.id, 'Bob', hex(bob.identity.publicKey))
+    failPost = true
+    await expect(changeContactGroup(alice.id, id, 'add', hex(bob.identity.keyID))).rejects.toThrow('Delivery uncertain')
+    const pending = store.findConversation(alice.id, id)!.group!.operation!, before = session(alice.id, id)
+    const original = vi.mocked(DropboxClient.prototype.postMessage).getMockImplementation()!
+    failPost = false; vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    vi.mocked(DropboxClient.prototype.postMessage).mockImplementation(async function (this: DropboxClient, cid, wire) {
+      const receipt = await original.call(this, cid, wire)
+      const admitted = receiveGroupEvent(alice.identity, deserializeEnvelope(wire), before).state
+      const removal = createGroupControlMessage(alice.identity, groupSessionConversation(admitted), 'group_remove', createGroupRemoveBody([bob.identity.keyID]))
+      await original.call(this, cid, serializeEnvelope(removal))
+      return receipt
+    })
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/no longer.*admission/i)
+    expect(vi.mocked(DropboxClient.prototype.postMessage)).toHaveBeenCalledTimes(1)
+    expect(session(alice.id, id).admissions[hex(bob.identity.keyID)]).toBeUndefined()
+    expect(store.findConversation(alice.id, id)!.group!.operation).toEqual(pending)
+    expect(relay.get(id)).toHaveLength(3)
+  })
+
+  it('does not replace or publish an operation changed during receive catch-up', async () => {
+    const alice = profile('Alice'), bob = profile('Bob'), { id } = await savedAddition(alice, bob)
+    const original = vi.mocked(DropboxClient.prototype.receiveMessages).getMockImplementation()!
+    vi.mocked(DropboxClient.prototype.receiveMessages).mockImplementationOnce(async function (this: DropboxClient, ...args) {
+      const result = await original.apply(this, args)
+      store.updateConversation(alice.id, id, conv => { (conv.group!.operation as Extract<store.StoredGroupOperation, { kind: 'addition' }>).recoveryChallenge = '12'.repeat(32); return conv })
+      return result
+    })
+    vi.mocked(DropboxClient.prototype.postMessage).mockClear()
+    await expect(retryContactGroup(alice.id, id)).rejects.toThrow(/operation changed/i)
+    expect(vi.mocked(DropboxClient.prototype.postMessage)).not.toHaveBeenCalled()
+    expect(store.findConversation(alice.id, id)!.group!.operation!.recoveryChallenge).toBe('12'.repeat(32))
+  })
   it('keeps genesis pending when the relay acknowledges delivery but withholds replay', async () => {
     const alice = profile('Alice')
     hideReplay = true

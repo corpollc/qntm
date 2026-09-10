@@ -12,6 +12,7 @@ import {
 } from '@corpollc/qntm'
 import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
+import { groupAdditionIntent, groupAdditionChallenge, sameGroupOperationValue } from './group-operation'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 export function bytes(value: string): Uint8Array {
@@ -191,37 +192,128 @@ function operationValue(op: store.StoredGroupOperation): GroupAddition | GroupWe
     admission: op.admission, admissions: op.expected.admissions }
   return { conversation, state, welcomes }
 }
-async function resumeUnlocked(profile: string, id: string): Promise<string> {
-  await syncUnlocked(profile, id)
-  let record = load(profile, id), op = record.group.operation
-  if (!op) return publicGroupLink(profile, id)
-  if (record.group.session.recovery) throw new Error('Recover missing group history before retrying this operation')
-  if (record.group.session.removed) throw new Error('You have been removed from this group')
-  const dropbox = new DropboxClient(record.group.relayUrl)
-  for (const wire of op.controls) {
-    if (controlAccepted(record.group.session, wire)) continue
-    const envelope = deserializeEnvelope(base64UrlDecode(wire))
-    if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved operation expired; its ciphertext is retained for recovery')
-    const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
-    if (op.kind === 'create') { record.group.receipts.push(seq); save(profile, record) }
-    await syncUnlocked(profile, id); record = load(profile, id)
-    if (!controlAccepted(record.group.session, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
+function operationRecord(profile: string, id: string, op: store.StoredGroupOperation) {
+  const record = load(profile, id)
+  if (!sameGroupOperationValue(record.group.operation, op)) throw new Error('The saved operation changed; retry against its latest progress')
+  return record
+}
+function additionProof(identity: Identity, record: ReturnType<typeof load>, op: Extract<store.StoredGroupOperation, { kind: 'addition' }>) {
+  const intent = groupAdditionIntent(identity, op), accepted = record.group.session.admissions[intent.kid]
+  return { ...intent, accepted: accepted && accepted.addId === intent.proof.addId && accepted.addDigest === intent.proof.addDigest ? accepted : undefined }
+}
+function assertExactAdditionCurrent(identity: Identity, record: ReturnType<typeof load>, op: Extract<store.StoredGroupOperation, { kind: 'addition' }>) {
+  const proof = additionProof(identity, record, op)
+  if (!proof.accepted?.completion || proof.accepted.completion.rekeyId !== hex(proof.rekey.msg_id)
+    || proof.accepted.completion.rekeyDigest !== hex(suite.hash(proof.rekeyWire))) throw new Error('Original completing rekey is no longer canonical')
+  assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
+}
+function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation {
+  if (op.kind !== 'addition') return op
+  const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
+  const intent = additionProof(identity, record, op)
+  if (!intent.accepted) {
+    if (state.epoch > intent.addition.conv_epoch || state.needsRekey || state.admissions[intent.kid]) {
+      throw new Error('Original addition is no longer the accepted admission; its operation is preserved')
+    }
+    return op
   }
-  const identity = identityFor(profile)
-  if (op.kind === 'addition') assertGroupAdditionAccepted(identity, record.group.session, operationValue(op) as GroupAddition)
-  else if (op.kind === 'renewal') assertGroupAdmissionRenewalCurrent(identity, record.group.session, operationValue(op) as GroupAdmissionRenewal)
-  else if (op.kind === 'refresh') assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
-  else if (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch) throw new Error('Saved operation no longer matches the accepted group state')
-  for (let index = op.delivered; index < op.welcomes.length; index++) {
-    const wire = op.welcomes[index]
-    if (deserializeEnvelope(base64UrlDecode(wire)).expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved welcome expired; ask a current member to refresh it')
-    const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
-    record.group.receipts.push(seq); record.group.operation!.delivered = index + 1; save(profile, record)
+  if (!intent.accepted.completion) return op // A still-valid original rotation can finish below.
+  assertGroupCanSend(identity, state)
+  try { assertExactAdditionCurrent(identity, record, op); return op } catch { /* Current keys or delivery window changed. */ }
+  const challenge = groupAdditionChallenge(identity, op, intent)
+  const renewed = prepareGroupAdmissionRenewal(identity, state, intent.recipient, intent.proof, undefined,
+    challenge ? bytes(challenge) : undefined, record.group.cursor)
+  const next: store.StoredGroupOperation = { kind: 'renewal', controls: [], delivered: 0,
+    welcomes: renewed.welcomes.map(welcome => base64UrlEncode(serializeEnvelope(welcome))),
+    expected: createGroupSession(identity, renewed.conversation, renewed.state, { signedEpoch: state.signedEpoch, admissions: renewed.admissions }),
+    recipient: hex(intent.recipient), admission: renewed.admission,
+    origin: { kind: 'addition', controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered,
+      recipient: hex(intent.recipient), admission: intent.proof, recoveryChallenge: challenge, delivery: 'unknown' } }
+  record.group.operation = next; save(profile, record)
+  return next
+}
+/** Called under the shared Web Lock immediately before a control POST. */
+function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, op: store.StoredGroupOperation, wire: string) {
+  const state = record.group.session, envelope = deserializeEnvelope(base64UrlDecode(wire))
+  assertGroupCanSend(identity, { ...state, needsRekey: false })
+  if (op.kind === 'addition') {
+    const proof = additionProof(identity, record, op)
+    if (wire === op.controls[0]) {
+      if (proof.accepted) return false
+      if (state.needsRekey || state.epoch !== envelope.conv_epoch || state.admissions[proof.kid]) {
+        throw new Error('Original addition is no longer safe to publish; its operation is preserved')
+      }
+    } else {
+      if (!proof.accepted) throw new Error('Original addition is no longer the accepted admission')
+      if (proof.accepted.completion) return false
+      if (!state.needsRekey || proof.accepted.sourceEpoch !== state.epoch) throw new Error('Admission is not awaiting its original rotation')
+      const trial = receiveGroupEvent(identity, envelope, state).state
+      if (trial.root !== op.expected.root || trial.snapshot !== op.expected.snapshot || trial.epoch !== op.expected.epoch) {
+        throw new Error('Saved rotation differs from the current roster; its operation is preserved')
+      }
+    }
   }
+  const seen = state.seen[hex(envelope.msg_id)]
+  if (seen) {
+    if (!controlAccepted(state, wire)) throw new Error('Saved control conflicts with accepted ciphertext')
+    return false
+  }
+  if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved operation expired; its ciphertext is retained for recovery')
+  if (op.kind !== 'create') receiveGroupEvent(identity, envelope, state)
+  return true
+}
+function finishOperation(profile: string, id: string, op: store.StoredGroupOperation) {
+  const record = operationRecord(profile, id, op)
   record.group.operation = null; save(profile, record)
   return publicGroupLink(profile, id)
 }
-export function retryContactGroup(profile: string, id: string) { return withGroupLock(profile, id, () => resumeUnlocked(profile, id)) }
+async function resumeUnlocked(profile: string, id: string, reconcile = false): Promise<string> {
+  let record = load(profile, id), op = record.group.operation
+  if (!op) return publicGroupLink(profile, id)
+  // Delivery is already acknowledged. Cleanup must not depend on later expiry,
+  // removal or recovery, and does not release any additional ciphertext.
+  if (op.welcomes.length > 0 && op.delivered === op.welcomes.length) return finishOperation(profile, id, op)
+  await syncUnlocked(profile, id)
+  record = operationRecord(profile, id, op)
+  if (record.group.session.recovery) throw new Error('Recover missing group history before retrying this operation')
+  if (record.group.session.removed) throw new Error('You have been removed from this group')
+  if (reconcile) op = reconcileAddition(profile, id, op)
+  const identity = identityFor(profile)
+  const dropbox = new DropboxClient(record.group.relayUrl)
+  for (const wire of op.controls) {
+    record = operationRecord(profile, id, op)
+    if (!shouldPostControl(identity, record, op, wire)) continue
+    const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
+    record = operationRecord(profile, id, op)
+    if (op.kind === 'create') { record.group.receipts.push(seq); save(profile, record) }
+    await syncUnlocked(profile, id); record = operationRecord(profile, id, op)
+    if (op.kind === 'addition') {
+      const proof = additionProof(identity, record, op)
+      if (proof.accepted && (wire === op.controls[0] || proof.accepted.completion)) continue
+    }
+    if (!controlAccepted(record.group.session, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
+  }
+  if (reconcile) op = reconcileAddition(profile, id, op)
+  record = operationRecord(profile, id, op)
+  if (!op.welcomes.length && (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch)) {
+    throw new Error('Saved operation no longer matches the accepted group state')
+  }
+  for (let index = op.delivered; index < op.welcomes.length; index++) {
+    record = operationRecord(profile, id, op)
+    const wire = op.welcomes[index]
+    if (deserializeEnvelope(base64UrlDecode(wire)).expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved welcome expired; ask a current member to refresh it')
+    if (op.kind === 'renewal') assertGroupAdmissionRenewalCurrent(identity, record.group.session, operationValue(op) as GroupAdmissionRenewal)
+    else if (op.kind === 'addition' && reconcile) assertExactAdditionCurrent(identity, record, op)
+    else if (op.kind === 'addition') assertGroupAdditionAccepted(identity, record.group.session, operationValue(op) as GroupAddition)
+    else if (op.kind === 'refresh') assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
+    const seq = await dropbox.postMessage(bytes(id), base64UrlDecode(wire))
+    record = operationRecord(profile, id, op)
+    record.group.receipts.push(seq); record.group.operation!.delivered = index + 1; save(profile, record)
+    op = record.group.operation!
+  }
+  return finishOperation(profile, id, op)
+}
+export function retryContactGroup(profile: string, id: string) { return withGroupLock(profile, id, () => resumeUnlocked(profile, id, true)) }
 export async function createContactGroup(profile: string, name: string): Promise<string> {
   const identity = identityFor(profile), invite = createInvite(identity, 'group'), conversation = createConversation(invite, deriveConversationKeys(invite))
   addParticipant(conversation, identity.publicKey)
@@ -267,7 +359,8 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     const operation = { controls: controls.map(c => base64UrlEncode(serializeEnvelope(c))), welcomes: welcomes.map(c => base64UrlEncode(serializeEnvelope(c))), delivered: 0, expected }
     record.group.operation = renewal
       ? { ...operation, kind: 'renewal', recipient: hex(renewal.recipient), admission: renewal.admission }
-      : { ...operation, kind: action === 'add' ? 'addition' : action }
+      : action === 'add' ? { ...operation, kind: 'addition', recipient: hex(contactKey(profile, contact!)), recoveryChallenge: challengeBytes(challenge) ? challenge!.trim().toLowerCase() : null }
+      : { ...operation, kind: action }
     save(profile, record)
     return resumeUnlocked(profile, id)
   })
