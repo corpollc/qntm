@@ -102,7 +102,7 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   'Invalid group addition context');
   const snapshot = state.snapshot();
   validateSnapshot(snapshot);
-  requireValue(state.isAdmin(identity.keyID), 'Only a group administrator may add contacts');
+  requireValue(state.isMember(identity.keyID), 'Only a current group member may add contacts');
   requireValue(Array.isArray(recipients) && recipients.length > 0
     && state.memberCount() + recipients.length <= 128, 'Invalid added contact count');
   requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
@@ -194,8 +194,8 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   validateSnapshot(payload.group_state);
   const state = new GroupState();
   state.applyGenesis(payload.group_state);
-  requireValue(state.isAdmin(keyIDFromPublicKey(expected.inviterPublicKey)) && state.isMember(identity.keyID),
-    'Welcome does not establish an admitted contact and administrator');
+  requireValue(state.isMember(keyIDFromPublicKey(expected.inviterPublicKey)) && state.isMember(identity.keyID),
+    'Welcome does not establish an admitted contact and current inviter');
   const conversation: Conversation = { id: new Uint8Array(value.conv_id), type: 'group', name: state.groupName,
     keys: { root: payload.group_key, ...suite.deriveEpochKeys(payload.group_key, value.conv_id, value.conv_epoch) },
     participants: state.listMembers(), createdAt: new Date(state.createdAt * 1000), currentEpoch: value.conv_epoch };

@@ -11,10 +11,11 @@ available in the browser, terminal, CLI or OpenClaw.
 
 `prepareGroupAddition` / `prepare_group_addition` takes the local identity,
 conversation, trusted local `GroupState` and the new contacts' public keys. It
-validates the complete roster and administrator before returning an operation
+validates the complete roster and the inviter's membership before returning an operation
 containing the encrypted `group_add`, a fresh-key `group_rekey`, one sealed
 welcome per added contact, and the resulting local state. It never mutates the
-supplied checkpoint. An existing noncreator administrator can add contacts;
+supplied checkpoint. A current noncreator member can add contacts, preserving
+the existing ordinary-group policy rather than introducing an admin-only gate;
 the creator's identity in the snapshot stays unchanged.
 
 Hosts publish the addition and rekey before sending any welcome. They must
@@ -94,7 +95,7 @@ compromise of identity keys. This extension does not implement stranger-requeste
 entry or make the relay an admission authority.
 
 Both library suites exercise real encrypted before/after traffic, signed-context
-tampering, wrong recipients/pins, noncreator administrators and removal followed
+tampering, wrong recipients/pins, member-initiated addition and removal followed
 by readmission. `cd client && npm run test:cross` additionally invokes a fresh
 Python peer in both directions; install `python-dist` into that interpreter, or
 set `QNTM_TEST_PYTHON` to an existing test environment. Relay acceptance exercises

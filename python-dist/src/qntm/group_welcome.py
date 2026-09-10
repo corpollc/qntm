@@ -77,7 +77,7 @@ def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_
              "Invalid group addition context")
     snapshot = state.snapshot()
     _validate_snapshot(snapshot)
-    _require(state.is_admin(identity["keyID"]), "Only a group administrator may add contacts")
+    _require(state.is_member(identity["keyID"]), "Only a current group member may add contacts")
     _require(isinstance(recipients, list) and len(recipients) > 0
              and state.member_count() + len(recipients) <= 128, "Invalid added contact count")
     _require(_uint(ttl) and 0 < ttl <= GROUP_WELCOME_TTL, "Invalid welcome lifetime")
@@ -172,8 +172,8 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     _validate_snapshot(payload["group_state"])
     state = GroupState()
     state.apply_genesis(payload["group_state"])
-    _require(state.is_admin(key_id_from_public_key(inviter_public_key)) and state.is_member(identity["keyID"]),
-             "Welcome does not establish an admitted contact and administrator")
+    _require(state.is_member(key_id_from_public_key(inviter_public_key)) and state.is_member(identity["keyID"]),
+             "Welcome does not establish an admitted contact and current inviter")
     aead, nonce = _suite.derive_epoch_keys(payload["group_key"], conversation_id, value["conv_epoch"])
     conversation = {"id": conversation_id, "type": "group", "name": state.group_name,
                     "keys": {"root": payload["group_key"], "aeadKey": aead, "nonceKey": nonce},

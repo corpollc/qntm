@@ -59,11 +59,10 @@ def test_add_has_fresh_keys_without_old_history(epoch):
         decrypt_message(envelope, before)
 
 
-def test_noncreator_admin_and_recipient_encryption():
+def test_member_initiated_addition_and_recipient_encryption():
     owner, peer, late, conversation, state = setup()
     second = generate_identity()
     snapshot = state.snapshot()
-    snapshot["founding_members"][1]["role"] = "admin"
     state = GroupState()
     state.apply_genesis(snapshot)
     added = prepare_group_addition(peer, conversation, state, [late["publicKey"], second["publicKey"]])
@@ -81,8 +80,8 @@ def test_noncreator_admin_and_recipient_encryption():
 def test_invalid_additions_do_not_mutate_state():
     owner, peer, late, conversation, state = setup()
     before = state.snapshot()
-    with pytest.raises(ValueError, match="administrator"):
-        prepare_group_addition(peer, conversation, state, [late["publicKey"]])
+    with pytest.raises(ValueError, match="current group member"):
+        prepare_group_addition(generate_identity(), conversation, state, [late["publicKey"]])
     for recipients in [[owner["publicKey"]], [late["publicKey"], late["publicKey"]], [bytes(32)], []]:
         with pytest.raises(ValueError):
             prepare_group_addition(owner, conversation, state, recipients)

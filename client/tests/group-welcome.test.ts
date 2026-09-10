@@ -53,10 +53,9 @@ describe('Contact group welcomes', () => {
     expect(() => decryptMessage(outer, before)).toThrow();
   });
 
-  it('supports a noncreator administrator and encrypts each welcome to its recipient', () => {
+  it('preserves member-initiated addition and encrypts each welcome to its recipient', () => {
     const f = setup(), second = generateIdentity();
     const snapshot = f.state.snapshot();
-    snapshot.founding_members[1].role = 'admin';
     const state = new GroupState(); state.applyGenesis(snapshot);
     const added = prepareGroupAddition(f.peer, f.conversation, state, [f.late.publicKey, second.publicKey]);
     const expected = { conversationId: f.conversation.id, inviterPublicKey: f.peer.publicKey };
@@ -68,9 +67,9 @@ describe('Contact group welcomes', () => {
     expect(() => openGroupWelcome(f.late, marshalCanonical(added.welcomes[0]), pin(f))).toThrow();
   });
 
-  it('rejects nonadmins, duplicate contacts, stale rosters and malformed keys without mutation', () => {
+  it('rejects outsiders, duplicate contacts, stale rosters and malformed keys without mutation', () => {
     const f = setup(), before = f.state.snapshot();
-    expect(() => prepareGroupAddition(f.peer, f.conversation, f.state, [f.late.publicKey])).toThrow('administrator');
+    expect(() => prepareGroupAddition(generateIdentity(), f.conversation, f.state, [f.late.publicKey])).toThrow('current group member');
     for (const recipients of [[f.owner.publicKey], [f.late.publicKey, f.late.publicKey], [new Uint8Array(32)], []]) {
       expect(() => prepareGroupAddition(f.owner, f.conversation, f.state, recipients)).toThrow();
     }
