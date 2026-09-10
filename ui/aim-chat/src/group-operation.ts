@@ -2,14 +2,38 @@
 import { base64UrlDecode, deserializeEnvelope, serializeEnvelope, restoreGroupSession, parseGroupGenesisBody,
   keyIDFromPublicKey, QSP1Suite, openSecret, marshalCanonical, unmarshalCanonical } from '@corpollc/qntm'
 import type { Identity } from '@corpollc/qntm'
-import type { StoredGroupOperation } from './store'
+import type { StoredGroupOperation, StoredGroupAdditionOrigin, StoredGroupOperationEvidence } from './store'
 type Addition = Extract<StoredGroupOperation, { kind: 'addition' }>
+type Repair = Extract<StoredGroupOperation, { kind: 'addition_rekey' }>
 const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 const suite = new QSP1Suite()
-export const sameGroupOperationValue = (left: unknown, right: unknown) => hex(marshalCanonical(left)) === hex(marshalCanonical(right))
+export function sameGroupOperationValue(left: unknown, right: unknown) {
+  const a = marshalCanonical(left), b = marshalCanonical(right)
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
 function requireValue(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message) }
+export const MAX_GROUP_OPERATION_REVISIONS = 256
+export const MAX_GROUP_OPERATION_EVIDENCE_BYTES = 4 * 1024 * 1024
+export function assertGroupOperationEvidenceBudget(origin: StoredGroupAdditionOrigin | undefined, superseded: StoredGroupOperationEvidence[]) {
+  requireValue(Array.isArray(superseded) && superseded.length <= MAX_GROUP_OPERATION_REVISIONS, 'Saved recovery evidence reached its revision limit; operation preserved')
+  requireValue(marshalCanonical({ ...(origin ? { origin } : {}), superseded }).length <= MAX_GROUP_OPERATION_EVIDENCE_BYTES,
+    'Saved recovery evidence reached its byte limit; operation preserved')
+}
+export function appendGroupOperationEvidence(op: Extract<StoredGroupOperation, { kind: 'addition_rekey' | 'renewal' }>) {
+  const evidence: StoredGroupOperationEvidence[] = [...structuredClone(op.superseded ?? []),
+    { kind: op.kind, controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered, delivery: 'unknown' }]
+  assertGroupOperationEvidenceBudget(op.origin, evidence)
+  return evidence
+}
+function originalAddition(op: Addition | Repair): Addition {
+  return op.kind === 'addition' ? op : { kind: 'addition', controls: op.origin.controls, welcomes: op.origin.welcomes,
+    expected: op.expected, delivered: op.origin.delivered, recipient: op.origin.recipient, recoveryChallenge: op.origin.recoveryChallenge }
+}
 
-export function groupAdditionIntent(identity: Identity, op: Addition) {
+export function groupAdditionIntent(identity: Identity, saved: Addition | Repair) {
+  const op = originalAddition(saved)
   requireValue(op.controls.length === 2 && op.welcomes.length === 1, 'Invalid saved addition shape')
   const expected = restoreGroupSession(identity, op.expected), wire = base64UrlDecode(op.controls[0])
   const addition = deserializeEnvelope(wire), rekeyWire = base64UrlDecode(op.controls[1]), rekey = deserializeEnvelope(rekeyWire)
@@ -17,6 +41,7 @@ export function groupAdditionIntent(identity: Identity, op: Addition) {
     && hex(addition.conv_id) === expected.conversationId && hex(rekey.conv_id) === expected.conversationId,
   'Invalid saved addition context')
   const proof = { addId: hex(addition.msg_id), addDigest: hex(suite.hash(wire)) }
+  if (saved.kind === 'addition_rekey') requireValue(saved.recipient === saved.origin.recipient && sameGroupOperationValue(saved.origin.admission, proof), 'Saved rotation differs from its original admission')
   const matches = Object.entries(expected.admissions).filter(([, admission]) => admission.addId === proof.addId && admission.addDigest === proof.addDigest)
   requireValue(matches.length === 1 && matches[0][1].completion && matches[0][1].sourceEpoch === addition.conv_epoch,
     'Saved addition lacks exact recipient provenance; preserve it for recovery')
@@ -27,7 +52,8 @@ export function groupAdditionIntent(identity: Identity, op: Addition) {
 }
 
 /** Older journals kept the optional challenge only inside the recipient box. */
-export function groupAdditionChallenge(identity: Identity, op: Addition, intent = groupAdditionIntent(identity, op)): string | null {
+export function groupAdditionChallenge(identity: Identity, saved: Addition | Repair, intent = groupAdditionIntent(identity, saved)): string | null {
+  const op = originalAddition(saved)
   const envelope = deserializeEnvelope(base64UrlDecode(op.welcomes[0]))
   const plain = openSecret(identity.privateKey, intent.recipient, envelope.ciphertext)
   const signed = unmarshalCanonical<{ payload: Record<string, unknown>; signature: Uint8Array }>(plain)
@@ -47,5 +73,29 @@ export function groupAdditionChallenge(identity: Identity, op: Addition, intent 
   requireValue(challenge === undefined || challenge instanceof Uint8Array && challenge.length === 32, 'Invalid saved recovery challenge')
   const value = challenge === undefined ? null : hex(challenge as Uint8Array)
   requireValue(op.recoveryChallenge === undefined || op.recoveryChallenge === value, 'Saved recovery challenge differs from its signed welcome')
+  return value
+}
+
+/** Verify a saved renewal before preserving its challenge in a replacement. */
+export function groupRenewalChallenge(identity: Identity, op: Extract<StoredGroupOperation, { kind: 'renewal' }>): string | null {
+  requireValue(op.welcomes.length === 1 && /^[a-f0-9]{64}$/.test(op.recipient), 'Invalid saved renewal shape')
+  const recipient = Uint8Array.from(op.recipient.match(/../g)!, byte => parseInt(byte, 16))
+  const envelope = deserializeEnvelope(base64UrlDecode(op.welcomes[0])), { ciphertext: _ciphertext, ...header } = envelope
+  const plain = openSecret(identity.privateKey, recipient, envelope.ciphertext)
+  const signed = unmarshalCanonical<{ payload: Record<string, unknown>; signature: Uint8Array }>(plain), payload = signed?.payload
+  const wireAdmission = (payload?.admissions as Record<string, unknown> | undefined)?.[hex(keyIDFromPublicKey(recipient))]
+  const bytes = (value: string) => Uint8Array.from(value.match(/../g)!, byte => parseInt(byte, 16))
+  requireValue(payload && op.admission.completion && payload.proto === 'qntm/group-renewal/v1'
+    && sameGroupOperationValue(plain, marshalCanonical(signed)) && sameGroupOperationValue(payload.envelope, header)
+    && hex(envelope.conv_id) === op.expected.conversationId
+    && sameGroupOperationValue(payload.inviter_ik_pk, identity.publicKey) && sameGroupOperationValue(payload.recipient_ik_pk, recipient)
+    && sameGroupOperationValue(wireAdmission, { add_id: bytes(op.admission.addId), add_hash: bytes(op.admission.addDigest), source_epoch: op.admission.sourceEpoch,
+      rekey_id: bytes(op.admission.completion.rekeyId), rekey_hash: bytes(op.admission.completion.rekeyDigest) })
+    && signed.signature instanceof Uint8Array && suite.verify(identity.publicKey, marshalCanonical(payload), signed.signature),
+  'Invalid saved renewal challenge binding')
+  const challenge = payload.recovery_challenge
+  requireValue(challenge === undefined || challenge instanceof Uint8Array && challenge.length === 32, 'Invalid saved renewal recovery challenge')
+  const value = challenge === undefined ? null : hex(challenge as Uint8Array)
+  requireValue(!op.origin || value === op.origin.recoveryChallenge, 'Saved renewal differs from its original recovery challenge')
   return value
 }

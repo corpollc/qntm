@@ -241,7 +241,7 @@ test('browser welcomes a fresh Python CLI peer and renews its later readmission 
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
-test('browser retries a completed addition after its original welcome expires and a fresh Python process opens the renewal', async ({ page }) => {
+for (const phase of ['completed', 'partial'] as const) test(`browser retries a ${phase} addition after its original delivery expires and a fresh Python process opens the renewal`, async ({ page }) => {
   test.setTimeout(60_000)
   const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-expired-python-'))
   const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
@@ -272,31 +272,43 @@ test('browser retries a completed addition after its original welcome expires an
     }, { profile: saved.profile, id, pending: { kind: 'addition', expected, controls: [operation.addition, operation.rekey].map(e => base64UrlEncode(serializeEnvelope(e))), welcomes: operation.welcomes.map(e => base64UrlEncode(serializeEnvelope(e))), delivered: 0 } })
     await page.reload(); await contacts(page)
     const client = new DropboxClient(relay.url), cid = operation.conversation.id
-    for (const envelope of [operation.addition, operation.rekey]) await client.postMessage(cid, serializeEnvelope(envelope))
-    await expect(page.getByText('2 members · key epoch 1')).toBeVisible()
+    for (const envelope of phase === 'completed' ? [operation.addition, operation.rekey] : [operation.addition]) await client.postMessage(cid, serializeEnvelope(envelope))
+    await expect(page.getByText(`2 members · key epoch ${phase === 'completed' ? 1 : 0}`)).toBeVisible()
     const accepted = await page.evaluate(() => {
       const data = JSON.parse(localStorage.getItem('aim-store')!)
       return data.conversations[data.activeProfileId][0].group
     })
-    expect(accepted.session.admissions[peer.key_id].completion).not.toBeNull()
-    expect(accepted.cursor).toBeGreaterThanOrEqual(3)
+    expect(accepted.session.admissions[peer.key_id].completion === null).toBe(phase === 'partial')
+    expect(accepted.cursor).toBeGreaterThanOrEqual(phase === 'completed' ? 3 : 2)
     const delay = Math.max(0, (operation.welcomes[0].expiry_ts + 1) * 1000 - Date.now())
     await new Promise(resolve => setTimeout(resolve, delay))
+    await page.reload(); await contacts(page)
     const posted: Uint8Array[] = []
     page.on('request', request => {
       if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(new Uint8Array(Buffer.from(request.postDataJSON().envelope_b64, 'base64')))
     })
     await page.getByRole('button', { name: 'Retry saved operation', exact: true }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Saved operation completed' })).toBeVisible()
-    expect(posted).toHaveLength(1)
-    expect(isGroupWelcomeEnvelope(deserializeEnvelope(posted[0]))).toBe(true)
-    expect(base64UrlEncode(posted[0])).not.toBe(base64UrlEncode(serializeEnvelope(operation.welcomes[0])))
+    expect(posted).toHaveLength(phase === 'completed' ? 1 : 2)
+    expect(isGroupWelcomeEnvelope(deserializeEnvelope(posted.at(-1)!))).toBe(true)
+    expect(base64UrlEncode(posted.at(-1)!)).not.toBe(base64UrlEncode(serializeEnvelope(operation.welcomes[0])))
+    for (const wire of posted) {
+      expect(hex(deserializeEnvelope(wire).msg_id)).not.toBe(hex(operation.addition.msg_id))
+      expect(hex(deserializeEnvelope(wire).msg_id)).not.toBe(hex(operation.rekey.msg_id))
+    }
+    const canonical = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return data.conversations[data.activeProfileId][0].group.session
+    })
+    expect(canonical.epoch).toBe(1); expect(canonical.needsRekey).toBe(false)
     const link = await page.getByLabel('Public group link', { exact: true }).inputValue()
     await command('command', 'group', 'join', link)
     const record = JSON.parse(await readFile(join(directory, 'conversations.json'), 'utf8')).find((row: { id: string }) => row.id === id)
     expect(record.group_session.epoch).toBe(1)
     expect(record.group_session.rekeys).toEqual([])
-    expect(record.group_session.admissions[peer.key_id]).toEqual(expected.admissions[peer.key_id])
+    expect(record.group_session.admissions[peer.key_id]).toEqual(canonical.admissions[peer.key_id])
+    expect(record.group_session.admissions[peer.key_id].addId).toBe(expected.admissions[peer.key_id].addId)
+    expect(record.group_session.admissions[peer.key_id].addDigest).toBe(expected.admissions[peer.key_id].addDigest)
     await command('command', 'send', id, 'Python received the retried admission renewal')
     await expect(page.locator('.message-body', { hasText: 'Python received the retried admission renewal' })).toBeVisible()
   } finally { await rm(directory, { recursive: true, force: true }) }

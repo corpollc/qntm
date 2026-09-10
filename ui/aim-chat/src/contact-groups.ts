@@ -12,7 +12,8 @@ import {
 } from '@corpollc/qntm'
 import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
-import { groupAdditionIntent, groupAdditionChallenge, sameGroupOperationValue } from './group-operation'
+import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, sameGroupOperationValue,
+  appendGroupOperationEvidence, assertGroupOperationEvidenceBudget } from './group-operation'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
 export function bytes(value: string): Uint8Array {
@@ -197,7 +198,8 @@ function operationRecord(profile: string, id: string, op: store.StoredGroupOpera
   if (!sameGroupOperationValue(record.group.operation, op)) throw new Error('The saved operation changed; retry against its latest progress')
   return record
 }
-function additionProof(identity: Identity, record: ReturnType<typeof load>, op: Extract<store.StoredGroupOperation, { kind: 'addition' }>) {
+type AdditionOperation = Extract<store.StoredGroupOperation, { kind: 'addition' | 'addition_rekey' }>
+function additionProof(identity: Identity, record: ReturnType<typeof load>, op: AdditionOperation) {
   const intent = groupAdditionIntent(identity, op), accepted = record.group.session.admissions[intent.kid]
   return { ...intent, accepted: accepted && accepted.addId === intent.proof.addId && accepted.addDigest === intent.proof.addDigest ? accepted : undefined }
 }
@@ -207,19 +209,65 @@ function assertExactAdditionCurrent(identity: Identity, record: ReturnType<typeo
     || proof.accepted.completion.rekeyDigest !== hex(suite.hash(proof.rekeyWire))) throw new Error('Original completing rekey is no longer canonical')
   assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
 }
+function assertPendingRotationCurrent(identity: Identity, record: ReturnType<typeof load>, op: AdditionOperation, proof = additionProof(identity, record, op)) {
+  const state = record.group.session
+  assertGroupCanSend(identity, { ...state, needsRekey: false })
+  if (!proof.accepted || proof.accepted.completion || !state.needsRekey || proof.accepted.sourceEpoch !== state.epoch) throw new Error('Admission is not awaiting its completing rotation')
+  const envelope = deserializeEnvelope(base64UrlDecode(op.controls[op.kind === 'addition' ? 1 : 0]))
+  if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('Saved completing rotation expired')
+  const trial = receiveGroupEvent(identity, envelope, state).state
+  if (trial.root !== op.expected.root || trial.snapshot !== op.expected.snapshot || trial.epoch !== op.expected.epoch) {
+    throw new Error('Saved rotation differs from the current roster; its operation is preserved')
+  }
+}
+function additionOrigin(op: AdditionOperation, intent: ReturnType<typeof additionProof>, challenge: string | null): store.StoredGroupAdditionOrigin {
+  return op.kind === 'addition_rekey' ? structuredClone(op.origin) : { kind: 'addition', controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered,
+    recipient: hex(intent.recipient), admission: intent.proof, recoveryChallenge: challenge, delivery: 'unknown' }
+}
+function reconcileRenewal(profile: string, id: string, op: Extract<store.StoredGroupOperation, { kind: 'renewal' }>) {
+  const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
+  assertGroupCanSend(identity, state)
+  const recipient = bytes(op.recipient), admission = state.admissions[hex(keyIDFromPublicKey(recipient))]
+  if (!admission?.completion || admission.addId !== op.admission.addId || admission.addDigest !== op.admission.addDigest) {
+    throw new Error('Original addition is no longer the accepted admission; its operation is preserved')
+  }
+  try { assertGroupAdmissionRenewalCurrent(identity, state, operationValue(op) as GroupAdmissionRenewal); return op } catch { /* Replace only stale current-admission delivery. */ }
+  const challenge = groupRenewalChallenge(identity, op)
+  const renewed = prepareGroupAdmissionRenewal(identity, state, recipient, { addId: op.admission.addId, addDigest: op.admission.addDigest }, undefined,
+    challenge ? bytes(challenge) : undefined, record.group.cursor)
+  const next: typeof op = { ...op, welcomes: renewed.welcomes.map(welcome => base64UrlEncode(serializeEnvelope(welcome))), delivered: 0,
+    expected: createGroupSession(identity, renewed.conversation, renewed.state, { signedEpoch: state.signedEpoch, admissions: renewed.admissions }),
+    admission: renewed.admission, superseded: appendGroupOperationEvidence(op) }
+  record.group.operation = next; save(profile, record)
+  return next
+}
 function reconcileAddition(profile: string, id: string, op: store.StoredGroupOperation): store.StoredGroupOperation {
-  if (op.kind !== 'addition') return op
+  if (op.kind === 'renewal') return reconcileRenewal(profile, id, op)
+  if (op.kind !== 'addition' && op.kind !== 'addition_rekey') return op
   const record = operationRecord(profile, id, op), identity = identityFor(profile), state = record.group.session
   const intent = additionProof(identity, record, op)
   if (!intent.accepted) {
-    if (state.epoch > intent.addition.conv_epoch || state.needsRekey || state.admissions[intent.kid]) {
+    if (op.kind === 'addition_rekey' || state.epoch > intent.addition.conv_epoch || state.needsRekey || state.admissions[intent.kid]) {
       throw new Error('Original addition is no longer the accepted admission; its operation is preserved')
     }
     return op
   }
-  if (!intent.accepted.completion) return op // A still-valid original rotation can finish below.
+  if (!intent.accepted.completion) {
+    assertGroupCanSend(identity, { ...state, needsRekey: false })
+    if (!state.needsRekey || intent.accepted.sourceEpoch !== state.epoch) throw new Error('Admission is not awaiting its completing rotation')
+    try { assertPendingRotationCurrent(identity, record, op, intent); return op } catch { /* Expired or changed roster; stage a new current rotation. */ }
+    const challenge = groupAdditionChallenge(identity, op, intent), rotation = prepareGroupSessionRekey(identity, state)
+    const trial = receiveGroupEvent(identity, rotation.rekey, state).state, origin = additionOrigin(op, intent, challenge)
+    const superseded = op.kind === 'addition_rekey' ? appendGroupOperationEvidence(op) : []
+    assertGroupOperationEvidenceBudget(origin, superseded)
+    const next: store.StoredGroupOperation = { kind: 'addition_rekey', controls: [base64UrlEncode(serializeEnvelope(rotation.rekey))], welcomes: [], delivered: 0,
+      expected: createGroupSession(identity, rotation.conversation, rotation.state, { signedEpoch: state.signedEpoch, admissions: trial.admissions }),
+      recipient: hex(intent.recipient), origin, ...(superseded.length ? { superseded } : {}) }
+    record.group.operation = next; save(profile, record)
+    return next
+  }
   assertGroupCanSend(identity, state)
-  try { assertExactAdditionCurrent(identity, record, op); return op } catch { /* Current keys or delivery window changed. */ }
+  if (op.kind === 'addition') try { assertExactAdditionCurrent(identity, record, op); return op } catch { /* Current keys or delivery window changed. */ }
   const challenge = groupAdditionChallenge(identity, op, intent)
   const renewed = prepareGroupAdmissionRenewal(identity, state, intent.recipient, intent.proof, undefined,
     challenge ? bytes(challenge) : undefined, record.group.cursor)
@@ -227,8 +275,8 @@ function reconcileAddition(profile: string, id: string, op: store.StoredGroupOpe
     welcomes: renewed.welcomes.map(welcome => base64UrlEncode(serializeEnvelope(welcome))),
     expected: createGroupSession(identity, renewed.conversation, renewed.state, { signedEpoch: state.signedEpoch, admissions: renewed.admissions }),
     recipient: hex(intent.recipient), admission: renewed.admission,
-    origin: { kind: 'addition', controls: [...op.controls], welcomes: [...op.welcomes], delivered: op.delivered,
-      recipient: hex(intent.recipient), admission: intent.proof, recoveryChallenge: challenge, delivery: 'unknown' } }
+    origin: additionOrigin(op, intent, challenge), ...(op.kind === 'addition_rekey' ? { superseded: appendGroupOperationEvidence(op) } : {}) }
+  assertGroupOperationEvidenceBudget(next.origin, next.superseded ?? [])
   record.group.operation = next; save(profile, record)
   return next
 }
@@ -236,9 +284,9 @@ function reconcileAddition(profile: string, id: string, op: store.StoredGroupOpe
 function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, op: store.StoredGroupOperation, wire: string) {
   const state = record.group.session, envelope = deserializeEnvelope(base64UrlDecode(wire))
   assertGroupCanSend(identity, { ...state, needsRekey: false })
-  if (op.kind === 'addition') {
+  if (op.kind === 'addition' || op.kind === 'addition_rekey') {
     const proof = additionProof(identity, record, op)
-    if (wire === op.controls[0]) {
+    if (op.kind === 'addition' && wire === op.controls[0]) {
       if (proof.accepted) return false
       if (state.needsRekey || state.epoch !== envelope.conv_epoch || state.admissions[proof.kid]) {
         throw new Error('Original addition is no longer safe to publish; its operation is preserved')
@@ -246,11 +294,7 @@ function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, 
     } else {
       if (!proof.accepted) throw new Error('Original addition is no longer the accepted admission')
       if (proof.accepted.completion) return false
-      if (!state.needsRekey || proof.accepted.sourceEpoch !== state.epoch) throw new Error('Admission is not awaiting its original rotation')
-      const trial = receiveGroupEvent(identity, envelope, state).state
-      if (trial.root !== op.expected.root || trial.snapshot !== op.expected.snapshot || trial.epoch !== op.expected.epoch) {
-        throw new Error('Saved rotation differs from the current roster; its operation is preserved')
-      }
+      assertPendingRotationCurrent(identity, record, op, proof)
     }
   }
   const seen = state.seen[hex(envelope.msg_id)]
@@ -259,6 +303,9 @@ function shouldPostControl(identity: Identity, record: ReturnType<typeof load>, 
     return false
   }
   if (envelope.expiry_ts < Math.floor(Date.now() / 1000)) throw new Error('The saved operation expired; its ciphertext is retained for recovery')
+  if (!['addition', 'addition_rekey', 'create'].includes(op.kind) && envelope.conv_epoch !== state.epoch) {
+    throw new Error('Saved control belongs to an older group epoch; its operation is preserved')
+  }
   if (op.kind !== 'create') receiveGroupEvent(identity, envelope, state)
   return true
 }
@@ -287,13 +334,14 @@ async function resumeUnlocked(profile: string, id: string, reconcile = false): P
     record = operationRecord(profile, id, op)
     if (op.kind === 'create') { record.group.receipts.push(seq); save(profile, record) }
     await syncUnlocked(profile, id); record = operationRecord(profile, id, op)
-    if (op.kind === 'addition') {
+    if (op.kind === 'addition' || op.kind === 'addition_rekey') {
       const proof = additionProof(identity, record, op)
-      if (proof.accepted && (wire === op.controls[0] || proof.accepted.completion)) continue
+      if (proof.accepted && (op.kind === 'addition' && wire === op.controls[0] || proof.accepted.completion)) continue
     }
     if (!controlAccepted(record.group.session, wire)) throw new Error('The relay has not replayed the saved control; retry this operation')
   }
   if (reconcile) op = reconcileAddition(profile, id, op)
+  if (op.kind === 'addition_rekey') throw new Error('Completing rotation is not yet verified in relay replay; retry this operation')
   record = operationRecord(profile, id, op)
   if (!op.welcomes.length && (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch)) {
     throw new Error('Saved operation no longer matches the accepted group state')
