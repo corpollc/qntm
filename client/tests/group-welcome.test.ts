@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   QSP1Suite, generateIdentity, createInvite, createConversation, deriveConversationKeys,
   createMessage, decryptMessage, marshalCanonical, unmarshalCanonical,
@@ -6,6 +6,8 @@ import {
   applyRekey, createRekey, base64UrlEncode, prepareGroupAddition, openGroupWelcome,
   isGroupWelcomeEnvelope, GROUP_WELCOME_TTL, MAX_GROUP_WELCOME_BYTES,
   groupSessionFromWelcome, checkGroupReplayCoverage, assertGroupCanSend,
+  createGroupSession, prepareGroupSessionAddition, receiveGroupEvent, prepareGroupAdmissionRenewal,
+  assertGroupAdmissionRenewalCurrent, prepareGroupSessionRekey,
 } from '../src/index.js';
 import { openSecret, sealSecret } from '../src/crypto/naclbox.js';
 
@@ -23,6 +25,85 @@ function setup(epoch = 0) {
 const pin = (f: ReturnType<typeof setup>) => ({ conversationId: f.conversation.id, inviterPublicKey: f.owner.publicKey });
 
 describe('Contact group welcomes', () => {
+  it('signs exact admission provenance, rejects malformed records, and keeps old drafts unknown', () => {
+    const f = setup();
+    const operation = prepareGroupAddition(f.owner, f.conversation, f.state, [f.late.publicKey]);
+    const envelope = operation.welcomes[0], kid = Buffer.from(f.late.keyID).toString('hex');
+    const decoded = unmarshalCanonical<any>(openSecret(f.late.privateKey, f.owner.publicKey, envelope.ciphertext));
+    expect(Object.keys(decoded.payload.admissions[kid]).sort()).toEqual(['add_hash', 'add_id', 'rekey_hash', 'rekey_id', 'source_epoch']);
+    expect(decoded.payload.admissions[kid].source_epoch).toBe(0);
+    const resign = (payload: any) => marshalCanonical({ ...envelope, ciphertext: sealSecret(f.owner.privateKey, f.late.publicKey,
+      marshalCanonical({ payload, signature: suite.sign(f.owner.privateKey, marshalCanonical(payload)) })) });
+    const changed = structuredClone(decoded);
+    changed.payload.admissions[kid].add_hash[0] ^= 1;
+    expect(() => openGroupWelcome(f.late, marshalCanonical({ ...envelope,
+      ciphertext: sealSecret(f.late.privateKey, f.owner.publicKey, marshalCanonical(changed)) }), pin(f))).toThrow('signature');
+    for (const change of [
+      (payload: any) => { payload.admissions = null; },
+      (payload: any) => { payload.admissions[kid].source_epoch = 1; },
+      (payload: any) => { payload.admissions[kid].rekey_hash = new Uint8Array(31); },
+      (payload: any) => { payload.admissions[kid].add_id = new Uint8Array(16); },
+      (payload: any) => { payload.admissions['00'.repeat(16)] = payload.admissions[kid]; },
+      (payload: any) => { payload.admissions = Object.fromEntries([['__proto__', payload.admissions[kid]]]); },
+      (payload: any) => { payload.admissions[kid].extra = true; },
+    ]) {
+      const payload = structuredClone(decoded.payload); change(payload);
+      expect(() => openGroupWelcome(f.late, resign(payload), pin(f))).toThrow();
+    }
+    const legacy = structuredClone(decoded.payload); delete legacy.admissions;
+    expect(openGroupWelcome(f.late, resign(legacy), pin(f)).admissions).toEqual({});
+  });
+
+  it('renews expired delivery with a separate purpose, current keys and no historical-key archive', () => {
+    const f = setup();
+    let state = createGroupSession(f.owner, f.conversation, f.state);
+    const operation = prepareGroupSessionAddition(f.owner, state, [f.late.publicKey], 1);
+    state = receiveGroupEvent(f.owner, operation.addition, state).state;
+    state = receiveGroupEvent(f.owner, operation.rekey, state).state;
+    const admission = state.admissions[Buffer.from(f.late.keyID).toString('hex')];
+    const expected = { addId: admission.addId, addDigest: admission.addDigest };
+    const historical = createMessage(f.owner, operation.conversation, 'text', new TextEncoder().encode('older generation'));
+    state = receiveGroupEvent(f.owner, prepareGroupSessionRekey(f.owner, state).rekey, state).state;
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime((operation.welcomes[0].expiry_ts + 2) * 1000);
+      expect(() => openGroupWelcome(f.late, marshalCanonical(operation.welcomes[0]), pin(f))).toThrow('expired');
+      const renewal = prepareGroupAdmissionRenewal(f.owner, state, f.late.publicKey, expected, 1, undefined, 10);
+      assertGroupAdmissionRenewalCurrent(f.owner, state, renewal);
+      const payload = unmarshalCanonical<any>(openSecret(f.late.privateKey, f.owner.publicKey, renewal.welcomes[0].ciphertext)).payload;
+      expect(payload.proto).toBe('qntm/group-renewal/v1');
+      expect(payload.addition_id).toBeUndefined();
+      expect(payload.rekey_id).toBeUndefined();
+      expect(Object.keys(payload).sort()).toEqual(['admissions', 'envelope', 'group_key', 'group_state',
+        'inviter_ik_pk', 'proto', 'recipient_ik_pk', 'replay_from_seq']);
+      const opened = openGroupWelcome(f.late, marshalCanonical(renewal.welcomes[0]), pin(f));
+      expect(opened.purpose).toBe('renewal');
+      expect(opened.conversation.currentEpoch).toBe(2);
+      expect(() => decryptMessage(historical, opened.conversation)).toThrow();
+      expect(groupSessionFromWelcome(f.late, opened, 11).rekeys).toEqual([]);
+      for (const admissions of [undefined, {}]) {
+        const changed = structuredClone(payload);
+        if (admissions === undefined) delete changed.admissions;
+        else changed.admissions = admissions;
+        const wire = marshalCanonical({ ...renewal.welcomes[0], ciphertext: sealSecret(f.owner.privateKey, f.late.publicKey,
+          marshalCanonical({ payload: changed, signature: suite.sign(f.owner.privateKey, marshalCanonical(changed)) })) });
+        expect(() => openGroupWelcome(f.late, wire, pin(f))).toThrow();
+      }
+      vi.setSystemTime((renewal.welcomes[0].expiry_ts + 1) * 1000);
+      expect(() => assertGroupAdmissionRenewalCurrent(f.owner, state, renewal)).toThrow('expired');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('fits authenticated provenance for a maximum-size ordinary group within the welcome bound', () => {
+    const f = setup(), recipients = Array.from({ length: 126 }, () => generateIdentity());
+    const operation = prepareGroupAddition(f.owner, f.conversation, f.state, recipients.map(identity => identity.publicKey));
+    const wire = marshalCanonical(operation.welcomes[0]);
+    expect(wire.length).toBeLessThanOrEqual(MAX_GROUP_WELCOME_BYTES);
+    const opened = openGroupWelcome(recipients[0], wire, pin(f));
+    expect(opened.state.memberCount()).toBe(128);
+    expect(Object.keys(opened.admissions)).toHaveLength(126);
+  });
+
   it('binds the replay interval before welcome delivery and rejects a changed anchor', () => {
     const f = setup();
     const envelope = prepareGroupAddition(f.owner, f.conversation, f.state, [f.late.publicKey], undefined, undefined, 12).welcomes[0];

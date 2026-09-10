@@ -6,6 +6,8 @@ import {
   createGroupSession, restoreGroupSession, receiveGroupEvent, groupSessionConversation,
   assertGroupCanSend, createGroupControlMessage, prepareGroupAddition, openGroupWelcome,
   prepareGroupSessionAddition, assertGroupAdditionAccepted,
+  groupSessionFromWelcome, prepareGroupWelcomeRefresh, prepareGroupAdmissionRenewal,
+  assertGroupAdmissionRenewalCurrent, prepareGroupSessionRekey, requireGroupRecovery,
   QSP1Suite, GROUP_REKEY_GRACE_SECONDS,
 } from '../src/index.js';
 import type { Identity, Conversation, OuterEnvelope, GroupSessionState } from '../src/index.js';
@@ -177,5 +179,173 @@ describe('ordinary group receive checkpoints', () => {
     const current = receiveGroupEvent(f.member, envelope, f.state);
     const forged: OuterEnvelope = structuredClone(envelope); forged.ciphertext[0] ^= 1;
     expect(() => receiveGroupEvent(f.member, forged, current.state)).toThrow('Conflicting');
+  });
+});
+
+describe('authenticated admission renewal', () => {
+  const expected = (state: GroupSessionState, kid: Uint8Array) => {
+    const { addId, addDigest } = state.admissions[hex(kid)];
+    return { addId, addDigest };
+  };
+  function admitted() {
+    const f = setup();
+    const addition = prepareGroupSessionAddition(f.member, f.state, [f.late.publicKey]);
+    const pending = receiveGroupEvent(f.member, addition.addition, f.state).state;
+    const state = receiveGroupEvent(f.member, addition.rekey, pending).state;
+    const pin = { conversationId: f.conversation.id, inviterPublicKey: f.member.publicKey };
+    const welcome = openGroupWelcome(f.late, marshalCanonical(addition.welcomes[0]), pin);
+    return { ...f, addition, pending, state, pin, welcome, peerState: groupSessionFromWelcome(f.late, welcome, 3) };
+  }
+  function nextEpoch(identity: Identity, state: GroupSessionState) {
+    return receiveGroupEvent(identity, prepareGroupSessionRekey(identity, state).rekey, state).state;
+  }
+
+  it('persists incomplete and canonical completion evidence independently of seen eviction', () => {
+    const f = admitted(), kid = hex(f.late.keyID), suite = new QSP1Suite();
+    expect(restart(f.member, f.pending).admissions[kid]).toEqual({
+      addId: hex(f.addition.addition.msg_id), addDigest: hex(suite.hash(marshalCanonical(f.addition.addition))),
+      sourceEpoch: 0, completion: null,
+    });
+    expect(f.state.rekeys[0].admissions[kid].completion).toBeNull();
+    expect(f.state.admissions[kid].completion).toEqual({ rekeyId: hex(f.addition.rekey.msg_id),
+      rekeyDigest: hex(suite.hash(marshalCanonical(f.addition.rekey))) });
+    let state = restart(f.member, f.state);
+    for (let index = 0; Object.keys(state.seen).length < 8192; index++) {
+      state.seen[index.toString(16).padStart(32, '0')] = { digest: '00'.repeat(32), epoch: state.epoch };
+    }
+    for (let index = 0; index < 2; index++) state = receiveGroupEvent(f.member, text(f.owner, groupSessionConversation(state)), state).state;
+    expect(state.seen[hex(f.addition.addition.msg_id)]).toBeUndefined();
+    expect(state.seen[hex(f.addition.rekey.msg_id)]).toBeUndefined();
+    state = nextEpoch(f.member, nextEpoch(f.member, restart(f.member, state)));
+    const renewal = prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey, expected(f.state, f.late.keyID), undefined, undefined, 9000);
+    expect(renewal.admission).toEqual(f.state.admissions[kid]);
+    expect(() => assertGroupAdmissionRenewalCurrent(f.member, state, renewal)).not.toThrow();
+    expect(() => prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey,
+      { ...expected(state, f.late.keyID), addDigest: '01'.repeat(32) })).toThrow('provenance');
+    const substituted = structuredClone(state);
+    substituted.admissions[kid].completion!.rekeyDigest = '02'.repeat(32);
+    expect(() => assertGroupAdmissionRenewalCurrent(f.member, substituted, renewal)).toThrow('provenance');
+  });
+
+  it('restores admission evidence with a canonical rewind and replaces its completing rekey proof', () => {
+    const f = setup(), other = generateIdentity();
+    const operation = prepareGroupSessionAddition(f.member, f.state, [f.late.publicKey]);
+    const pending = receiveGroupEvent(f.member, operation.addition, f.state).state;
+    const [low, high] = [operation.rekey, prepareGroupSessionRekey(f.member, pending).rekey]
+      .sort((a, b) => hex(a.msg_id).localeCompare(hex(b.msg_id)));
+    let state = receiveGroupEvent(f.member, high, pending).state;
+    const renewal = prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey, expected(state, f.late.keyID));
+    const descendant = prepareGroupSessionAddition(f.member, state, [other.publicKey]);
+    state = receiveGroupEvent(f.member, descendant.addition, state).state;
+    state = receiveGroupEvent(f.member, descendant.rekey, state).state;
+    const removal = createGroupControlMessage(f.owner, groupSessionConversation(state), 'group_remove', createGroupRemoveBody([f.member.keyID]));
+    const removed = receiveGroupEvent(f.member, removal, state).state;
+    const removedRewind = receiveGroupEvent(f.member, low, removed).state;
+    expect(restart(f.member, removedRewind).removedAtEpoch).toBe(2);
+    expect(removedRewind.removed).toBe(true);
+    const winner = receiveGroupEvent(f.member, low, restart(f.member, state));
+    expect(winner.rewound).toBe(true);
+    expect(winner.state.admissions[hex(other.keyID)]).toBeUndefined();
+    expect(winner.state.admissions[hex(f.late.keyID)].completion).toEqual({ rekeyId: hex(low.msg_id),
+      rekeyDigest: hex(new QSP1Suite().hash(marshalCanonical(low))) });
+    expect(winner.state.rekeys[0].admissions[hex(f.late.keyID)].completion).toBeNull();
+    expect(() => assertGroupAdmissionRenewalCurrent(f.member, winner.state, renewal)).toThrow();
+  });
+
+  it('renews a later readmission without a new challenge and never revives its old incarnation', () => {
+    const f = admitted();
+    const remove = createGroupControlMessage(f.member, groupSessionConversation(f.state), 'group_remove', createGroupRemoveBody([f.late.keyID]));
+    const removed = receiveGroupEvent(f.late, remove, f.peerState).state;
+    expect(removed.removedAtEpoch).toBe(1);
+    expect(removed.admissions[hex(f.late.keyID)]).toBeUndefined();
+    let state = receiveGroupEvent(f.member, remove, f.state).state;
+    state = nextEpoch(f.member, state);
+    const readmit = prepareGroupSessionAddition(f.member, state, [f.late.publicKey]);
+    state = receiveGroupEvent(f.member, readmit.addition, state).state;
+    state = receiveGroupEvent(f.member, readmit.rekey, state).state;
+    const secondEpoch = state;
+    state = nextEpoch(f.member, nextEpoch(f.member, state));
+    expect(state.epoch).toBe(5);
+    expect(() => prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey, expected(f.state, f.late.keyID))).toThrow('provenance');
+    const renewal = prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey, expected(state, f.late.keyID), undefined, undefined, 20);
+    const opened = openGroupWelcome(f.late, marshalCanonical(renewal.welcomes[0]), f.pin);
+    expect(opened.purpose).toBe('renewal');
+    const renewed = groupSessionFromWelcome(f.late, opened, 21, restart(f.late, removed));
+    expect(renewed.removed).toBe(false);
+    expect(renewed.removedAtEpoch).toBe(1);
+    expect(renewed.epoch).toBe(5);
+    expect(renewed.rekeys).toEqual([]);
+    // The very same proof at current epoch 5 cannot undo a later source-epoch 3 removal.
+    const readmitted = groupSessionFromWelcome(f.late, openGroupWelcome(f.late, marshalCanonical(readmit.welcomes[0]), f.pin), 10, removed);
+    const laterRemove = createGroupControlMessage(f.member, groupSessionConversation(secondEpoch), 'group_remove', createGroupRemoveBody([f.late.keyID]));
+    const removedAgain = receiveGroupEvent(f.late, laterRemove, readmitted).state;
+    expect(removedAgain.removedAtEpoch).toBe(3);
+    expect(() => groupSessionFromWelcome(f.late, opened, 21, removedAgain)).toThrow('saved removal');
+    const refresh = prepareGroupWelcomeRefresh(f.member, state, [f.late.publicKey], undefined, undefined, 20);
+    expect(() => groupSessionFromWelcome(f.late, openGroupWelcome(f.late, marshalCanonical(refresh.welcomes[0]), f.pin), 21, removed)).toThrow('refresh');
+    const blocked = requireGroupRecovery(removed, 18, 'missing_history');
+    expect(() => groupSessionFromWelcome(f.late, opened, 21, blocked)).toThrow('challenge');
+    const challenged = prepareGroupAdmissionRenewal(f.member, state, f.late.publicKey, expected(state, f.late.keyID), undefined,
+      new Uint8Array(Buffer.from(blocked.recovery!.challenge, 'hex')), 20);
+    expect(groupSessionFromWelcome(f.late, openGroupWelcome(f.late, marshalCanonical(challenged.welcomes[0]), f.pin), 21, blocked).removed).toBe(false);
+    expect(() => groupSessionFromWelcome(f.late, opened, 21, { ...removed, removedAtEpoch: null })).toThrow('saved removal');
+  });
+
+  it('imports signed provenance for later member-issued renewals and enriches only unknown same-epoch evidence', () => {
+    const f = admitted(), newcomer = generateIdentity();
+    const addition = prepareGroupSessionAddition(f.member, f.state, [newcomer.publicKey]);
+    let state = receiveGroupEvent(f.member, addition.addition, f.state).state;
+    state = receiveGroupEvent(f.member, addition.rekey, state).state;
+    const opened = openGroupWelcome(newcomer, marshalCanonical(addition.welcomes[0]), f.pin);
+    const joined = groupSessionFromWelcome(newcomer, opened, 6);
+    expect(joined.admissions).toEqual(state.admissions);
+    const renewal = prepareGroupAdmissionRenewal(newcomer, joined, f.late.publicKey, expected(joined, f.late.keyID));
+    expect(openGroupWelcome(f.late, marshalCanonical(renewal.welcomes[0]), { ...f.pin, inviterPublicKey: newcomer.publicKey }).admissions).toEqual(state.admissions);
+    const legacy: any = structuredClone(joined);
+    delete legacy.admissions; delete legacy.removedAtEpoch;
+    const unknown = restoreGroupSession(newcomer, legacy);
+    expect(unknown.admissions).toEqual({});
+    expect(() => prepareGroupAdmissionRenewal(newcomer, unknown, f.late.publicKey, expected(state, f.late.keyID))).toThrow('unknown');
+    expect(groupSessionFromWelcome(newcomer, opened, 7, unknown).admissions).toEqual(state.admissions);
+    const conflict = structuredClone(joined);
+    conflict.admissions[hex(f.late.keyID)].addDigest = '00'.repeat(32);
+    expect(() => groupSessionFromWelcome(newcomer, opened, 7, conflict)).toThrow('conflicts');
+  });
+
+  it('validates bounded private provenance and keeps unknown draft archives unknown', () => {
+    const f = admitted(), kid = hex(f.late.keyID);
+    for (const admissions of [null, [], { outsider: f.state.admissions[kid] },
+      { [kid]: { ...f.state.admissions[kid], sourceEpoch: 1 } },
+      { [kid]: { ...f.state.admissions[kid], completion: null } }]) {
+      expect(() => restoreGroupSession(f.member, { ...f.state, admissions })).toThrow();
+    }
+    expect(() => restoreGroupSession(f.member, { ...f.pending, needsRekey: false })).toThrow('rotation');
+    expect(() => restoreGroupSession(f.member, { ...f.state, removedAtEpoch: -1 })).toThrow('removal');
+    const legacy: any = structuredClone(f.state);
+    delete legacy.admissions; delete legacy.removedAtEpoch;
+    for (const frame of legacy.rekeys) delete frame.admissions;
+    const restored = restoreGroupSession(f.member, legacy);
+    expect(restored.admissions).toEqual({});
+    expect(restored.rekeys[0].admissions).toEqual({});
+    expect(restored.removedAtEpoch).toBeNull();
+  });
+
+  it('does not invent epoch-bound provenance from legacy unsigned-epoch controls', () => {
+    const f = setup();
+    const legacy = { ...f.state, signedEpoch: false };
+    const addition = createMessage(f.member, f.conversation, 'group_add', createGroupAddBody(f.member, [f.late.publicKey]));
+    let current = receiveGroupEvent(f.member, addition, legacy);
+    const rekey = rotate(f.member, current.conversation, current.group);
+    current = receiveGroupEvent(f.member, rekey.envelope, current.state);
+    expect(current.state.admissions).toEqual({});
+    const removal = createMessage(f.owner, current.conversation, 'group_remove', createGroupRemoveBody([f.member.keyID]));
+    const removed = receiveGroupEvent(f.member, removal, current.state).state;
+    expect(removed.removed).toBe(true);
+    expect(removed.removedAtEpoch).toBeNull();
+    const signedAddition = prepareGroupSessionAddition(f.member, legacy, [f.late.publicKey]);
+    const pending = receiveGroupEvent(f.member, signedAddition.addition, legacy);
+    const unsignedRekey = createMessage(f.member, pending.conversation, 'group_rekey', createRekey(f.member, pending.conversation, pending.group).bodyBytes);
+    const unknown = receiveGroupEvent(f.member, unsignedRekey, pending.state).state;
+    expect(restart(f.member, unknown).admissions).toEqual({});
   });
 });

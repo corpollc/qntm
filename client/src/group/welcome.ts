@@ -17,6 +17,7 @@ import type { Conversation, Identity, OuterEnvelope } from '../types.js';
 const suite = new QSP1Suite();
 const DOMAIN = 'qntm/group-welcome/v1';
 const REFRESH_DOMAIN = 'qntm/group-refresh/v1';
+const RENEWAL_DOMAIN = 'qntm/group-renewal/v1';
 export const MAX_GROUP_WELCOME_BYTES = 65536;
 export const GROUP_WELCOME_TTL = 604800;
 const MAX_EPOCH = 0xffffffff;
@@ -24,6 +25,10 @@ const equal = uint8ArrayEquals;
 const now = () => Math.floor(Date.now() / 1000);
 const uint = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const bytes = (value: unknown, size: number): value is Uint8Array => value instanceof Uint8Array && value.length === size;
+const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('');
+const unhex = (value: string) => new Uint8Array(value.match(/../g)!.map(b => parseInt(b, 16)));
+const fixedHex = (value: unknown, size: number): value is string => typeof value === 'string'
+  && value.length === size * 2 && /^[0-9a-f]+$/.test(value);
 function requireValue(value: unknown, reason: string): asserts value {
   if (!value) throw new Error(reason);
 }
@@ -34,6 +39,53 @@ function fields(value: unknown, names: string): value is Record<string, unknown>
 
 export interface GroupWelcomeEnvelope extends OuterEnvelope {
   kind: 'group_welcome';
+}
+/** Private accepted-admission evidence. Missing entries mean unknown provenance. */
+export interface GroupAdmission {
+  addId: string;
+  addDigest: string;
+  sourceEpoch: number;
+  completion: null | { rekeyId: string; rekeyDigest: string };
+}
+export type GroupAdmissions = Record<string, GroupAdmission>;
+
+/** Validate locally authenticated evidence; this does not authenticate network JSON. */
+export function validateGroupAdmissions(value: unknown, state: GroupState, epoch: number, allowPending = false): asserts value is GroupAdmissions {
+  requireValue(value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length <= 128, 'Invalid group admission provenance');
+  const members = new Set(state.listMembers().map(hex));
+  for (const [kid, record] of Object.entries(value)) {
+    requireValue(fixedHex(kid, 16) && members.has(kid)
+      && fields(record, 'addId,addDigest,sourceEpoch,completion') && fixedHex(record.addId, 16)
+      && fixedHex(record.addDigest, 32) && uint(record.sourceEpoch) && record.sourceEpoch <= MAX_EPOCH,
+    'Invalid group admission provenance');
+    requireValue(record.completion === null
+      ? allowPending && record.sourceEpoch === epoch
+      : fields(record.completion, 'rekeyId,rekeyDigest') && fixedHex(record.completion.rekeyId, 16)
+        && fixedHex(record.completion.rekeyDigest, 32) && record.sourceEpoch < epoch,
+    'Invalid group admission completion');
+  }
+}
+function wireAdmissions(value: GroupAdmissions): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).map(([kid, record]) => {
+    requireValue(record.completion, 'Admission has not completed its key rotation');
+    return [kid, { add_id: unhex(record.addId), add_hash: unhex(record.addDigest), source_epoch: record.sourceEpoch,
+      rekey_id: unhex(record.completion.rekeyId), rekey_hash: unhex(record.completion.rekeyDigest) }];
+  }));
+}
+function readAdmissions(value: unknown, state: GroupState, epoch: number): GroupAdmissions {
+  requireValue(value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length <= 128, 'Invalid welcome admission provenance');
+  const result: GroupAdmissions = {};
+  for (const [kid, record] of Object.entries(value)) {
+    requireValue(fixedHex(kid, 16) && fields(record, 'add_id,add_hash,source_epoch,rekey_id,rekey_hash')
+      && bytes(record.add_id, 16) && bytes(record.add_hash, 32) && uint(record.source_epoch)
+      && bytes(record.rekey_id, 16) && bytes(record.rekey_hash, 32), 'Invalid welcome admission provenance');
+    result[kid] = { addId: hex(record.add_id), addDigest: hex(record.add_hash), sourceEpoch: record.source_epoch,
+      completion: { rekeyId: hex(record.rekey_id), rekeyDigest: hex(record.rekey_hash) } };
+  }
+  validateGroupAdmissions(result, state, epoch);
+  return result;
 }
 export interface GroupAddition {
   /** New local state; install only when the corresponding rekey is accepted. */
@@ -52,8 +104,9 @@ export type GroupWelcome = {
   /** Sender's fully processed relay cursor before preparing this welcome. */
   replayFromSequence: number;
   recoveryChallenge?: Uint8Array;
+  admissions: GroupAdmissions;
 } & ({ purpose: 'addition'; additionId: Uint8Array; rekeyId: Uint8Array; additionHash?: Uint8Array; rekeyHash?: Uint8Array }
-  | { purpose: 'refresh'; additionId?: never; rekeyId?: never });
+  | { purpose: 'refresh' | 'renewal'; additionId?: never; rekeyId?: never });
 interface WelcomeContext {
   envelope: ReturnType<typeof header>;
   inviter_ik_pk: Uint8Array;
@@ -62,9 +115,10 @@ interface WelcomeContext {
   group_state: GroupGenesisBody;
   replay_from_seq: number;
   recovery_challenge?: Uint8Array;
+  admissions?: Record<string, unknown>;
 }
 type WelcomePayload = WelcomeContext & ({ proto: typeof DOMAIN; addition_id: Uint8Array; rekey_id: Uint8Array; addition_hash: Uint8Array; rekey_hash: Uint8Array }
-  | { proto: typeof REFRESH_DOMAIN });
+  | { proto: typeof REFRESH_DOMAIN | typeof RENEWAL_DOMAIN });
 function header(envelope: GroupWelcomeEnvelope) {
   return { v: envelope.v, suite: envelope.suite, kind: envelope.kind,
     conv_id: envelope.conv_id, msg_id: envelope.msg_id, conv_epoch: envelope.conv_epoch,
@@ -75,18 +129,22 @@ function header(envelope: GroupWelcomeEnvelope) {
 export function sealGroupWelcome(identity: Identity, conversation: Conversation, state: GroupState,
   recipient: Uint8Array, createdAt: number, ttl: number,
   admission?: { additionId: Uint8Array; rekeyId: Uint8Array; additionHash: Uint8Array; rekeyHash: Uint8Array }, recoveryChallenge?: Uint8Array,
-  replayFromSequence = 0): GroupWelcomeEnvelope {
+  replayFromSequence = 0, admissions?: GroupAdmissions, renewal = false): GroupWelcomeEnvelope {
   requireValue(uint(replayFromSequence), 'Invalid welcome replay anchor');
+  if (admissions !== undefined) validateGroupAdmissions(admissions, state, conversation.currentEpoch);
+  requireValue(!renewal || !admission && admissions?.[hex(keyIDFromPublicKey(recipient))]?.completion,
+    'Admission renewal requires current provenance');
   const envelope: GroupWelcomeEnvelope = { v: 1, suite: 'QSP-1', kind: 'group_welcome',
     conv_id: new Uint8Array(conversation.id), msg_id: generateMessageID(), conv_epoch: conversation.currentEpoch,
     created_ts: createdAt, expiry_ts: createdAt + ttl, ciphertext: new Uint8Array() };
   const context: WelcomeContext = { envelope: header(envelope), inviter_ik_pk: identity.publicKey,
     recipient_ik_pk: recipient, group_key: conversation.keys.root, group_state: state.snapshot(), replay_from_seq: replayFromSequence,
-    ...(recoveryChallenge ? { recovery_challenge: recoveryChallenge } : {}) };
+    ...(recoveryChallenge ? { recovery_challenge: recoveryChallenge } : {}),
+    ...(admissions !== undefined ? { admissions: wireAdmissions(admissions) } : {}) };
   const payload: WelcomePayload = admission
     ? { ...context, proto: DOMAIN, addition_id: admission.additionId, rekey_id: admission.rekeyId,
       addition_hash: admission.additionHash, rekey_hash: admission.rekeyHash }
-    : { ...context, proto: REFRESH_DOMAIN };
+    : { ...context, proto: renewal ? RENEWAL_DOMAIN : REFRESH_DOMAIN };
   const signature = suite.sign(identity.privateKey, marshalCanonical(payload));
   envelope.ciphertext = sealSecret(identity.privateKey, recipient, marshalCanonical({ payload, signature }));
   requireValue(marshalCanonical(envelope).length <= MAX_GROUP_WELCOME_BYTES, 'Group welcome exceeds size limit');
@@ -121,7 +179,8 @@ export function validateGroupSnapshot(value: unknown): asserts value is GroupGen
  * Gateway-governed membership must use its governance operation instead.
  */
 export function prepareGroupAddition(identity: Identity, conversation: Conversation, state: GroupState,
-  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array, replayFromSequence = 0): GroupAddition {
+  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array, replayFromSequence = 0,
+  admissions: GroupAdmissions = {}): GroupAddition {
   validateIdentity(identity);
   requireValue(conversation.type === 'group' && bytes(conversation.id, 16)
     && uint(conversation.currentEpoch) && conversation.currentEpoch < MAX_EPOCH,
@@ -129,6 +188,7 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   const snapshot = state.snapshot();
   validateGroupSnapshot(snapshot);
   requireValue(state.isMember(identity.keyID), 'Only a current group member may add contacts');
+  validateGroupAdmissions(admissions, state, conversation.currentEpoch);
   requireValue(Array.isArray(recipients) && recipients.length > 0
     && state.memberCount() + recipients.length <= 128, 'Invalid added contact count');
   requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
@@ -163,9 +223,14 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   applyRekey(next, newGroupKey, conversation.currentEpoch + 1);
   // A welcome never carries an old invite token or saved epoch-key archive.
   delete next.inviteToken;
+  const nextAdmissions = structuredClone(admissions);
+  for (const recipient of recipients) nextAdmissions[hex(keyIDFromPublicKey(recipient))] = {
+    addId: hex(addition.msg_id), addDigest: hex(suite.hash(marshalCanonical(addition))), sourceEpoch: conversation.currentEpoch,
+    completion: { rekeyId: hex(rekey.msg_id), rekeyDigest: hex(suite.hash(marshalCanonical(rekey))) },
+  };
   const welcomes = recipients.map(recipient => sealGroupWelcome(identity, next, nextState, recipient,
     addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id,
-      additionHash: suite.hash(marshalCanonical(addition)), rekeyHash: suite.hash(marshalCanonical(rekey)) }, recoveryChallenge, replayFromSequence));
+      additionHash: suite.hash(marshalCanonical(addition)), rekeyHash: suite.hash(marshalCanonical(rekey)) }, recoveryChallenge, replayFromSequence, nextAdmissions));
   return { conversation: next, state: nextState, addition, rekey, welcomes };
 }
 
@@ -202,7 +267,8 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   requireValue(equal(plaintext, marshalCanonical(opened)), 'Signed group welcome must use canonical CBOR');
   const payload = opened.payload;
   const anchorFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'replay_from_seq') ? ',replay_from_seq' : '';
-  const common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state' + anchorFields;
+  const provenanceFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'admissions') ? ',admissions' : '';
+  const common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state' + anchorFields + provenanceFields;
   const challengeFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'recovery_challenge') ? ',recovery_challenge' : '';
   const hashFields = payload && typeof payload === 'object' && (Object.hasOwn(payload, 'addition_hash') || Object.hasOwn(payload, 'rekey_hash')) ? ',addition_hash,rekey_hash' : '';
   const addition = fields(payload, common + ',addition_id,rekey_id' + challengeFields + hashFields)
@@ -210,7 +276,8 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
     && (!hashFields || bytes(payload.addition_hash, 32) && bytes(payload.rekey_hash, 32));
   const refresh = fields(payload, common + challengeFields)
     && payload.proto === REFRESH_DOMAIN;
-  requireValue((addition || refresh) && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
+  const renewal = fields(payload, common + challengeFields) && payload.proto === RENEWAL_DOMAIN && !!provenanceFields;
+  requireValue((addition || refresh || renewal) && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
     && bytes(payload.group_key, 32) && (!anchorFields || uint(payload.replay_from_seq))
     && (!challengeFields || bytes(payload.recovery_challenge, 32)),
   'Invalid group welcome payload');
@@ -224,14 +291,22 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   state.applyGenesis(payload.group_state);
   requireValue(state.isMember(keyIDFromPublicKey(expected.inviterPublicKey)) && state.isMember(identity.keyID),
     'Welcome does not establish an admitted contact and current inviter');
+  const admissions = provenanceFields ? readAdmissions(payload.admissions, state, value.conv_epoch) : {};
+  const recipientAdmission = admissions[hex(identity.keyID)];
+  requireValue(!renewal || recipientAdmission?.completion, 'Admission renewal omits recipient provenance');
+  if (addition && provenanceFields) requireValue(recipientAdmission?.addId === hex(payload.addition_id as Uint8Array)
+    && recipientAdmission.sourceEpoch + 1 === value.conv_epoch && hashFields
+    && recipientAdmission.addDigest === hex(payload.addition_hash as Uint8Array)
+    && recipientAdmission.completion?.rekeyId === hex(payload.rekey_id as Uint8Array)
+    && recipientAdmission.completion.rekeyDigest === hex(payload.rekey_hash as Uint8Array), 'Welcome admission proof differs');
   const conversation: Conversation = { id: new Uint8Array(value.conv_id), type: 'group', name: state.groupName,
     keys: { root: payload.group_key, ...suite.deriveEpochKeys(payload.group_key, value.conv_id, value.conv_epoch) },
     participants: state.listMembers(), createdAt: new Date(state.createdAt * 1000), currentEpoch: value.conv_epoch };
   const result = { conversation, state, inviterPublicKey: new Uint8Array(expected.inviterPublicKey), messageId: value.msg_id,
-    replayFromSequence: anchorFields ? payload.replay_from_seq as number : 0,
+    replayFromSequence: anchorFields ? payload.replay_from_seq as number : 0, admissions,
     ...(challengeFields ? { recoveryChallenge: payload.recovery_challenge as Uint8Array } : {}) };
   return addition
     ? { ...result, purpose: 'addition', additionId: payload.addition_id as Uint8Array, rekeyId: payload.rekey_id as Uint8Array,
       ...(hashFields ? { additionHash: payload.addition_hash as Uint8Array, rekeyHash: payload.rekey_hash as Uint8Array } : {}) }
-    : { ...result, purpose: 'refresh' };
+    : { ...result, purpose: renewal ? 'renewal' : 'refresh' };
 }
