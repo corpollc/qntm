@@ -1,5 +1,5 @@
 import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, restoreGroupSession, groupSessionConversation, createGroupLink, keyIDFromPublicKey, deserializeEnvelope, parseGroupGenesisBody, QSP1Suite } from '@corpollc/qntm'
-import type { StoreData, StoredConversation, StoredGroupOperation } from './store'
+import { MAX_GROUP_CONTROL_RECEIPTS, type StoreData, type StoredConversation, type StoredGroupOperation } from './store'
 import { groupAdditionIntent, groupAdditionChallenge, groupRenewalChallenge, groupRefreshIntent, assertGroupOperationEvidenceBudget, MAX_GROUP_OPERATION_REVISIONS } from './group-operation'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
@@ -120,7 +120,7 @@ export function validateBackup(json: string): StoreData {
         const identity = data.identities[pid]
         if (!identity) fail('contact group identity missing')
         const localIdentity = { privateKey: hexBytes(identity.privateKey), publicKey: hexBytes(identity.publicKey), keyID: hexBytes(identity.keyId) }
-        const host = object(conv.group, 'group host fields', ['session', 'cursor', 'bootstrapSequence', 'removedSequence', 'pending', 'receipts', 'operation', 'relayUrl', 'inviterPublicKey', 'revision'])
+        const host = object(conv.group, 'group host fields', ['session', 'cursor', 'bootstrapSequence', 'removedSequence', 'pending', 'receipts', 'controlReceipts', 'operation', 'relayUrl', 'inviterPublicKey', 'revision'])
         const checkpoint = restoreGroupSession(localIdentity, host.session)
         if (checkpoint.conversationId !== conv.id) fail('group checkpoint conversation mismatch')
         const crypto = groupSessionConversation(checkpoint)
@@ -139,6 +139,16 @@ export function validateBackup(json: string): StoreData {
         for (const row of pending) { object(row, 'pending row', ['seq', 'wire']); integer(row.seq, 'pending sequence', 1); if (row.seq > host.cursor) fail('pending sequence exceeds cursor'); pendingBytes += b64(row.wire, 'pending ciphertext').length }
         if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
         for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
+        if (host.controlReceipts !== undefined) {
+          for (const row of list(host.controlReceipts, 'group control receipts', MAX_GROUP_CONTROL_RECEIPTS)) {
+            const item = object(row, 'group control receipt', ['id', 'digest', 'epoch', 'sequence', 'valid', 'bodyType'])
+            hex(item.id, 16, 'control receipt id'); hex(item.digest, 32, 'control receipt digest')
+            integer(item.epoch, 'control receipt epoch'); integer(item.sequence, 'control receipt sequence', 1)
+            if (item.sequence > host.cursor) fail('control receipt sequence exceeds cursor')
+            if (typeof item.valid !== 'boolean') fail('control receipt validity')
+            if (!['group_genesis', 'group_add', 'group_remove', 'group_rekey'].includes(item.bodyType)) fail('control receipt body type')
+          }
+        }
         if (host.operation !== null) {
           const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded'])
           if (!['addition', 'addition_rekey', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
