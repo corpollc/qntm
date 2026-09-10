@@ -14,6 +14,7 @@ import {
 } from '@corpollc/qntm';
 import { createHostRelay } from '../tests/support/host-relay.mjs';
 import { createToolProvider } from '../tests/support/tool-provider.mjs';
+import { cleanupSmoke, createSqliteWriteLock } from '../tests/support/smoke-lifecycle.mjs';
 import { stagePlugin } from './package.mjs';
 
 const host = fileURLToPath(new URL('../../openclaw.mjs', import.meta.resolve('openclaw/plugin-sdk/channel-core')));
@@ -35,8 +36,9 @@ for (const key of Object.keys(env)) {
 let gateway;
 let sessionLock;
 let gatewayLog = '';
-const relay = await createHostRelay();
-const provider = await createToolProvider();
+let failed = false;
+let relay;
+let provider;
 function terminate(child, signal) {
   try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, signal); }
   catch (error) { if (error.code !== 'ESRCH') throw error; }
@@ -81,6 +83,8 @@ function startHost() {
   gateway.stderr.on('data', (chunk) => { gatewayLog += chunk; });
 }
 try {
+  relay = await createHostRelay();
+  provider = await createToolProvider();
   await mkdir(state, { mode: 0o700 });
   await stagePlugin(stage);
   await mkdir(fixture);
@@ -239,8 +243,8 @@ try {
   const direct = conversations[0].conversation;
   // Force SQLite contention at host session admission, before ownership
   // transfers. Only the disposable host's synthetic session store is locked.
-  sessionLock = new DatabaseSync(join(state, 'smoke-sessions.sqlite'));
-  sessionLock.exec('BEGIN IMMEDIATE');
+  sessionLock = createSqliteWriteLock(join(state, 'smoke-sessions.sqlite'));
+  await waitFor(() => sessionLock.tryAcquire(), 'fixture session lock after prior host writes');
   const crashEnvelope = createMessage(peer, direct, 'text', new TextEncoder().encode('crash-wire-smoke'));
   await client.postMessage(direct.id, serializeEnvelope(crashEnvelope));
   const database = new DatabaseSync(join(state, 'plugins/qntm/accounts/default/ingress.sqlite'), { readOnly: true });
@@ -253,7 +257,7 @@ try {
   } finally { database.close(); }
   await stopHost('SIGKILL'); // Kill the host after its relay cursor has already committed.
   assert.ok((await checkpoint(direct)).cursor >= relay.conversations.get(hex(direct.id)).messages.length);
-  sessionLock.exec('ROLLBACK'); sessionLock.close(); sessionLock = undefined;
+  sessionLock.close(); sessionLock = undefined;
   startHost();
   await waitFor(() => conversations.every(({ conversation }) => relay.conversations.get(hex(conversation.id))?.sockets.size), 'subscriptions after process crash');
   await expectReply(direct, 'crash-wire-smoke'); // No resend or new relay message is needed.
@@ -269,13 +273,18 @@ try {
   assert.equal(relay.conversations.get(hex(group.id)).messages.length, beforeRemovalProbe + 1);
   console.log('PASS: real OpenClaw install/discovery, native model/tool request/votes/secret/governance, encrypted direct/group replies, rekey/replay, SIGKILL recovery before adoption, removal across restart.');
 } catch (error) {
+  failed = true;
+  console.error('Native OpenClaw smoke failed:', error);
   console.error(gatewayLog);
   throw error;
 } finally {
-  if (sessionLock) { sessionLock.exec('ROLLBACK'); sessionLock.close(); }
-  await stopHost();
-  await relay.close();
-  await provider.close();
-  if (process.env.QNTM_KEEP_HOST_SMOKE === '1') console.log(`Disposable evidence retained: ${temporary}`);
-  else await rm(temporary, { recursive: true, force: true });
+  await cleanupSmoke([
+    () => sessionLock?.close(),
+    () => stopHost(),
+    () => relay?.close(),
+    () => provider?.close(),
+    () => process.env.QNTM_KEEP_HOST_SMOKE === '1'
+      ? console.log(`Disposable evidence retained: ${temporary}`)
+      : rm(temporary, { recursive: true, force: true }),
+  ], { failed });
 }
