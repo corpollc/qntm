@@ -28,6 +28,8 @@ Add a hostname through **Workers & Pages → qntm-aim → Custom domains** befor
 
 At activation on September 10, 2026, `web.qntm.corpo.llc` returned verified HTTPS 200 from the operator Mac and the exe.dev monitor host. HTML, JavaScript and CSS hashes matched the existing production addresses. HTTP redirected to HTTPS; HTML required revalidation and versioned JS/CSS responses on the custom domains used a four-hour cache lifetime. The served certificate was from Let's Encrypt YE1, covered the exact hostname and expired December 8, 2026. These are observed deployment properties, not permanent provider guarantees.
 
+The [external monitor](relay-monitoring.md#external-checks) checks both browser hostnames every minute and has HTTPS-failure and certificate-expiry rules. These probes request only the public root page; they do not open profiles or replace the browser messaging check below. Outbound paging recipients still require configuration.
+
 If issuance or renewal fails, inspect the actual issuer, challenge status and CAA records at the hostname and its ancestors. `qntm.corpo.llc` points to GitHub Pages, whose CAA policy permits Let's Encrypt but excludes Google Trust Services. No additional CAA record was needed for this Pages certificate. A future issuer change may require explicit authorization; see the [relay TLS incident and checks](relay-operations.md#certificate-authority-authorization) and Cloudflare's CAA guidance in the custom-domain guide. Avoid repeatedly detaching and reattaching a domain while validation is pending.
 
 ## Deploy a tested commit

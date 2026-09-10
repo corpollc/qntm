@@ -1,0 +1,60 @@
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+  - name: Healthy browser targets do not alert
+    interval: 1m
+    input_series:
+      - {series: 'probe_success{job="browser_https",instance="https://chat.corpo.llc/"}', values: '1+0x20'}
+      - {series: 'probe_success{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '1+0x20'}
+      - {series: 'up{job="browser_https",instance="https://chat.corpo.llc/"}', values: '1+0x20'}
+      - {series: 'up{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '1+0x20'}
+      - {series: 'probe_ssl_earliest_cert_expiry{job="browser_https",instance="https://chat.corpo.llc/"}', values: '7776000+0x20'}
+      - {series: 'probe_ssl_earliest_cert_expiry{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '7776000+0x20'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: BrowserHTTPSUnavailable, exp_alerts: []}
+      - {eval_time: 20m, alertname: BrowserCertificateExpiring, exp_alerts: []}
+  - name: A failed public HTTPS probe alerts after two minutes
+    interval: 1m
+    input_series:
+      - {series: 'probe_success{job="browser_https",instance="https://chat.corpo.llc/"}', values: '1+0x5'}
+      - {series: 'probe_success{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '0+0x5'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BrowserHTTPSUnavailable, exp_alerts: []}
+      - eval_time: 2m
+        alertname: BrowserHTTPSUnavailable
+        exp_alerts:
+          - exp_labels: {job: browser_https, instance: 'https://web.qntm.corpo.llc/', severity: critical}
+            exp_annotations: {summary: 'Browser DNS, TLS or HTTPS check is failing or missing'}
+  - name: A missing target cannot look healthy because the other target works
+    interval: 1m
+    input_series:
+      - {series: 'probe_success{job="browser_https",instance="https://chat.corpo.llc/"}', values: '1+0x5'}
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BrowserHTTPSUnavailable
+        exp_alerts:
+          - exp_labels: {job: browser_https, instance: 'https://web.qntm.corpo.llc/', severity: critical}
+            exp_annotations: {summary: 'Browser DNS, TLS or HTTPS check is failing or missing'}
+  - name: Exporter failure overrides an earlier successful probe
+    interval: 1m
+    input_series:
+      - {series: 'probe_success{job="browser_https",instance="https://chat.corpo.llc/"}', values: '1+0x5'}
+      - {series: 'probe_success{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '1+0x5'}
+      - {series: 'up{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '0+0x5'}
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BrowserHTTPSUnavailable
+        exp_alerts:
+          - exp_labels: {job: browser_https, instance: 'https://web.qntm.corpo.llc/', severity: critical}
+            exp_annotations: {summary: 'Browser DNS, TLS or HTTPS check is failing or missing'}
+  - name: A certificate within fourteen days alerts after ten minutes
+    interval: 1m
+    input_series:
+      - {series: 'probe_ssl_earliest_cert_expiry{job="browser_https",instance="https://web.qntm.corpo.llc/"}', values: '604800+0x15'}
+    alert_rule_test:
+      - {eval_time: 9m, alertname: BrowserCertificateExpiring, exp_alerts: []}
+      - eval_time: 10m
+        alertname: BrowserCertificateExpiring
+        exp_alerts:
+          - exp_labels: {job: browser_https, instance: 'https://web.qntm.corpo.llc/', severity: warning}
+            exp_annotations: {summary: 'Browser TLS certificate expires in fewer than 14 days'}

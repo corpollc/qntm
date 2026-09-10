@@ -48,3 +48,18 @@ groups:
         for: 3m
         labels: {severity: warning}
         annotations: {summary: 'Relay aggregate message and conversation telemetry is unavailable'}
+  - name: browser
+    rules:
+      - alert: BrowserHTTPSUnavailable
+        expr: >-
+          probe_success{job="browser_https"} == 0 or up{job="browser_https"} == 0
+          or absent(probe_success{job="browser_https",instance="https://chat.corpo.llc/"})
+          or absent(probe_success{job="browser_https",instance="https://web.qntm.corpo.llc/"})
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Browser DNS, TLS or HTTPS check is failing or missing'}
+      - alert: BrowserCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="browser_https"} - time() < 14 * 86400
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Browser TLS certificate expires in fewer than 14 days'}
