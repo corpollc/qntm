@@ -13,6 +13,7 @@ import { GroupState, createInvite, createConversation, deriveConversationKeys, c
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink, isGroupWelcomeEnvelope,
   createGroupSession, restoreGroupSession, receiveGroupEvent, assertGroupAdditionAccepted,
   createGroupControlMessage, createGroupRemoveBody, createRekey, assertGroupCanSend,
+  groupSessionFromWelcome, checkGroupReplayCoverage,
   DropboxClient } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
@@ -390,6 +391,39 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(sawExcludedMessage).toBe(true);
     expect(checkpoint.removed).toBe(true);
   }, 90_000);
+
+  it('recovers a TypeScript member through a fresh CLI welcome after real relay retention', async () => {
+    const peer = generateIdentity();
+    const profileDir = join(stateDir, 'retention-recovery');
+    const invoke = async (phase: string, extra: string, ...args: string[]) => {
+      const { stdout } = await promisify(execFile)(process.env.QNTM_MONITOR_PYTHON || 'python3', [
+        join(REPO_ROOT, 'python-dist/tests/group_cli_peer.py'), phase, relayUrl, profileDir, extra, ...args,
+      ], { timeout: 45_000, env: { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') } });
+      return JSON.parse(stdout);
+    };
+    const prepared = await invoke('prepare', Buffer.from(peer.publicKey).toString('hex'));
+    const locator = parseGroupLink(prepared.group_link), relay = new DropboxClient(relayUrl);
+    const replay = await relay.receiveMessages(locator.conversationId);
+    const welcome = openGroupWelcome(peer, replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!, locator);
+    const initial = groupSessionFromWelcome(peer, welcome, replay.sequence);
+    const missed = await invoke('missed', prepared.conversation_id);
+    await delay(65_000); // Actual Worker retention and alarm, not a mocked clock.
+    const expired = await relay.receiveMessages(locator.conversationId, replay.sequence);
+    expect(expired.messages).toEqual([]);
+    expect(expired.sequence).toBe(missed.sequence);
+    const blocked = checkGroupReplayCoverage(initial, replay.sequence, expired.sequence, []);
+    expect(() => assertGroupCanSend(peer, blocked)).toThrow('incomplete');
+    await invoke('refresh', prepared.conversation_id, blocked.recovery!.challenge);
+    const fresh = await relay.receiveMessages(locator.conversationId, expired.sequence);
+    expect(fresh.messages).toHaveLength(1);
+    const opened = openGroupWelcome(peer, fresh.messages[0], locator);
+    const recovered = groupSessionFromWelcome(peer, opened, fresh.sequence, restoreGroupSession(peer, JSON.parse(JSON.stringify(blocked))));
+    assertGroupCanSend(peer, recovered);
+    expect(recovered.root).toBe(initial.root);
+    const reply = createMessage(peer, opened.conversation, 'text', new TextEncoder().encode('TypeScript contact reply'));
+    await relay.postMessage(locator.conversationId, marshalCanonical(reply));
+    expect((await invoke('finish', prepared.conversation_id)).received_reply).toBe(true);
+  }, 180_000);
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {
     const msgId = 'cd'.repeat(16);

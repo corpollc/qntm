@@ -52,6 +52,8 @@ def events(config_dir, conversation_id):
 
 def delivery_events(config_dir, conversation_id):
     """Private delivery order can advance when an older relay item decrypts late."""
+    if cli._group_recovery_status(config_dir, conversation_id):
+        return []
     result = []
     for entry in cli._load_history(config_dir, conversation_id):
         event = entry.get("receive_event")
@@ -310,7 +312,9 @@ def receive(config_dir, relay, conversation_id, identity, stop, consumers):
                     for consumer in consumers:
                         consumer.wake.set()
                     if kind == "ready":
-                        status("ready", conversation_id=conversation_id, head_sequence=sequence)
+                        recovery = cli._group_recovery_status(config_dir, conversation_id)
+                        status("recovery_required" if recovery else "ready", conversation_id=conversation_id,
+                               head_sequence=sequence, **recovery)
                     if time.monotonic() - connected_at >= 30:
                         delay = 1
         except (WebSocketException, ConnectionError, TimeoutError, cli.ssl.SSLError, cli.socket.gaierror) as error:

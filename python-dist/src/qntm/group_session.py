@@ -5,6 +5,7 @@ It is not network evidence and does not replace accepted gateway governance.
 """
 import copy
 import re
+import secrets
 import time
 
 from .cbor import marshal_canonical, unmarshal
@@ -88,7 +89,7 @@ def create_group_session(identity, conversation, group, *, signed_epoch=True):
     _require(aead == conversation['keys']['aeadKey'] and nonce == conversation['keys']['nonceKey'], 'Group keys differ from epoch')
     return {'version': 1, 'conversationId': conversation['id'].hex(), 'identityKid': identity['keyID'].hex(),
             'epoch': conversation['currentEpoch'], 'root': root.hex(), 'snapshot': encoded,
-            'removed': False, 'needsRekey': False, 'signedEpoch': signed_epoch is not False, 'rekeys': [], 'seen': {}}
+            'removed': False, 'needsRekey': False, 'signedEpoch': signed_epoch is not False, 'rekeys': [], 'seen': {}, 'recovery': None}
 
 
 def restore_group_session(identity, value):
@@ -98,7 +99,8 @@ def restore_group_session(identity, value):
     received from another party. The JSON format is shared with TypeScript.
     """
     validate_identity(identity)
-    _require(_fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen')
+    _require((_fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen,recovery')
+              or _fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen'))
              and type(value['version']) is int and value['version'] == 1
              and _hex(value['conversationId'], 16) and value['identityKid'] == identity['keyID'].hex()
              and _uint(value['epoch']) and value['epoch'] <= _MAX_EPOCH and _hex(value['root'], 32)
@@ -119,7 +121,81 @@ def restore_group_session(identity, value):
     for mid, event in value['seen'].items():
         _require(_hex(mid, 16) and _fields(event, 'digest,epoch') and _hex(event['digest'], 32)
                  and _uint(event['epoch']) and event['epoch'] <= value['epoch'], 'Invalid saved group event')
-    return copy.deepcopy(value)
+    recovery = value.get('recovery')
+    _require(recovery is None or _fields(recovery, 'afterSequence,reason,challenge') and _uint(recovery['afterSequence'])
+             and recovery['afterSequence'] > 0 and _hex(recovery['challenge'], 32)
+             and recovery['reason'] in ('missing_history', 'expired_control'), 'Invalid group recovery state')
+    return copy.deepcopy({**value, 'recovery': recovery})
+
+
+def require_group_recovery(previous, after_sequence, reason):
+    """Record a transport gap; a subsequent authenticated welcome must clear it."""
+    _require(_uint(after_sequence) and after_sequence > 0 and reason in ('missing_history', 'expired_control'), 'Invalid group recovery boundary')
+    state = copy.deepcopy(previous)
+    if not state.get('recovery') or after_sequence > state['recovery']['afterSequence']:
+        state['recovery'] = {'afterSequence': after_sequence, 'reason': reason, 'challenge': secrets.token_hex(32)}
+    return state
+
+
+def check_group_replay_coverage(previous, from_sequence, head, sequences):
+    """Inspect complete replay through a captured head, including unreadable rows.
+
+    Sequence metadata detects omissions; it authenticates no message.
+    """
+    _require(_uint(from_sequence) and _uint(head) and head >= from_sequence and isinstance(sequences, list)
+             and all(_uint(seq) and 0 < seq <= head for seq in sequences), 'Invalid group replay coverage')
+    next_sequence, missing = from_sequence + 1, 0
+    for sequence in sorted(set(seq for seq in sequences if seq > from_sequence)):
+        if sequence > next_sequence:
+            missing = sequence - 1
+        next_sequence = sequence + 1
+    if next_sequence <= head:
+        missing = head
+    return require_group_recovery(previous, missing, 'missing_history') if missing else copy.deepcopy(previous)
+
+
+def check_expired_group_control(identity, previous, envelope, sequence):
+    """Recognize expired signed controls with current keys; never apply them."""
+    validate_identity(identity)
+    _require(previous['identityKid'] == identity['keyID'].hex(), 'Group checkpoint belongs to another identity')
+    if (not isinstance(envelope.get('msg_id'), bytes) or len(envelope['msg_id']) != 16
+            or not _uint(envelope.get('expiry_ts')) or envelope['expiry_ts'] >= int(time.time())
+            or envelope.get('conv_epoch') != previous['epoch']
+            or previous['seen'].get(envelope['msg_id'].hex(), {}).get('digest') == _suite.hash(serialize_envelope(envelope)).hex()):
+        return previous
+    try:
+        message = decrypt_message(envelope, group_session_conversation(previous), allow_expired=True)
+        kind = message['inner']['body_type']
+        if (_roster(previous['snapshot']).is_member(message['inner']['sender_kid'])
+                and (kind in _CONTROLS - {'group_genesis'} or kind.startswith(('gate.', 'gov.')))):
+            return require_group_recovery(previous, sequence, 'expired_control')
+    except Exception:
+        pass  # Unauthenticated noise is not a group control.
+    return previous
+
+
+def group_session_from_welcome(identity, welcome, sequence, previous=None):
+    """Install authenticated, pinned welcome data; replay after it before acting.
+
+    An old welcome cannot clear a gap. A refresh cannot undo saved removal.
+    """
+    _require(_uint(sequence) and sequence > 0, 'Invalid welcome sequence')
+    if previous:
+        saved = restore_group_session(identity, previous)
+        _require(saved['conversationId'] == welcome['conversation']['id'].hex(), 'Welcome belongs to a different group')
+        _require(_roster(saved['snapshot']).creator == welcome['state'].creator, 'Group creator differs from saved state')
+        _require(not saved['recovery'] or sequence > saved['recovery']['afterSequence'], 'Welcome predates missing group history')
+        _require(not saved['recovery'] or isinstance(welcome.get('recovery_challenge'), bytes)
+                 and welcome['recovery_challenge'].hex() == saved['recovery']['challenge'], 'Welcome does not answer the current recovery challenge')
+        _require(not saved['removed'] or welcome['purpose'] == 'addition', 'A welcome refresh cannot undo saved removal')
+        _require(welcome['conversation']['currentEpoch'] >= saved['epoch'], 'Welcome is older than saved group state')
+        if welcome['conversation']['currentEpoch'] == saved['epoch']:
+            _require(not saved['removed'] and not saved['needsRekey'] and welcome['conversation']['keys']['root'].hex() == saved['root'],
+                     'Welcome cannot replace the saved epoch or removal')
+            _require(_encode_roster(welcome['state']) == saved['snapshot'], 'Welcome roster conflicts with the saved epoch')
+            if not saved['recovery']:
+                return saved
+    return create_group_session(identity, welcome['conversation'], welcome['state'])
 
 
 def group_session_conversation(state):
@@ -136,18 +212,20 @@ def assert_group_can_send(identity, state):
     """Membership changes must finish their rekey before application sends."""
     _require(state['identityKid'] == identity['keyID'].hex(), 'Group checkpoint belongs to another identity')
     _require(not state['removed'], 'You have been removed from this group')
+    _require(not state.get('recovery'), 'Group history is incomplete; open a fresh welcome from a current member')
     _require(not state['needsRekey'], 'Group membership update awaits key rotation')
     _require(_roster(state['snapshot']).is_member(identity['keyID']), 'Local identity is not a current group member')
 
 
-def prepare_group_session_addition(identity, state, recipients, ttl=None):
+def prepare_group_session_addition(identity, state, recipients, ttl=None, recovery_challenge=None):
     """Prepare from the authenticated checkpoint; save before publishing."""
     assert_group_can_send(identity, state)
     options = {} if ttl is None else {'ttl': ttl}
-    return prepare_group_addition(identity, group_session_conversation(state), _roster(state['snapshot']), recipients, **options)
+    return prepare_group_addition(identity, group_session_conversation(state), _roster(state['snapshot']), recipients,
+                                  recovery_challenge=recovery_challenge, **options)
 
 
-def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL):
+def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL, recovery_challenge=None):
     """Refresh current keys for members without admission or rotation.
 
     Hosts finish replay first, save the exact operation and recheck before
@@ -158,6 +236,8 @@ def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELC
     conversation, group = group_session_conversation(state), _roster(state['snapshot'])
     _require(_uint(ttl) and 0 < ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime')
     _require(isinstance(recipients, list) and 0 < len(recipients) <= 128, 'Invalid refresh recipient count')
+    _require(recovery_challenge is None or isinstance(recovery_challenge, bytes)
+             and len(recovery_challenge) == 32 and len(recipients) == 1, 'Invalid recovery challenge')
     members = {member['public_key'] for member in group.snapshot()['founding_members']}
     seen = set()
     for recipient in recipients:
@@ -166,7 +246,8 @@ def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELC
         seen.add(recipient)
     at = int(time.time())
     return {'conversation': conversation, 'state': group,
-            'welcomes': [_seal_welcome(identity, conversation, group, recipient, at, ttl) for recipient in recipients]}
+            'welcomes': [_seal_welcome(identity, conversation, group, recipient, at, ttl,
+                                      recovery_challenge=recovery_challenge) for recipient in recipients]}
 
 
 def assert_group_welcome_refresh_current(identity, state, operation):
@@ -242,6 +323,7 @@ def receive_group_event(identity, envelope, previous):
     if mid in previous['seen']:
         _require(previous['seen'][mid]['digest'] == digest, 'Conflicting group message ID')
         return {**result(previous, False), 'duplicate': True}
+    _require(not previous.get('recovery'), 'Group history is incomplete; open a fresh welcome from a current member')
     at = int(time.time())
     state = copy.deepcopy(previous)
     state['rekeys'] = [frame for frame in state['rekeys'] if frame['expiresAt'] >= at]

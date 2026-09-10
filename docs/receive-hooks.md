@@ -129,6 +129,13 @@ catch-up, a message can become decryptable later than its relay sequence would
 suggest. Hooks use a private delivery order to include that message while its
 public event keeps the original relay sequence and stable event ID. See the
 [group storage and recovery boundaries](group-welcomes.md#cli-local-storage).
+For these groups, missing replay sequences or expired authenticated membership
+controls pause hook delivery and sends. The watcher reports
+`recovery_required` with the saved boundary, reason and challenge. A current
+member can issue a challenge-bound welcome; after the recipient opens it and
+replays subsequent updates, delivery resumes. See the
+[recovery workflow](group-welcomes.md#cli-and-mcp). This does not add automatic
+outbound recovery requests or confer permission to admit a contact.
 
 A newly configured destination starts after already saved history and receives
 unread relay backlog plus subsequent arrivals. Existing destinations retain their

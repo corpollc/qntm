@@ -90,7 +90,12 @@ Add to your `.cursor/mcp.json`:
 | `group_link` | Retrieve the public locator for welcomes issued by this identity; no network access or membership change (unreleased) |
 
 The unreleased group tools share the CLI profile and require host authorization
-for membership changes and sends. Gateway-governed groups and complete recovery
+for membership changes and sends. When `receive_messages` reports
+`recovery_required`, its `recovery.challenge` can be supplied to `group_refresh`
+as the optional `challenge` argument by an up-to-date member. The same argument
+on `group_add_contact` supports explicit readmission. It grants no membership by
+itself; see [missing-history recovery](group-welcomes.md).
+Gateway-governed groups and complete recovery
 from competing operations remain unfinished. See the [contact-add workflow and
 exact local storage contents](group-welcomes.md#cli-and-mcp). These tools are not
 included in published 0.6.1 packages.

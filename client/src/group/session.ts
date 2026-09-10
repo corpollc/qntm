@@ -3,12 +3,13 @@
  * state, never network evidence or a replacement for gateway governance.
  */
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
+import { randomBytes } from '@noble/hashes/utils';
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { base64UrlDecode, base64UrlEncode, uint8ArrayEquals, validateIdentity } from '../identity/index.js';
 import { createMessage, decryptMessage, serializeEnvelope } from '../message/index.js';
 import { GroupState, applyRekey, createRekey, type GroupGenesisBody } from './index.js';
 import { validateGroupSnapshot, prepareGroupAddition, sealGroupWelcome, GROUP_WELCOME_TTL,
-  type GroupAddition, type GroupWelcomeEnvelope } from './welcome.js';
+  type GroupAddition, type GroupWelcomeEnvelope, type GroupWelcome } from './welcome.js';
 import type { Conversation, Identity, Message, OuterEnvelope } from '../types.js';
 
 const suite = new QSP1Suite();
@@ -69,6 +70,13 @@ export interface GroupSessionState {
   signedEpoch: boolean;
   rekeys: RekeyCheckpoint[];
   seen: Record<string, { digest: string; epoch: number }>;
+  recovery: GroupRecovery | null;
+}
+export interface GroupRecovery {
+  afterSequence: number;
+  reason: 'missing_history' | 'expired_control';
+  /** Echoed inside the signed, recipient-encrypted recovery welcome. */
+  challenge: string;
 }
 export type GroupEvent = {
   state: GroupSessionState;
@@ -105,7 +113,7 @@ export function createGroupSession(identity: Identity, conversation: Conversatio
     && uint8ArrayEquals(derived.nonceKey, conversation.keys.nonceKey), 'Group keys differ from epoch');
   return { version: 1, conversationId: hex(conversation.id), identityKid: hex(identity.keyID),
     epoch: conversation.currentEpoch, root: hex(conversation.keys.root), snapshot: encoded,
-    removed: false, needsRekey: false, signedEpoch: options.signedEpoch !== false, rekeys: [], seen: {} };
+    removed: false, needsRekey: false, signedEpoch: options.signedEpoch !== false, rekeys: [], seen: {}, recovery: null };
 }
 
 /** Validate a private JSON checkpoint after restart, binding it to this identity.
@@ -113,7 +121,8 @@ export function createGroupSession(identity: Identity, conversation: Conversatio
  */
 export function restoreGroupSession(identity: Identity, value: unknown): GroupSessionState {
   validateIdentity(identity);
-  requireValue(fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen')
+  requireValue((fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen,recovery')
+    || fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen'))
     && value.version === 1 && fixedHex(value.conversationId, 16) && value.identityKid === hex(identity.keyID)
     && uint(value.epoch) && value.epoch <= MAX_EPOCH && fixedHex(value.root, 32)
     && typeof value.removed === 'boolean' && typeof value.needsRekey === 'boolean' && typeof value.signedEpoch === 'boolean',
@@ -136,7 +145,80 @@ export function restoreGroupSession(identity: Identity, value: unknown): GroupSe
     requireValue(fixedHex(id, 16) && fields(event, 'digest,epoch') && fixedHex(event.digest, 32)
       && uint(event.epoch) && event.epoch <= value.epoch, 'Invalid saved group event');
   }
-  return structuredClone(value) as unknown as GroupSessionState;
+  const recovery = value.recovery ?? null;
+  requireValue(recovery === null || fields(recovery, 'afterSequence,reason,challenge') && uint(recovery.afterSequence)
+    && recovery.afterSequence > 0 && fixedHex(recovery.challenge, 32)
+    && ['missing_history', 'expired_control'].includes(recovery.reason as string), 'Invalid group recovery state');
+  return structuredClone({ ...value, recovery }) as unknown as GroupSessionState;
+}
+
+/** Record a transport gap; only a subsequent authenticated welcome can clear it. */
+export function requireGroupRecovery(previous: GroupSessionState, afterSequence: number, reason: GroupRecovery['reason']): GroupSessionState {
+  requireValue(uint(afterSequence) && afterSequence > 0 && ['missing_history', 'expired_control'].includes(reason), 'Invalid group recovery boundary');
+  const state = structuredClone(previous);
+  if (!state.recovery || afterSequence > state.recovery.afterSequence) state.recovery = { afterSequence, reason, challenge: hex(randomBytes(32)) };
+  return state;
+}
+
+/** Inspect a complete replay through its captured head, including unreadable rows.
+ * Sequence metadata detects omissions; it does not authenticate any message.
+ */
+export function checkGroupReplayCoverage(previous: GroupSessionState, fromSequence: number, head: number, sequences: number[]): GroupSessionState {
+  requireValue(uint(fromSequence) && uint(head) && head >= fromSequence && Array.isArray(sequences)
+    && sequences.every(sequence => uint(sequence) && sequence > 0 && sequence <= head), 'Invalid group replay coverage');
+  let next = fromSequence + 1, missing = 0;
+  for (const sequence of [...new Set(sequences)].filter(sequence => sequence > fromSequence).sort((a, b) => a - b)) {
+    if (sequence > next) missing = sequence - 1;
+    next = sequence + 1;
+  }
+  if (next <= head) missing = head;
+  return missing ? requireGroupRecovery(previous, missing, 'missing_history') : structuredClone(previous);
+}
+
+/** Expired controls cannot authorize a live transition. Recognize a signed
+ * control using current keys only, then require fresh state rather than apply it.
+ */
+export function checkExpiredGroupControl(identity: Identity, previous: GroupSessionState, envelope: OuterEnvelope, sequence: number): GroupSessionState {
+  validateIdentity(identity);
+  requireValue(previous.identityKid === hex(identity.keyID), 'Group checkpoint belongs to another identity');
+  if (!(envelope.msg_id instanceof Uint8Array) || envelope.msg_id.length !== 16
+    || !uint(envelope.expiry_ts) || envelope.expiry_ts >= Math.floor(Date.now() / 1000)
+    || envelope.conv_epoch !== previous.epoch || previous.seen[hex(envelope.msg_id)]?.digest === hex(suite.hash(serializeEnvelope(envelope)))) return previous;
+  try {
+    const message = decryptMessage(envelope, groupSessionConversation(previous), { allowExpired: true });
+    const type = message.inner.body_type;
+    if (roster(previous.snapshot).isMember(message.inner.sender_kid)
+      && ((controls.has(type) && type !== 'group_genesis') || type.startsWith('gate.') || type.startsWith('gov.'))) {
+      return requireGroupRecovery(previous, sequence, 'expired_control');
+    }
+  } catch { /* Unauthenticated noise is not a group control. */ }
+  return previous;
+}
+
+/** Install already authenticated, pinned welcome data. Hosts replay everything
+ * after its sequence before enabling actions; an old welcome cannot clear a gap.
+ */
+export function groupSessionFromWelcome(identity: Identity, welcome: GroupWelcome, sequence: number,
+  previous?: GroupSessionState): GroupSessionState {
+  requireValue(uint(sequence) && sequence > 0, 'Invalid welcome sequence');
+  if (previous) {
+    const saved = restoreGroupSession(identity, previous);
+    requireValue(saved.conversationId === hex(welcome.conversation.id), 'Welcome belongs to a different group');
+    requireValue(uint8ArrayEquals(roster(saved.snapshot).snapshot().founding_members[0].key_id,
+        welcome.state.snapshot().founding_members[0].key_id), 'Group creator differs from saved state');
+    requireValue(!saved.recovery || sequence > saved.recovery.afterSequence, 'Welcome predates missing group history');
+    requireValue(!saved.recovery || welcome.recoveryChallenge instanceof Uint8Array
+      && hex(welcome.recoveryChallenge) === saved.recovery.challenge, 'Welcome does not answer the current recovery challenge');
+    requireValue(!saved.removed || welcome.purpose === 'addition', 'A welcome refresh cannot undo saved removal');
+    requireValue(welcome.conversation.currentEpoch >= saved.epoch, 'Welcome is older than saved group state');
+    if (welcome.conversation.currentEpoch === saved.epoch) {
+      requireValue(!saved.removed && !saved.needsRekey && hex(welcome.conversation.keys.root) === saved.root,
+        'Welcome cannot replace the saved epoch or removal');
+      requireValue(encodeRoster(welcome.state) === saved.snapshot, 'Welcome roster conflicts with the saved epoch');
+      if (!saved.recovery) return saved;
+    }
+  }
+  return createGroupSession(identity, welcome.conversation, welcome.state);
 }
 
 /** Reconstruct keys from a trusted, validated checkpoint. No archived key is
@@ -152,6 +234,7 @@ export function groupSessionConversation(state: GroupSessionState): Conversation
 export function assertGroupCanSend(identity: Identity, state: GroupSessionState): void {
   requireValue(state.identityKid === hex(identity.keyID), 'Group checkpoint belongs to another identity');
   requireValue(!state.removed, 'You have been removed from this group');
+  requireValue(!state.recovery, 'Group history is incomplete; open a fresh welcome from a current member');
   requireValue(!state.needsRekey, 'Group membership update awaits key rotation');
   requireValue(roster(state.snapshot).isMember(identity.keyID), 'Local identity is not a current group member');
 }
@@ -159,9 +242,9 @@ export function assertGroupCanSend(identity: Identity, state: GroupSessionState)
 /** Prepare using the authenticated local checkpoint, including its exclusion
  * and unfinished-rotation guards. Save the exact operation before publishing. */
 export function prepareGroupSessionAddition(identity: Identity, state: GroupSessionState,
-  recipients: Uint8Array[], ttl?: number): GroupAddition {
+  recipients: Uint8Array[], ttl?: number, recoveryChallenge?: Uint8Array): GroupAddition {
   assertGroupCanSend(identity, state);
-  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl);
+  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl, recoveryChallenge);
 }
 
 /** Refresh current keys for existing members without admission or rotation.
@@ -169,13 +252,15 @@ export function prepareGroupSessionAddition(identity: Identity, state: GroupSess
  * immediately before release. Gateway-governed groups use their own reducer.
  */
 export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSessionState,
-  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL): GroupWelcomeRefresh {
+  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array): GroupWelcomeRefresh {
   const state = restoreGroupSession(identity, previous);
   assertGroupCanSend(identity, state);
   const conversation = groupSessionConversation(state), group = roster(state.snapshot);
   requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
   requireValue(Array.isArray(recipients) && recipients.length > 0 && recipients.length <= 128,
     'Invalid refresh recipient count');
+  requireValue(recoveryChallenge === undefined || recoveryChallenge instanceof Uint8Array
+    && recoveryChallenge.length === 32 && recipients.length === 1, 'Invalid recovery challenge');
   const members = group.snapshot().founding_members;
   const seen = new Set<string>();
   for (const recipient of recipients) {
@@ -186,7 +271,7 @@ export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSe
   }
   const at = Math.floor(Date.now() / 1000);
   return { conversation, state: group,
-    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl)) };
+    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl, undefined, recoveryChallenge)) };
 }
 
 /** Any remaining ordinary-group member can finish an interrupted rotation.
@@ -255,6 +340,7 @@ export function receiveGroupEvent(identity: Identity, envelope: OuterEnvelope, p
     requireValue(previous.seen[id].digest === digest, 'Conflicting group message ID');
     return { ...result(previous, false), duplicate: true };
   }
+  requireValue(!previous.recovery, 'Group history is incomplete; open a fresh welcome from a current member');
   const at = Math.floor(Date.now() / 1000);
   const state = structuredClone(previous);
   state.rekeys = state.rekeys.filter(frame => frame.expiresAt >= at);

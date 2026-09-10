@@ -47,6 +47,7 @@ from .cli import (
     _http_send,
     _recv_once,
     _process_received_messages,
+    _group_recovery_status,
     default_ttl,
     AGENT_RULES,
 )
@@ -374,6 +375,7 @@ def send_message(conversation: str, message: str) -> dict:
         "body_type": "text",
         "body": message,
         "created_ts": envelope["created_ts"],
+        "relay_receipt_sequence": seq,
     })
     _save_history(config_dir, conv_id_hex, history)
 
@@ -432,6 +434,7 @@ def receive_messages(conversation: str) -> dict:
         "conversation_id": conv_id_hex,
         "messages": output_messages,
         "count": len(output_messages),
+        **_group_recovery_status(config_dir, conv_id_hex),
         "cursor": up_to_seq,
         "rules": AGENT_RULES,
     }
@@ -640,13 +643,14 @@ def _group_action(conversation, action, *args):
 
 
 @mcp.tool()
-def group_add_contact(conversation: str, contact: str) -> dict:
+def group_add_contact(conversation: str, contact: str, challenge: str = '') -> dict:
     """Add a known contact under host authorization, rotate keys and send their encrypted welcome.
 
     contact is a local contact name or a full public key. Returns a group link
     containing no group keys. This changes membership and sends messages.
+    Optional challenge echoes the contact's 64-hex recovery challenge on readmission.
     """
-    return _group_action(conversation, 'add', contact)
+    return _group_action(conversation, 'add', contact, challenge)
 
 
 @mcp.tool()
@@ -662,13 +666,14 @@ def group_retry(conversation: str) -> dict:
 
 
 @mcp.tool()
-def group_refresh(conversation: str, contact: str) -> dict:
+def group_refresh(conversation: str, contact: str, challenge: str = '') -> dict:
     """Resend current keys to an existing member under host authorization.
 
     No membership change, new rotation or older keys. Saves the exact encrypted
-    welcome for retry and returns the public group link.
+    welcome for retry and returns the public group link. Optional challenge echoes
+    the existing member's 64-hex recovery challenge; it grants no membership.
     """
-    return _group_action(conversation, 'refresh', contact)
+    return _group_action(conversation, 'refresh', contact, challenge)
 
 
 @mcp.tool()

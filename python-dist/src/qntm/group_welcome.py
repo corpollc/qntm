@@ -46,7 +46,7 @@ def _header(envelope):
     )}
 
 
-def _seal_welcome(identity, conversation, state, recipient, created_at, ttl, admission=None):
+def _seal_welcome(identity, conversation, state, recipient, created_at, ttl, admission=None, recovery_challenge=None):
     """Internal sealing primitive; recovery uses the checkpoint-aware helper."""
     envelope = {"v": 1, "suite": "QSP-1", "kind": "group_welcome", "conv_id": conversation["id"],
                 "msg_id": generate_message_id(), "conv_epoch": conversation["currentEpoch"],
@@ -56,6 +56,8 @@ def _seal_welcome(identity, conversation, state, recipient, created_at, ttl, adm
                "group_key": conversation["keys"]["root"], "group_state": state.snapshot()}
     if admission:
         payload.update(admission)
+    if recovery_challenge is not None:
+        payload['recovery_challenge'] = recovery_challenge
     signature = _suite.sign(identity["privateKey"], marshal_canonical(payload))
     envelope["ciphertext"] = seal_secret(identity["privateKey"], recipient, marshal_canonical({"payload": payload, "signature": signature}))
     _require(len(marshal_canonical(envelope)) <= MAX_GROUP_WELCOME_BYTES, "Group welcome exceeds size limit")
@@ -82,7 +84,7 @@ def _validate_snapshot(value):
     _require(members[0]["role"] == "admin", "Invalid group creator")
 
 
-def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_WELCOME_TTL):
+def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_WELCOME_TTL, recovery_challenge=None):
     """Prepare one authorized contact addition with fresh keys.
 
     state is a trusted local checkpoint. Gateway-governed membership uses its
@@ -98,6 +100,7 @@ def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_
     _require(isinstance(recipients, list) and len(recipients) > 0
              and state.member_count() + len(recipients) <= 128, "Invalid added contact count")
     _require(_uint(ttl) and 0 < ttl <= GROUP_WELCOME_TTL, "Invalid welcome lifetime")
+    _require(recovery_challenge is None or _bytes(recovery_challenge, 32) and len(recipients) == 1, 'Invalid recovery challenge')
     seen = set()
     for recipient in recipients:
         _require(_bytes(recipient, 32) and is_valid_ed25519_public_key(recipient), "Invalid contact public key")
@@ -124,7 +127,7 @@ def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_
     apply_rekey(next_conversation, new_key, conversation["currentEpoch"] + 1)
     next_conversation.pop("inviteToken", None)
     welcomes = [_seal_welcome(identity, next_conversation, next_state, recipient, addition["created_ts"], ttl,
-                             {"addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"]}) for recipient in recipients]
+                             {"addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"]}, recovery_challenge) for recipient in recipients]
     return {"conversation": next_conversation, "state": next_state,
             "addition": addition, "rekey": rekey, "welcomes": welcomes}
 
@@ -164,13 +167,16 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     _require(_fields(opened, "payload,signature") and _bytes(opened["signature"], 64), "Invalid signed group welcome")
     _require(plaintext == marshal_canonical(opened), "Signed group welcome must use canonical CBOR")
     payload = opened["payload"]
-    addition = (_fields(payload, "proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id")
+    common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state'
+    challenge_fields = ',recovery_challenge' if isinstance(payload, dict) and 'recovery_challenge' in payload else ''
+    addition = (_fields(payload, common + ',addition_id,rekey_id' + challenge_fields)
                 and payload["proto"] == _DOMAIN and _bytes(payload["addition_id"], 16)
                 and _bytes(payload["rekey_id"], 16) and value["conv_epoch"] > 0)
-    refresh = (_fields(payload, "proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state")
+    refresh = (_fields(payload, common + challenge_fields)
                and payload["proto"] == _REFRESH_DOMAIN)
     _require((addition or refresh) and _bytes(payload["inviter_ik_pk"], 32)
-             and _bytes(payload["recipient_ik_pk"], 32) and _bytes(payload["group_key"], 32), "Invalid group welcome payload")
+             and _bytes(payload["recipient_ik_pk"], 32) and _bytes(payload["group_key"], 32)
+             and (not challenge_fields or _bytes(payload['recovery_challenge'], 32)), "Invalid group welcome payload")
     _require(payload["inviter_ik_pk"] == inviter_public_key and payload["recipient_ik_pk"] == identity["publicKey"],
              "Welcome contact binding differs")
     _require(marshal_canonical(payload["envelope"]) == marshal_canonical(_header(value)),
@@ -188,4 +194,5 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
                     "participants": state.list_members(), "createdAt": state.created_at, "currentEpoch": value["conv_epoch"]}
     return {"conversation": conversation, "state": state, "inviter_public_key": inviter_public_key,
             "purpose": "addition" if addition else "refresh", "message_id": value["msg_id"],
+            **({'recovery_challenge': payload['recovery_challenge']} if challenge_fields else {}),
             **({"addition_id": payload["addition_id"], "rekey_id": payload["rekey_id"]} if addition else {})}

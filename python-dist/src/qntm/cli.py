@@ -733,6 +733,21 @@ def _conv_to_crypto(conv_record):
     }
 
 
+def _conv_for_send(config_dir, identity, record, relay):
+    """Refresh membership before every command that sends into a tracked group."""
+    if record.get('group_session'):
+        from .group_client import GroupClient
+        from .group_session import assert_group_can_send
+        try:
+            record = GroupClient(config_dir, identity, relay).sync(record['id'])
+            assert_group_can_send(identity, record['group_session'])
+            if record.get('group_operation'):
+                raise ValueError('A group operation is pending; use group retry before sending')
+        except ValueError as error:
+            _error(str(error), code='group_state_error')
+    return _conv_to_crypto(record)
+
+
 def _get_dropbox_url(args):
     return getattr(args, "dropbox_url", None) or DEFAULT_DROPBOX_URL
 
@@ -1150,6 +1165,7 @@ def cmd_send(args):
         "body": text,
         "created_ts": envelope["created_ts"],
         "acknowledgement": result.get("acknowledgement", "received"),
+        "relay_receipt_sequence": seq,
     })
     _save_history(config_dir, conv_id_hex, history)
 
@@ -1345,7 +1361,14 @@ def cmd_recv(args):
     _output("recv", {
         "received": len(output_messages),
         "messages": output_messages,
+        **_group_recovery_status(config_dir, conv_id_hex),
     })
+
+
+def _group_recovery_status(config_dir, conversation_id):
+    record = _find_conversation(_load_conversations(config_dir), conversation_id)
+    recovery = (record.get('group_session') or {}).get('recovery') if record else None
+    return {'recovery_required': True, 'recovery': recovery} if recovery else {}
 
 
 def cmd_inbox(args):
@@ -1543,7 +1566,7 @@ def _group_client(args):
 
 def cmd_group_add(args):
     client, conversation_id = _group_client(args)
-    _group_output('group.add', lambda: client.add(conversation_id, args.public_key))
+    _group_output('group.add', lambda: client.add(conversation_id, args.public_key, getattr(args, 'challenge', '')))
 
 
 def cmd_group_remove(args):
@@ -1563,7 +1586,7 @@ def cmd_group_retry(args):
 
 def cmd_group_refresh(args):
     client, conversation_id = _group_client(args)
-    _group_output('group.refresh', lambda: client.refresh(conversation_id, args.contact))
+    _group_output('group.refresh', lambda: client.refresh(conversation_id, args.contact, getattr(args, 'challenge', '')))
 
 
 def cmd_group_link(args):
@@ -1701,7 +1724,8 @@ def cmd_announce_post(args):
     if not conv_record:
         _error(f"conversation {conv_id_hex} not found")
 
-    conv = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
 
     envelope = create_message(
         identity, conv, "text", args.message.encode(), None, default_ttl()
@@ -2210,7 +2234,8 @@ def cmd_gate_run(args):
         _error(f"conversation {conv_id_input} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
 
     recipe_name = args.recipe
 
@@ -2297,7 +2322,8 @@ def cmd_gate_approve(args):
         _error(f"conversation {conv_id_input} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     request_id = args.request_id
 
     history = _load_history(config_dir, conv_id_hex)
@@ -2345,7 +2371,8 @@ def cmd_gate_disapprove(args):
         _error(f"conversation {conv_id_input} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     request_id = args.request_id
 
     disapproval_msg = {
@@ -2455,7 +2482,8 @@ def cmd_gate_promote(args):
     if not conv_record:
         _error(f"conversation {args.conversation} not found")
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     gateway = conv_record.get("gateway") or {}
     if gateway.get("status") == "active":
         _error("Gateway has already joined")
@@ -2510,7 +2538,8 @@ def cmd_gate_secret(args):
         _error(f"conversation {conv_id_input} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
 
     service = args.service
     gateway_pubkey = args.gateway_pubkey
@@ -2586,7 +2615,8 @@ def cmd_gov_propose_floor(args):
         _error(f"conversation {args.conversation} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     history = _load_history(config_dir, conv_id_hex)
     payload = create_proposal_body(
         identity,
@@ -2639,7 +2669,8 @@ def cmd_gov_propose_add(args):
         _error(f"conversation {args.conversation} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     history = _load_history(config_dir, conv_id_hex)
     public_key = _decode_identity_public_key(args.public_key)
     payload = create_proposal_body(
@@ -2696,7 +2727,8 @@ def cmd_gov_propose_remove(args):
         _error(f"conversation {args.conversation} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     history = _load_history(config_dir, conv_id_hex)
     member_kid = kid_to_wire(_decode_identity_key_id(args.key_id))
     payload = create_proposal_body(
@@ -2751,7 +2783,8 @@ def cmd_gov_approve(args):
         _error(f"conversation {args.conversation} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     history = _load_history(config_dir, conv_id_hex)
     try:
         proposal = _find_gov_proposal_in_history(history, args.proposal_id)
@@ -2807,7 +2840,8 @@ def cmd_gov_disapprove(args):
         _error(f"conversation {args.conversation} not found")
 
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    dropbox_url = _conversation_relay(args, conv_record)
+    conv_crypto = _conv_for_send(config_dir, identity, conv_record, dropbox_url)
     payload = {
         "type": GOV_MESSAGE_DISAPPROVE,
         "conv_id": conv_id_hex,
@@ -3115,6 +3149,7 @@ claude code channel:
     group_add_p = group_sub.add_parser("add", help="Add a contact, rotate keys and deliver their encrypted welcome")
     group_add_p.add_argument("conversation", help="Conversation ID or prefix")
     group_add_p.add_argument("public_key", help="Local contact name or full public key (base64url or hex)")
+    group_add_p.add_argument('--challenge', default='', help='Optional 64-hex recovery challenge from the contact being admitted')
 
     group_remove_p = group_sub.add_parser("remove", help="Remove member from group")
     group_remove_p.add_argument("conversation", help="Conversation ID or prefix")
@@ -3129,6 +3164,7 @@ claude code channel:
     group_refresh_p = group_sub.add_parser('refresh', help='Resend current keys to an existing member without changing membership')
     group_refresh_p.add_argument('conversation', help='Conversation ID or prefix')
     group_refresh_p.add_argument('contact', help='Local contact name or full public key')
+    group_refresh_p.add_argument('--challenge', default='', help='Optional 64-hex recovery challenge reported by the member’s client')
     group_link_p = group_sub.add_parser('link', help='Show a public group locator link containing no group keys')
     group_link_p.add_argument('conversation', help='Conversation ID or prefix')
 

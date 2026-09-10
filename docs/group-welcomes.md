@@ -48,6 +48,26 @@ Neither refresh nor admission can recover keys for an interval of exclusion.
 If another current member sends the refresh, use that member's returned link,
 which pins their signing identity.
 
+If a previously joined client detects missing history, `recv` reports
+`recovery_required: true` and a `recovery` object containing `afterSequence`,
+`reason` and a 64-hex `challenge`. Sends, membership changes and receive hooks
+pause until recovery. Pass that challenge to an up-to-date member through your
+existing contact channel:
+
+```bash
+qntm group refresh GROUP_ID Colleague --challenge RECOVERY_CHALLENGE
+# The recovering contact then opens the returned public group link again.
+```
+
+The welcome signs and encrypts the challenge together with the recipient, group,
+keys and roster. Reposting an old welcome at a newer relay sequence cannot answer
+it. A newly detected gap generates a new challenge; retrying the same gap keeps
+the saved one. This proves that the response was prepared for this recovery,
+not that the sender has a globally complete view of membership. The sender must
+still have current state and verify that the recipient remains a member.
+Explicit readmission can include `group add ... --challenge RECOVERY_CHALLENGE`;
+the challenge itself grants no permission to add anyone.
+
 `group add` saves the exact encrypted operation before sending, verifies the
 addition and rekey from relay replay, then sends the recipient-encrypted welcome.
 If delivery is uncertain, keep the profile and use `qntm group retry GROUP_ID`;
@@ -74,9 +94,11 @@ a fresh epoch; opening the resulting link preserves existing local history but
 does not grant keys for the interval when that identity was absent.
 
 This increment supports newly created ordinary groups and legacy profiles with
-a complete, trusted local roster. It does not reconstruct missing legacy roster
-history, automatically detect and recover every expired replay gap, recover an
-addition superseded by another rekey, or integrate gateway admission/governance.
+a complete, trusted local roster. It detects missing relay sequences after a
+saved cursor or welcome, and expired authenticated controls for which it has
+keys. It does not reconstruct missing legacy roster history, establish freshness
+against a relay that fabricates a complete-looking replay, recover an addition
+superseded by another rekey, or integrate gateway admission/governance.
 A refresh requires a sender whose saved membership and keys are current;
 completion of a relay subscription alone cannot establish that if needed
 controls have expired. A saved operation that no
@@ -89,6 +111,11 @@ additional admission steps.
 For groups using this receiver, private `conversations.json` stores the current
 keys and checkpoint, full roster, **decrypted message history**, relay cursor,
 pending ciphertext and exact unfinished outgoing operation in one atomic update.
+It also stores the recovery boundary, reason and challenge, and sequence receipts
+for locally posted welcomes and text. Known own receipts can account for those
+expired rows without treating an unknown missing control as harmless. Welcome
+receipts are pruned when the receive cursor passes them; text receipts remain
+with local history.
 Contact names and public keys live in private `contacts.json`. File locks serialize
 receive writes and individual group operations; revision checks reject stale
 metadata writes that would erase receive progress.
@@ -177,6 +204,27 @@ no invite token, old keys or invented admission/rekey references.
 `assertGroupWelcomeRefreshCurrent` / `assert_group_welcome_refresh_current`
 rejects release after expiry or a change to the checkpoint's keys or roster.
 Both helpers refuse a removed sender or an unfinished membership rotation.
+Both also refuse a sender whose checkpoint requires missing-history recovery.
+Addition and refresh preparation accept an optional final `recoveryChallenge`
+argument in TypeScript or `recovery_challenge` in Python: exactly 32 bytes,
+restricted to a single recipient per operation.
+
+`checkGroupReplayCoverage` / `check_group_replay_coverage` takes the saved cursor,
+captured replay head and every received sequence, including unreadable rows.
+Missing sequences persist a recovery requirement with a random challenge;
+later complete replay alone does not clear it. `checkExpiredGroupControl` /
+`check_expired_group_control` recognizes expired authenticated controls with
+available current keys without applying their authority. Hosts must retain and
+recheck unreadable future-epoch controls when their keys become available.
+
+`groupSessionFromWelcome` / `group_session_from_welcome` installs an already
+opened, pinned welcome. It guards saved removal, older epochs and conflicting
+same-epoch state. Clearing a recovery requirement also requires the signed
+challenge and a sequence beyond the missing-history boundary. Hosts must replay
+everything after that welcome before enabling actions; a later gap blocks again.
+`requireGroupRecovery` / `require_group_recovery` lets a host persist another
+detected missing-history boundary. These checks use transport sequences to
+detect omissions, not to authenticate membership.
 
 `prepareGroupSessionRekey` / `prepare_group_session_rekey` lets any remaining
 ordinary-group member finish an interrupted rotation. Unlike application sends,
@@ -203,7 +251,8 @@ authenticated governance flow.
 
 The private checkpoint contains the conversation and local identity IDs,
 current group root, full member public keys and group metadata, exclusion and
-rotation status, up to 8192 message IDs/digests, and the bounded rekey archive.
+rotation status, recovery boundary/reason/challenge, up to 8192 message
+IDs/digests, and the bounded rekey archive.
 It contains no message plaintext. It must receive the same private or encrypted
 storage protection as identity keys. Archive eligibility expires by time, but
 disk copies are pruned only when the host persists a successful receive update;
@@ -240,6 +289,9 @@ A refresh uses the same outer envelope and signature/box construction with
 `rekey_id`; the signed domain identifies recovery of existing membership.
 `openGroupWelcome` / `open_group_welcome` returns `purpose: "addition"` or
 `purpose: "refresh"`, and admission references exist only for an addition.
+Either payload may also contain `recovery_challenge: bytes(32)` inside its
+signed and encrypted content. It is absent for ordinary welcomes. Opened data
+exposes it as `recoveryChallenge` in TypeScript and `recovery_challenge` in Python.
 
 The snapshot is bootstrap state, not a second genesis event. Signatures use the
 shared strict Ed25519 profile. The separate signature is necessary: a recipient
@@ -259,7 +311,8 @@ Normal relay retention still applies independently.
 
 The relay can inspect its existing group ID, message ID, ordering, timestamps,
 epoch, ciphertext size and transport metadata, plus the `group_welcome` kind.
-It cannot read the recipient's identity, inviter's identity, roster or group key
+It cannot read the recipient's identity, inviter's identity, roster, recovery
+challenge or group key
 from the welcome. This extension adds no metrics or recipient labels. A link
 holder can see its group locator and inviter pin. Keeping the locator in a URL
 fragment avoids including it in the normal HTTP request to the browser host;
@@ -280,3 +333,6 @@ set `QNTM_TEST_PYTHON` to an existing test environment. Relay acceptance exercis
 the same welcome through the existing send/subscription path. Checkpoint tests
 also exchange state between languages during addition, removal and competing
 rekeys, and exercise restart, exact replay, invalid authority and archive expiry.
+Recovery tests also cover reposted old welcomes, mismatched challenges, expired
+controls, blocked CLI/MCP/guidance sends and hooks, and a real relay retention
+cycle followed by CLI-to-TypeScript recovery and a reply.

@@ -49,6 +49,7 @@ export type GroupWelcome = {
   state: GroupState;
   inviterPublicKey: Uint8Array;
   messageId: Uint8Array;
+  recoveryChallenge?: Uint8Array;
 } & ({ purpose: 'addition'; additionId: Uint8Array; rekeyId: Uint8Array }
   | { purpose: 'refresh'; additionId?: never; rekeyId?: never });
 interface WelcomeContext {
@@ -57,6 +58,7 @@ interface WelcomeContext {
   recipient_ik_pk: Uint8Array;
   group_key: Uint8Array;
   group_state: GroupGenesisBody;
+  recovery_challenge?: Uint8Array;
 }
 type WelcomePayload = WelcomeContext & ({ proto: typeof DOMAIN; addition_id: Uint8Array; rekey_id: Uint8Array }
   | { proto: typeof REFRESH_DOMAIN });
@@ -69,12 +71,13 @@ function header(envelope: GroupWelcomeEnvelope) {
 /** Internal sealing primitive. Call the checkpoint-aware refresh helper for recovery. */
 export function sealGroupWelcome(identity: Identity, conversation: Conversation, state: GroupState,
   recipient: Uint8Array, createdAt: number, ttl: number,
-  admission?: { additionId: Uint8Array; rekeyId: Uint8Array }): GroupWelcomeEnvelope {
+  admission?: { additionId: Uint8Array; rekeyId: Uint8Array }, recoveryChallenge?: Uint8Array): GroupWelcomeEnvelope {
   const envelope: GroupWelcomeEnvelope = { v: 1, suite: 'QSP-1', kind: 'group_welcome',
     conv_id: new Uint8Array(conversation.id), msg_id: generateMessageID(), conv_epoch: conversation.currentEpoch,
     created_ts: createdAt, expiry_ts: createdAt + ttl, ciphertext: new Uint8Array() };
   const context: WelcomeContext = { envelope: header(envelope), inviter_ik_pk: identity.publicKey,
-    recipient_ik_pk: recipient, group_key: conversation.keys.root, group_state: state.snapshot() };
+    recipient_ik_pk: recipient, group_key: conversation.keys.root, group_state: state.snapshot(),
+    ...(recoveryChallenge ? { recovery_challenge: recoveryChallenge } : {}) };
   const payload: WelcomePayload = admission
     ? { ...context, proto: DOMAIN, addition_id: admission.additionId, rekey_id: admission.rekeyId }
     : { ...context, proto: REFRESH_DOMAIN };
@@ -112,7 +115,7 @@ export function validateGroupSnapshot(value: unknown): asserts value is GroupGen
  * Gateway-governed membership must use its governance operation instead.
  */
 export function prepareGroupAddition(identity: Identity, conversation: Conversation, state: GroupState,
-  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL): GroupAddition {
+  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL, recoveryChallenge?: Uint8Array): GroupAddition {
   validateIdentity(identity);
   requireValue(conversation.type === 'group' && bytes(conversation.id, 16)
     && uint(conversation.currentEpoch) && conversation.currentEpoch < MAX_EPOCH,
@@ -123,6 +126,7 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   requireValue(Array.isArray(recipients) && recipients.length > 0
     && state.memberCount() + recipients.length <= 128, 'Invalid added contact count');
   requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
+  requireValue(recoveryChallenge === undefined || bytes(recoveryChallenge, 32) && recipients.length === 1, 'Invalid recovery challenge');
   const seen = new Set<string>();
   for (const recipient of recipients) {
     requireValue(isValidEd25519PublicKey(recipient), 'Invalid contact public key');
@@ -153,7 +157,7 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   // A welcome never carries an old invite token or saved epoch-key archive.
   delete next.inviteToken;
   const welcomes = recipients.map(recipient => sealGroupWelcome(identity, next, nextState, recipient,
-    addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id }));
+    addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id }, recoveryChallenge));
   return { conversation: next, state: nextState, addition, rekey, welcomes };
 }
 
@@ -189,12 +193,14 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   requireValue(fields(opened, 'payload,signature') && bytes(opened.signature, 64), 'Invalid signed group welcome');
   requireValue(equal(plaintext, marshalCanonical(opened)), 'Signed group welcome must use canonical CBOR');
   const payload = opened.payload;
-  const addition = fields(payload, 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id')
+  const common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state';
+  const challengeFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'recovery_challenge') ? ',recovery_challenge' : '';
+  const addition = fields(payload, common + ',addition_id,rekey_id' + challengeFields)
     && payload.proto === DOMAIN && bytes(payload.addition_id, 16) && bytes(payload.rekey_id, 16) && value.conv_epoch > 0;
-  const refresh = fields(payload, 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state')
+  const refresh = fields(payload, common + challengeFields)
     && payload.proto === REFRESH_DOMAIN;
   requireValue((addition || refresh) && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
-    && bytes(payload.group_key, 32),
+    && bytes(payload.group_key, 32) && (!challengeFields || bytes(payload.recovery_challenge, 32)),
   'Invalid group welcome payload');
   requireValue(equal(payload.inviter_ik_pk, expected.inviterPublicKey)
     && equal(payload.recipient_ik_pk, identity.publicKey), 'Welcome contact binding differs');
@@ -209,7 +215,8 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   const conversation: Conversation = { id: new Uint8Array(value.conv_id), type: 'group', name: state.groupName,
     keys: { root: payload.group_key, ...suite.deriveEpochKeys(payload.group_key, value.conv_id, value.conv_epoch) },
     participants: state.listMembers(), createdAt: new Date(state.createdAt * 1000), currentEpoch: value.conv_epoch };
-  const result = { conversation, state, inviterPublicKey: new Uint8Array(expected.inviterPublicKey), messageId: value.msg_id };
+  const result = { conversation, state, inviterPublicKey: new Uint8Array(expected.inviterPublicKey), messageId: value.msg_id,
+    ...(challengeFields ? { recoveryChallenge: payload.recovery_challenge as Uint8Array } : {}) };
   return addition
     ? { ...result, purpose: 'addition', additionId: payload.addition_id as Uint8Array, rekeyId: payload.rekey_id as Uint8Array }
     : { ...result, purpose: 'refresh' };

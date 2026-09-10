@@ -371,3 +371,170 @@ def test_cli_member_can_finish_partial_rotation_and_refresh_the_new_contact(setu
     f.command(new_dir, 'send', f.cid, 'recovered after interrupted rotation')
     assert any(row.get('unsafe_body') == 'recovered after interrupted rotation'
                for row in f.command(f.contact_dir, 'recv', f.cid)['messages'])
+
+
+def test_missing_membership_history_blocks_all_sends_and_hooks_until_fresh_welcome(setup, monkeypatch):
+    from qntm import guidance, mcp_server as mcp
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    f.command(f.owner_dir, 'send', f.cid, 'saved before gap')
+    f.command(f.contact_dir, 'recv', f.cid)
+    assert delivery_events(f.contact_dir, f.cid)
+    guidance.pin_contact(f.contact_dir, f.relay, 'advisor', 'ethical', 'Advisor', 'agent', f.cid, f.owner['keyID'].hex())
+    review = guidance.prepare_request(f.contact_dir, f.relay, 'advisor', 'Please advise')
+    missing = len(f.rows[f.cid]) + 1
+    owner.add(f.cid, generate_identity()['publicKey'].hex())
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] != missing], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    result = f.command(f.contact_dir, 'recv', f.cid)
+    assert result['recovery_required'] and result['recovery']['afterSequence'] == missing
+    assert not delivery_events(f.contact_dir, f.cid)
+    attempted = len(f.attempted)
+    for args in [('send', f.cid, 'must not send'), ('group', 'rekey', f.cid),
+                 ('group', 'refresh', f.cid, f.owner['publicKey'].hex())]:
+        with pytest.raises(SystemExit):
+            f.command(f.contact_dir, *args)
+    with pytest.raises(ValueError, match='incomplete'):
+        guidance.send_request(f.contact_dir, f.relay, 'advisor', 'Please advise', '', review['review_token'])
+    monkeypatch.setenv('QNTM_CONFIG_DIR', f.contact_dir)
+    monkeypatch.setenv('QNTM_RELAY_URL', f.relay)
+    monkeypatch.setattr(mcp, '_http_send', f.send)
+    assert 'error' in mcp.send_message(f.cid, 'MCP must not send')
+    assert len(f.attempted) == attempted
+    with pytest.raises(ValueError, match='challenge'):
+        join(f.contact_dir, f.contact, link)
+    refreshed = f.command(f.owner_dir, 'group', 'refresh', f.cid, 'Colleague', '--challenge', result['recovery']['challenge'])
+    assert join(f.contact_dir, f.contact, refreshed['group_link'])['current_epoch'] == 2
+    assert cli._load_conversations(f.contact_dir)[0]['group_session']['recovery'] is None
+    assert delivery_events(f.contact_dir, f.cid)
+    f.command(f.contact_dir, 'send', f.cid, 'recovered safely')
+    assert any(row.get('unsafe_body') == 'recovered safely' for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
+
+
+def test_a_missing_removal_does_not_allow_old_welcome_or_refresh_to_restore_access(setup, monkeypatch):
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    missing = len(f.rows[f.cid]) + 1
+    owner.change(f.cid, 'Colleague')
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] != missing], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    status = f.command(f.contact_dir, 'recv', f.cid)
+    assert status['recovery_required']
+    with pytest.raises(SystemExit):
+        f.command(f.contact_dir, 'send', f.cid, 'must remain excluded')
+    with pytest.raises(ValueError, match='challenge'):
+        join(f.contact_dir, f.contact, link)
+    with pytest.raises(ValueError, match='current member'):
+        owner.refresh(f.cid, 'Colleague')
+    # A later explicit addition remains an admission, distinct from recovery.
+    f.command(f.owner_dir, 'group', 'add', f.cid, 'Colleague', '--challenge', status['recovery']['challenge'])
+    assert join(f.contact_dir, f.contact, link)['current_epoch'] == 3
+
+
+def test_known_own_receipts_cover_expired_welcome_and_text_without_masking_other_holes(setup, monkeypatch):
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    expired_welcome_sequence = len(f.rows[f.cid])
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] != expired_welcome_sequence], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    assert owner.refresh(f.cid, 'Colleague')['group_link'] == link
+    f.command(f.owner_dir, 'send', f.cid, 'own text')
+    expired_text_sequence = len(f.rows[f.cid])
+
+    def receive_after_text(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] not in (expired_welcome_sequence, expired_text_sequence)], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive_after_text)
+    assert owner.sync(f.cid)['group_session']['recovery'] is None
+    stranger = generate_identity()
+    f.send(f.relay, f.cid, serialize_envelope(create_message(stranger, group_session_conversation(owner.sync(f.cid)['group_session']), 'text', b'unknown')))
+    missing = len(f.rows[f.cid])
+    monkeypatch.setattr(cli, '_recv_once', lambda url, cid, cursor: ([], missing))
+    assert owner.sync(f.cid)['group_session']['recovery']['afterSequence'] == missing
+
+
+def test_expired_removal_is_visible_as_recovery_required_without_stale_send(setup, monkeypatch):
+    from qntm import create_group_remove_body
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    record = owner.sync(f.cid)
+    removal = create_group_control_message(f.owner, group_session_conversation(record['group_session']), 'group_remove',
+                                          create_group_remove_body([f.contact['keyID']]), 1)
+    f.send(f.relay, f.cid, serialize_envelope(removal))
+    owner.change(f.cid)
+    at = removal['expiry_ts'] + 1
+    monkeypatch.setattr('time.time', lambda: at)
+    result = f.command(f.contact_dir, 'recv', f.cid)
+    assert result['recovery_required'] and result['recovery']['reason'] == 'expired_control'
+    before = len(f.attempted)
+    with pytest.raises(SystemExit):
+        f.command(f.contact_dir, 'send', f.cid, 'stale send refused')
+    assert len(f.attempted) == before
+
+
+def test_expired_future_control_is_rechecked_when_the_parent_key_arrives(setup, monkeypatch):
+    from qntm import create_group_remove_body, prepare_group_session_rekey
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    record = owner.sync(f.cid)
+    rotation = prepare_group_session_rekey(f.owner, record['group_session'])
+    removal = create_group_control_message(f.owner, rotation['conversation'], 'group_remove',
+                                           create_group_remove_body([f.contact['keyID']]), 1)
+    f.send(f.relay, f.cid, serialize_envelope(removal))
+    monkeypatch.setattr('time.time', lambda: removal['expiry_ts'] + 2)
+    f.command(f.contact_dir, 'recv', f.cid)
+    pending = cli._load_conversations(f.contact_dir)[0]
+    assert pending['group_pending'] and pending['group_session']['recovery'] is None
+    f.send(f.relay, f.cid, serialize_envelope(rotation['rekey']))
+    received = f.command(f.contact_dir, 'recv', f.cid)
+    assert received['recovery_required'] and received['recovery']['reason'] == 'expired_control'
+    assert not cli._load_conversations(f.contact_dir)[0]['group_session']['removed']
+
+
+def test_mcp_challenge_refresh_recovers_and_invalid_challenges_send_nothing(setup, monkeypatch):
+    from qntm import mcp_server as mcp
+    f = setup
+    owner = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = owner.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    f.command(f.owner_dir, 'send', f.cid, 'missing text')
+    missing = len(f.rows[f.cid])
+
+    def receive(url, cid, cursor):
+        rows, head = f.receive(url, cid, cursor)
+        return [row for row in rows if row['seq'] != missing], head
+
+    monkeypatch.setattr(cli, '_recv_once', receive)
+    status = f.command(f.contact_dir, 'recv', f.cid)
+    monkeypatch.setenv('QNTM_CONFIG_DIR', f.owner_dir)
+    monkeypatch.setenv('QNTM_RELAY_URL', f.relay)
+    monkeypatch.setattr(mcp, '_http_send', f.send)
+    before = len(f.attempted)
+    assert 'error' in mcp.group_refresh(f.cid, 'Colleague', 'not hex')
+    assert 'error' in mcp.group_add_contact(f.cid, 'Colleague', '00')
+    assert len(f.attempted) == before
+    refreshed = mcp.group_refresh(f.cid, 'Colleague', status['recovery']['challenge'])
+    assert refreshed['group_link'] == link
+    assert not join(f.contact_dir, f.contact, link)['recovery_required']

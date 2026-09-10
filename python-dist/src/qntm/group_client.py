@@ -22,6 +22,7 @@ from .group_session import (
     create_group_session, restore_group_session, receive_group_event, group_session_conversation,
     prepare_group_session_addition, assert_group_addition_accepted, assert_group_can_send,
     prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
+    check_group_replay_coverage, check_expired_group_control, group_session_from_welcome,
     create_group_control_message,
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
@@ -33,6 +34,14 @@ from .storage import private_lock
 _suite = QSP1Suite()
 MAX_PENDING_MESSAGES = 256
 MAX_PENDING_BYTES = 4 * 1024 * 1024
+
+
+def _recovery_challenge(value):
+    if value == '':
+        return None
+    if not isinstance(value, str) or not re.fullmatch('[0-9a-fA-F]{64}', value):
+        raise ValueError('Recovery challenge must be 64 hexadecimal characters')
+    return bytes.fromhex(value)
 
 
 def public_key(value):
@@ -142,6 +151,15 @@ def receive_batch(record, identity, raw_messages, head):
     result = copy.deepcopy(record)
     state = restore_group_session(identity, result['group_session'])
     history = result.setdefault('group_history', [])
+    floor = result.get('group_cursor', 0)
+    # A concurrent receiver may already have committed beyond this fetch's head.
+    head = max(head, floor)
+    receipts = result.get('group_delivery_receipts', [])
+    known_sequences = [row.get('relay_receipt_sequence') for row in history
+                       if row.get('body_type') == 'text' and type(row.get('relay_receipt_sequence')) is int
+                       and floor < row['relay_receipt_sequence'] <= head]
+    known_sequences += [seq for seq in receipts if type(seq) is int and floor < seq <= head]
+    state = check_group_replay_coverage(state, floor, head, [row['seq'] for row in raw_messages] + known_sequences)
     known_history = {entry['msg_id']: entry for entry in history}
     order = max(result.get('group_order', 0), result.get('group_cursor', 0),
                 max((entry.get('receive_order', entry.get('sequence', 0)) for entry in history), default=0))
@@ -153,8 +171,10 @@ def receive_batch(record, identity, raw_messages, head):
                 continue
             wire = base64.b64decode(raw['envelope_b64'], validate=True)
             envelope = deserialize_envelope(wire)
-            if (envelope['conv_id'].hex() != result['id'] or envelope['expiry_ts'] < int(time.time())
-                    or is_group_welcome_envelope(envelope)):
+            if (type(envelope.get('expiry_ts')) is not int or type(envelope.get('conv_epoch')) is not int
+                    or not isinstance(envelope.get('msg_id'), bytes) or len(envelope['msg_id']) != 16):
+                continue
+            if envelope['conv_id'].hex() != result['id'] or is_group_welcome_envelope(envelope):
                 continue
             # Key by exact bytes: conflicting IDs must still reach the reducer.
             pending[_suite.hash(wire).hex()] = {'seq': sequence, 'envelope_b64': base64.b64encode(wire).decode()}
@@ -166,6 +186,14 @@ def receive_batch(record, identity, raw_messages, head):
         retry, changed = [], False
         for raw in remaining:
             envelope = deserialize_envelope(base64.b64decode(raw['envelope_b64']))
+            if envelope['expiry_ts'] < int(time.time()):
+                if raw['seq'] > result.get('group_bootstrap_sequence', 0):
+                    state = check_expired_group_control(identity, state, envelope, raw['seq'])
+                if envelope['conv_epoch'] > state['epoch'] and not state['recovery'] and not state['removed']:
+                    retry.append(raw)
+                continue
+            if state['recovery']:
+                continue
             try:
                 event = receive_group_event(identity, envelope, state)
             except CryptoError:
@@ -211,6 +239,7 @@ def receive_batch(record, identity, raw_messages, head):
     _install(result, state)
     result['group_pending'] = remaining
     result['group_cursor'] = max(result.get('group_cursor', 0), head)
+    result['group_delivery_receipts'] = [seq for seq in receipts if seq > head]
     result['group_order'] = order
     return result, output
 
@@ -257,6 +286,8 @@ class GroupClient:
     def sync(self, conversation_id):
         _, record = self._load(conversation_id)
         raw, head = cli._recv_once(self.relay_url, record['id'], record.get('group_cursor', 0))
+        if head < record.get('group_cursor', 0):
+            raise ValueError('Relay replay head is older than saved progress; group state was not changed')
         cli._process_received_messages(self.config_dir, self.identity, [], record, raw, head)
         return self._load(record['id'])[1]
 
@@ -271,14 +302,15 @@ class GroupClient:
     def _operation_lock(self, conversation_id):
         return private_lock(os.path.join(self.config_dir, 'groups', conversation_id + '.operation.lock'))
 
-    def add(self, conversation_id, address):
+    def add(self, conversation_id, address, challenge=''):
+        recovery_challenge = _recovery_challenge(challenge)
         key = resolve_contact(self.config_dir, address)
         record = self.enable(conversation_id)
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
             if record.get('group_operation'):
                 raise ValueError('A group operation is pending; use group retry')
-            operation = prepare_group_session_addition(self.identity, record['group_session'], [key])
+            operation = prepare_group_session_addition(self.identity, record['group_session'], [key], recovery_challenge=recovery_challenge)
             expected = create_group_session(self.identity, operation['conversation'], operation['state'], signed_epoch=record['group_session']['signedEpoch'])
             self._save_operation(record['id'], {'kind': 'add', 'controls': [base64.b64encode(serialize_envelope(operation[name])).decode() for name in ('addition', 'rekey')],
                                                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
@@ -314,12 +346,13 @@ class GroupClient:
                                                 'welcomes': [], 'welcomes_sent': 0, 'expected': trial})
             return self._resume(record['id'])
 
-    def refresh(self, conversation_id, address):
+    def refresh(self, conversation_id, address, challenge=''):
+        recovery_challenge = _recovery_challenge(challenge)
         key = resolve_contact(self.config_dir, address)
         record = self.enable(conversation_id)
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
-            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key])
+            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key], recovery_challenge=recovery_challenge)
             expected = create_group_session(self.identity, operation['conversation'], operation['state'],
                                             signed_epoch=record['group_session']['signedEpoch'])
             self._save_operation(record['id'], {'kind': 'refresh', 'controls': [],
@@ -342,6 +375,8 @@ class GroupClient:
         operation = record.get('group_operation')
         if not operation:
             raise ValueError('No pending group operation')
+        if record['group_session'].get('recovery'):
+            raise ValueError('Group history is incomplete; open a fresh welcome from a current member before retrying')
         for encoded in operation['controls']:
             wire = base64.b64decode(encoded, validate=True)
             envelope = deserialize_envelope(wire)
@@ -365,10 +400,15 @@ class GroupClient:
                         'welcomes': [deserialize_envelope(base64.b64decode(w)) for w in operation['welcomes']]}
             assert_group_welcome_refresh_current(self.identity, record['group_session'], prepared)
         for position in range(operation['welcomes_sent'], len(operation['welcomes'])):
-            cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['welcomes'][position], validate=True))
+            receipt = cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['welcomes'][position], validate=True))
             with self._lock():
                 records, record = self._load(conversation_id)
                 record['group_operation']['welcomes_sent'] = position + 1
+                # Own welcome receipts can fill a future retention hole without
+                # treating an unknown missing membership control as harmless.
+                seq = receipt.get('seq')
+                if type(seq) is int and seq > record.get('group_cursor', 0):
+                    record.setdefault('group_delivery_receipts', []).append(seq)
                 cli._save_conversations(self.config_dir, records)
         with self._lock():
             records, record = self._load(conversation_id)
@@ -391,27 +431,45 @@ def join(config_dir, identity, link, name=''):
             candidates.append((welcome, row['seq']))
         except Exception:
             continue
-    if not candidates:
-        raise ValueError('No current welcome for this identity; ask the contact to add or welcome this identity')
     # At a given epoch, a later refresh is the inviter's latest signed current
     # snapshot. Addition-only candidates retain the canonical rekey-ID order.
     candidates.sort(key=lambda candidate: (-candidate[0]['conversation']['currentEpoch'],
                     0 if candidate[0]['purpose'] == 'refresh' else 1,
                     -candidate[1] if candidate[0]['purpose'] == 'refresh' else candidate[0]['rekey_id']))
-    welcome, welcome_sequence = candidates[0]
     with private_lock(os.path.join(config_dir, 'receive.lock')):
         records = cli._load_conversations(config_dir)
         previous = cli._find_conversation(records, conversation_id)
+        saved = None
         if previous:
             if previous.get('type') != 'group' or previous.get('gateway') or previous.get('relay_url', relay).rstrip('/') != relay:
                 raise ValueError('Group link conflicts with the saved conversation')
             saved = previous.get('group_session')
+            if saved:
+                # Existing keys can often catch up directly. Persist any detected
+                # recovery requirement even if no usable welcome remains.
+                updated, _ = receive_batch(previous, identity, raw, head)
+                records[records.index(previous)] = updated
+                cli._save_conversations(config_dir, records)
+                previous = updated
+                saved = restore_group_session(identity, updated['group_session'])
+                if not saved['removed'] and not saved['needsRekey'] and not saved['recovery']:
+                    return {'conversation_id': conversation_id, 'current_epoch': saved['epoch'], 'removed': False}
+        if saved and saved['recovery']:
+            challenge = bytes.fromhex(saved['recovery']['challenge'])
+            candidates = [candidate for candidate in candidates
+                          if candidate[0].get('recovery_challenge') == challenge
+                          and candidate[1] > saved['recovery']['afterSequence']]
+            if not candidates:
+                raise ValueError('No welcome answers the current recovery challenge; use recv to retrieve it and ask a current member for group refresh --challenge')
+        if not candidates:
+            raise ValueError('No current welcome for this identity; ask the contact to add or welcome this identity')
+        welcome, welcome_sequence = candidates[0]
+        if previous:
             if not saved and (welcome['conversation']['currentEpoch'] < previous.get('current_epoch', 0)
                               or welcome['conversation']['currentEpoch'] == previous.get('current_epoch', 0)
                               and welcome['conversation']['keys']['root'].hex() != previous['keys']['root']):
                 raise ValueError('Welcome is older than or conflicts with saved group state')
             if saved:
-                saved = restore_group_session(identity, saved)
                 if saved['removed'] and welcome['purpose'] == 'refresh':
                     readmissions = [candidate for candidate in candidates if candidate[0]['purpose'] == 'addition'
                                     and candidate[0]['conversation']['currentEpoch'] > saved['epoch']
@@ -419,26 +477,18 @@ def join(config_dir, identity, link, name=''):
                     if not readmissions:
                         raise ValueError('A welcome refresh cannot undo saved removal; a new admission welcome is required')
                     welcome, welcome_sequence = readmissions[0]
-                if _group(saved).creator != welcome['state'].creator:
-                    raise ValueError('Group creator differs from saved state')
-                if welcome['conversation']['currentEpoch'] < saved['epoch']:
-                    raise ValueError('Welcome is older than saved group state')
-                if welcome['conversation']['currentEpoch'] == saved['epoch']:
-                    if saved['removed'] or welcome['conversation']['keys']['root'].hex() != saved['root']:
-                        raise ValueError('Welcome cannot replace the saved epoch or removal')
-                    updated, _ = receive_batch(previous, identity, raw, head)
-                    records[records.index(previous)] = updated
-                    cli._save_conversations(config_dir, records)
-                    return {'conversation_id': conversation_id, 'current_epoch': updated['current_epoch'], 'removed': updated['group_session']['removed']}
                 if saved['removed'] and welcome_sequence <= previous.get('group_removed_sequence', 0):
                     raise ValueError('Welcome predates the saved removal')
         record = {'id': conversation_id, 'type': 'group', 'name': name or welcome['state'].group_name,
                   'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'relay_url': relay,
-                  'group_cursor': 0, 'group_pending': [], 'group_history': copy.deepcopy(cli._load_history(config_dir, conversation_id)) if previous else [],
+                  'group_cursor': welcome_sequence, 'group_bootstrap_sequence': welcome_sequence,
+                  'group_pending': [], 'group_history': copy.deepcopy(cli._load_history(config_dir, conversation_id)) if previous else [],
                   'inviter_public_key': locator['inviter_public_key'].hex()}
         if previous and 'group_revision' in previous:
             record['group_revision'] = previous['group_revision']
-        _install(record, create_group_session(identity, welcome['conversation'], welcome['state']))
+        if previous and previous.get('group_operation'):
+            record['group_operation'] = copy.deepcopy(previous['group_operation'])
+        _install(record, group_session_from_welcome(identity, welcome, welcome_sequence, saved))
         record, _ = receive_batch(record, identity, raw, head)
         if previous:
             records[records.index(previous)] = record
@@ -446,4 +496,5 @@ def join(config_dir, identity, link, name=''):
             records.append(record)
         cli._save_conversations(config_dir, records)
     return {'conversation_id': conversation_id, 'name': record['name'], 'type': 'group',
-            'current_epoch': record['current_epoch'], 'participants': len(record['participants']), 'removed': record['group_session']['removed']}
+            'current_epoch': record['current_epoch'], 'participants': len(record['participants']),
+            'removed': record['group_session']['removed'], 'recovery_required': bool(record['group_session'].get('recovery'))}

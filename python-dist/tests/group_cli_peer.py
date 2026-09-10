@@ -33,8 +33,12 @@ if phase == 'prepare':
     result = command('--dropbox-url', relay, 'group', 'add', cid, 'TypeScript peer')
     print(json.dumps({'conversation_id': cid, 'group_link': result['group_link']}))
 elif phase == 'refresh':
-    result = command('group', 'refresh', sys.argv[4], 'TypeScript peer')
+    result = command('group', 'refresh', sys.argv[4], 'TypeScript peer',
+                     *(['--challenge', sys.argv[5]] if len(sys.argv) > 5 else []))
     print(json.dumps({'group_link': result['group_link'], 'epoch': result['current_epoch']}))
+elif phase == 'missed':
+    result = command('send', sys.argv[4], 'message that will expire')
+    print(json.dumps({'sequence': result['sequence']}))
 elif phase == 'finish':
     cid = sys.argv[4]
     received = command('recv', cid)

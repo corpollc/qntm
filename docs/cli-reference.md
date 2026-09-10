@@ -413,14 +413,17 @@ options:
 ## `qntm group add`
 
 ```text
-usage: qntm group add [-h] conversation public_key
+usage: qntm group add [-h] [--challenge CHALLENGE] conversation public_key
 
 positional arguments:
-  conversation  Conversation ID or prefix
-  public_key    Local contact name or full public key (base64url or hex)
+  conversation          Conversation ID or prefix
+  public_key            Local contact name or full public key (base64url or hex)
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help            show this help message and exit
+  --challenge CHALLENGE
+                        Optional 64-hex recovery challenge from the contact being
+                        admitted
 ```
 
 ## `qntm group remove`
@@ -464,14 +467,17 @@ options:
 ## `qntm group refresh`
 
 ```text
-usage: qntm group refresh [-h] conversation contact
+usage: qntm group refresh [-h] [--challenge CHALLENGE] conversation contact
 
 positional arguments:
-  conversation  Conversation ID or prefix
-  contact       Local contact name or full public key
+  conversation          Conversation ID or prefix
+  contact               Local contact name or full public key
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help            show this help message and exit
+  --challenge CHALLENGE
+                        Optional 64-hex recovery challenge reported by the member’s
+                        client
 ```
 
 ## `qntm group link`
