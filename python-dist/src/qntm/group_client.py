@@ -452,8 +452,9 @@ class GroupClient:
             self._save_operation(record['id'], {'kind': 'renewal' if admission and admission['completion'] else 'refresh', 'controls': [],
                                                 'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
                                                 'welcomes_sent': 0, 'expected': expected,
-                                                **({'recipient': key.hex(), 'admission': copy.deepcopy(admission),
-                                                    'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None}
+                                                'recipient': key.hex(),
+                                                'recovery_challenge': recovery_challenge.hex() if recovery_challenge else None,
+                                                **({'admission': copy.deepcopy(admission)}
                                                    if admission and admission['completion'] else {})})
             return self._resume(record['id'])
 
@@ -618,6 +619,89 @@ class GroupClient:
         return {'conversation': group_session_conversation(operation['expected']), 'state': _group(operation['expected']),
                 'welcomes': [deserialize_envelope(base64.b64decode(w, validate=True)) for w in operation['welcomes']]}
 
+    def _refresh_context(self, operation):
+        """Recover intent from the sender's authenticated box, including old journals.
+
+        This inspects expired delivery evidence; it never installs its keys or
+        treats the old roster as current membership authority.
+        """
+        from .gate import open_secret
+        from .group_admission import decode_admissions
+        expected = restore_group_session(self.identity, operation['expected'])
+        if operation['kind'] != 'refresh' or operation['controls'] or len(operation['welcomes']) != 1:
+            raise ValueError('Invalid saved generic refresh shape; operation preserved')
+        wire = base64.b64decode(operation['welcomes'][0], validate=True)
+        envelope = deserialize_envelope(wire)
+        if (serialize_envelope(envelope) != wire or envelope.get('kind') != 'group_welcome'
+                or envelope['conv_id'].hex() != expected['conversationId'] or envelope['conv_epoch'] != expected['epoch']):
+            raise ValueError('Invalid saved generic refresh context; operation preserved')
+        snapshot = _group(expected).snapshot()
+        candidates = ([public_key(operation['recipient'])] if 'recipient' in operation else
+                      [member['public_key'] for member in snapshot['founding_members']])
+        matches = []
+        for recipient in candidates:
+            try:
+                plain = open_secret(self.identity['privateKey'], recipient, envelope['ciphertext'])
+                signed = unmarshal(plain)
+                payload = signed['payload']
+                required = {'proto', 'envelope', 'inviter_ik_pk', 'recipient_ik_pk', 'group_key', 'group_state'}
+                optional = {'recovery_challenge', 'replay_from_seq', 'admissions'}
+                if (set(signed) != {'payload', 'signature'} or not isinstance(payload, dict)
+                        or not required <= set(payload) or set(payload) - required - optional
+                        or plain != marshal_canonical(signed) or payload['proto'] != 'qntm/group-refresh/v1'
+                        or payload['inviter_ik_pk'] != self.identity['publicKey'] or payload['recipient_ik_pk'] != recipient
+                        or payload['group_key'] != bytes.fromhex(expected['root'])
+                        or marshal_canonical(payload['group_state']) != marshal_canonical(snapshot)
+                        or not any(member['public_key'] == recipient for member in snapshot['founding_members'])
+                        or marshal_canonical(payload['envelope']) != marshal_canonical({key: value for key, value in envelope.items() if key != 'ciphertext'})
+                        or not isinstance(signed['signature'], bytes) or len(signed['signature']) != 64
+                        or not _suite.verify(self.identity['publicKey'], marshal_canonical(payload), signed['signature'])):
+                    continue
+                challenge = payload.get('recovery_challenge')
+                if challenge is not None and (not isinstance(challenge, bytes) or len(challenge) != 32):
+                    continue
+                if 'recovery_challenge' in operation and operation['recovery_challenge'] != (challenge.hex() if challenge else None):
+                    continue
+                anchor = payload.get('replay_from_seq', 0)
+                if type(anchor) is not int or not 0 <= anchor <= 2**53 - 1:
+                    continue
+                if 'admissions' in payload:
+                    admissions = decode_admissions(payload['admissions'], {member['key_id'].hex() for member in snapshot['founding_members']}, expected['epoch'])
+                    if admissions != expected['admissions']:
+                        continue
+                matches.append((recipient, challenge))
+            except (CryptoError, ValueError, TypeError, KeyError):
+                continue
+        if len(matches) != 1:
+            raise ValueError('Saved generic refresh does not authenticate one recipient and challenge; operation preserved')
+        return matches[0]
+
+    def _reconcile_refresh(self, conversation_id, original):
+        with self._lock():
+            records, record = self._load(conversation_id)
+            if marshal_canonical(record.get('group_operation')) != marshal_canonical(original):
+                raise ValueError('Pending operation changed before refresh reconciliation; use group retry')
+            state = restore_group_session(self.identity, record['group_session'])
+            assert_group_can_send(self.identity, state)
+            recipient, challenge = self._refresh_context(original)
+            if not any(member['public_key'] == recipient for member in _group(state).snapshot()['founding_members']):
+                raise ValueError('Original refresh recipient is no longer a member; operation preserved')
+            try:
+                assert_group_welcome_refresh_current(self.identity, state, self._prepared_welcome(original))
+                return record
+            except ValueError:
+                pass
+            refresh = prepare_group_welcome_refresh(self.identity, state, [recipient],
+                recovery_challenge=challenge, replay_from_sequence=record.get('group_cursor', 0))
+            record['group_operation'] = {**copy.deepcopy(original), 'recipient': recipient.hex(),
+                'recovery_challenge': challenge.hex() if challenge else None,
+                'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in refresh['welcomes']], 'welcomes_sent': 0,
+                'expected': create_group_session(self.identity, refresh['conversation'], refresh['state'],
+                                                signed_epoch=state['signedEpoch'], admissions=state['admissions']),
+                'superseded_operations': self._superseded_evidence(original)}
+            cli._save_conversations(self.config_dir, records)
+            return record
+
     def _assert_exact_addition_current(self, record, operation):
         proof = self._addition_proof(record, operation)
         if proof is None or proof[3]['completion'] is None:
@@ -746,6 +830,9 @@ class GroupClient:
             operation = record['group_operation']
         elif reconcile and operation['kind'] == 'renewal':
             record = self._reconcile_renewal(conversation_id, operation)
+            operation = record['group_operation']
+        elif reconcile and operation['kind'] == 'refresh':
+            record = self._reconcile_refresh(conversation_id, operation)
             operation = record['group_operation']
         controls = [] if exact_addition_proof else operation['controls']
         if reconcile and operation['kind'] == 'add' and self._addition_proof(record, operation) is not None:
