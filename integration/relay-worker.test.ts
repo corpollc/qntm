@@ -82,7 +82,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     writeFileSync(join(artifactDir, 'relay.stdout.log'), relayProcess?.stdout ?? '');
     writeFileSync(join(artifactDir, 'relay.stderr.log'), relayProcess?.stderr ?? '');
     writeFileSync(join(artifactDir, 'runtime.json'), JSON.stringify({
-      node: process.version, platform: process.platform, arch: process.arch,
+      node: process.version, undici: process.versions.undici, platform: process.platform, arch: process.arch,
       url: relayUrl, command: relayProcess?.command, timeline,
     }, null, 2));
   }
@@ -500,7 +500,7 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     // Send-time alignment deliberately exercises KJ's 5-second idle boundary.
     // Waiting five seconds *after* responses would miss the stale-socket race.
     const start = performance.now() + 150;
-    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string }> = [];
+    const outcomes: Array<{ lane: number; round: number; sentAtMs: number; status: number; body: string; cause?: unknown }> = [];
     const conversations = Array.from({ length: 32 }, () => generateIdentity().keyID);
     await Promise.all(conversations.map(async (cid, lane) => {
       for (let round = 0; round < 5; round++) {
@@ -516,21 +516,29 @@ describe.sequential('real relay worker subscribe acceptance', () => {
           outcomes.push({ lane, round, sentAtMs, status: response.status, body: await response.text() });
         } catch (error) {
           // Await every lane before teardown, even if one transport fails.
-          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error) });
+          const cause = error instanceof Error ? error.cause : undefined;
+          outcomes.push({ lane, round, sentAtMs, status: 0, body: String(error),
+            cause: cause instanceof Error ? { name: cause.name, message: cause.message,
+              ...Object.fromEntries(Object.entries(cause)) } : cause });
         }
       }
     }));
     writeFileSync(join(artifactDir, 'idle-boundary.json'), JSON.stringify(outcomes, null, 2));
-    expect(outcomes.filter(row => row.status !== 201)).toEqual([]);
-    for (const row of outcomes) expect(JSON.parse(row.body).seq).toBe(row.round + 1);
     // Replayed bytes and sequence numbers prove that the fixture did not hide
     // an uncertain POST by resubmitting it or inventing a successful response.
     const relay = new DropboxClient(relayUrl);
+    const replays = [];
     for (const cid of conversations) {
       const replay = await relay.receiveMessages(cid);
+      replays.push({ conversation: Buffer.from(cid).toString('hex'), sequence: replay.sequence,
+        entries: replay.entries.map(row => ({ seq: row.seq, body: Buffer.from(row.envelope).toString() })) });
+    }
+    writeFileSync(join(artifactDir, 'idle-boundary-replay.json'), JSON.stringify({ node: process.version, outcomes, replays }, null, 2));
+    expect(outcomes.filter(row => row.status !== 201)).toEqual([]);
+    for (const row of outcomes) expect(JSON.parse(row.body).seq).toBe(row.round + 1);
+    for (const replay of replays) {
       expect(replay.sequence).toBe(5);
-      expect(replay.entries.map(row => ({ seq: row.seq, body: Buffer.from(row.envelope).toString() })))
-        .toEqual(Array.from({ length: 5 }, (_, round) => ({ seq: round + 1, body: `idle-boundary-${round}` })));
+      expect(replay.entries).toEqual(Array.from({ length: 5 }, (_, round) => ({ seq: round + 1, body: `idle-boundary-${round}` })));
     }
   }, 45_000);
 
