@@ -144,6 +144,30 @@ def _history_entry(message, sequence, order):
     return entry
 
 
+def _control_accepted(record, wire):
+    """Use exact branch-valid receive evidence, never an HTTP acknowledgement."""
+    envelope = deserialize_envelope(wire)
+    mid, digest = envelope['msg_id'].hex(), _suite.hash(wire).hex()
+    known = record['group_session']['seen'].get(mid)
+    if known and known['digest'] != digest:
+        raise ValueError('Pending group message conflicts with accepted state')
+    for entry in record.get('group_history', []):
+        binding = entry.get('receive_binding', {})
+        if entry.get('msg_id') != mid or binding.get('digest') != digest:
+            continue
+        # A rewind leaves some source-epoch IDs in the bounded replay cache.
+        # Its explicit invalidation must win over that older duplicate marker.
+        if binding.get('valid') is False:
+            return False
+        sequence = entry.get('sequence')
+        if (binding.get('valid') is True and binding.get('epoch') == envelope['conv_epoch']
+                and entry.get('verified') is True and type(sequence) is int
+                and 0 < sequence <= record.get('group_cursor', 0)
+                and entry.get('body_type') in ('group_genesis', 'group_add', 'group_remove', 'group_rekey')):
+            return True
+    return bool(known and known['epoch'] == envelope['conv_epoch'])
+
+
 def _creation_message(identity, record, envelope):
     """Recognize only the exact locally prepared genesis, never a new genesis."""
     operation = record.get('group_operation') or {}
@@ -569,10 +593,7 @@ class GroupClient:
                 raise ValueError('Pending operation changed before control release; use group retry')
             state = restore_group_session(self.identity, record['group_session'])
             envelope = deserialize_envelope(wire)
-            known = state['seen'].get(envelope['msg_id'].hex())
-            if known:
-                if known['digest'] != _suite.hash(wire).hex():
-                    raise ValueError('Pending group message conflicts with accepted state')
+            if _control_accepted(record, wire):
                 return
             assert_group_can_send(self.identity, {**state, 'needsRekey': False})
             if operation['kind'] == 'create':
@@ -852,7 +873,7 @@ class GroupClient:
                 if proof and (encoded == operation['controls'][0] and operation['kind'] == 'add'
                               or proof[3]['completion'] is not None):
                     continue  # The canonical completing rekey may be another member's.
-            if record['group_session']['seen'].get(envelope['msg_id'].hex(), {}).get('digest') != _suite.hash(wire).hex():
+            if not _control_accepted(record, wire):
                 raise ValueError('Group control is not yet verified in relay replay; use group retry')
         if reconcile and operation['kind'] in ('add', 'addition_rekey'):
             record, exact_addition_proof = self._reconcile_addition(conversation_id, operation)
