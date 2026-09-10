@@ -3,7 +3,8 @@ import { QntmGroupStore } from '../../src/group-store.js';
 import { QntmIngressQueue } from '../../src/ingress-queue.js';
 import { resolveQntmAccount } from '../../src/accounts.js';
 import { inboundId } from '../../src/checkpoint.js';
-import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, createGroupSession } from '@corpollc/qntm';
+import { randomBytes } from 'node:crypto';
+import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, createGroupSession, restoreGroupSession } from '@corpollc/qntm';
 
 export async function stageGroupDelivery(config, stateDir, messageId) {
   const account = resolveQntmAccount({ cfg: config });
@@ -56,6 +57,34 @@ export async function stageCompletedGroupAddition(config, stateDir, contact, ttl
     await ordinary.sync();
     if (ordinary.load().session.needsRekey !== partial || ordinary.load().session.epoch !== (partial ? before.session.epoch : prepared.conversation.currentEpoch)) throw new Error('Staged native admission did not complete');
     return { expiry: prepared.welcomes[0].expiry_ts, original: operation, currentRoot: ordinary.load().session.root };
+  });
+}
+
+/** Leave a durable rotation that the real relay accepted and production
+ * receive authenticated, but whose POST acknowledgement was lost. The bounded
+ * replay cache is then filled to its legal limit with that rotation's marker
+ * oldest, so the next real authenticated messages evict it through the shared
+ * reducer's own eviction rather than by deleting replay state. */
+export async function stageAcceptedGroupRotation(config, stateDir) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    if (ordinary.load().operation) throw new Error('Fixture found an unexpected pending operation');
+    const operation = ordinary.prepare('rekey', {});
+    ordinary.saveOperation(operation);
+    await ordinary.client.postMessage(ordinary.binding.conversation.id, base64UrlDecode(operation.controls[0]));
+    await ordinary.sync();
+    const state = ordinary.load(), expected = restoreGroupSession(account.identity, operation.expected);
+    const messageId = Buffer.from(deserializeEnvelope(base64UrlDecode(operation.controls[0])).msg_id).toString('hex');
+    const receipt = state.controlReceipts.find(entry => entry.messageId === messageId);
+    if (!receipt?.valid || state.session.epoch !== expected.epoch || state.session.root !== expected.root) throw new Error('Staged rotation was not authenticated in replay');
+    const seen = { [messageId]: state.session.seen[messageId] };
+    for (const [id, marker] of Object.entries(state.session.seen)) if (id !== messageId) seen[id] = marker;
+    while (Object.keys(seen).length < 8192) seen[randomBytes(16).toString('hex')] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+    state.session.seen = seen;
+    ordinary.save(state);
+    return { messageId, control: operation.controls[0], sequence: receipt.sequence, epoch: state.session.epoch, expectedRoot: expected.root };
   });
 }
 

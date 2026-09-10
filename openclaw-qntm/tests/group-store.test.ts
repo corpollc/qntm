@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -73,6 +74,198 @@ function genericPending(store: QntmGroupStore, contact = 'Owner', ttl = 604800, 
     { signedEpoch: state.session!.signedEpoch, admissions: state.session!.admissions });
   operation.welcomePurpose = 'refresh'; store.saveOperation(operation); return operation;
 }
+/** Shared reducer replay bound (client/src/group/session.ts MAX_SEEN); it is not exported. */
+const MAX_SEEN = 8192;
+/** The relay accepts the numbered POST, but its acknowledgement never returns. */
+function loseAckAt(f: ReturnType<typeof fixture>, call: number) {
+  const post = f.client.postMessage.bind(f.client); let count = 0;
+  f.client.postMessage = async (id, bytes) => {
+    const receipt = await post(id, bytes);
+    if (++count === call) { f.client.postMessage = post; throw new Error('ambiguous POST'); }
+    return receipt;
+  };
+}
+async function acceptedPending(f: ReturnType<typeof fixture>, store: QntmGroupStore, action: 'rekey' | 'remove' | 'send', options: { contact?: string } = {}) {
+  const last = action === 'remove' ? 2 : 1;
+  loseAckAt(f, last);
+  await expect(action === 'send' ? store.send('accepted text') : run(store, action, options)).rejects.toThrow('ambiguous POST');
+  const operation = store.load().operation!;
+  expect(operation.sentControls).toBe(last - 1);
+  await store.exclusive(() => store.sync());
+  return operation;
+}
+/** Fill the bounded cache to its legal limit, then let real authenticated
+ * traffic run the production eviction over the oldest markers. */
+async function evictWithAuthenticatedTraffic(f: ReturnType<typeof fixture>, store: QntmGroupStore, sender: Identity, messages = 6) {
+  const state = store.load(), seen = state.session!.seen;
+  while (Object.keys(seen).length < MAX_SEEN) seen[randomBytes(16).toString('hex')] = { digest: randomBytes(32).toString('hex'), epoch: 0 };
+  store.save(state);
+  const peer = f.store(sender); await peer.exclusive(() => peer.sync());
+  for (let index = 0; index < messages; index++) {
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(createMessage(sender, groupSessionConversation(peer.load().session!), 'text', new TextEncoder().encode(`cache pressure ${index}`))));
+  }
+  await store.exclusive(() => store.sync());
+}
+describe('OpenClaw pending-control acceptance receipts', () => {
+  it.each(['rekey', 'remove'] as const)('finishes an accepted %s after real replay-cache eviction and restart without a POST', async action => {
+    const f = fixture(), member = f.store(f.member);
+    if (action === 'remove') await run(member, 'add', { contact: 'Late' });
+    const operation = await acceptedPending(f, member, action, action === 'remove' ? { contact: 'Late' } : {});
+    const last = operation.controls.at(-1)!, outer = deserializeEnvelope(base64UrlDecode(last)), id = toHex(outer.msg_id);
+    const latched = member.load();
+    expect(latched.session!.seen[id]).toBeDefined(); expect(latched.controlReceipts).toHaveLength(operation.controls.length);
+    await evictWithAuthenticatedTraffic(f, member, f.owner);
+    const evicted = member.load();
+    expect(evicted.session!.seen[id]).toBeUndefined();
+    const receipt = evicted.controlReceipts.find(entry => entry.messageId === id)!;
+    expect(receipt).toMatchObject({ digest: toHex(new QSP1Suite().hash(base64UrlDecode(last))), epoch: outer.conv_epoch, valid: true });
+    expect(receipt.sequence).toBeGreaterThan(0); expect(receipt.sequence).toBeLessThanOrEqual(evicted.cursor);
+    expect(member.controlAccepted(evicted, last)).toBe(true);
+    const count = f.rows.length, restarted = f.store(f.member), service = new QntmGroupActions(), scope = { key: `accepted-${action}`, store: restarted };
+    expect(restarted.status().pendingOperation).toMatchObject({ action, acceptedControls: operation.controls.length });
+    const review = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(review.review.retryMode).toBe('accepted_cleanup'); expect(review.review.acceptedControls).toBe(operation.controls.length);
+    expect(review.review.effect).toContain('No messages will be posted'); expect(restarted.load().operation).toEqual(operation);
+    const result = await service.execute(scope, { operation: 'commit', reviewToken: review.reviewToken, reviewHash: review.reviewHash }) as any;
+    expect(result.status).toBe('submitted');
+    expect(f.rows).toHaveLength(count); expect(restarted.load().operation).toBeNull(); expect(restarted.load().controlReceipts).toEqual([]);
+    expect(restarted.load().session!.epoch).toBe(restoreGroupSession(f.member, operation.expected).epoch);
+    if (action === 'remove') expect(groupSessionConversation(restarted.load().session!).participants.map(toHex)).not.toContain(toHex(f.late.keyID));
+  });
+  it.each([false, true])('finishes an accepted rotation after a later canonical rotation without reposting (evicted=%s)', async evicted => {
+    const f = fixture(), member = f.store(f.member), operation = await acceptedPending(f, member, 'rekey');
+    if (evicted) await evictWithAuthenticatedTraffic(f, member, f.owner);
+    await run(f.store(f.owner), 'rekey'); await member.exclusive(() => member.sync());
+    expect(member.load().session!.epoch).toBe(2); expect(member.load().controlReceipts[0].valid).toBe(true);
+    const count = f.rows.length, restarted = f.store(f.member);
+    expect(restarted.prepareRetry()).toEqual(operation);
+    await restarted.exclusive(() => restarted.resume());
+    expect(f.rows).toHaveLength(count); expect(restarted.load().operation).toBeNull(); expect(restarted.load().controlReceipts).toEqual([]);
+    expect(restarted.load().session!.epoch).toBe(2);
+  });
+  it('keeps cache-only evidence exact: an older checkpoint without receipts stays preserved after a later rotation', async () => {
+    const f = fixture(), member = f.store(f.member), operation = await acceptedPending(f, member, 'rekey');
+    const legacy = JSON.parse(readFileSync(member.filename, 'utf8')); delete legacy.controlReceipts; writeFileSync(member.filename, JSON.stringify(legacy));
+    await run(f.store(f.owner), 'rekey');
+    const count = f.rows.length, restarted = f.store(f.member);
+    expect(restarted.load().controlReceipts).toEqual([]);
+    await expect(restarted.exclusive(() => restarted.resume())).rejects.toThrow('no longer matches accepted state');
+    expect(f.rows).toHaveLength(count); expect(restarted.load().operation).toMatchObject({ id: operation.id, controls: operation.controls, expected: operation.expected });
+  });
+  it('finishes an accepted text through the monitor cleanup path after replay-cache eviction', async () => {
+    const f = fixture(), member = f.store(f.member), operation = await acceptedPending(f, member, 'send');
+    await evictWithAuthenticatedTraffic(f, member, f.owner);
+    expect(member.load().session!.seen[toHex(deserializeEnvelope(base64UrlDecode(operation.controls[0])).msg_id)]).toBeUndefined();
+    const count = f.rows.length, restarted = f.store(f.member);
+    expect(restarted.finishAcceptedSend()).toBe(true);
+    expect(restarted.load().operation).toBeNull(); expect(restarted.load().controlReceipts).toEqual([]); expect(f.rows).toHaveLength(count);
+  });
+  it('invalidates the losing source rekey that a rewind leaves in the replay cache, and keeps it invalid after the challenged welcome', async () => {
+    const f = fixture(), member = f.store(f.member), owner = f.store(f.owner), source = owner.load().session!;
+    const operation = await acceptedPending(f, member, 'rekey');
+    const wire = operation.controls[0], id = toHex(deserializeEnvelope(base64UrlDecode(wire)).msg_id);
+    let winner; do { winner = prepareGroupSessionRekey(f.owner, source); } while (toHex(winner.rekey.msg_id) >= id);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(winner.rekey));
+    await member.exclusive(() => member.sync());
+    const rewound = member.load();
+    expect(rewound.session!.recovery).not.toBeNull();
+    expect(rewound.session!.seen[id]?.digest).toBe(toHex(new QSP1Suite().hash(base64UrlDecode(wire))));
+    expect(rewound.controlReceipts[0]).toMatchObject({ messageId: id, valid: false });
+    expect(member.controlAccepted(rewound, wire)).toBe(false);
+    let count = f.rows.length;
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow('recovery is required');
+    expect(f.rows).toHaveLength(count); expect(member.load().operation).toEqual(operation);
+    const accepted = receiveGroupEvent(f.owner, winner.rekey, source).state;
+    const refreshed = prepareGroupWelcomeRefresh(f.owner, accepted, [f.member.publicKey], undefined,
+      new Uint8Array(Buffer.from(rewound.session!.recovery!.challenge, 'hex')), f.rows.at(-1)!.seq);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
+    await member.exclusive(() => member.open(owner.link()));
+    const replaced = member.load();
+    expect(replaced.session!.recovery).toBeNull(); expect(replaced.session!.root).toBe(accepted.root);
+    expect(replaced.controlReceipts[0]).toMatchObject({ messageId: id, valid: false });
+    expect(member.controlAccepted(replaced, wire)).toBe(false);
+    count = f.rows.length;
+    expect(member.prepareRetry()).toEqual(operation);
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow('obsolete epoch');
+    expect(f.rows).toHaveLength(count); expect(member.load().operation).toEqual(operation);
+  });
+  it('invalidates a receipt accepted on a losing descendant branch', async () => {
+    const f = fixture(), member = f.store(f.member), source = f.store(f.owner).load().session!;
+    await run(member, 'rekey');
+    const first = member.load().session!.rekeys[0].messageId;
+    const operation = await acceptedPending(f, member, 'rekey');
+    const wire = operation.controls[0], id = toHex(deserializeEnvelope(base64UrlDecode(wire)).msg_id);
+    expect(member.load().controlReceipts[0]).toMatchObject({ messageId: id, epoch: 1, valid: true });
+    let winner; do { winner = prepareGroupSessionRekey(f.owner, source); } while (toHex(winner.rekey.msg_id) >= first);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(winner.rekey));
+    await member.exclusive(() => member.sync());
+    const rewound = member.load();
+    expect(rewound.session!.recovery).not.toBeNull(); expect(rewound.session!.seen[id]).toBeUndefined();
+    expect(rewound.controlReceipts[0]).toMatchObject({ messageId: id, epoch: 1, valid: false });
+    expect(rewound.controlReceipts[0].sequence).toBeGreaterThan(0);
+    expect(member.controlAccepted(rewound, wire)).toBe(false);
+    const count = f.rows.length;
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow();
+    expect(f.rows).toHaveLength(count); expect(member.load().operation).toEqual(operation);
+  });
+  it('drops earlier control proof when a challenged welcome replaces the checkpoint, even on the same branch', async () => {
+    const f = fixture(), member = f.store(f.member), owner = f.store(f.owner);
+    const operation = await acceptedPending(f, member, 'rekey');
+    await owner.send('missed retained row'); f.rows.splice(f.rows.length - 1, 1);
+    await member.exclusive(() => member.sync());
+    const paused = member.load();
+    expect(paused.session!.recovery).not.toBeNull(); expect(paused.controlReceipts[0].valid).toBe(true);
+    await run(owner, 'refresh', { contact: 'Member', challenge: paused.session!.recovery!.challenge });
+    await member.exclusive(() => member.open(owner.link()));
+    const replaced = member.load();
+    expect(replaced.session!.recovery).toBeNull(); expect(replaced.session!.epoch).toBe(1);
+    expect(replaced.controlReceipts[0]).toMatchObject({ valid: false }); expect(member.controlAccepted(replaced, operation.controls[0])).toBe(false);
+    const count = f.rows.length;
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow('obsolete epoch');
+    expect(f.rows).toHaveLength(count); expect(member.load().operation).toEqual(operation);
+  });
+  it.each(['digest', 'epoch', 'zero sequence', 'future sequence', 'unbound', 'duplicate', 'extra field', 'no operation', 'excess'] as const)('refuses a %s receipt before any action', async tamper => {
+    const f = fixture(), member = f.store(f.member); await acceptedPending(f, member, 'rekey');
+    const disk = JSON.parse(readFileSync(member.filename, 'utf8')), receipt = disk.controlReceipts[0];
+    if (tamper === 'digest') receipt.digest = '00'.repeat(32);
+    else if (tamper === 'epoch') receipt.epoch += 1;
+    else if (tamper === 'zero sequence') receipt.sequence = 0;
+    else if (tamper === 'future sequence') receipt.sequence = disk.cursor + 1;
+    else if (tamper === 'unbound') receipt.messageId = '11'.repeat(16);
+    else if (tamper === 'duplicate') disk.controlReceipts.push({ ...receipt });
+    else if (tamper === 'extra field') receipt.note = 'x';
+    else if (tamper === 'no operation') disk.operation = null;
+    else disk.controlReceipts = [receipt, { ...receipt, messageId: '22'.repeat(16) }, { ...receipt, messageId: '33'.repeat(16) }];
+    writeFileSync(member.filename, JSON.stringify(disk));
+    const count = f.rows.length;
+    expect(() => member.load()).toThrow();
+    await expect(member.exclusive(() => member.resume())).rejects.toThrow();
+    expect(f.rows).toHaveLength(count);
+  });
+  it('requires a new review when acceptance proof changes between prepare and commit', async () => {
+    const f = fixture(), member = f.store(f.member), post = f.client.postMessage.bind(f.client);
+    f.client.postMessage = async () => { throw new Error('ambiguous POST'); };
+    await expect(run(member, 'rekey')).rejects.toThrow('ambiguous POST'); f.client.postMessage = post;
+    const operation = member.load().operation!, service = new QntmGroupActions(), scope = { key: 'proof-cas', store: member };
+    const exact = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(exact.review.retryMode).toBe('exact'); expect(exact.review.acceptedControls).toBe(0);
+    // Late relay acceptance of the identical ciphertext lands before commit.
+    await post(f.conversation.id, base64UrlDecode(operation.controls[0]));
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: exact.reviewToken, reviewHash: exact.reviewHash })).rejects.toThrow('configuration changed');
+    expect(f.rows).toHaveLength(1); expect(member.load().operation).toEqual(operation);
+    expect(member.load().controlReceipts[0]).toMatchObject({ valid: true, sequence: 1 });
+    const cleanup = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(cleanup.review.retryMode).toBe('accepted_cleanup'); expect(cleanup.review.acceptedControls).toBe(1);
+    // An explicit invalidation after review must also void it, even though the duplicate marker remains.
+    const disk = JSON.parse(readFileSync(member.filename, 'utf8')); disk.controlReceipts[0].valid = false; writeFileSync(member.filename, JSON.stringify(disk));
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: cleanup.reviewToken, reviewHash: cleanup.reviewHash })).rejects.toThrow('configuration changed');
+    expect(f.rows).toHaveLength(1); expect(member.load().operation).toEqual(operation);
+    const again = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(again.review.retryMode).toBe('exact'); expect(again.review.acceptedControls).toBe(0);
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: again.reviewToken, reviewHash: again.reviewHash })).rejects.toThrow('obsolete epoch');
+    expect(f.rows).toHaveLength(1); expect(member.load().operation).toEqual(operation);
+  });
+});
 describe('OpenClaw durable ordinary groups', () => {
   it.each(['expiry', 'rotation'] as const)('reviews generic founder refresh replacement after %s with its authenticated original challenge', async reason => {
     const f = fixture(), member = f.store(f.member), challenge = '84'.repeat(32);
@@ -466,6 +659,19 @@ describe('OpenClaw durable ordinary groups', () => {
     expect(restarted.load().operation).toBeNull(); expect(restarted.load().session!.root).toBe(before.session!.root);
     const opened = openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
     expect(opened.recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+  });
+  it('delivers a fresh generic founder refresh whose signed box carries existing admission provenance', async () => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const before = member.load(), count = f.rows.length;
+    expect(Object.keys(before.session!.admissions)).toEqual([toHex(f.late.keyID)]);
+    const prepared = member.prepare('refresh', { contact: 'Owner' });
+    expect(prepared.welcomePurpose).toBe('refresh');
+    expect(restoreGroupSession(f.member, prepared.expected).admissions).toEqual(before.session!.admissions);
+    await run(member, 'refresh', { contact: 'Owner' });
+    expect(member.load().operation).toBeNull(); expect(f.rows).toHaveLength(count + 1);
+    const opened = openGroupWelcome(f.owner, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('refresh'); expect(opened.admissions).toEqual(before.session!.admissions);
   });
   it('preserves founding-member generic refresh and unfinished older journals', async () => {
     const f = fixture(), member = f.store(f.member), challenge = '35'.repeat(32);

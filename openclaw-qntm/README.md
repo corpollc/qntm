@@ -156,7 +156,7 @@ The base directory is `OPENCLAW_STATE_DIR`, or `~/.openclaw` when unset. qntm ow
 | --- | --- |
 | `conversations/<conv_id>.json` | Current conversation keys/epoch, creation date/type, participant IDs and known public keys, signed gateway invitation/context, verified gateway workflow history, removal status, relay/legacy cursors, initial configuration hash, identity key ID, exact replay IDs/digests, and up to 64 pending plaintext deliveries. Current state remains until the operator removes it. No prior epoch keys are retained. Replay history is capped at 8,192 IDs; workflow history at 4,096 events and approximately 8 MiB. The complete file is capped at 16 MiB. |
 | `conversations/<conv_id>.json.gateway-bootstrap` | At most 96 KiB: sealed bootstrap ciphertext, identity/conversation/invitation/message IDs, epoch, relay/gateway URLs, gateway public key, relay sequence and expiry. Contains no plaintext conversation keys. Removed after verified acceptance on a received event; failed cleanup retries on later events. Otherwise remains until overwritten by later admission or removed by the operator, including after expiry. Expired or mismatched bootstrap cannot be retried. |
-| `groups/<conv_id>.json` | Ordinary-group identity/configuration hash and revision, current root and full roster, source replay/bootstrap cursors, saved removal sequence, recovery boundary/reason/challenge, a random local dispatch generation, up to 8,192 authenticated IDs/digests, up to 64 prior source-key/roster checkpoints, up to 256 pending ciphertext entries/4 MiB, up to 64 pending plaintext deliveries, own welcome sequence receipts, and an exact unfinished operation including expected keys. Admission recovery retains the original encrypted controls/welcome, delivery counters, recipient pin and exact admission ID/digest once, alongside the current exact repair or renewal. Superseded recovery ciphertext and delivery counters form a flat history capped at 256 revisions; original plus superseded evidence is capped at 4 MiB of canonical CBOR. At either bound, replacement is refused and the saved operation remains. Retained evidence contains no old expected plaintext roots. Prior roots authenticate competing rekeys only; eligibility lasts at most 24 hours; expired archive entries are pruned on successful receive writes. Whole file capped at 16 MiB; backups can retain earlier keys. A temporary `.lock` file contains the writer PID. |
+| `groups/<conv_id>.json` | Ordinary-group identity/configuration hash and revision, current root and full roster, source replay/bootstrap cursors, saved removal sequence, recovery boundary/reason/challenge, a random local dispatch generation, up to 8,192 authenticated IDs/digests, up to 64 prior source-key/roster checkpoints, up to 256 pending ciphertext entries/4 MiB, up to 64 pending plaintext deliveries, own welcome sequence receipts, an exact unfinished operation including expected keys, and at most two pending-control acceptance receipts (message ID, ciphertext digest, source epoch, verified relay sequence, branch validity) bound to that operation's exact controls. Admission recovery retains the original encrypted controls/welcome, delivery counters, recipient pin and exact admission ID/digest once, alongside the current exact repair or renewal. Superseded recovery ciphertext and delivery counters form a flat history capped at 256 revisions; original plus superseded evidence is capped at 4 MiB of canonical CBOR. At either bound, replacement is refused and the saved operation remains. Retained evidence contains no old expected plaintext roots. Prior roots authenticate competing rekeys only; eligibility lasts at most 24 hours; expired archive entries are pruned on successful receive writes. Whole file capped at 16 MiB; backups can retain earlier keys. A temporary `.lock` file contains the writer PID. |
 | `ingress.sqlite` and SQLite sidecars | Pending/claimed/failed plaintext deliveries: conversation and message IDs, sender key ID/public key, epoch, creation time, body type/text and gateway-verification flag; ordinary-group dispatch generation and accepted envelope digest; queue account/channel, lane, arrival/update/attempt timestamps, attempt counts and claim token/owner/heartbeat. Host exceptions are replaced by fixed failure strings. At most 1,024 pending/claimed events are admitted; full storage retains the checkpoint outbox and applies backpressure. Pending work has no time-based expiry. |
 | Completed/failed queue records | A completed row drops its plaintext payload when OpenClaw durably adopts the turn, or when a synchronous dispatch completes. Completed IDs are retained for seven days, capped at 8,192; failed records retain their payload for seven days, capped at 1,024. Pruning runs at startup and approximately hourly while the monitor runs. The SQLite main file has a 65,536-page limit (256 MiB with its default page size); sidecars and checkpoint files are additional storage. |
 
@@ -242,7 +242,7 @@ contact or permission changes. Cancel a review with `cancel` and `reviewToken`.
 | `remove` | `{ "contact": "Colleague" }` | Remove and rotate for remaining members; creator removal is rejected. |
 | `refresh` | `{ "contact": "Colleague", "challenge": "optional 64 hex" }` | Deliver current keys without rotation. Include renewal proof when this member has a known completed admission; otherwise use generic refresh. |
 | `rekey` | `{}` | Complete a pending rotation or rotate the current roster. |
-| `retry` | `{}` | Review exact retry, acknowledged-welcome cleanup, replacement rotation for the same pending admission, current-key renewal, or generic refresh for the same current recipient. Original and superseded ciphertext remain retained. |
+| `retry` | `{}` | Review exact retry, acknowledged-welcome cleanup, accepted-control cleanup, replacement rotation for the same pending admission, current-key renewal, or generic refresh for the same current recipient. Original and superseded ciphertext remain retained. |
 | `open` | `{ "link": "optional public link" }` | Reopen a pinned link for this configured group/relay. |
 | `send` | `{ "text": "Complete text to review" }` | Review and send explicit text. Normal native replies retain existing host authorization. |
 
@@ -297,6 +297,27 @@ matches its exact ciphertext, so a crash after relay acceptance cannot leave
 agent dispatch blocked behind a completed reply. This does not automatically
 POST uncertain sends or retry membership changes. Challenged welcomes are
 checked after subscription backlog replay as well as on live arrival.
+
+Acceptance of a pending control outlives the bounded replay cache. When
+authenticated receive accepts the exact ciphertext of a saved control, the same
+checkpoint write latches a receipt: message ID, canonical ciphertext digest,
+source epoch, the verified relay sequence and whether that branch is still
+canonical. Observed delivery and current canonical effect are kept apart: a
+competing-rekey rewind marks the losing rotation and everything accepted on its
+descendants invalid, and installing a challenged welcome marks every earlier
+receipt invalid because the welcome attests the sender's branch, not which
+local controls survive on it. An explicit invalidation overrides a duplicate
+marker that the rewind left in the cache. Without a receipt, only a retained
+cache marker counts; evidence evicted before this revision stays unknown. A
+relay acknowledgement, a bare message ID, a missing target or a matching
+expected root is never proof. `status` reports `acceptedControls`, and a retry
+review whose controls are all authenticated identifies `accepted_cleanup` with
+no POST; this lets a completed `remove`, `rekey` or `send` finish locally after
+real cache eviction or a later legitimate rotation. Cache-only evidence still
+requires the exact expected state. Receipts are validated against the pending
+exact wires, conversation and cursor on every load and write, drop when the
+operation is replaced or cleared, and are part of the review fingerprint, so
+proof that changes between `prepare` and `commit` requires a new review.
 The receiving client also accepts admission-renewal welcomes from the pinned
 contact. A renewal carries current keys and authenticated evidence of an existing
 admission; it does not add a member or rotate keys. It can recover delivery of a
@@ -344,7 +365,9 @@ offline cleanup path. An acknowledgement alone is not proof the recipient receiv
 New group messages remain deferred while an operation is pending. An agent turn
 already running can review retry, but inbound messages cannot start a recovery
 turn through that barrier after restart. A separate local recovery entry point
-has not yet shipped. Expired messages without authenticated acceptance and
+has not yet shipped; the native journeys stage interruptions inside an already
+admitted agent turn through a test-only hook, which does not demonstrate that a
+restarted host wakes an agent for a pending operation. Expired messages without authenticated acceptance and
 removed or superseded admission identities remain preserved and blocked.
 
 When the ADD is already authenticated but its completing rotation expired or

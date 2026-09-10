@@ -48,16 +48,25 @@ const operationSchema = z.object({
   welcomes: z.array(z.string().max(128 * 1024)).max(1), sentControls: seq.max(2), sentWelcomes: seq.max(1),
 }).strict();
 export type GroupOperation = z.infer<typeof operationSchema>;
+/** Exact acceptance evidence for one pending control, latched only from
+ * authenticated receive. Observed delivery (digest, ID, source epoch, relay
+ * sequence) is kept apart from whether that branch is still canonical. */
+const controlReceiptSchema = z.object({
+  messageId: z.string().regex(/^[0-9a-f]{32}$/), digest: z.string().regex(/^[0-9a-f]{64}$/),
+  epoch: z.number().int().min(0).max(0xffffffff), sequence: seq.min(1), valid: z.boolean(),
+}).strict();
+export type GroupControlReceipt = z.infer<typeof controlReceiptSchema>;
 const schema = z.object({
   version: z.literal(1), seed: z.string().regex(/^[0-9a-f]{64}$/), revision: seq,
   cursor: seq, bootstrap: seq, session: z.unknown().nullable(),
   pending: z.array(rowSchema).max(256), outbox: z.array(z.unknown()).max(MAX_PENDING_DISPATCHES),
   receipts: z.array(seq.min(1)).max(8192), operation: operationSchema.nullable(), removedSequence: seq,
   dispatchGeneration: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  controlReceipts: z.array(controlReceiptSchema).max(2).optional(),
 }).strict();
 export type GroupRow = z.infer<typeof rowSchema>;
-export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox' | 'dispatchGeneration'> {
-  session: GroupSessionState | null; outbox: QntmInbound[]; dispatchGeneration: string;
+export interface GroupCheckpoint extends Omit<z.infer<typeof schema>, 'session' | 'outbox' | 'dispatchGeneration' | 'controlReceipts'> {
+  session: GroupSessionState | null; outbox: QntmInbound[]; dispatchGeneration: string; controlReceipts: GroupControlReceipt[];
 }
 /** Pending host jobs are rechecked immediately before entering the agent. */
 export function groupDispatchDisposition(state: GroupCheckpoint, inbound: QntmInbound): 'dispatch' | 'defer' | 'discard' {
@@ -74,6 +83,7 @@ function group(state: GroupSessionState): GroupState {
 }
 function envelope(wire: string): OuterEnvelope { return deserializeEnvelope(base64UrlDecode(wire)); }
 function encode(value: OuterEnvelope): string { return base64UrlEncode(serializeEnvelope(value)); }
+function wireDigest(wire: string): string { return toHex(new QSP1Suite().hash(base64UrlDecode(wire))); }
 function requireValue(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 const locks = new Map<string, Promise<unknown>>();
 export class QntmGroupStore {
@@ -97,7 +107,7 @@ export class QntmGroupStore {
       const cursor = this.binding.groupSeed?.cursor ?? 0;
       seq.parse(cursor);
       return { version: 1, seed: this.seed, revision: 0, cursor, bootstrap: cursor, session,
-        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0, dispatchGeneration: dispatchGeneration() };
+        pending: [], outbox: [], receipts: [], operation: null, removedSequence: 0, dispatchGeneration: dispatchGeneration(), controlReceipts: [] };
     }
     const parsed = schema.parse(JSON.parse(raw.toString('utf8')));
     requireValue(parsed.seed === this.seed, 'Group checkpoint identity or initial configuration changed; preserve and inspect its private file');
@@ -106,7 +116,9 @@ export class QntmGroupStore {
     const outbox = parsed.outbox.map(validateInbound);
     requireValue(outbox.every(item => item.conversationId === this.binding.conversationId), 'Group dispatch conversation mismatch');
     if (parsed.operation) { restoreGroupSession(this.account.identity!, parsed.operation.expected); this.checkEvidence(parsed.operation); }
-    return { ...parsed, session, outbox, dispatchGeneration: parsed.dispatchGeneration ?? dispatchGeneration() };
+    const state = { ...parsed, session, outbox, dispatchGeneration: parsed.dispatchGeneration ?? dispatchGeneration(), controlReceipts: parsed.controlReceipts ?? [] };
+    this.checkReceipts(state);
+    return state;
   }
   save(state: GroupCheckpoint): void {
     requireValue(this.load().revision === state.revision, 'Concurrent group writer; reload before retrying');
@@ -114,8 +126,61 @@ export class QntmGroupStore {
     const next = { ...state, revision: state.revision + 1 };
     schema.parse(next);
     if (next.operation) this.checkEvidence(next.operation);
+    this.checkReceipts(next);
     writePrivateJSON(this.filename, next, 16 * 1024 * 1024);
     state.revision = next.revision;
+  }
+  /** Every receipt must name one exact pending control of this conversation at
+   * a verified relay sequence. Anything else fails closed. */
+  private checkReceipts(state: Pick<GroupCheckpoint, 'operation' | 'controlReceipts' | 'cursor'>): void {
+    const receipts = state.controlReceipts, controls = state.operation?.controls ?? [];
+    const bound = (receipt: GroupControlReceipt) => controls.some(wire => {
+      try {
+        const outer = envelope(wire);
+        return toHex(outer.msg_id) === receipt.messageId && wireDigest(wire) === receipt.digest
+          && outer.conv_epoch === receipt.epoch && toHex(outer.conv_id) === this.binding.conversationId;
+      } catch { return false; }
+    });
+    requireValue(receipts.length <= controls.length && new Set(receipts.map(receipt => receipt.messageId)).size === receipts.length
+      && receipts.every(receipt => receipt.sequence <= state.cursor && bound(receipt)),
+    'Group control receipts do not match the pending operation; preserve and inspect its private file');
+  }
+  private static receiptsFor(receipts: GroupControlReceipt[], controls: string[]): GroupControlReceipt[] {
+    const digests = new Set(controls.map(wireDigest));
+    return receipts.filter(receipt => digests.has(receipt.digest));
+  }
+  /** Latched exact evidence for one pending control, or undefined when unknown. */
+  controlReceipt(state: GroupCheckpoint, wire: string): GroupControlReceipt | undefined {
+    const digest = wireDigest(wire), id = toHex(envelope(wire).msg_id);
+    return state.controlReceipts.find(receipt => receipt.messageId === id && receipt.digest === digest);
+  }
+  /** Exact branch-valid acceptance of a pending control. A latched receipt
+   * decides first, so its explicit invalidation overrides a duplicate marker
+   * that a rewind left in the bounded cache. Without a receipt, only the
+   * retained marker counts; older evicted evidence stays unknown. No relay
+   * acknowledgement, bare ID, missing target or expected root is proof. */
+  controlAccepted(state: GroupCheckpoint, wire: string): boolean {
+    if (!state.session) return false;
+    const outer = envelope(wire), id = toHex(outer.msg_id), digest = wireDigest(wire);
+    const receipt = state.controlReceipts.find(receipt => receipt.messageId === id && receipt.digest === digest);
+    if (receipt) return receipt.valid && receipt.epoch === outer.conv_epoch && receipt.sequence > 0 && receipt.sequence <= state.cursor;
+    const known = state.session.seen[id];
+    return known?.digest === digest && known.epoch === outer.conv_epoch;
+  }
+  private latchReceipt(state: GroupCheckpoint, wire: string, outer: OuterEnvelope, sequence: number): void {
+    const digest = wireDigest(wire);
+    if (!state.operation?.controls.some(control => wireDigest(control) === digest)) return;
+    const id = toHex(outer.msg_id);
+    state.controlReceipts = [...state.controlReceipts.filter(receipt => receipt.messageId !== id),
+      { messageId: id, digest, epoch: outer.conv_epoch, sequence, valid: true }];
+  }
+  /** A canonical rewind at this source epoch supersedes every rekey that had
+   * advanced from it and everything accepted on those descendants. Controls
+   * applied at the source epoch before the rotation remain part of its frame. */
+  private invalidateRewound(state: GroupCheckpoint, sourceEpoch: number, frames: GroupSessionState['rekeys']): void {
+    const losing = new Set(frames.filter(frame => frame.epoch >= sourceEpoch).map(frame => frame.messageId));
+    state.controlReceipts = state.controlReceipts.map(receipt => receipt.epoch > sourceEpoch || losing.has(receipt.messageId)
+      ? { ...receipt, valid: false } : receipt);
   }
   /** Serialize tool, outbound and monitor writes across instances and processes. */
   async exclusive<T>(run: () => Promise<T>): Promise<T> {
@@ -148,7 +213,8 @@ export class QntmGroupStore {
     return { status: !state.session ? 'awaiting_welcome' : state.session.recovery ? 'recovery_required' : state.session.removed ? 'removed' : state.session.needsRekey ? 'rotation_required' : 'ready',
       conversationId: this.binding.conversationId, epoch: state.session?.epoch, cursor: state.cursor,
       recovery: state.session?.recovery, pendingOperation: state.operation && { id: state.operation.id, action: state.operation.action,
-        phase: state.operation.phase, welcomePurpose: state.operation.welcomePurpose },
+        phase: state.operation.phase, welcomePurpose: state.operation.welcomePurpose,
+        acceptedControls: state.operation.controls.filter(wire => this.controlAccepted(state, wire)).length },
       members: state.session ? group(state.session).snapshot().founding_members.map(member => ({ keyId: toHex(member.key_id), publicKey: base64UrlEncode(member.public_key) })) : [],
       contacts: Object.entries(this.account.config.contacts ?? {}).map(([name, key]) => ({ name, publicKey: base64UrlEncode(decodeContactKey(key)) })),
       groupLink: this.link(), permittedActions: this.binding.groupActions ?? [] };
@@ -187,7 +253,11 @@ export class QntmGroupStore {
         }
         try {
           const event = receiveGroupEvent(this.account.identity!, wire, state.session);
+          if (event.rewound) this.invalidateRewound(state, wire.conv_epoch, state.session.rekeys);
           state.session = event.state; pending.delete(sequence); progress = true;
+          // Only fresh authenticated acceptance latches proof; a duplicate marker
+          // may be a losing rekey the rewind left behind at its source epoch.
+          if (!event.duplicate) this.latchReceipt(state, row.wire, wire, sequence);
           if (event.rewound) {
             // Branch reconciliation needs proof beyond this adapter's retained
             // ciphertext. Discard undispatched plaintext before recovery.
@@ -228,9 +298,8 @@ export class QntmGroupStore {
     const state = this.load(), operation = state.operation;
     if (operation?.action !== 'send' || operation.controls.length !== 1 || operation.welcomes.length
       || !state.session || state.session.recovery || state.session.removed || state.session.needsRekey) return false;
-    const wire = base64UrlDecode(operation.controls[0]), outer = deserializeEnvelope(wire);
-    if (state.session.seen[toHex(outer.msg_id)]?.digest !== toHex(new QSP1Suite().hash(wire))) return false;
-    state.operation = null; this.save(state); return true;
+    if (!this.controlAccepted(state, operation.controls[0])) return false;
+    state.operation = null; state.controlReceipts = []; this.save(state); return true;
   }
   async open(link = this.binding.groupLink): Promise<void> {
     requireValue(link, 'Configure a public group link from a pinned contact');
@@ -273,6 +342,9 @@ export class QntmGroupStore {
       } catch { continue; }
       state.session = next; state.cursor = replayFromSequence; state.bootstrap = replayFromSequence; state.pending = []; state.outbox = [];
       state.dispatchGeneration = dispatchGeneration();
+      // The installed welcome attests the sender's branch, not which of our
+      // earlier controls survive on it. Replay below can latch fresh proof.
+      state.controlReceipts = state.controlReceipts.map(receipt => ({ ...receipt, valid: false }));
       this.save(state); this.receive(rows.filter(item => item.seq > replayFromSequence), result.sequence, true); return;
     }
     throw new Error('No current welcome for this identity; retain the profile and ask a current member for a challenged refresh or explicit readmission');
@@ -294,8 +366,10 @@ export class QntmGroupStore {
         : welcomePurpose === 'renewal' ? prepareGroupAdmissionRenewal(identity, session, recipient!,
           { addId: admission!.addId, addDigest: admission!.addDigest }, undefined, challenge, state.cursor)
           : prepareGroupWelcomeRefresh(identity, session, [recipient!], undefined, challenge, state.cursor);
+      // A refresh seals the full current admission map; its expected checkpoint
+      // must carry the same map so the signed intent can be compared on retry.
       expected = createGroupSession(identity, value.conversation, value.state, { signedEpoch: session.signedEpoch,
-        ...(welcomePurpose === 'renewal' ? { admissions: (value as GroupAdmissionRenewal).admissions } : {}) });
+        ...(action === 'refresh' ? { admissions: welcomePurpose === 'renewal' ? (value as GroupAdmissionRenewal).admissions : session.admissions } : {}) });
       if (action === 'add') controls = [(value as GroupAddition).addition, (value as GroupAddition).rekey];
       welcomes = value.welcomes;
     } else if (action === 'rekey') {
@@ -316,7 +390,7 @@ export class QntmGroupStore {
   }
   saveOperation(operation: GroupOperation): void {
     const state = this.load(); requireValue(!state.operation, 'An exact group operation is already pending');
-    state.operation = operationSchema.parse(operation); this.save(state);
+    state.operation = operationSchema.parse(operation); state.controlReceipts = []; this.save(state);
   }
   private additionProof(state: GroupCheckpoint, operation: GroupOperation) {
     const controls = operation.origin?.controls ?? operation.controls;
@@ -543,7 +617,9 @@ export class QntmGroupStore {
   saveRetry(operation: GroupOperation): void {
     const state = this.load();
     requireValue(state.operation?.id === operation.id, 'Pending operation changed before retry');
-    state.operation = operationSchema.parse(operation); this.save(state);
+    state.operation = operationSchema.parse(operation);
+    // Superseded controls keep only their flat 'unknown' evidence; receipts follow exact pending wires.
+    state.controlReceipts = QntmGroupStore.receiptsFor(state.controlReceipts, state.operation.controls); this.save(state);
   }
   /** Caller owns the writer lock through replay, every POST and its journal write. */
   async resume(): Promise<number | undefined> {
@@ -554,7 +630,7 @@ export class QntmGroupStore {
     // This is only local journal cleanup. Acknowledged welcomes need no new
     // network publication or current membership authority after a later change.
     if (operation.welcomes.length && operation.sentWelcomes === operation.welcomes.length) {
-      state.operation = null; this.save(state); return;
+      state.operation = null; state.controlReceipts = []; this.save(state); return;
     }
     requireValue(state.session && !state.session.recovery && !state.session.removed, 'No retryable group operation or recovery is required');
     this.checkContact(operation);
@@ -592,15 +668,14 @@ export class QntmGroupStore {
           'Original addition is no longer safe to publish; preserve it for reconciliation');
           else requireValue(proof, 'Original addition is no longer the current admission');
         }
-        const verified = state.session.seen[toHex(outer.msg_id)]?.digest === toHex(new QSP1Suite().hash(base64UrlDecode(wire)));
         // Receiver support for delayed competing rekeys is not permission to
         // publish a newly obsolete local operation. Only exact replay can skip it.
-        requireValue(verified || outer.conv_epoch === state.session.epoch,
-          'Unaccepted saved control targets an obsolete epoch; preserve it for reconciliation');
-        requireValue(verified || outer.expiry_ts >= Math.floor(Date.now() / 1000),
-          'Saved group operation expired; preserve it for reconciliation');
-        const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
-        if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
+        if (!this.controlAccepted(state, wire)) {
+          requireValue(outer.conv_epoch === state.session.epoch, 'Unaccepted saved control targets an obsolete epoch; preserve it for reconciliation');
+          requireValue(outer.expiry_ts >= Math.floor(Date.now() / 1000), 'Saved group operation expired; preserve it for reconciliation');
+          const preflight = receiveGroupEvent(this.account.identity!, outer, state.session);
+          if (!preflight.duplicate) publishedSequence = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
+        }
       }
       state = this.load(); operation = state.operation!; operation.sentControls++; this.save(state);
     }
@@ -609,12 +684,15 @@ export class QntmGroupStore {
     const expected = restoreGroupSession(this.account.identity!, operation.expected);
     assertGroupCanSend(this.account.identity!, state.session);
     if (operation.action === 'add' && !operation.origin) this.assertExactAddition(state, operation);
-    else for (const wire of operation.controls) {
-      const outer = envelope(wire);
-      requireValue(state.session.seen[toHex(outer.msg_id)]?.digest === toHex(new QSP1Suite().hash(base64UrlDecode(wire))), 'Exact saved control or send has not been accepted');
-    }
-    requireValue(operation.action === 'send' || state.session.root === expected.root && state.session.epoch === expected.epoch && state.session.snapshot === expected.snapshot,
-      'Pending group operation no longer matches accepted state; preserve it for reconciliation');
+    else for (const wire of operation.controls) requireValue(this.controlAccepted(state, wire), 'Exact saved control or send has not been accepted');
+    // Latched receipts stay valid only while their branch is canonical, so a
+    // fully receipted control set may finish after a later legitimate rotation.
+    // Cache-only evidence cannot establish that lineage and stays exact.
+    const receipted = operation.controls.length > 0 && !operation.welcomes.length
+      && operation.controls.every(wire => this.controlReceipt(state, wire)?.valid);
+    requireValue(operation.action === 'send' || state.session.root === expected.root && state.session.epoch === expected.epoch && state.session.snapshot === expected.snapshot
+      || receipted && state.session.epoch > expected.epoch,
+    'Pending group operation no longer matches accepted state; preserve it for reconciliation');
     const base = this.welcomeBase(operation);
     if (operation.welcomePurpose === 'renewal') this.assertRenewal(state, operation);
     else if (operation.action === 'refresh') {
@@ -627,7 +705,7 @@ export class QntmGroupStore {
       const receipt = await this.client.postMessage(this.binding.conversation.id, base64UrlDecode(wire));
       state = this.load(); operation = state.operation!; operation.sentWelcomes++; state.receipts.push(receipt); this.save(state);
     }
-    state = this.load(); state.operation = null; this.save(state);
+    state = this.load(); state.operation = null; state.controlReceipts = []; this.save(state);
     return publishedSequence;
   }
   async send(text: string): Promise<{ messageId: string; sequence: number }> {
