@@ -7,6 +7,7 @@ import {
   createGroupGenesisBody, parseGroupGenesisBody, createGroupSession, base64UrlEncode, base64UrlDecode, serializeEnvelope, deserializeEnvelope,
   openGroupWelcome, groupSessionFromWelcome, createMessage, groupSessionConversation, prepareGroupWelcomeRefresh,
   receiveGroupEvent, createGroupControlMessage, createGroupRemoveBody, prepareGroupSessionRekey, restoreGroupSession,
+  prepareGroupAdmissionRenewal, prepareGroupSessionAddition,
   type Identity, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { QntmGroupStore, groupDispatchDisposition, type GroupTransport } from '../src/group-store.js';
@@ -44,6 +45,73 @@ async function run(store: QntmGroupStore, action: Parameters<QntmGroupStore['pre
   await store.exclusive(async () => { await store.sync(); store.saveOperation(store.prepare(action, options)); await store.resume(); });
 }
 describe('OpenClaw durable ordinary groups', () => {
+  it.each([false, true])('prefers a current renewal over a later replayed addition welcome (rotated=%s)', async rotated => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const oldWelcome = f.rows.at(-1)!.envelope;
+    if (rotated) await run(member, 'rekey');
+    const state = member.load(), admission = state.session!.admissions[toHex(f.late.keyID)];
+    const renewal = prepareGroupAdmissionRenewal(f.member, state.session!, f.late.publicKey,
+      { addId: admission.addId, addDigest: admission.addDigest }, undefined, undefined, state.cursor);
+    const opened = openGroupWelcome(f.late, serializeEnvelope(renewal.welcomes[0]),
+      { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('renewal'); expect(opened).not.toHaveProperty('rekeyId');
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(renewal.welcomes[0]));
+    await f.client.postMessage(f.conversation.id, oldWelcome);
+    const late = f.store(f.late, undefined, member.link());
+    await late.exclusive(() => late.open());
+    expect(late.load().session!.epoch).toBe(rotated ? 2 : 1);
+    expect(late.load().session!.rekeys).toEqual([]);
+    expect(late.load().bootstrap).toBe(state.cursor);
+    expect(late.load().session!.admissions[toHex(f.late.keyID)]).toEqual(admission);
+    await late.send('native renewal uses current keys');
+    await member.exclusive(() => member.sync());
+    expect(member.load().outbox.at(-1)!.text).toBe('native renewal uses current keys');
+  });
+  it('keeps saved removal against old renewals, then accepts renewed delivery of a later expired readmission', async () => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const late = f.store(f.late, undefined, member.link());
+    await late.exclusive(() => late.open());
+    const before = member.load(), oldAdmission = before.session!.admissions[toHex(f.late.keyID)];
+    const oldRenewal = prepareGroupAdmissionRenewal(f.member, before.session!, f.late.publicKey,
+      { addId: oldAdmission.addId, addDigest: oldAdmission.addDigest }, undefined, undefined, before.cursor);
+    await run(member, 'remove', { contact: 'Late' });
+    await late.exclusive(() => late.sync());
+    expect(late.load().session!.removedAtEpoch).toBe(1);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(oldRenewal.welcomes[0]));
+    await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
+    expect(late.load().session!.removed).toBe(true);
+
+    await member.exclusive(() => member.sync());
+    const current = member.load(), readmission = prepareGroupSessionAddition(f.member, current.session!, [f.late.publicKey], 1,
+      undefined, current.cursor);
+    for (const envelope of [readmission.addition, readmission.rekey, readmission.welcomes[0]]) {
+      await f.client.postMessage(f.conversation.id, serializeEnvelope(envelope));
+    }
+    await member.exclusive(() => member.sync());
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((readmission.welcomes[0].expiry_ts + 1) * 1000);
+    await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
+    expect(late.load().session!.removed).toBe(true);
+    const admitted = member.load(), admission = admitted.session!.admissions[toHex(f.late.keyID)];
+    const refreshed = prepareGroupWelcomeRefresh(f.member, admitted.session!, [f.late.publicKey], undefined, undefined, admitted.cursor);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
+    await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
+    const renewal = prepareGroupAdmissionRenewal(f.member, admitted.session!, f.late.publicKey,
+      { addId: admission.addId, addDigest: admission.addDigest }, undefined, undefined, admitted.cursor);
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(renewal.welcomes[0]));
+    // A later generic refresh is ineligible for saved removal; candidate
+    // fallback must still reach the valid renewal of the later admission.
+    await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
+    await late.exclusive(() => late.open());
+    expect(late.load().session!.removed).toBe(false);
+    expect(late.load().session!.epoch).toBe(3);
+    expect(late.load().session!.rekeys).toEqual([]);
+    expect(late.load().session!.admissions[toHex(f.late.keyID)].sourceEpoch).toBe(2);
+    await late.send('native readmission renewal reply');
+    await member.exclusive(() => member.sync());
+    expect(member.load().outbox.at(-1)!.text).toBe('native readmission renewal reply');
+  });
   it('allows a noncreator member to add, opens a key-free contact link, and exchanges encrypted replies', async () => {
     const f = fixture(), member = f.store(f.member);
     await run(member, 'add', { contact: 'Late' });

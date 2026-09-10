@@ -15,7 +15,7 @@ import {
   assertGroupCanSend, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey,
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, createGroupControlMessage, createGroupRemoveBody,
   createGroupSession, createMessage, keyIDFromPublicKey, unmarshalCanonical,
-  type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type OuterEnvelope,
+  type GroupSessionState, type GroupAddition, type GroupWelcomeRefresh, type GroupWelcome, type OuterEnvelope,
 } from '@corpollc/qntm';
 import { readBoundedFile, writePrivateJSON } from './storage.js';
 import { validateInbound, inboundId, MAX_PENDING_DISPATCHES, type QntmInbound } from './checkpoint.js';
@@ -227,11 +227,26 @@ export class QntmGroupStore {
       this.receive(rows, result.sequence); state = this.load();
       if (!state.session!.removed && !state.session!.needsRekey && !state.session!.recovery) return;
     }
-    const candidates = rows.toSorted((a, b) => b.seq - a.seq);
-    for (const row of candidates) {
+    const candidates: Array<{ row: GroupRow; opened: GroupWelcome }> = [];
+    for (const row of rows) {
+      try {
+        candidates.push({ row, opened: openGroupWelcome(this.account.identity!, base64UrlDecode(row.wire),
+          { inviterPublicKey: locator.inviterPublicKey, conversationId: locator.conversationId }) });
+      } catch { /* Not a valid unexpired welcome from this pinned contact. */ }
+    }
+    candidates.sort((a, b) => {
+      const epoch = b.opened.conversation.currentEpoch - a.opened.conversation.currentEpoch;
+      if (epoch) return epoch;
+      const aAddition = a.opened.purpose === 'addition', bAddition = b.opened.purpose === 'addition';
+      if (aAddition !== bAddition) return aAddition ? 1 : -1;
+      // Renewals carry historical admission evidence, not a fresh rekey ID.
+      if (a.opened.purpose !== 'addition' || b.opened.purpose !== 'addition') return b.row.seq - a.row.seq;
+      const aId = toHex(a.opened.rekeyId), bId = toHex(b.opened.rekeyId);
+      return aId < bId ? -1 : aId > bId ? 1 : b.row.seq - a.row.seq;
+    });
+    for (const { row, opened } of candidates) {
       let next: GroupSessionState, replayFromSequence: number;
       try {
-        const opened = openGroupWelcome(this.account.identity!, base64UrlDecode(row.wire), { inviterPublicKey: locator.inviterPublicKey, conversationId: locator.conversationId });
         if (state.removedSequence && opened.purpose === 'addition' && row.seq <= state.removedSequence) continue;
         next = groupSessionFromWelcome(this.account.identity!, opened, row.seq, state.session ?? undefined);
         // A complete sequence can still hide an old-source competing rekey
