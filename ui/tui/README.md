@@ -50,7 +50,7 @@ receive no pre-admission keys or history.
 | `/group refresh <contact>` | Deliver current keys to an existing member without changing membership |
 | `/group link` | Show your public locator for contacts whose welcomes you issued |
 | `/group status` | Show epoch, member count, relay, unfinished operation and recovery challenge |
-| `/group retry` | Resume the exact saved operation after uncertain delivery |
+| `/group retry` | Check current group state and continue a saved operation |
 | `/group rekey` | Finish an interrupted membership rotation |
 | `/contact list` | Show full locally pinned addresses |
 | `/contact remove <name>` | Delete a local pin without changing group membership |

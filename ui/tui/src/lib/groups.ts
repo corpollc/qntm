@@ -166,7 +166,7 @@ export class GroupBridge {
     if (state?.recovery) parts.push(`Missing history after sequence ${state.recovery.afterSequence} (${state.recovery.reason}).`,
       `Recovery challenge: ${state.recovery.challenge}`,
       'Send this challenge to a current member through your existing contact channel. They use /group refresh <your-contact> --challenge <challenge>, then you /join their returned public link. A refresh cannot undo removal.');
-    if (record.groupOperation) parts.push(`Saved operation: ${record.groupOperation}; /group retry sends its exact saved ciphertext.`);
+    if (record.groupOperation) parts.push(`Saved operation: ${record.groupOperation}; /group retry checks current group state before continuing.`);
     return parts.join('\n');
   }
 
