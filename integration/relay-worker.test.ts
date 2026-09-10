@@ -13,7 +13,7 @@ import { GroupState, createInvite, createConversation, deriveConversationKeys, c
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink, isGroupWelcomeEnvelope,
   createGroupSession, restoreGroupSession, receiveGroupEvent, assertGroupAdditionAccepted,
   createGroupControlMessage, createGroupRemoveBody, createRekey, assertGroupCanSend,
-  groupSessionFromWelcome, checkGroupReplayCoverage,
+  groupSessionFromWelcome, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch,
   DropboxClient } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 
@@ -415,9 +415,10 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const locator = parseGroupLink(prepared.group_link);
     const relay = new DropboxClient(locator.relayUrl);
     const replay = await relay.receiveMessages(locator.conversationId);
-    const welcome = replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!;
-    const joined = openGroupWelcome(contact, welcome, locator);
-    let checkpoint = createGroupSession(contact, joined.conversation, joined.state);
+    const welcome = replay.entries.find(row => isGroupWelcomeEnvelope(deserializeEnvelope(row.envelope)))!;
+    const joined = openGroupWelcome(contact, welcome.envelope, locator);
+    let checkpoint = checkGroupWelcomeReplay(groupSessionFromWelcome(contact, joined, welcome.seq), joined, replay.sequence, replay.entries);
+    assertGroupCanSend(contact, checkpoint);
     expect(() => decryptMessage(deserializeEnvelope(replay.messages[1]), joined.conversation)).toThrow();
     const refreshed = await invoke('refresh', prepared.conversation_id);
     expect(refreshed).toMatchObject({ group_link: prepared.group_link, epoch: 1 });
@@ -432,6 +433,8 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(finished).toMatchObject({ received_reply: true, epoch: 2 });
     checkpoint = restoreGroupSession(contact, JSON.parse(JSON.stringify(checkpoint)));
     const changes = await relay.receiveMessages(locator.conversationId, replay.sequence);
+    checkpoint = checkGroupReplayCoverage(checkpoint, replay.sequence, changes.sequence, changes.entries.map(row => row.seq));
+    for (const row of changes.entries) checkpoint = checkGroupUnverifiableEpoch(checkpoint, deserializeEnvelope(row.envelope), row.seq);
     let sawExcludedMessage = false;
     for (const wire of changes.messages) {
       const envelope = deserializeEnvelope(wire);
@@ -461,8 +464,10 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const prepared = await invoke('prepare', Buffer.from(peer.publicKey).toString('hex'));
     const locator = parseGroupLink(prepared.group_link), relay = new DropboxClient(relayUrl);
     const replay = await relay.receiveMessages(locator.conversationId);
-    const welcome = openGroupWelcome(peer, replay.messages.find(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire)))!, locator);
-    const initial = groupSessionFromWelcome(peer, welcome, replay.sequence);
+    const welcomeRow = replay.entries.find(row => isGroupWelcomeEnvelope(deserializeEnvelope(row.envelope)))!;
+    const welcome = openGroupWelcome(peer, welcomeRow.envelope, locator);
+    const initial = checkGroupWelcomeReplay(groupSessionFromWelcome(peer, welcome, welcomeRow.seq), welcome, replay.sequence, replay.entries);
+    assertGroupCanSend(peer, initial);
     const missed = await invoke('missed', prepared.conversation_id);
     await delay(65_000); // Actual Worker retention and alarm, not a mocked clock.
     const expired = await relay.receiveMessages(locator.conversationId, replay.sequence);
@@ -474,7 +479,8 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const fresh = await relay.receiveMessages(locator.conversationId, expired.sequence);
     expect(fresh.messages).toHaveLength(1);
     const opened = openGroupWelcome(peer, fresh.messages[0], locator);
-    const recovered = groupSessionFromWelcome(peer, opened, fresh.sequence, restoreGroupSession(peer, JSON.parse(JSON.stringify(blocked))));
+    const recovered = checkGroupWelcomeReplay(groupSessionFromWelcome(peer, opened, fresh.entries[0].seq,
+      restoreGroupSession(peer, JSON.parse(JSON.stringify(blocked)))), opened, fresh.sequence, fresh.entries);
     assertGroupCanSend(peer, recovered);
     expect(recovered.root).toBe(initial.root);
     const reply = createMessage(peer, opened.conversation, 'text', new TextEncoder().encode('TypeScript contact reply'));
