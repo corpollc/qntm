@@ -115,9 +115,16 @@ checkpoint after the bounded replay cache forgets that ID: exact ciphertext
 digest, source epoch, positive verified sequence, and a still-valid branch
 binding. A losing rekey, its descendants, or a replacement welcome leave
 invalidated receipts, which override a leftover cache entry and are not
-completion proof. HTTP acknowledgements, message IDs alone, expected roots, and
+completion proof. Duplicate receipt identities are rejected on restore;
+invalidation of a matching id and digest wins even if an earlier copy is still
+marked valid. HTTP acknowledgements, message IDs alone, expected roots, and
 application history are not used. Missing evidence in older backups stays
-unknown. A completed addition with a still-current, unexpired welcome retries its exact
+unknown. Host unit tests and the live browser journey fill the legal 8192 seen
+bound with synthetic unrelated pressure markers while keeping the accepted
+control's id, digest and epoch, then a real signed peer message drives the
+reducer's own eviction. They do not delete that marker, invent a receipt, or
+send thousands of network messages. After restart and a later current rotation,
+**Retry saved operation** finishes without posting the obsolete control. A completed addition with a still-current, unexpired welcome retries its exact
 ciphertext, even if the bounded replay cache has evicted its controls. If the
 delivery window expired or another accepted rotation changed the current keys,
 retry sends a renewal only when the same exact addition still proves the

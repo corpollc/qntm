@@ -140,6 +140,7 @@ export function validateBackup(json: string): StoreData {
         if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
         for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
         if (host.controlReceipts !== undefined) {
+          const identities: string[] = []
           for (const row of list(host.controlReceipts, 'group control receipts', MAX_GROUP_CONTROL_RECEIPTS)) {
             const item = object(row, 'group control receipt', ['id', 'digest', 'epoch', 'sequence', 'valid', 'bodyType'])
             hex(item.id, 16, 'control receipt id'); hex(item.digest, 32, 'control receipt digest')
@@ -147,7 +148,9 @@ export function validateBackup(json: string): StoreData {
             if (item.sequence > host.cursor) fail('control receipt sequence exceeds cursor')
             if (typeof item.valid !== 'boolean') fail('control receipt validity')
             if (!['group_genesis', 'group_add', 'group_remove', 'group_rekey'].includes(item.bodyType)) fail('control receipt body type')
+            identities.push(`${item.id}:${item.digest}`)
           }
+          unique(identities, 'duplicate control receipt identity')
         }
         if (host.operation !== null) {
           const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission', 'recoveryChallenge', 'origin', 'superseded'])

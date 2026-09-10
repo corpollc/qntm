@@ -378,6 +378,160 @@ for (const phase of ['completed', 'partial'] as const) test(`browser retries a $
 })
 
 
+test('browser retries a completed rekey after synthetic cache pressure, authenticated eviction, restart and a later rotation', async ({ page }) => {
+  test.setTimeout(60_000)
+  const directory = await mkdtemp(join(tmpdir(), 'qntm-browser-control-receipt-'))
+  const command = async (...args: string[]) => JSON.parse((await promisify(execFile)(process.env.QNTM_TEST_PYTHON || 'python3',
+    [resolve('tests/e2e/fixtures/python-group-peer.py'), directory, ...args], {
+      env: { ...process.env, PYTHONPATH: resolve('../../python-dist/src') }, timeout: 45_000,
+    })).stdout)
+  try {
+    const python = await command('identity'), other = generateIdentity()
+    await page.goto('/'); await contacts(page)
+    await page.getByLabel('Contact name', { exact: true }).fill('Short')
+    await page.getByLabel('Full public key', { exact: true }).fill('ab')
+    await page.getByLabel('I checked this key with the contact').check()
+    await page.getByRole('button', { name: 'Pin contact', exact: true }).click()
+    await expect(page.getByRole('alert')).toBeVisible()
+    await page.getByLabel('Contact name', { exact: true }).fill('Python colleague')
+    await page.getByLabel('Full public key', { exact: true }).fill(python.public_key)
+    await page.getByLabel('I checked this key with the contact').check()
+    await page.getByRole('button', { name: 'Pin contact', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Contact pinned' })).toBeVisible()
+    await pin(page, 'TypeScript colleague', other)
+    await page.getByLabel('Group name', { exact: true }).fill('Control receipt journey')
+    await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+    const link = await add(page, 'TypeScript colleague')
+    expect(await add(page, 'Python colleague')).toBe(link)
+    await command('command', 'group', 'join', link)
+    await expect(page.getByText('3 members · key epoch 2')).toBeVisible()
+    const ts = await peerOpen(other, link)
+    const saved = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return { profile: data.activeProfileId, record: data.conversations[data.activeProfileId][0] }
+    })
+    const id = saved.record.id, current = saved.record.group.session as GroupSessionState
+    const pending = prepareGroupSessionRekey(browserIdentity, current)
+    const expected = receiveGroupEvent(browserIdentity, pending.rekey, current).state
+    const pendingWire = serializeEnvelope(pending.rekey), mid = hex(pending.rekey.msg_id)
+    // ACK-uncertain journal: the control is published on the real relay, but the
+    // saved operation is not finished. Authenticated receive must latch the receipt.
+    await page.evaluate(({ profile, id, operation }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const record = data.conversations[profile].find((row: { id: string }) => row.id === id)
+      record.group.operation = operation; record.group.revision++
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { profile: saved.profile, id, operation: { kind: 'rekey', controls: [base64UrlEncode(pendingWire)], welcomes: [], delivered: 0, expected } })
+    await new DropboxClient(relay.url).postMessage(parseGroupLink(link).conversationId, pendingWire)
+    await page.reload(); await contacts(page)
+    await expect(page.getByRole('button', { name: 'Retry saved operation', exact: true })).toBeVisible()
+    await expect(page.getByText('3 members · key epoch 3')).toBeVisible()
+    const afterAuth = await page.evaluate(({ cid, mid }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      const seen = group.session.seen[mid]
+      return {
+        pending: !!group.operation, kind: group.operation?.kind, seen: !!seen, digest: seen?.digest, epoch: seen?.epoch,
+        receipt: (group.controlReceipts ?? []).find((row: { id: string }) => row.id === mid),
+        root: group.session.root, groupEpoch: group.session.epoch,
+      }
+    }, { cid: id, mid })
+    expect(afterAuth.pending).toBe(true); expect(afterAuth.kind).toBe('rekey')
+    expect(afterAuth.seen).toBe(true); expect(afterAuth.receipt?.valid).toBe(true)
+    expect(afterAuth.receipt?.id).toBe(mid); expect(afterAuth.receipt?.digest).toBe(afterAuth.digest)
+    expect(afterAuth.groupEpoch).toBe(3)
+    await catchUpPeer(other, ts)
+    expect(ts.state.epoch).toBe(3)
+    // Synthetic unrelated pressure to the legal 8192 seen bound. The accepted
+    // control's id/digest/epoch are preserved; they are not deleted and no fake
+    // receipt is invented. Real signed peer texts then drive reducer eviction.
+    await page.evaluate(({ cid, mid }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      const kept = group.session.seen[mid], next: Record<string, { digest: string; epoch: number }> = { [mid]: kept }
+      for (let index = 1; Object.keys(next).length < 8192; index++) {
+        const dummy = index.toString(16).padStart(32, '0')
+        if (!next[dummy]) next[dummy] = { digest: '00'.repeat(32), epoch: 0 }
+      }
+      group.session.seen = next
+      localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { cid: id, mid })
+    await page.reload(); await contacts(page)
+    await expect(page.getByRole('button', { name: 'Retry saved operation', exact: true })).toBeVisible()
+    const pressured = await page.evaluate(({ cid, mid }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      return { size: Object.keys(group.session.seen).length, kept: group.session.seen[mid], first: Object.keys(group.session.seen)[0] }
+    }, { cid: id, mid })
+    expect(pressured.size).toBe(8192); expect(pressured.first).toBe(mid)
+    expect(pressured.kept.digest).toBe(afterAuth.digest); expect(pressured.kept.epoch).toBe(afterAuth.epoch)
+    await ts.relayClient.postMessage(ts.locator.conversationId,
+      serializeEnvelope(createMessage(other, groupSessionConversation(ts.state), 'text', new TextEncoder().encode('eviction trigger'))))
+    await expect(page.locator('.message-body', { hasText: 'eviction trigger' })).toBeVisible()
+    const evicted = await page.evaluate(({ cid, mid }) => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      return { seen: !!group.session.seen[mid], receipt: (group.controlReceipts ?? []).find((row: { id: string }) => row.id === mid), pending: !!group.operation, size: Object.keys(group.session.seen).length }
+    }, { cid: id, mid })
+    expect(evicted.seen).toBe(false); expect(evicted.receipt?.valid).toBe(true); expect(evicted.pending).toBe(true)
+    expect(evicted.size).toBe(8192)
+    await page.reload(); await contacts(page)
+    await expect(page.getByRole('button', { name: 'Retry saved operation', exact: true })).toBeVisible()
+    const rotation = prepareGroupSessionRekey(other, ts.state)
+    await ts.relayClient.postMessage(ts.locator.conversationId, serializeEnvelope(rotation.rekey))
+    ts.state = receiveGroupEvent(other, rotation.rekey, ts.state).state
+    await expect(page.getByText('3 members · key epoch 4')).toBeVisible()
+    const beforeRetry = await page.evaluate(cid => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      return { root: group.session.root, epoch: group.session.epoch, expected: group.operation.expected.root }
+    }, id)
+    expect(beforeRetry.epoch).toBe(4); expect(beforeRetry.root).toBe(ts.state.root)
+    expect(beforeRetry.root).not.toBe(beforeRetry.expected)
+    const retry = page.getByRole('button', { name: 'Retry saved operation', exact: true })
+    await retry.scrollIntoViewIfNeeded()
+    await expect(retry).toBeEnabled()
+    await page.screenshot({ path: '/tmp/qntm-grok-browser-receipt-retry-before.png' })
+    await test.info().attach('control-receipt-retry-before', { body: await page.screenshot(), contentType: 'image/png' })
+    const posted: Uint8Array[] = []
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/send') posted.push(new Uint8Array(Buffer.from(request.postDataJSON().envelope_b64, 'base64')))
+    })
+    await retry.click()
+    await expect(page.getByRole('status').filter({ hasText: 'Saved operation completed' })).toBeVisible({ timeout: 15_000 })
+    expect(posted.some(wire => hex(deserializeEnvelope(wire).msg_id) === mid)).toBe(false)
+    expect(posted.some(wire => base64UrlEncode(wire) === base64UrlEncode(pendingWire))).toBe(false)
+    const afterRetry = await page.evaluate(cid => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      const group = data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group
+      return { operation: group.operation, root: group.session.root, epoch: group.session.epoch }
+    }, id)
+    expect(afterRetry.operation).toBeNull(); expect(afterRetry.root).toBe(ts.state.root); expect(afterRetry.epoch).toBe(4)
+    await command('command', 'recv', id)
+    await command('command', 'send', id, 'Python reads the current rotated keys')
+    await expect(page.locator('.message-body', { hasText: 'Python reads the current rotated keys' })).toBeVisible()
+    await page.getByPlaceholder('Type a message').fill('Browser reply on the current root')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.locator('.message-body', { hasText: 'Browser reply on the current root' })).toBeVisible()
+    const received = await command('command', 'recv', id)
+    expect(received.messages.some((message: { unsafe_body: string }) => message.unsafe_body === 'Browser reply on the current root')).toBe(true)
+    await page.screenshot({ path: '/tmp/qntm-grok-browser-receipt-retry-after.png' })
+    await test.info().attach('control-receipt-retry-after', { body: await page.screenshot(), contentType: 'image/png' })
+    await page.getByLabel('Pinned contact', { exact: true }).selectOption({ label: 'Python colleague' })
+    await page.getByRole('button', { name: 'Remove from group', exact: true }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Python colleague removed' })).toBeVisible()
+    await command('command', 'recv', id)
+    await expect(command('command', 'send', id, 'removed peer cannot send')).rejects.toThrow(/removed/i)
+    await expect(page.getByText('2 members · key epoch 5')).toBeVisible()
+    const finalRoot = await page.evaluate(cid => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!)
+      return data.conversations[data.activeProfileId].find((row: { id: string }) => row.id === cid).group.session.root
+    }, id)
+    expect(finalRoot).not.toBe(ts.state.root)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
 test('browser recovers retained-history loss with its signed challenge and preserves its name when reopening', async ({ page }) => {
   test.skip(!!process.env.QNTM_BROWSER_RELAY_URL, 'Deterministic retained-row omission is exercised by the relay fixture')
   await page.goto('/'); await contacts(page)

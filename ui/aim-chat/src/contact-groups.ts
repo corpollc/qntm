@@ -114,12 +114,14 @@ export function controlAccepted(group: store.StoredGroup, wire: string) {
   const envelope = deserializeEnvelope(base64UrlDecode(wire)), mid = hex(envelope.msg_id), digest = hex(suite.hash(base64UrlDecode(wire)))
   const known = group.session.seen[mid]
   if (known && known.digest !== digest) throw new Error('Saved control conflicts with accepted ciphertext')
+  let accepted = false
   for (const receipt of group.controlReceipts ?? []) {
     if (receipt.id !== mid || receipt.digest !== digest) continue
     if (receipt.valid === false) return false
     if (receipt.valid === true && receipt.epoch === envelope.conv_epoch && Number.isSafeInteger(receipt.sequence)
-      && receipt.sequence > 0 && receipt.sequence <= group.cursor && CONTROL_BODY_TYPES.has(receipt.bodyType)) return true
+      && receipt.sequence > 0 && receipt.sequence <= group.cursor && CONTROL_BODY_TYPES.has(receipt.bodyType)) accepted = true
   }
+  if (accepted) return true
   return Boolean(known && known.epoch === envelope.conv_epoch)
 }
 function invalidateHistory(history: store.StoredMessage[], afterEpoch = -1) {
