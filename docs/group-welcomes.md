@@ -215,6 +215,26 @@ can leave the operation preserved until explicit local reconciliation is availab
 Remaining unproven-removal recovery is tracked under `qntm-ra0e`; broader
 recovery remains `qntm-qp22`.
 
+Python CLI/MCP provides an explicit local escape for a removal that was never
+verified and can no longer be retried exactly:
+
+```sh
+qntm group retry CONVERSATION --release-unproven
+```
+
+MCP exposes the same action as `group_retry(conversation, release_unproven=True)`.
+After complete replay, this moves the uncertain operation into a private local
+archive and releases its ownership of the retry slot. It sends nothing and
+changes no membership. It refuses verified or still-exactly-retryable removals,
+incomplete history, and unrelated operation kinds. Removed-member and pending
+rotation barriers remain in force. A fresh removal is a separate explicit action
+against current membership; release cannot revoke old ciphertext that might
+arrive later. The archive retains original and superseded ciphertext, target
+pins, delivery counts, reason and time, but omits predicted keys. At 256 entries
+or 4 MiB, release refuses rather than discarding uncertain evidence. This archive
+stays on the client and is not sent to the relay. Browser, terminal and OpenClaw
+release controls remain tracked under `qntm-ra0e`.
+
 Saved **generic refreshes** for founding members or checkpoints without admission
 proof can also be retried after expiry or a later rotation. Maintained clients
 authenticate the original signed recipient box and optional recovery challenge,
