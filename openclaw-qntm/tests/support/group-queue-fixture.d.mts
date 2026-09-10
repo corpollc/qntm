@@ -11,6 +11,12 @@ export function stageGenericGroupRefresh(config: unknown, stateDir: string, cont
   expiry: number; original: { welcomes: string[] }; cursor: number; currentRoot: string;
 }>;
 
+export function stagePendingGroupRemoval(config: unknown, stateDir: string, contact: string, ttl?: number): Promise<{
+  cursor: number; epoch: number; removalId: string; rekeyId: string; expiry: number; controls: string[]; target: unknown;
+}>;
+
+export function stageUncertainRemovalRepair(config: unknown, stateDir: string): Promise<{ rotation: string; rotationId: string }>;
+
 export function stagePendingGroupRotation(config: unknown, stateDir: string): Promise<{
   messageId: string; control: string; epoch: number; expectedRoot: string; cursor: number;
 }>;

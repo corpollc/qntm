@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, CliAgent, type LongHarness } from './src/runtime.js';
-import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation, stagePendingGroupRotation } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
+import { stageGroupDelivery, stageAcceptedGroupSend, stageCompletedGroupAddition, stageGenericGroupRefresh, stageAcceptedGroupRotation, stagePendingGroupRotation, stagePendingGroupRemoval, stageUncertainRemovalRepair } from '../openclaw-qntm/tests/support/group-queue-fixture.mjs';
 import {
   DropboxClient, base64UrlEncode, generateIdentity, openGroupWelcome, parseGroupLink, createGroupLink,
   groupSessionFromWelcome, checkGroupWelcomeReplay, receiveGroupEvent, deserializeEnvelope, groupSessionConversation, createMessage,
@@ -462,6 +462,93 @@ cli._http_send(relay, cid, serialize_envelope(operation['welcomes'][0]))
     expect(completions).toHaveLength(1);
     await action('after-operator-recovery', 'send', { text: 'native delivery resumed after operator-initiated recovery' });
     await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native delivery resumed after operator-initiated recovery', 'native reply after local recovery');
+  }, TIMEOUT);
+
+  it('finishes an accepted native removal whose rotation expired through operator-initiated turns after host restarts, with the removed Python peer excluded', async () => {
+    const provider = (host as unknown as { provider: { outcomes: Map<string, unknown> } }).provider;
+    const conversationId = parseGroupLink(checkpointLink()).conversationId;
+    const hostConversation = () => groupSessionConversation(restoreGroupSession(host.identity, checkpoint().session));
+    const decryptAll = (rows: Array<{ seq: number; envelope: Uint8Array }>, conversation: ReturnType<typeof hostConversation>) => rows.flatMap(row => {
+      try { const message = decryptMessage(deserializeEnvelope(row.envelope), conversation); return [{ seq: row.seq, type: message.inner.body_type, text: new TextDecoder().decode(message.inner.body) }]; } catch { return []; }
+    });
+    // Round one: crash before the completing rotation, expiry, denied action, then a reviewed replacement.
+    await host.stop();
+    const deferredPlan = { id: 'deferred-behind-pending-removal', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    await h.alice.run(['send', convId, 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(deferredPlan)).toString('base64url')]);
+    const config = JSON.parse(readFileSync(host.configPath, 'utf8')), permitted = config.channels.qntm.conversations.test.groupActions as string[];
+    const staged = await stagePendingGroupRemoval(config, host.stateDir, 'Dave', 8);
+    expect(checkpoint().operation.controls).toEqual(staged.controls); expect(checkpoint().session.needsRekey).toBe(true);
+    expect(checkpoint().controlReceipts).toEqual([expect.objectContaining({ messageId: staged.removalId, epoch: staged.epoch, valid: true })]);
+    config.channels.qntm.conversations.test.groupActions = permitted.filter(action => action !== 'remove');
+    writeFileSync(host.configPath, JSON.stringify(config), { mode: 0o600 });
+    await host.start();
+    await host.waitFor(() => checkpoint().cursor >= staged.cursor, 'host replayed the accepted removal after restart');
+    await delay(Math.max(0, (staged.expiry + 1) * 1000 - Date.now()));
+    expect(provider.outcomes.has(deferredPlan.id)).toBe(false); expect(checkpoint().operation.controls).toEqual(staged.controls);
+    const before = await relay.receiveMessages(conversationId, 0);
+    const denied = await host.localAgentTurn({ id: 'operator-removal-denied', tool: 'qntm_group', single: { operation: 'prepare', action: 'retry' },
+      expectedStatus: 'error', expectedCode: 'group_action_failed' }, 'test');
+    expect(String(denied.results[0].message)).toContain('no longer locally permitted');
+    expect((await relay.receiveMessages(conversationId, 0)).sequence).toBe(before.sequence); expect(checkpoint().operation.phase).toBeUndefined();
+    await host.stop();
+    config.channels.qntm.conversations.test.groupActions = permitted; writeFileSync(host.configPath, JSON.stringify(config), { mode: 0o600 });
+    await host.start();
+    await host.waitFor(() => checkpoint().cursor >= staged.cursor, 'host replayed again with removal permitted');
+    expect(provider.outcomes.has(deferredPlan.id)).toBe(false);
+    const repaired = await host.localAgentTurn({ id: 'operator-removal-repair', tool: 'qntm_group', action: 'retry', initialStatus: 'rotation_required' }, 'test');
+    expect(repaired.code).toBe(0);
+    expect(repaired.results[1].review!.recoveryPhase).toBe('removal_rekey'); expect(repaired.results[1].review!.retryMode).toBe('replacement_rotation');
+    expect(repaired.results[1].review!.effect).toContain('never reposted'); expect(repaired.results[2].status).toBe('submitted');
+    await host.waitFor(() => !checkpoint().operation && checkpoint().session.epoch === staged.epoch + 1, 'reviewed replacement rotation completed the removal');
+    expect(checkpoint().session.needsRekey).toBe(false); expect(checkpoint().controlReceipts).toEqual([]);
+    const afterRepair = await relay.receiveMessages(conversationId, 0), wires = afterRepair.entries.map(row => Buffer.from(row.envelope).toString('base64url'));
+    expect(wires.filter(wire => wire === staged.controls[0])).toHaveLength(1); expect(wires).not.toContain(staged.controls[1]);
+    const rotations = afterRepair.entries.filter(row => row.seq > before.sequence && (() => { try { return deserializeEnvelope(row.envelope).conv_epoch === staged.epoch; } catch { return false; } })());
+    expect(rotations).toHaveLength(1);
+    await host.waitFor(() => provider.outcomes.has(deferredPlan.id), 'deferred inbound turn released after the removal completed');
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === `gateway-tool-complete:${deferredPlan.id}`, 'deferred turn completion');
+    await h.dave.run(['recv', convId]);
+    expect((h.dave.readConversation(convId).group_session as GroupSessionState).removed).toBe(true);
+    await expect(h.dave.run(['send', convId, 'removed peer cannot send'])).rejects.toThrow();
+    await h.alice.run(['send', convId, 'survivor reply after native removal repair']);
+    await host.waitFor(() => checkpoint().cursor > afterRepair.sequence, 'host received the survivor reply');
+    const survivorRows = await relay.receiveMessages(conversationId, afterRepair.sequence);
+    expect(decryptAll(survivorRows.entries, hostConversation()).map(row => row.text)).toContain('survivor reply after native removal repair');
+    // Round two: the reviewed repair itself is posted, then the host dies before its journal is finalized.
+    await host.stop();
+    await h.alice.run(['recv', convId]);
+    const deferredAgain = { id: 'deferred-behind-uncertain-repair', tool: 'qntm_group', single: { operation: 'status' }, expectedStatus: 'ready' };
+    await h.alice.run(['send', convId, 'gateway-tool-smoke:' + Buffer.from(JSON.stringify(deferredAgain)).toString('base64url')]);
+    const second = await stagePendingGroupRemoval(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir, 'TypeScript', 8);
+    await delay(Math.max(0, (second.expiry + 1) * 1000 - Date.now()));
+    const uncertain = await stageUncertainRemovalRepair(JSON.parse(readFileSync(host.configPath, 'utf8')), host.stateDir);
+    expect(checkpoint().operation).toMatchObject({ phase: 'removal_rekey', controls: [uncertain.rotation], origin: { kind: 'remove', controls: second.controls, delivery: 'unknown' } });
+    expect(checkpoint().controlReceipts).toEqual([expect.objectContaining({ messageId: second.removalId, valid: true })]);
+    await host.start();
+    await host.waitFor(() => checkpoint().cursor > second.cursor, 'host replayed the uncertain repair rotation after restart');
+    expect(provider.outcomes.has(deferredAgain.id)).toBe(false);
+    const finished = await host.localAgentTurn({ id: 'operator-uncertain-repair', tool: 'qntm_group', action: 'retry', initialStatus: 'ready' }, 'test');
+    expect(finished.code).toBe(0); expect(finished.results[1].review!.retryMode).toBe('accepted_cleanup'); expect(finished.results[2].status).toBe('submitted');
+    await host.waitFor(() => !checkpoint().operation && checkpoint().session.epoch === second.epoch + 1, 'uncertain repair proven from replay without another POST');
+    const final = await relay.receiveMessages(conversationId, 0), finalWires = final.entries.map(row => Buffer.from(row.envelope).toString('base64url'));
+    expect(finalWires.filter(wire => wire === uncertain.rotation)).toHaveLength(1); expect(finalWires.filter(wire => wire === second.controls[0])).toHaveLength(1);
+    expect(finalWires).not.toContain(second.controls[1]);
+    await host.waitFor(() => provider.outcomes.has(deferredAgain.id), 'second deferred inbound turn released');
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === `gateway-tool-complete:${deferredAgain.id}`, 'second deferred turn completion');
+    // Both removed peers are absent from the host's authenticated roster and from Alice's
+    // Python view; the TypeScript peer's last keys (epoch 3) cannot open post-repair traffic.
+    // (A cold offline replay of this whole history with the bare reducer is not attempted:
+    // earlier tests posted 20-second rotations that decryptMessage now rejects as expired.)
+    const hostRoster = groupSessionConversation(restoreGroupSession(host.identity, checkpoint().session)).participants.map(kid => Buffer.from(kid).toString('hex'));
+    expect(hostRoster).not.toContain(Buffer.from(tsPeer.keyID).toString('hex')); expect(hostRoster).not.toContain(h.dave.readIdentity().key_id);
+    expect(hostRoster).toContain(h.alice.readIdentity().key_id);
+    await h.alice.run(['recv', convId]);
+    expect(h.alice.readConversation(convId).participants).not.toContain(Buffer.from(tsPeer.keyID).toString('hex'));
+    await action('after-removal-recoveries', 'send', { text: 'native finished both removals from the current roster' });
+    await waitForCliHistory(h.alice, convId, row => row.unsafe_body === 'native finished both removals from the current roster', 'native reply after removal recoveries');
+    const latest = (await relay.receiveMessages(conversationId, final.sequence)).entries;
+    expect(latest.length).toBeGreaterThan(0);
+    for (const row of latest) expect(() => decryptMessage(deserializeEnvelope(row.envelope), groupSessionConversation(tsSession))).toThrow();
   }, TIMEOUT);
 
 });

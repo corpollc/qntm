@@ -4,7 +4,7 @@ import { QntmIngressQueue } from '../../src/ingress-queue.js';
 import { resolveQntmAccount } from '../../src/accounts.js';
 import { inboundId } from '../../src/checkpoint.js';
 import { randomBytes } from 'node:crypto';
-import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, createGroupSession, restoreGroupSession } from '@corpollc/qntm';
+import { base64UrlDecode, base64UrlEncode, deserializeEnvelope, serializeEnvelope, prepareGroupSessionAddition, prepareGroupWelcomeRefresh, prepareGroupSessionRekey, receiveGroupEvent, createGroupSession, restoreGroupSession } from '@corpollc/qntm';
 
 export async function stageGroupDelivery(config, stateDir, messageId) {
   const account = resolveQntmAccount({ cfg: config });
@@ -85,6 +85,49 @@ export async function stageAcceptedGroupRotation(config, stateDir) {
     state.session.seen = seen;
     ordinary.save(state);
     return { messageId, control: operation.controls[0], sequence: receipt.sequence, epoch: state.session.epoch, expectedRoot: expected.root };
+  });
+}
+
+/** Leave the durable state of a host that removed a pinned contact, had the
+ * removal accepted through production receive, and died before publishing its
+ * short-lived completing rotation. Host stopped; only the crash window and
+ * the rotation lifetime are chosen here. */
+export async function stagePendingGroupRemoval(config, stateDir, contact, ttl = 8) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    if (ordinary.load().operation) throw new Error('Fixture found an unexpected pending operation');
+    const state = ordinary.load(), operation = ordinary.prepare('remove', { contact });
+    const removal = deserializeEnvelope(base64UrlDecode(operation.controls[0]));
+    const removed = receiveGroupEvent(account.identity, removal, state.session).state;
+    const rotation = prepareGroupSessionRekey(account.identity, removed, ttl).rekey;
+    operation.controls[1] = base64UrlEncode(serializeEnvelope(rotation));
+    operation.expected = receiveGroupEvent(account.identity, rotation, removed).state;
+    if (operation.target?.keyId !== Buffer.from(removal.msg_id).toString('hex') && !operation.target) throw new Error('Fixture removal lacks its target pin');
+    ordinary.saveOperation(operation);
+    await ordinary.client.postMessage(ordinary.binding.conversation.id, base64UrlDecode(operation.controls[0]));
+    await ordinary.sync();
+    const accepted = ordinary.load();
+    if (!accepted.session.needsRekey || !ordinary.controlAccepted(accepted, operation.controls[0]) || ordinary.controlAccepted(accepted, operation.controls[1])) throw new Error('Staged removal was not accepted in replay');
+    return { cursor: accepted.cursor, epoch: accepted.session.epoch, removalId: Buffer.from(removal.msg_id).toString('hex'),
+      rekeyId: Buffer.from(rotation.msg_id).toString('hex'), expiry: rotation.expiry_ts, controls: operation.controls, target: operation.target };
+  });
+}
+
+/** With the host stopped, leave the state of a host that saved its reviewed
+ * repair rotation and died after the relay accepted the POST but before the
+ * journal was finalized. The plan comes from production prepareRetry. */
+export async function stageUncertainRemovalRepair(config, stateDir) {
+  const account = resolveQntmAccount({ cfg: config });
+  const ordinary = new QntmGroupStore(account, account.bindings[0], { stateDir });
+  return ordinary.exclusive(async () => {
+    await ordinary.sync();
+    const repair = ordinary.prepareRetry();
+    if (repair.phase !== 'removal_rekey' || repair.controls.length !== 1) throw new Error('Fixture expected a removal repair plan');
+    ordinary.saveRetry(repair);
+    await ordinary.client.postMessage(ordinary.binding.conversation.id, base64UrlDecode(repair.controls[0]));
+    return { rotation: repair.controls[0], rotationId: Buffer.from(deserializeEnvelope(base64UrlDecode(repair.controls[0])).msg_id).toString('hex') };
   });
 }
 
