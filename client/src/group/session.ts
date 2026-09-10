@@ -6,7 +6,7 @@ import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { randomBytes } from '@noble/hashes/utils';
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { base64UrlDecode, base64UrlEncode, uint8ArrayEquals, validateIdentity } from '../identity/index.js';
-import { createMessage, decryptMessage, serializeEnvelope } from '../message/index.js';
+import { createMessage, decryptMessage, serializeEnvelope, deserializeEnvelope } from '../message/index.js';
 import { GroupState, applyRekey, createRekey, type GroupGenesisBody } from './index.js';
 import { validateGroupSnapshot, prepareGroupAddition, sealGroupWelcome, GROUP_WELCOME_TTL,
   type GroupAddition, type GroupWelcomeEnvelope, type GroupWelcome } from './welcome.js';
@@ -175,6 +175,45 @@ export function checkGroupReplayCoverage(previous: GroupSessionState, fromSequen
   return missing ? requireGroupRecovery(previous, missing, 'missing_history') : structuredClone(previous);
 }
 
+/** Check the entire bootstrap batch before applying any message or dispatching.
+ * An unknown older-source ciphertext can hide a competing rekey. Its header is
+ * not authority: conservatively pause rather than request pre-admission keys.
+ */
+export function checkGroupWelcomeReplay(previous: GroupSessionState, welcome: GroupWelcome, head: number,
+  entries: Array<{ seq: number; envelope: Uint8Array }>): GroupSessionState {
+  requireValue(previous.conversationId === hex(welcome.conversation.id), 'Welcome belongs to a different group');
+  let state = checkGroupReplayCoverage(previous, welcome.replayFromSequence, head, entries.map(row => row.seq));
+  for (const row of entries) {
+    if (row.seq <= welcome.replayFromSequence) continue;
+    let envelope: OuterEnvelope;
+    try { envelope = deserializeEnvelope(row.envelope); } catch { continue; }
+    if (!(envelope.conv_id instanceof Uint8Array) || !uint8ArrayEquals(envelope.conv_id, welcome.conversation.id)
+      || (envelope as OuterEnvelope & { kind?: string }).kind === 'group_welcome'
+      || !uint(envelope.conv_epoch) || envelope.conv_epoch >= welcome.conversation.currentEpoch) continue;
+    const digest = suite.hash(row.envelope);
+    if (welcome.purpose === 'addition' && (
+      welcome.additionHash && uint8ArrayEquals(digest, welcome.additionHash)
+      || welcome.rekeyHash && uint8ArrayEquals(digest, welcome.rekeyHash))) continue;
+    state = requireGroupRecovery(state, row.seq, 'missing_history');
+  }
+  return state;
+}
+
+/** Preflight ordinary batches before dispatch, including pending ciphertext.
+ * Without a source key, older traffic cannot be distinguished from a late
+ * competing rekey. Bootstrap uses checkGroupWelcomeReplay's exact exemptions.
+ */
+export function checkGroupUnverifiableEpoch(previous: GroupSessionState, envelope: OuterEnvelope, sequence: number): GroupSessionState {
+  if (previous.removed || !uint(envelope.conv_epoch) || envelope.conv_epoch >= previous.epoch
+    || !(envelope.conv_id instanceof Uint8Array) || hex(envelope.conv_id) !== previous.conversationId
+    || (envelope as OuterEnvelope & { kind?: string }).kind === 'group_welcome') return previous;
+  const at = Math.floor(Date.now() / 1000);
+  if (previous.rekeys.some(frame => frame.epoch === envelope.conv_epoch && frame.expiresAt >= at)) return previous;
+  if (envelope.msg_id instanceof Uint8Array
+    && previous.seen[hex(envelope.msg_id)]?.digest === hex(suite.hash(serializeEnvelope(envelope)))) return previous;
+  return requireGroupRecovery(previous, sequence, 'missing_history');
+}
+
 /** Expired controls cannot authorize a live transition. Recognize a signed
  * control using current keys only, then require fresh state rather than apply it.
  */
@@ -213,10 +252,13 @@ export function groupSessionFromWelcome(identity: Identity, welcome: GroupWelcom
     requireValue(!saved.removed || welcome.purpose === 'addition', 'A welcome refresh cannot undo saved removal');
     requireValue(welcome.conversation.currentEpoch >= saved.epoch, 'Welcome is older than saved group state');
     if (welcome.conversation.currentEpoch === saved.epoch) {
-      requireValue(!saved.removed && !saved.needsRekey && hex(welcome.conversation.keys.root) === saved.root,
+      requireValue(!saved.removed && !saved.needsRekey,
         'Welcome cannot replace the saved epoch or removal');
-      requireValue(encodeRoster(welcome.state) === saved.snapshot, 'Welcome roster conflicts with the saved epoch');
-      if (!saved.recovery) return saved;
+      if (!saved.recovery) {
+        requireValue(hex(welcome.conversation.keys.root) === saved.root, 'Welcome cannot replace the saved epoch or removal');
+        requireValue(encodeRoster(welcome.state) === saved.snapshot, 'Welcome roster conflicts with the saved epoch');
+        return saved;
+      }
     }
   }
   return createGroupSession(identity, welcome.conversation, welcome.state);

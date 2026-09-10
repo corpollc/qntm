@@ -52,7 +52,7 @@ export type GroupWelcome = {
   /** Sender's fully processed relay cursor before preparing this welcome. */
   replayFromSequence: number;
   recoveryChallenge?: Uint8Array;
-} & ({ purpose: 'addition'; additionId: Uint8Array; rekeyId: Uint8Array }
+} & ({ purpose: 'addition'; additionId: Uint8Array; rekeyId: Uint8Array; additionHash?: Uint8Array; rekeyHash?: Uint8Array }
   | { purpose: 'refresh'; additionId?: never; rekeyId?: never });
 interface WelcomeContext {
   envelope: ReturnType<typeof header>;
@@ -63,7 +63,7 @@ interface WelcomeContext {
   replay_from_seq: number;
   recovery_challenge?: Uint8Array;
 }
-type WelcomePayload = WelcomeContext & ({ proto: typeof DOMAIN; addition_id: Uint8Array; rekey_id: Uint8Array }
+type WelcomePayload = WelcomeContext & ({ proto: typeof DOMAIN; addition_id: Uint8Array; rekey_id: Uint8Array; addition_hash: Uint8Array; rekey_hash: Uint8Array }
   | { proto: typeof REFRESH_DOMAIN });
 function header(envelope: GroupWelcomeEnvelope) {
   return { v: envelope.v, suite: envelope.suite, kind: envelope.kind,
@@ -74,7 +74,7 @@ function header(envelope: GroupWelcomeEnvelope) {
 /** Internal sealing primitive. Call the checkpoint-aware refresh helper for recovery. */
 export function sealGroupWelcome(identity: Identity, conversation: Conversation, state: GroupState,
   recipient: Uint8Array, createdAt: number, ttl: number,
-  admission?: { additionId: Uint8Array; rekeyId: Uint8Array }, recoveryChallenge?: Uint8Array,
+  admission?: { additionId: Uint8Array; rekeyId: Uint8Array; additionHash: Uint8Array; rekeyHash: Uint8Array }, recoveryChallenge?: Uint8Array,
   replayFromSequence = 0): GroupWelcomeEnvelope {
   requireValue(uint(replayFromSequence), 'Invalid welcome replay anchor');
   const envelope: GroupWelcomeEnvelope = { v: 1, suite: 'QSP-1', kind: 'group_welcome',
@@ -84,7 +84,8 @@ export function sealGroupWelcome(identity: Identity, conversation: Conversation,
     recipient_ik_pk: recipient, group_key: conversation.keys.root, group_state: state.snapshot(), replay_from_seq: replayFromSequence,
     ...(recoveryChallenge ? { recovery_challenge: recoveryChallenge } : {}) };
   const payload: WelcomePayload = admission
-    ? { ...context, proto: DOMAIN, addition_id: admission.additionId, rekey_id: admission.rekeyId }
+    ? { ...context, proto: DOMAIN, addition_id: admission.additionId, rekey_id: admission.rekeyId,
+      addition_hash: admission.additionHash, rekey_hash: admission.rekeyHash }
     : { ...context, proto: REFRESH_DOMAIN };
   const signature = suite.sign(identity.privateKey, marshalCanonical(payload));
   envelope.ciphertext = sealSecret(identity.privateKey, recipient, marshalCanonical({ payload, signature }));
@@ -163,7 +164,8 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   // A welcome never carries an old invite token or saved epoch-key archive.
   delete next.inviteToken;
   const welcomes = recipients.map(recipient => sealGroupWelcome(identity, next, nextState, recipient,
-    addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id }, recoveryChallenge, replayFromSequence));
+    addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id,
+      additionHash: suite.hash(marshalCanonical(addition)), rekeyHash: suite.hash(marshalCanonical(rekey)) }, recoveryChallenge, replayFromSequence));
   return { conversation: next, state: nextState, addition, rekey, welcomes };
 }
 
@@ -202,8 +204,10 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   const anchorFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'replay_from_seq') ? ',replay_from_seq' : '';
   const common = 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state' + anchorFields;
   const challengeFields = payload && typeof payload === 'object' && Object.hasOwn(payload, 'recovery_challenge') ? ',recovery_challenge' : '';
-  const addition = fields(payload, common + ',addition_id,rekey_id' + challengeFields)
-    && payload.proto === DOMAIN && bytes(payload.addition_id, 16) && bytes(payload.rekey_id, 16) && value.conv_epoch > 0;
+  const hashFields = payload && typeof payload === 'object' && (Object.hasOwn(payload, 'addition_hash') || Object.hasOwn(payload, 'rekey_hash')) ? ',addition_hash,rekey_hash' : '';
+  const addition = fields(payload, common + ',addition_id,rekey_id' + challengeFields + hashFields)
+    && payload.proto === DOMAIN && bytes(payload.addition_id, 16) && bytes(payload.rekey_id, 16) && value.conv_epoch > 0
+    && (!hashFields || bytes(payload.addition_hash, 32) && bytes(payload.rekey_hash, 32));
   const refresh = fields(payload, common + challengeFields)
     && payload.proto === REFRESH_DOMAIN;
   requireValue((addition || refresh) && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
@@ -227,6 +231,7 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
     replayFromSequence: anchorFields ? payload.replay_from_seq as number : 0,
     ...(challengeFields ? { recoveryChallenge: payload.recovery_challenge as Uint8Array } : {}) };
   return addition
-    ? { ...result, purpose: 'addition', additionId: payload.addition_id as Uint8Array, rekeyId: payload.rekey_id as Uint8Array }
+    ? { ...result, purpose: 'addition', additionId: payload.addition_id as Uint8Array, rekeyId: payload.rekey_id as Uint8Array,
+      ...(hashFields ? { additionHash: payload.addition_hash as Uint8Array, rekeyHash: payload.rekey_hash as Uint8Array } : {}) }
     : { ...result, purpose: 'refresh' };
 }
