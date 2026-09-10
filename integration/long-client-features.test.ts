@@ -7,13 +7,13 @@ import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { matchesGatewayAcceptance, generateIdentity, DropboxClient, deserializeEnvelope, serializeEnvelope,
   isGroupWelcomeEnvelope, parseGroupLink, openGroupWelcome, groupSessionFromWelcome, checkGroupWelcomeReplay,
-  assertGroupCanSend, groupSessionConversation, createMessage, decryptMessage } from '@corpollc/qntm';
-import type { ReceiveEvent } from '@corpollc/qntm';
+  assertGroupCanSend, groupSessionConversation, createMessage, decryptMessage, QSP1Suite } from '@corpollc/qntm';
+import type { ReceiveEvent, GroupSessionState, GroupAdmission } from '@corpollc/qntm';
 import { createLongHarness, waitForUiStoredHistory } from './src/runtime.js';
 import type { LongHarness, ManagedProcess } from './src/runtime.js';
 import { LONG_TIMEOUT, setupTwoPartyGovernedConversation, waitForCliHistory, requireUi, printDiagnostics } from './long-helpers.js';
@@ -264,5 +264,116 @@ describe.sequential('new release features across real clients and relay', () => 
       await harness.alice.run(['--dropbox-url', proxy.url, 'recv', id]);
       expect(harness.alice.readHistory(id).filter(message => message.unsafe_body === `${surface} renewed contact reply`)).toHaveLength(1);
     } finally { await retryMcp?.close(); await proxy.stop(); }
+  }, LONG_TIMEOUT);
+
+  for (const surface of ['CLI', 'MCP']) it(`finishes an accepted add after its rekey expires through fresh ${surface} processes and a lost rotation ACK`, async () => {
+    const proxy = await recordingRelay(harness.relayUrl);
+    const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+    try {
+      const recipient = generateIdentity();
+      const created = await harness.alice.run(['--dropbox-url', proxy.url, 'group', 'create', `${surface} expired rotation`, '--contact']);
+      const id = String(created.data!.conversation_id);
+      const original = harness.alice.readConversation(id).group_session as GroupSessionState;
+      const oldConversation = groupSessionConversation(original);
+      await harness.alice.run(['--dropbox-url', proxy.url, 'send', id, 'history from before the accepted add']);
+      const beforeAdmission = deserializeEnvelope(Buffer.from(proxy.sends.at(-1)!.envelope_b64, 'base64'));
+      const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+      const stage = await promisify(execFile)(join(dirname(harness.alice.qntmBin), 'python'), [
+        join(repo, 'integration/src/stage-pending-addition.py'), harness.alice.configDir, proxy.url, id,
+        hex(recipient.publicKey), '', 'add-only',
+      ], { cwd: repo, timeout: 30_000, maxBuffer: 1024 * 1024 });
+      const staged = JSON.parse(stage.stdout) as {
+        expires_at: number; rekey_expires_at: number; cursor: number;
+        controls: string[]; welcome_id: string; admission: GroupAdmission;
+      };
+      expect(staged.admission.completion).toBeNull();
+      expect(harness.alice.readConversation(id).group_session).toMatchObject({ epoch: 0, needsRekey: true });
+      const originalOperation = harness.alice.readConversation(id).group_operation as { controls: string[]; welcomes: string[] };
+      const postedIds = proxy.sends.map(send => hex(deserializeEnvelope(Buffer.from(send.envelope_b64, 'base64')).msg_id));
+      expect(postedIds.filter(messageId => messageId === staged.controls[0])).toHaveLength(1);
+      expect(postedIds).not.toContain(staged.controls[1]);
+      expect(postedIds).not.toContain(staged.welcome_id);
+      const beforeRetry = proxy.sends.length;
+      const wait = Math.max(0, Math.max(staged.expires_at, staged.rekey_expires_at) * 1000 - Date.now() + 1100);
+      expect(wait).toBeLessThanOrEqual(10_000);
+      await delay(wait);
+      expect(Math.floor(Date.now() / 1000)).toBeGreaterThan(staged.rekey_expires_at);
+
+      async function freshRetry(): Promise<Record<string, unknown>> {
+        if (surface === 'CLI') return (await harness.alice.run(['--dropbox-url', proxy.url, 'group', 'retry', id])).data!;
+        const client = new Client({ name: 'expired-rotation-retry', version: '1' });
+        try {
+          await client.connect(new StdioClientTransport({
+            command: join(dirname(harness.alice.qntmBin), 'qntm-mcp'),
+            env: { QNTM_CONFIG_DIR: harness.alice.configDir, QNTM_RELAY_URL: proxy.url }, stderr: 'pipe',
+          }));
+          const response = await client.callTool({ name: 'group_retry', arguments: { conversation: id } });
+          if (response.isError) throw new Error(JSON.stringify(response));
+          const result = response.structuredContent as Record<string, unknown> ?? JSON.parse((response.content as Array<{ text: string }>)[0].text);
+          if (result.error) throw new Error(String(result.error));
+          return result;
+        } finally { await client.close(); }
+      }
+
+      // Production first tries exact replay after an ACK loss. Make that read
+      // unavailable too, so only a later fresh process can finish the journal.
+      proxy.loseNextSendAcknowledgement({ pauseReplay: true });
+      await expect(freshRetry()).rejects.toThrow();
+      expect(proxy.droppedAcknowledgements).toBe(1);
+      expect(proxy.blockedReplays).toBeGreaterThan(0);
+      const uncertain = proxy.sends.slice(beforeRetry);
+      expect(uncertain).toHaveLength(1);
+      const replacement = deserializeEnvelope(Buffer.from(uncertain[0].envelope_b64, 'base64'));
+      expect(isGroupWelcomeEnvelope(replacement)).toBe(false);
+      expect(decryptMessage(replacement, oldConversation).inner.body_type).toBe('group_rekey');
+      expect(hex(replacement.msg_id)).not.toBe(staged.controls[1]);
+      const saved = harness.alice.readConversation(id).group_operation as { kind: string; controls: string[] };
+      expect(saved.kind).toBe('addition_rekey');
+      expect(saved.controls).toEqual([uncertain[0].envelope_b64]);
+      expect(harness.alice.readConversation(id).group_session)
+        .toMatchObject({ root: original.root, epoch: original.epoch, needsRekey: true });
+
+      proxy.resumeReplay();
+      const result = await freshRetry(); // New CLI process or new stdio MCP server.
+      expect(result.current_epoch).toBe(1);
+      expect(harness.alice.readConversation(id).group_operation).toBeUndefined();
+      const sent = proxy.sends.slice(beforeRetry);
+      expect(sent).toHaveLength(2); // One replacement rotation and one renewal; includes all attempts.
+      expect(sent.filter(send => send.envelope_b64 === uncertain[0].envelope_b64)).toHaveLength(1);
+      for (const obsolete of [...originalOperation.controls, ...originalOperation.welcomes]) {
+        expect(sent.map(send => send.envelope_b64)).not.toContain(obsolete);
+      }
+      const renewalEnvelope = deserializeEnvelope(Buffer.from(sent[1].envelope_b64, 'base64'));
+      expect(isGroupWelcomeEnvelope(renewalEnvelope)).toBe(true);
+      const locator = parseGroupLink(String(result.group_link)), transport = new DropboxClient(locator.relayUrl);
+      const batch = await transport.receiveMessages(locator.conversationId);
+      const rotationRow = batch.entries.find(row => hex(deserializeEnvelope(row.envelope).msg_id) === hex(replacement.msg_id))!;
+      const welcomeRow = batch.entries.find(row => hex(deserializeEnvelope(row.envelope).msg_id) === hex(renewalEnvelope.msg_id))!;
+      expect(rotationRow.seq).toBe(staged.cursor + 1);
+      expect(welcomeRow.seq).toBe(rotationRow.seq + 1);
+      const welcome = openGroupWelcome(recipient, welcomeRow.envelope, locator);
+      expect(welcome.purpose).toBe('renewal');
+      expect(welcome.recoveryChallenge).toBeUndefined(); // Adding a known contact needs no request nonce.
+      expect(welcome.replayFromSequence).toBe(rotationRow.seq);
+      expect(welcome.admissions[hex(recipient.keyID)]).toEqual({ ...staged.admission,
+        completion: { rekeyId: hex(replacement.msg_id), rekeyDigest: hex(new QSP1Suite().hash(serializeEnvelope(replacement))) } });
+      const state = checkGroupWelcomeReplay(groupSessionFromWelcome(recipient, welcome, welcomeRow.seq), welcome, batch.sequence, batch.entries);
+      assertGroupCanSend(recipient, state);
+      expect(state.rekeys).toEqual([]);
+      expect(JSON.stringify(state)).not.toContain(original.root);
+      expect(() => decryptMessage(beforeAdmission, groupSessionConversation(state))).toThrow();
+      const reply = createMessage(recipient, groupSessionConversation(state), 'text', new TextEncoder().encode(`${surface} replacement rotation reply`));
+      await transport.postMessage(locator.conversationId, serializeEnvelope(reply));
+      await harness.alice.run(['--dropbox-url', proxy.url, 'recv', id]);
+      expect(harness.alice.readHistory(id).filter(message => message.unsafe_body === `${surface} replacement rotation reply`)).toHaveLength(1);
+      mkdirSync(harness.artifactDir, { recursive: true });
+      writeFileSync(join(harness.artifactDir, `${surface.toLowerCase()}-expired-admission-rotation.json`), JSON.stringify({
+        conversation: id, originalAdd: staged.controls[0], obsoleteRekey: staged.controls[1],
+        replacementRekey: hex(replacement.msg_id), renewal: hex(renewalEnvelope.msg_id),
+        lostAcknowledgements: proxy.droppedAcknowledgements, blockedReplays: proxy.blockedReplays,
+        replaySequences: batch.entries.map(row => row.seq),
+        postedMessageIds: proxy.sends.map(send => hex(deserializeEnvelope(Buffer.from(send.envelope_b64, 'base64')).msg_id)),
+      }, null, 2));
+    } finally { await proxy.stop(); }
   }, LONG_TIMEOUT);
 });
