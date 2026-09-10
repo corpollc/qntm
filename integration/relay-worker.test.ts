@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { connect as connectTcp } from 'node:net';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -122,13 +122,14 @@ function rawCloseHandshake(
         const head = buffer.subarray(0, end).toString();
         buffer = buffer.subarray(end + 4);
         if (!head.startsWith('HTTP/1.1 101 ')) return settle(new Error(`upgrade rejected: ${head.split('\r\n')[0]}`));
-        if (!/^sec-websocket-accept:\s*(.+?)\s*$/im.exec(head)?.[1]?.startsWith(accept)) return settle(new Error('bad Sec-WebSocket-Accept'));
+        if (/^sec-websocket-accept:\s*(.+?)\s*$/im.exec(head)?.[1] !== accept) return settle(new Error('bad Sec-WebSocket-Accept'));
         result.extensions = /^sec-websocket-extensions:\s*(.*?)\s*$/im.exec(head)?.[1] ?? null;
         upgraded = true;
       }
       while (!settled) {
         if (result.close) { result.bytesAfterClose += buffer.length; buffer = Buffer.alloc(0); return; }
         if (buffer.length < 2) return;
+        if ((buffer[0]! & 0xf0) !== 0x80) return settle(new Error('unexpected fragmented or extension frame'));
         const opcode = buffer[0]! & 0x0f;
         if (buffer[1]! & 0x80) return settle(new Error('relay sent a masked frame'));
         let length = buffer[1]! & 0x7f, offset = 2;
@@ -153,7 +154,10 @@ function rawCloseHandshake(
       socket.write(`GET /v1/subscribe?conv_id=${convId}&from_seq=0 HTTP/1.1\r\nHost: ${url.host}\r\n` +
         `Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
     });
-    socket.on('data', (chunk: Buffer) => { buffer = Buffer.concat([buffer, chunk]); parse(); });
+    socket.on('data', (chunk: Buffer) => {
+      try { buffer = Buffer.concat([buffer, chunk]); parse(); }
+      catch (error) { settle(error instanceof Error ? error : new Error(String(error))); }
+    });
     socket.on('end', () => {
       result.finAfterClose = result.close !== null;
       settle(result.close ? undefined : new Error(`relay sent FIN without a Close frame: ${JSON.stringify(result)}`));
