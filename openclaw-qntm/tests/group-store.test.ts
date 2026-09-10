@@ -45,6 +45,76 @@ async function run(store: QntmGroupStore, action: Parameters<QntmGroupStore['pre
   await store.exclusive(async () => { await store.sync(); store.saveOperation(store.prepare(action, options)); await store.resume(); });
 }
 describe('OpenClaw durable ordinary groups', () => {
+  it('reviews admission renewal through refresh without exposing keys or sending before commit', async () => {
+    const f = fixture(), store = f.store(f.member);
+    await run(store, 'add', { contact: 'Late' });
+    const before = store.load(), service = new QntmGroupActions(), scope = { key: 'native-renewal-review', store };
+    const challenge = '42'.repeat(32), count = f.rows.length;
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'refresh', options: { contact: 'Late', challenge } }) as any;
+    expect(reviewed.review.welcomePurpose).toBe('renewal');
+    expect(reviewed.review.effect).toContain('proof of this existing admission');
+    expect(reviewed.review.recoveryChallenge).toBe(challenge);
+    expect(reviewed.review.recipientPublicKey).toBe(base64UrlEncode(f.late.publicKey));
+    expect(JSON.stringify(reviewed)).not.toContain(before.session!.root);
+    expect(f.rows).toHaveLength(count); expect(store.load().operation).toBeNull();
+    await service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash });
+    const opened = openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('renewal'); expect(opened.recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+    expect(opened.replayFromSequence).toBe(count);
+    expect(opened.admissions).toEqual(before.session!.admissions);
+    expect(f.rows).toHaveLength(count + 1); expect(store.load().session!.epoch).toBe(before.session!.epoch);
+    expect(store.load().session!.root).toBe(before.session!.root);
+  });
+  it('retains the exact reviewed renewal and its challenge through a lost ACK and restart', async () => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const before = member.load(), count = f.rows.length, challenge = '71'.repeat(32); f.ambiguous();
+    await expect(run(member, 'refresh', { contact: 'Late', challenge })).rejects.toThrow('ambiguous POST');
+    const pending = member.load().operation!;
+    expect(pending.welcomePurpose).toBe('renewal'); expect(pending.controls).toEqual([]); expect(pending.sentWelcomes).toBe(0);
+    expect(restoreGroupSession(f.member, pending.expected).admissions).toEqual(before.session!.admissions);
+    const restarted = f.store(f.member), service = new QntmGroupActions(), scope = { key: 'native-retry-renewal', store: restarted };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'retry' }) as any;
+    expect(reviewed.review.welcomePurpose).toBe('renewal'); expect(reviewed.review.recoveryChallenge).toBe(challenge);
+    await service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash });
+    expect(f.rows.slice(count).map(row => row.envelope)).toEqual([base64UrlDecode(pending.welcomes[0]), base64UrlDecode(pending.welcomes[0])]);
+    expect(restarted.load().operation).toBeNull(); expect(restarted.load().session!.root).toBe(before.session!.root);
+    const opened = openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+  });
+  it('preserves founding-member generic refresh and unfinished older journals', async () => {
+    const f = fixture(), member = f.store(f.member), challenge = '35'.repeat(32);
+    const prepared = member.prepare('refresh', { contact: 'Owner', challenge });
+    expect(prepared.welcomePurpose).toBe('refresh');
+    delete prepared.welcomePurpose; delete prepared.recoveryChallenge; // Earlier native journal format.
+    member.saveOperation(prepared);
+    const restarted = f.store(f.member); await restarted.exclusive(() => restarted.resume());
+    expect(f.rows).toHaveLength(1); expect(f.rows[0].envelope).toEqual(base64UrlDecode(prepared.welcomes[0]));
+    const opened = openGroupWelcome(f.owner, f.rows[0].envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id });
+    expect(opened.purpose).toBe('refresh'); expect(opened.recoveryChallenge).toEqual(new Uint8Array(Buffer.from(challenge, 'hex')));
+    expect(restarted.load().session!.epoch).toBe(0);
+  });
+  it('invalidates a reviewed renewal when admission provenance changes without changing root or roster', async () => {
+    const f = fixture(), store = f.store(f.member);
+    await run(store, 'add', { contact: 'Late' });
+    const service = new QntmGroupActions(), scope = { key: 'provenance-review', store };
+    const reviewed = await service.execute(scope, { operation: 'prepare', action: 'refresh', options: { contact: 'Late' } }) as any;
+    const state = store.load(); state.session!.admissions = {}; store.save(state);
+    const count = f.rows.length;
+    await expect(service.execute(scope, { operation: 'commit', reviewToken: reviewed.reviewToken, reviewHash: reviewed.reviewHash })).rejects.toThrow('configuration changed');
+    expect(store.load().operation).toBeNull(); expect(f.rows).toHaveLength(count);
+  });
+  it.each(['provenance', 'contact'] as const)('retains a pending renewal without POST when its %s changes', async changed => {
+    const f = fixture(), member = f.store(f.member);
+    await run(member, 'add', { contact: 'Late' });
+    const pending = member.prepare('refresh', { contact: 'Late' }); member.saveOperation(pending);
+    if (changed === 'provenance') {
+      const state = member.load(); state.session!.admissions[toHex(f.late.keyID)].completion!.rekeyDigest = '12'.repeat(32); member.save(state);
+    } else member.account.config.contacts!.Late = base64UrlEncode(generateIdentity().publicKey);
+    const count = f.rows.length, restarted = f.store(f.member);
+    await expect(restarted.exclusive(() => restarted.resume())).rejects.toThrow(changed === 'provenance' ? 'current provenance' : 'contact pin changed');
+    expect(restarted.load().operation).toEqual(pending); expect(f.rows).toHaveLength(count);
+  });
   it.each([false, true])('prefers a current renewal over a later replayed addition welcome (rotated=%s)', async rotated => {
     const f = fixture(), member = f.store(f.member);
     await run(member, 'add', { contact: 'Late' });
@@ -73,13 +143,12 @@ describe('OpenClaw durable ordinary groups', () => {
     await run(member, 'add', { contact: 'Late' });
     const late = f.store(f.late, undefined, member.link());
     await late.exclusive(() => late.open());
-    const before = member.load(), oldAdmission = before.session!.admissions[toHex(f.late.keyID)];
-    const oldRenewal = prepareGroupAdmissionRenewal(f.member, before.session!, f.late.publicKey,
-      { addId: oldAdmission.addId, addDigest: oldAdmission.addDigest }, undefined, undefined, before.cursor);
+    const oldRenewal = member.prepare('refresh', { contact: 'Late' });
+    expect(oldRenewal.welcomePurpose).toBe('renewal');
     await run(member, 'remove', { contact: 'Late' });
     await late.exclusive(() => late.sync());
     expect(late.load().session!.removedAtEpoch).toBe(1);
-    await f.client.postMessage(f.conversation.id, serializeEnvelope(oldRenewal.welcomes[0]));
+    await f.client.postMessage(f.conversation.id, base64UrlDecode(oldRenewal.welcomes[0]));
     await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
     expect(late.load().session!.removed).toBe(true);
 
@@ -93,13 +162,12 @@ describe('OpenClaw durable ordinary groups', () => {
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime((readmission.welcomes[0].expiry_ts + 1) * 1000);
     await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
     expect(late.load().session!.removed).toBe(true);
-    const admitted = member.load(), admission = admitted.session!.admissions[toHex(f.late.keyID)];
+    const admitted = member.load();
     const refreshed = prepareGroupWelcomeRefresh(f.member, admitted.session!, [f.late.publicKey], undefined, undefined, admitted.cursor);
     await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
     await expect(late.exclusive(() => late.open())).rejects.toThrow('No current welcome');
-    const renewal = prepareGroupAdmissionRenewal(f.member, admitted.session!, f.late.publicKey,
-      { addId: admission.addId, addDigest: admission.addDigest }, undefined, undefined, admitted.cursor);
-    await f.client.postMessage(f.conversation.id, serializeEnvelope(renewal.welcomes[0]));
+    await run(member, 'refresh', { contact: 'Late' });
+    expect(openGroupWelcome(f.late, f.rows.at(-1)!.envelope, { inviterPublicKey: f.member.publicKey, conversationId: f.conversation.id }).purpose).toBe('renewal');
     // A later generic refresh is ineligible for saved removal; candidate
     // fallback must still reach the valid renewal of the later admission.
     await f.client.postMessage(f.conversation.id, serializeEnvelope(refreshed.welcomes[0]));
