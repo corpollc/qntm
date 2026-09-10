@@ -357,14 +357,16 @@ def receive(config_dir, relay, conversation_id, identity, stop, consumers, repla
                         continue
                     if group and kind == 'ready' and (not replaying or sequence < max([cursor, *[row['seq'] for row in backlog]])):
                         raise WebSocketException('invalid group replay head')
+                    if group and replay_ready is not None:
+                        replay_ready.clear()
                     # Local persistence errors are fatal: never retry them as
                     # network failures or move past data we couldn't save.
                     cli._process_received_messages(config_dir, identity, conversations, record,
                                                    [frame] if kind == "message" else backlog, sequence)
                     if kind == 'ready':
                         backlog, backlog_bytes, replaying = [], 0, False
-                        if replay_ready is not None:
-                            replay_ready.set()
+                    if not replaying and replay_ready is not None:
+                        replay_ready.set()
                     for consumer in consumers:
                         consumer.wake.set()
                     if kind == "ready":
