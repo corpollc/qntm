@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FixtureServer, getFreePorts, ManagedProcess, waitForHttp } from './src/runtime.js';
 
 const servers: Server[] = [];
@@ -35,6 +35,7 @@ async function listen(handler: RequestListener, port = 0): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(children.splice(0).map(processFixture => processFixture.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
@@ -119,6 +120,46 @@ describe('local service readiness', () => {
     const started = performance.now();
     await expect(worker.waitForLocalUrl('worker', '/', 5_000)).rejects.toThrow(/Process exited before readiness[\s\S]*fixture bind failed/);
     expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('verifies an exited group after Darwin reports EPERM', async () => {
+    const worker = child(listenerScript('worker'));
+    const url = await worker.waitForLocalUrl('worker', '/', 3_000);
+    const group = -worker.child.pid!;
+    const exited = new Promise<void>(resolve => worker.child.once('exit', () => resolve()));
+    worker.child.kill('SIGTERM');
+    await exited;
+    const kill = process.kill.bind(process);
+    const denied = Object.assign(new Error('synthetic Darwin zombie-group EPERM'), { code: 'EPERM' });
+    const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === group) throw denied;
+      return kill(pid, signal);
+    });
+    await expect(worker.stop()).resolves.toBeUndefined();
+    expect(probe).toHaveBeenCalledWith(group, 'SIGTERM');
+    await expect(fetch(url)).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform !== 'darwin')('does not suppress EPERM while an owned listener is live', async () => {
+    const worker = child(listenerScript('worker'));
+    const url = await worker.waitForLocalUrl('worker', '/', 3_000);
+    const group = -worker.child.pid!;
+    const kill = process.kill.bind(process);
+    const denied = Object.assign(new Error('synthetic live-group EPERM'), { code: 'EPERM' });
+    const probe = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === group) throw denied;
+      return kill(pid, signal);
+    });
+    try {
+      await expect(worker.stop()).rejects.toBe(denied);
+      expect((await fetch(url)).status).toBe(200);
+    } finally {
+      probe.mockRestore();
+      children.splice(children.indexOf(worker), 1); // stop() retains its rejected result.
+      const exited = new Promise<void>(resolve => worker.child.once('exit', () => resolve()));
+      worker.child.kill('SIGTERM');
+      await exited;
+    }
   });
 
   it('keeps the assigned service port through a process restart', async () => {
