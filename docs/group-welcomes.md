@@ -143,7 +143,7 @@ this resumes the saved ciphertext. Repeating `group add` cannot overwrite a
 pending operation. Sending ordinary messages is blocked while an operation is
 pending or while membership awaits key rotation.
 
-For a **completed** saved addition, CLI/MCP retry can also recover an expired
+For a **completed** saved addition, retry in the maintained clients can recover an expired
 welcome or a completing rekey superseded by a later canonical rotation. It checks
 the original add ID and exact ciphertext digest against current admission
 provenance before touching the old control queue. When the original welcome is
@@ -175,7 +175,13 @@ retains both the original intent and replacement rotation ciphertext. A POST
 acknowledgement alone never installs predicted keys or fills missing control
 history.
 
-If a replacement rotation or renewal becomes stale again, explicit CLI/MCP retry
+OpenClaw keeps its native review boundary: the first prepare/commit retry repairs
+the rotation and returns `rotation_verified` with `welcomePending`. The next
+prepare/commit retry reviews delivery from the now-verified current state. Both
+cycles can run in the same authorized agent turn. The browser and Python/terminal
+retry action complete these phases together after verified replay.
+
+If a replacement rotation or renewal becomes stale again, explicit retry
 can repeat this reconciliation for the same current admission. Valid uncertain
 ciphertext stays unchanged. A stale rotation still requires an incomplete
 admission at the current source epoch; a stale renewal requires a complete current
@@ -186,11 +192,12 @@ still needs recovery from a current member; retry cannot waive that boundary.
 Superseded recovery operations remain as a flat private list of exact control
 and welcome ciphertext, acknowledgement counts and unknown delivery status.
 Entries contain no old expected checkpoints or nested operation histories. The
-list is limited to 256 entries and 4 MiB of canonical encoded evidence, in addition
-to the original intent and current operation. At either limit, retry preserves
+list is limited to 256 entries and 4 MiB of canonical encoded evidence. Browser
+and OpenClaw include the original intent in that byte budget; Python retains its
+fixed original intent and current repair separately. At either limit, retry preserves
 the journal and sends nothing; it never silently discards uncertain delivery.
 The entire operation journal is removed after completion. Broader reconciliation
-for generic refresh/remove/rekey operations and other clients remains under
+for generic refresh/remove/rekey operations remains under
 `qntm-qp22`.
 
 `qntm group link GROUP_ID` retrieves the public locator pinned to **your**
@@ -355,7 +362,7 @@ recipient-encrypted welcome with current keys; it neither adds a member nor
 rotates keys. `assertGroupAdmissionRenewalCurrent` /
 `assert_group_admission_renewal_current` rechecks the admission, roster, keys and
 expiry immediately before publication. Hosts still persist the exact operation
-and finish replay before release. Python CLI/MCP `group retry` uses it for a
+and finish replay before release. Maintained client retry actions use it for a
 completed saved addition whose original delivery is stale. Python CLI/MCP
 `group refresh`, browser **Refresh welcome**, and OpenClaw's reviewed `refresh`
 action choose renewal for a recipient with a complete current admission. Founding
