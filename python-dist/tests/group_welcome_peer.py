@@ -13,6 +13,7 @@ from qntm import (
     prepare_group_addition, open_group_welcome, create_group_link, parse_group_link,
     restore_group_session, receive_group_event, create_group_session, prepare_group_welcome_refresh, prepare_group_session_rekey,
     check_group_replay_coverage, group_session_from_welcome,
+    prepare_group_admission_renewal, assert_group_admission_renewal_current,
 )
 
 request = json.load(sys.stdin)
@@ -83,6 +84,14 @@ elif request['action'] == 'session_rekey':
     state = restore_group_session(identity, request['state'])
     operation = prepare_group_session_rekey(identity, state)
     print(json.dumps({'rekey': marshal_canonical(operation['rekey']).hex(), 'root': operation['conversation']['keys']['root'].hex()}))
+elif request['action'] == 'admission_renewal':
+    identity = {key: bytes.fromhex(value) for key, value in request['identity'].items()}
+    state = restore_group_session(identity, request['state'])
+    operation = prepare_group_admission_renewal(identity, state, bytes.fromhex(request['recipient']), request['expected'],
+                                               replay_from_sequence=request['anchor'])
+    assert_group_admission_renewal_current(identity, state, operation)
+    print(json.dumps({'welcome': marshal_canonical(operation['welcomes'][0]).hex(), 'admission': operation['admission'],
+                      'admissions': operation['admissions'], 'state': state}))
 elif request["action"] == "session_receive":
     identity = {key: bytes.fromhex(value) for key, value in request["identity"].items()}
     state = restore_group_session(identity, request["state"])
