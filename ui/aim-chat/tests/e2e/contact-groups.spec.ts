@@ -55,7 +55,7 @@ async function peerOpen(identity: Identity, link: string) {
   let state: GroupSessionState | undefined
   for (const row of batch.entries) {
     if (!state) {
-      try { const welcome = openGroupWelcome(identity, row.envelope, locator); state = createGroupSession(identity, welcome.conversation, welcome.state) } catch { /* Before admission */ }
+      try { const welcome = openGroupWelcome(identity, row.envelope, locator); state = createGroupSession(identity, welcome.conversation, welcome.state, { admissions: welcome.admissions }) } catch { /* Before admission */ }
     } else {
       const envelope = deserializeEnvelope(row.envelope)
       if (!isGroupWelcomeEnvelope(envelope)) state = receiveGroupEvent(identity, envelope, state).state
@@ -348,7 +348,9 @@ test('browser hides an invalidated branch immediately while preserving earlier a
     return data.conversations[data.activeProfileId].find((conv: { id: string }) => conv.id === cid).group.session
   }, id)
   const frame = saved.rekeys[0]
-  const source = { ...saved, epoch: frame.epoch, root: frame.root, snapshot: frame.snapshot, rekeys: [], seen: {}, recovery: null }
+  const source = { ...saved, epoch: frame.epoch, root: frame.root, snapshot: frame.snapshot,
+    admissions: structuredClone(frame.admissions), needsRekey: Object.values(frame.admissions).some(admission => admission.completion === null),
+    rekeys: [], seen: {}, recovery: null }
   // Choose the test control's ID before signing/encryption, avoiding a random
   // retry budget when the original rekey happened to have a very small ID.
   const getRandomValues = crypto.getRandomValues
