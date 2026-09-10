@@ -8,8 +8,9 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DropboxClient, generateIdentity, openGroupWelcome, isGroupWelcomeEnvelope, deserializeEnvelope,
-  createMessage, serializeEnvelope, createGroupSession, receiveGroupEvent, groupSessionConversation,
-  decryptMessage, type GroupSessionState } from '@corpollc/qntm';
+  createMessage, serializeEnvelope, groupSessionFromWelcome, receiveGroupEvent, groupSessionConversation,
+  assertGroupCanSend, checkGroupReplayCoverage, checkExpiredGroupControl,
+  decryptMessage, type GroupSessionState, type ReceiveResult } from '@corpollc/qntm';
 import { ManagedProcess, workerTestEnv } from './src/runtime.js';
 import { TuiAgent } from './src/tui-agent.js';
 import { Store, bytesToHex } from '../ui/tui/src/lib/store.js';
@@ -62,30 +63,48 @@ describe.sequential('terminal contact welcomes with real relay, Python and TypeS
     proof('live', tui);
     return shown;
   };
-  const openTs = async () => {
-    const result = await relay.receiveMessages(Buffer.from(id, 'hex'), 0);
-    const welcomes = result.messages.filter(wire => isGroupWelcomeEnvelope(deserializeEnvelope(wire))).flatMap(wire => {
-      try { return [openGroupWelcome(peer, wire, { conversationId: Buffer.from(id, 'hex'), inviterPublicKey: store.loadIdentity()!.publicKey })]; }
-      catch { return []; }
-    });
-    const welcome = welcomes.at(-1)!;
-    expect(welcome).toBeDefined();
-    tsState = createGroupSession(peer, welcome.conversation, welcome.state);
-    tsCursor = result.sequence;
-    return { result, welcome };
-  };
-  const receiveTs = async () => {
-    const result = await relay.receiveMessages(Buffer.from(id, 'hex'), tsCursor);
+  const applyTsReplay = (result: ReceiveResult) => {
+    tsState = checkGroupReplayCoverage(tsState, tsCursor, result.sequence, result.entries.map(row => row.seq));
     const messages: string[] = [];
-    for (const wire of result.messages) {
-      const envelope = deserializeEnvelope(wire);
+    for (const row of result.entries.filter(row => row.seq > tsCursor).sort((a, b) => a.seq - b.seq)) {
+      const envelope = deserializeEnvelope(row.envelope);
       if (isGroupWelcomeEnvelope(envelope)) continue;
+      tsState = checkExpiredGroupControl(peer, tsState, envelope, row.seq);
+      if (tsState.recovery || envelope.expiry_ts < Math.floor(Date.now() / 1000)) continue;
+      // Bootstrap never discloses pre-admission roots. Such rows still count
+      // toward coverage, but cannot supply application or membership history.
+      if (envelope.conv_epoch < tsState.epoch && !tsState.rekeys.some(frame => frame.epoch === envelope.conv_epoch
+        && Buffer.from(envelope.msg_id).toString('hex') < frame.messageId)) continue;
       const event = receiveGroupEvent(peer, envelope, tsState);
       tsState = event.state;
+      expect(event.rewound, 'this linear fixture must not silently skip branch replay').toBe(false);
       if (!event.duplicate && event.message.inner.body_type === 'text') messages.push(new TextDecoder().decode(event.message.inner.body));
     }
     tsCursor = result.sequence;
     return messages;
+  };
+  const openTs = async () => {
+    const result = await relay.receiveMessages(Buffer.from(id, 'hex'), 0);
+    const welcomes = result.entries.filter(row => isGroupWelcomeEnvelope(deserializeEnvelope(row.envelope))).flatMap(row => {
+      try { return [{ sequence: row.seq, welcome: openGroupWelcome(peer, row.envelope,
+        { conversationId: Buffer.from(id, 'hex'), inviterPublicKey: store.loadIdentity()!.publicKey }) }]; }
+      catch { return []; }
+    });
+    const selected = welcomes.at(-1)!;
+    expect(selected).toBeDefined();
+    const { welcome, sequence } = selected;
+    tsState = groupSessionFromWelcome(peer, welcome, sequence, tsState);
+    tsCursor = welcome.replayFromSequence;
+    applyTsReplay(result);
+    assertGroupCanSend(peer, tsState);
+    return { result, welcome };
+  };
+  const receiveTs = async () => applyTsReplay(await relay.receiveMessages(Buffer.from(id, 'hex'), tsCursor));
+  const sendTs = async (text: string) => {
+    await receiveTs();
+    assertGroupCanSend(peer, tsState);
+    const envelope = createMessage(peer, groupSessionConversation(tsState), 'text', new TextEncoder().encode(text));
+    await relay.postMessage(Buffer.from(id, 'hex'), serializeEnvelope(envelope));
   };
   beforeAll(async () => {
     mkdirSync(artifacts, { recursive: true, mode: 0o700 });
@@ -146,11 +165,11 @@ describe.sequential('terminal contact welcomes with real relay, Python and TypeS
     expect(bobRecord().group_history.some((row: any) => row.unsafe_body === 'before anyone was admitted')).toBe(false);
     await cli('send', id, 'Python opened its earlier welcome second');
     await expect.poll(() => store.loadHistory(id).some(row => row.text === 'Python opened its earlier welcome second'), { timeout: 20000 }).toBe(true);
-    const envelope = createMessage(peer, groupSessionConversation(tsState), 'text', new TextEncoder().encode('TypeScript opened second admission first'));
-    await relay.postMessage(Buffer.from(id, 'hex'), serializeEnvelope(envelope));
+    expect(await receiveTs()).toContain('Python opened its earlier welcome second');
+    await sendTs('TypeScript opened second admission first');
     await expect.poll(() => store.loadHistory(id).some(row => row.text === 'TypeScript opened second admission first'), { timeout: 20000 }).toBe(true);
     await terminal.waitFor('TypeScript opened second admission first');
-    expect(await receiveTs()).toContain('Python opened its earlier welcome second');
+    expect(await receiveTs()).toContain('TypeScript opened second admission first');
     proof('01-open-order');
   }, 90000);
 
