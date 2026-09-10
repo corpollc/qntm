@@ -82,12 +82,22 @@ On receiving a `group_rekey` message at epoch N:
 
 ### 1.6 Member Addition
 
-When adding a member, the inviter:
+Adding a known contact is the membership operation. Apply the group's existing
+membership rules, then establish epoch N+1 with the added identity included in
+`wrapped_keys`. New members MUST NOT receive prior epoch keys; history before
+their admission epoch is inaccessible by design.
 
-1. Sends the new member a standard invite (per v1.0 §8) that bootstraps them into the **current** epoch.
-2. Issues a rekey to epoch N+1 with the new member's `kid` included in `wrapped_keys`.
+**Bootstrap limitation:** the rekey in §1.3 is encrypted under epoch N, which the
+new member cannot read. A standard v1.0 invite does not solve current-epoch
+bootstrap while preserving the no-history-access requirement. Do not distribute
+earlier keys to work around this limitation.
 
-The new member can decrypt from epoch N+1 onward. They MUST NOT receive prior epoch keys; history before their join epoch is inaccessible by design.
+The agreed extension is an independently recipient-encrypted welcome delivered
+through the existing group stream, followed by sharing a link locating the group.
+The welcome supplies the admitted epoch's keys and authenticated group state.
+This automatic delivery is not yet implemented; see the
+[group membership decision](design/group-membership.md) for its scope. A separate
+stranger-requested admission flow is not being pursued.
 
 ### 1.7 Member Removal
 

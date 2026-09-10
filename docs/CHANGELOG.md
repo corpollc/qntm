@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Clarified the group-add design as adding a known contact and sharing a group link, with automatic recipient-encrypted key delivery still to be implemented. Corrected contradictory late-join guidance in the protocol draft and recorded the decision to stop the stranger-entry experiment; released behavior is unchanged.
 - Added independent one-minute HTTPS and certificate checks for both browser hostnames, with tested alert delays, missing-target detection and bounded metadata documentation. These checks do not execute the browser app or replace encrypted messaging tests; outbound paging remains unconfigured.
 - Added `web.qntm.corpo.llc` as a verified HTTPS address for the existing Pages browser app. `chat.corpo.llc` remains available. The deployment guide explains DNS, certificate checks and deliberate encrypted-backup migration between browser origins; profiles do not transfer automatically.
 - Aligned messaging, gateway and relay signature checks with the charter's strict Ed25519 profile. TypeScript and Python now reject weak signing keys and permissive-only signatures consistently; shared vectors also run against the Go registry. Invite, gateway and group roster validation rejects invalid member keys before admission or partial updates. Real encrypted-message and Worker tests cover synthetic forgeries. Normally generated keys and wire formats are unchanged; malformed historical signatures now fail validation.
