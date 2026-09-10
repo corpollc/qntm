@@ -1,7 +1,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { generateIdentity, DropboxClient, createMessage, groupSessionConversation, serializeEnvelope,
-  deserializeEnvelope, openGroupWelcome, parseGroupLink, receiveGroupEvent, createGroupSession,
+  deserializeEnvelope, isGroupWelcomeEnvelope, openGroupWelcome, parseGroupLink, receiveGroupEvent, createGroupSession,
   createGroupLink, keyIDFromPublicKey, base64UrlDecode, base64UrlEncode, prepareGroupWelcomeRefresh,
   prepareGroupSessionAddition, prepareGroupSessionRekey, createGroupControlMessage, createGroupRemoveBody, assertGroupCanSend } from '@corpollc/qntm'
 import type { SubscriptionMessage, Identity, GroupSessionState } from '@corpollc/qntm'
@@ -118,6 +118,66 @@ describe('browser contact group host', () => {
     await openContactGroup(bob.id, link)
     expect(session(bob.id, id).recovery?.reason).toBe('missing_history')
     await expect(sendContactGroupMessage(bob.id, id, 'must not send stale keys')).rejects.toThrow(/history/i)
+  })
+
+  it.each(['before welcome', 'after opening', 'expired before welcome'])('blocks a lower-ID pre-admission rekey %s and accepts challenged same-epoch recovery', async timing => {
+    const alice = profile('Alice'), bob = profile('Bob')
+    const id = await createContactGroup(alice.id, 'Competing room'), source = session(alice.id, id)
+    let addition = prepareGroupSessionAddition(alice.identity, source, [bob.identity.publicKey], undefined, undefined, heads.get(id)!)
+    for (let n = 0; addition.rekey.msg_id[0] < 128 && n < 128; n++) addition = prepareGroupSessionAddition(alice.identity, source, [bob.identity.publicKey], undefined, undefined, heads.get(id)!)
+    expect(addition.rekey.msg_id[0]).toBeGreaterThanOrEqual(128)
+    const afterAdd = receiveGroupEvent(alice.identity, addition.addition, source).state
+    const competingTtl = timing === 'expired before welcome' ? 1 : undefined
+    let competing = prepareGroupSessionRekey(alice.identity, afterAdd, competingTtl)
+    for (let n = 0; hex(competing.rekey.msg_id) >= hex(addition.rekey.msg_id) && n < 128; n++) competing = prepareGroupSessionRekey(alice.identity, afterAdd, competingTtl)
+    expect(hex(competing.rekey.msg_id) < hex(addition.rekey.msg_id)).toBe(true)
+    let canonical = source
+    for (const control of [addition.addition, addition.rekey]) {
+      await post(id, control)
+      canonical = receiveGroupEvent(alice.identity, control, canonical).state
+    }
+    const link = publicGroupLink(alice.id, id)
+    if (timing === 'after opening') {
+      await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(addition.welcomes[0]))
+      await openContactGroup(bob.id, link)
+      expect(session(bob.id, id).recovery).toBeNull()
+    }
+    const losingText = createMessage(alice.identity, groupSessionConversation(canonical), 'text', new TextEncoder().encode('readable losing-branch text must stay hidden'))
+    await post(id, losingText)
+    await post(id, competing.rekey)
+    canonical = receiveGroupEvent(alice.identity, competing.rekey, canonical).state
+    const winningRoot = canonical.root
+    await post(id, createMessage(alice.identity, groupSessionConversation(canonical), 'text', new TextEncoder().encode('must not dispatch before recovery')))
+    if (timing !== 'after opening') {
+      await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(addition.welcomes[0]))
+      if (competingTtl) vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000)
+      await openContactGroup(bob.id, link)
+    } else await syncContactGroup(bob.id, id)
+    expect(session(bob.id, id).root).not.toBe(winningRoot)
+    expect(session(bob.id, id).rekeys).toEqual([])
+    expect(session(bob.id, id).recovery?.reason).toBe('missing_history')
+    expect(store.getHistory(bob.id, id)).toEqual([])
+    await expect(sendContactGroupMessage(bob.id, id, 'stale branch')).rejects.toThrow(/history/i)
+    const saved = rawBackup(); localStorage.clear(); localStorage.setItem('aim-store', saved)
+    const challenge = session(bob.id, id).recovery!.challenge
+    const captured = await new DropboxClient('http://localhost').receiveMessages(bytes(id), 1)
+    for (const row of captured.entries) {
+      const envelope = deserializeEnvelope(row.envelope)
+      if (isGroupWelcomeEnvelope(envelope)) continue
+      try { canonical = receiveGroupEvent(alice.identity, envelope, canonical).state }
+      catch (error) { if (hex(envelope.msg_id) !== hex(losingText.msg_id)) throw error }
+    }
+    const refresh = prepareGroupWelcomeRefresh(alice.identity, canonical, [bob.identity.publicKey], undefined, bytes(challenge), captured.sequence)
+    await new DropboxClient('http://localhost').postMessage(bytes(id), serializeEnvelope(refresh.welcomes[0]))
+    await openContactGroup(bob.id, link)
+    expect(session(bob.id, id).recovery).toBeNull()
+    expect(session(bob.id, id).root).toBe(winningRoot)
+    expect(session(bob.id, id).epoch).toBe(1)
+    expect(session(bob.id, id).rekeys).toEqual([])
+    const reply = await sendContactGroupMessage(bob.id, id, 'canonical reply')
+    const wire = relay.get(id)!.find(row => hex(deserializeEnvelope(row.envelope).msg_id) === reply.id)!
+    const received = receiveGroupEvent(alice.identity, deserializeEnvelope(wire.envelope), canonical)
+    expect(!received.duplicate && new TextDecoder().decode(received.message.inner.body)).toBe('canonical reply')
   })
 
   it('pauses on an expired authenticated removal without applying its expired authority', async () => {

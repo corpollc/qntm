@@ -64,6 +64,17 @@ async function peerOpen(identity: Identity, link: string) {
   expect(state).toBeDefined()
   return { state: state!, cursor: batch.sequence, relayClient, locator }
 }
+async function catchUpPeer(identity: Identity, peer: Awaited<ReturnType<typeof peerOpen>>, supersededIds: string[] = []) {
+  const batch = await peer.relayClient.receiveMessages(peer.locator.conversationId, peer.cursor)
+  for (const row of batch.entries) {
+    const envelope = deserializeEnvelope(row.envelope)
+    if (!isGroupWelcomeEnvelope(envelope)) {
+      try { peer.state = receiveGroupEvent(identity, envelope, peer.state).state }
+      catch (error) { if (!supersededIds.includes(hex(envelope.msg_id))) throw error }
+    }
+  }
+  peer.cursor = batch.sequence
+}
 async function browserOpen(page: Page, link: string) {
   const url = new URL(link)
   await page.goto(`/${url.hash}`)
@@ -114,7 +125,7 @@ test('browser opens its sealed welcome, persists removal, then accepts explicit 
   await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
   const ownerLink = await add(page, 'Peer'), peerState = await peerOpen(peer, ownerLink)
   const recipient = generateIdentity()
-  const addition = prepareGroupSessionAddition(peer, peerState.state, [recipient.publicKey])
+  const addition = prepareGroupSessionAddition(peer, peerState.state, [recipient.publicKey], undefined, undefined, peerState.cursor)
   for (const control of [addition.addition, addition.rekey]) {
     await peerState.relayClient.postMessage(peerState.locator.conversationId, serializeEnvelope(control))
     peerState.state = receiveGroupEvent(peer, control, peerState.state).state
@@ -135,7 +146,8 @@ test('browser opens its sealed welcome, persists removal, then accepts explicit 
   await expect(page.getByText('You were removed from this group.', { exact: true })).toBeVisible()
   await page.reload(); await expect(page.getByPlaceholder('Type a message')).toBeDisabled()
   await peerState.relayClient.postMessage(peerState.locator.conversationId, serializeEnvelope(createMessage(peer, groupSessionConversation(peerState.state), 'text', new TextEncoder().encode('excluded interval'))))
-  const readmit = prepareGroupSessionAddition(peer, peerState.state, [recipient.publicKey])
+  await catchUpPeer(peer, peerState)
+  const readmit = prepareGroupSessionAddition(peer, peerState.state, [recipient.publicKey], undefined, undefined, peerState.cursor)
   for (const control of [readmit.addition, readmit.rekey]) { await peerState.relayClient.postMessage(peerState.locator.conversationId, serializeEnvelope(control)); peerState.state = receiveGroupEvent(peer, control, peerState.state).state }
   await peerState.relayClient.postMessage(peerState.locator.conversationId, serializeEnvelope(readmit.welcomes[0]))
   await browserOpen(page, link)
@@ -233,4 +245,85 @@ test('two browser tabs serialize member additions against one durable checkpoint
   expect((await peerOpen(bob, link)).state.epoch).toBe(2)
   expect((await peerOpen(carol, link)).state.epoch).toBe(2)
   await second.close()
+})
+
+
+for (const timing of ['before welcome', 'after opening'] as const) test(`browser rejects a competing pre-admission rekey ${timing} and recovers to a challenged same-epoch welcome`, async ({ page }) => {
+  await page.goto('/'); await contacts(page)
+  const peer = generateIdentity(), recipient = generateIdentity()
+  await pin(page, 'Canonical peer', peer)
+  await page.getByLabel('Group name', { exact: true }).fill('Competing rotation')
+  await page.getByRole('button', { name: 'Create contact group', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Group created' })).toBeVisible()
+  const ownerLink = await add(page, 'Canonical peer'), opened = await peerOpen(peer, ownerLink)
+  // Stop the creator browser while the peer posts both branches. Its own
+  // conservative rewind recovery is separate from this new recipient's join.
+  await page.goto('about:blank')
+  await catchUpPeer(peer, opened)
+  let addition = prepareGroupSessionAddition(peer, opened.state, [recipient.publicKey], undefined, undefined, opened.cursor)
+  for (let n = 0; addition.rekey.msg_id[0] < 128 && n < 128; n++) addition = prepareGroupSessionAddition(peer, opened.state, [recipient.publicKey], undefined, undefined, opened.cursor)
+  expect(addition.rekey.msg_id[0]).toBeGreaterThanOrEqual(128)
+  const afterAdd = receiveGroupEvent(peer, addition.addition, opened.state).state
+  let competing = prepareGroupSessionRekey(peer, afterAdd)
+  for (let n = 0; hex(competing.rekey.msg_id) >= hex(addition.rekey.msg_id) && n < 128; n++) competing = prepareGroupSessionRekey(peer, afterAdd)
+  expect(hex(competing.rekey.msg_id) < hex(addition.rekey.msg_id)).toBe(true)
+  for (const control of [addition.addition, addition.rekey]) {
+    await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(control))
+    opened.state = receiveGroupEvent(peer, control, opened.state).state
+  }
+  assertGroupAdditionAccepted(peer, opened.state, addition)
+  const losingRoot = opened.state.root
+  const link = createGroupLink({ ...opened.locator, inviterPublicKey: peer.publicKey }), id = hex(opened.locator.conversationId)
+  const openRecipient = async () => {
+    await page.goto('/')
+    await page.evaluate(identity => {
+      const data = JSON.parse(localStorage.getItem('aim-store')!); data.activeProfileId = 'recipient'; data.profiles.push({ id: 'recipient', name: 'Recovering browser' }); data.identities.recipient = identity; localStorage.setItem('aim-store', JSON.stringify(data))
+    }, { privateKey: hex(recipient.privateKey), publicKey: hex(recipient.publicKey), keyId: hex(recipient.keyID) })
+    await page.reload(); await browserOpen(page, link)
+  }
+  if (timing === 'after opening') {
+    await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(addition.welcomes[0]))
+    await openRecipient()
+    await expect(page.getByPlaceholder('Type a message')).toBeEnabled()
+    // Resume the normal saved subscriber with the whole race in its backlog,
+    // proving a later unknown control blocks earlier plaintext in that batch.
+    await page.goto('about:blank')
+  }
+  const losingText = createMessage(peer, groupSessionConversation(opened.state), 'text', new TextEncoder().encode('readable losing-branch text must stay hidden'))
+  await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(losingText))
+  await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(competing.rekey))
+  const canonical = receiveGroupEvent(peer, competing.rekey, opened.state)
+  expect(canonical.rewound).toBe(true); opened.state = canonical.state
+  expect(opened.state.root).not.toBe(losingRoot)
+  await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(createMessage(peer, groupSessionConversation(opened.state), 'text', new TextEncoder().encode('canonical text before recovery'))))
+  if (timing === 'before welcome') {
+    await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(addition.welcomes[0]))
+    await openRecipient()
+  } else await page.goto('/')
+  await expect(page.getByPlaceholder('Type a message')).toBeDisabled()
+  await expect(page.locator('.message-body', { hasText: 'readable losing-branch text must stay hidden' })).toHaveCount(0)
+  await expect(page.locator('.message-body', { hasText: 'canonical text before recovery' })).toHaveCount(0)
+  const saved = await page.evaluate(cid => {
+    const data = JSON.parse(localStorage.getItem('aim-store')!)
+    return data.conversations[data.activeProfileId].find((conv: { id: string }) => conv.id === cid).group.session
+  }, id)
+  expect(saved.root).toBe(losingRoot)
+  expect(saved.recovery.reason).toBe('missing_history')
+  await contacts(page)
+  await expect(page.getByText('Group recovery required', { exact: true })).toBeVisible()
+  await test.info().attach('competing-welcome-blocked', { body: await page.screenshot(), contentType: 'image/png' })
+  await page.reload(); await expect(page.getByPlaceholder('Type a message')).toBeDisabled()
+  await catchUpPeer(peer, opened, [hex(losingText.msg_id)])
+  const refreshed = prepareGroupWelcomeRefresh(peer, opened.state, [recipient.publicKey], undefined, new Uint8Array(Buffer.from(saved.recovery.challenge, 'hex')), opened.cursor)
+  await opened.relayClient.postMessage(opened.locator.conversationId, serializeEnvelope(refreshed.welcomes[0]))
+  await browserOpen(page, link)
+  await expect(page.getByPlaceholder('Type a message')).toBeEnabled()
+  await page.reload(); await expect(page.getByPlaceholder('Type a message')).toBeEnabled()
+  await page.getByPlaceholder('Type a message').fill('recovered canonical branch reply')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(page.locator('.message-body', { hasText: 'recovered canonical branch reply' })).toBeVisible()
+  await test.info().attach('challenged-welcome-recovered', { body: await page.screenshot(), contentType: 'image/png' })
+  const replyBatch = await opened.relayClient.receiveMessages(opened.locator.conversationId, opened.cursor)
+  const reply = replyBatch.entries.map(row => deserializeEnvelope(row.envelope)).filter(envelope => !isGroupWelcomeEnvelope(envelope)).map(envelope => receiveGroupEvent(peer, envelope, opened.state)).find(result => !result.duplicate && new TextDecoder().decode(result.message.inner.body) === 'recovered canonical branch reply')
+  expect(reply).toBeDefined()
 })

@@ -109,6 +109,14 @@ or required recovery. The welcome signs the sender’s fully processed relay cur
 Opening its link verifies coverage from that anchor and replays retained
 decryptable transitions, including a rekey posted while the welcome was being
 delivered. A missing row before the welcome therefore still requires recovery.
+Opening also checks the entire captured batch for unverified earlier-epoch
+envelopes after that anchor. Only the exact add/rekey ciphertext signed into the
+welcome is exempt. A late competing rotation therefore pauses the new member
+before messages appear, without giving them pre-admission roots. A current
+member can answer the recipient's saved recovery challenge with a fresh welcome,
+including a corrected root at the same epoch.
+Later receive batches make the same check when the saved session has no eligible
+earlier key archive, and pause the whole batch before displaying its messages.
 
 Contact groups use a dedicated authenticated receive checkpoint. Legacy invite
 conversations and existing gateway conversations retain their existing flows;

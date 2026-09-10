@@ -6,7 +6,7 @@ import {
   groupSessionConversation, createGroupControlMessage, createGroupRemoveBody,
   prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupWelcomeRefresh,
   assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, assertGroupCanSend,
-  receiveGroupEvent, checkGroupReplayCoverage, checkExpiredGroupControl, requireGroupRecovery,
+  receiveGroupEvent, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl, requireGroupRecovery,
   createGroupLink, parseGroupLink, openGroupWelcome, groupSessionFromWelcome,
   serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, createMessage, defaultTTL, DropboxClient,
 } from '@corpollc/qntm'
@@ -93,6 +93,16 @@ export function applyGroupBatch(profile: string, id: string, entries: Subscripti
     if (row.seq <= host.bootstrapSequence && !includeBeforeBootstrap) continue
     const wire = base64UrlEncode(row.envelope)
     pending.set(`${row.seq}:${wire}`, { seq: row.seq, wire })
+  }
+  if (!includeBeforeBootstrap && !state.recovery) {
+    // Check the whole queued batch against the saved epoch before any plaintext
+    // can become visible. Welcome installation uses its stricter signed-context
+    // preflight, which can recognize the exact admission ciphertext.
+    for (const row of pending.values()) {
+      let envelope
+      try { envelope = deserializeEnvelope(base64UrlDecode(row.wire)) } catch { continue }
+      if (!isGroupWelcomeEnvelope(envelope)) state = checkGroupUnverifiableEpoch(state, envelope, row.seq)
+    }
   }
   let progress = true
   while (progress && !state.recovery) {
@@ -249,7 +259,13 @@ export async function openContactGroup(profile: string, link: string, name = '')
     for (const { entry, welcome } of candidates) {
       try {
         if (previous?.group?.removedSequence && welcome.purpose === 'addition' && entry.seq <= previous.group.removedSequence) throw new Error('This admission predates your saved removal')
-        const session = groupSessionFromWelcome(identity, welcome, entry.seq, previous?.group?.session)
+        // Inspect the complete captured replay before storing or dispatching
+        // bodies. A new member cannot verify a competing source-epoch rekey
+        // using roots from before their admission.
+        const session = checkGroupWelcomeReplay(
+          groupSessionFromWelcome(identity, welcome, entry.seq, previous?.group?.session),
+          welcome, batch.sequence, batch.entries,
+        )
         const conv = welcome.conversation
         const group: store.StoredGroup = { session, cursor: welcome.replayFromSequence, bootstrapSequence: welcome.replayFromSequence, removedSequence: previous?.group?.removedSequence,
           pending: [], receipts: previous?.group?.receipts ?? [], operation: previous?.group?.operation ?? null,
