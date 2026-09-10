@@ -9,8 +9,8 @@ import time
 
 from .cbor import marshal_canonical, unmarshal
 from .crypto import QSP1Suite
-from .group import GroupState, apply_rekey
-from .group_welcome import _validate_snapshot, prepare_group_addition
+from .group import GroupState, apply_rekey, create_rekey
+from .group_welcome import _validate_snapshot, prepare_group_addition, _seal_welcome, GROUP_WELCOME_TTL
 from .identity import base64url_decode, base64url_encode, validate_identity
 from .message import create_message, decrypt_message, serialize_envelope
 
@@ -145,6 +145,52 @@ def prepare_group_session_addition(identity, state, recipients, ttl=None):
     assert_group_can_send(identity, state)
     options = {} if ttl is None else {'ttl': ttl}
     return prepare_group_addition(identity, group_session_conversation(state), _roster(state['snapshot']), recipients, **options)
+
+
+def prepare_group_welcome_refresh(identity, previous, recipients, ttl=GROUP_WELCOME_TTL):
+    """Refresh current keys for members without admission or rotation.
+
+    Hosts finish replay first, save the exact operation and recheck before
+    release. Gateway-governed groups use their own authenticated reducer.
+    """
+    state = restore_group_session(identity, previous)
+    assert_group_can_send(identity, state)
+    conversation, group = group_session_conversation(state), _roster(state['snapshot'])
+    _require(_uint(ttl) and 0 < ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime')
+    _require(isinstance(recipients, list) and 0 < len(recipients) <= 128, 'Invalid refresh recipient count')
+    members = {member['public_key'] for member in group.snapshot()['founding_members']}
+    seen = set()
+    for recipient in recipients:
+        _require(isinstance(recipient, bytes) and recipient in members, 'Refresh recipient is not a current member')
+        _require(recipient not in seen, 'Duplicate refresh recipient')
+        seen.add(recipient)
+    at = int(time.time())
+    return {'conversation': conversation, 'state': group,
+            'welcomes': [_seal_welcome(identity, conversation, group, recipient, at, ttl) for recipient in recipients]}
+
+
+def assert_group_welcome_refresh_current(identity, state, operation):
+    """A refresh must still describe accepted keys and roster when released."""
+    assert_group_can_send(identity, state)
+    _require(state['conversationId'] == operation['conversation']['id'].hex()
+             and state['epoch'] == operation['conversation']['currentEpoch']
+             and state['root'] == operation['conversation']['keys']['root'].hex()
+             and state['snapshot'] == _encode_roster(operation['state']), 'Prepared welcome refresh differs from accepted group state')
+    at = int(time.time())
+    _require(len(operation['welcomes']) > 0 and all(w['created_ts'] <= at + 600 and w['expiry_ts'] >= at for w in operation['welcomes']),
+             'Prepared welcome refresh expired')
+
+
+def prepare_group_session_rekey(identity, previous, ttl=None):
+    """A remaining member can finish rotation; application sends stay blocked."""
+    state = restore_group_session(identity, previous)
+    # Rotation itself is allowed while membership awaits its new keys.
+    assert_group_can_send(identity, {**state, 'needsRekey': False})
+    conversation, group = group_session_conversation(state), _roster(state['snapshot'])
+    body, _ = create_rekey(identity, conversation, group, conversation['id'])
+    rekey = create_group_control_message(identity, conversation, 'group_rekey', body, ttl)
+    received = receive_group_event(identity, rekey, state)
+    return {'conversation': received['conversation'], 'state': received['group'], 'rekey': rekey}
 
 
 def assert_group_addition_accepted(identity, state, operation):

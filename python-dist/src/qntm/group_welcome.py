@@ -17,6 +17,7 @@ from .message import create_message
 
 _suite = QSP1Suite()
 _DOMAIN = "qntm/group-welcome/v1"
+_REFRESH_DOMAIN = "qntm/group-refresh/v1"
 MAX_GROUP_WELCOME_BYTES = 65536
 GROUP_WELCOME_TTL = 604800
 _MAX_EPOCH = 0xffffffff
@@ -43,6 +44,22 @@ def _header(envelope):
     return {key: envelope[key] for key in (
         "v", "suite", "kind", "conv_id", "msg_id", "conv_epoch", "created_ts", "expiry_ts",
     )}
+
+
+def _seal_welcome(identity, conversation, state, recipient, created_at, ttl, admission=None):
+    """Internal sealing primitive; recovery uses the checkpoint-aware helper."""
+    envelope = {"v": 1, "suite": "QSP-1", "kind": "group_welcome", "conv_id": conversation["id"],
+                "msg_id": generate_message_id(), "conv_epoch": conversation["currentEpoch"],
+                "created_ts": created_at, "expiry_ts": created_at + ttl}
+    payload = {"proto": _DOMAIN if admission else _REFRESH_DOMAIN, "envelope": _header(envelope),
+               "inviter_ik_pk": identity["publicKey"], "recipient_ik_pk": recipient,
+               "group_key": conversation["keys"]["root"], "group_state": state.snapshot()}
+    if admission:
+        payload.update(admission)
+    signature = _suite.sign(identity["privateKey"], marshal_canonical(payload))
+    envelope["ciphertext"] = seal_secret(identity["privateKey"], recipient, marshal_canonical({"payload": payload, "signature": signature}))
+    _require(len(marshal_canonical(envelope)) <= MAX_GROUP_WELCOME_BYTES, "Group welcome exceeds size limit")
+    return envelope
 
 
 def _validate_snapshot(value):
@@ -106,20 +123,8 @@ def prepare_group_addition(identity, conversation, state, recipients, ttl=GROUP_
     next_conversation["participants"] = next_state.list_members()
     apply_rekey(next_conversation, new_key, conversation["currentEpoch"] + 1)
     next_conversation.pop("inviteToken", None)
-    welcomes = []
-    for recipient in recipients:
-        envelope = {"v": 1, "suite": "QSP-1", "kind": "group_welcome", "conv_id": conversation["id"],
-                    "msg_id": generate_message_id(), "conv_epoch": next_conversation["currentEpoch"],
-                    "created_ts": addition["created_ts"], "expiry_ts": addition["expiry_ts"]}
-        payload = {"proto": _DOMAIN, "envelope": _header(envelope),
-                   "inviter_ik_pk": identity["publicKey"], "recipient_ik_pk": recipient,
-                   "group_key": new_key, "group_state": next_state.snapshot(),
-                   "addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"]}
-        signature = _suite.sign(identity["privateKey"], marshal_canonical(payload))
-        envelope["ciphertext"] = seal_secret(identity["privateKey"], recipient,
-                                              marshal_canonical({"payload": payload, "signature": signature}))
-        _require(len(marshal_canonical(envelope)) <= MAX_GROUP_WELCOME_BYTES, "Group welcome exceeds size limit")
-        welcomes.append(envelope)
+    welcomes = [_seal_welcome(identity, next_conversation, next_state, recipient, addition["created_ts"], ttl,
+                             {"addition_id": addition["msg_id"], "rekey_id": rekey["msg_id"]}) for recipient in recipients]
     return {"conversation": next_conversation, "state": next_state,
             "addition": addition, "rekey": rekey, "welcomes": welcomes}
 
@@ -143,7 +148,7 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     _require(_fields(value, "v,suite,kind,conv_id,msg_id,conv_epoch,created_ts,expiry_ts,ciphertext")
              and type(value["v"]) is int and value["v"] == 1 and value["suite"] == "QSP-1"
              and value["kind"] == "group_welcome" and _bytes(value["conv_id"], 16) and _bytes(value["msg_id"], 16)
-             and _uint(value["conv_epoch"]) and 0 < value["conv_epoch"] <= _MAX_EPOCH
+             and _uint(value["conv_epoch"]) and value["conv_epoch"] <= _MAX_EPOCH
              and _uint(value["created_ts"]) and value["created_ts"] > 0 and _uint(value["expiry_ts"])
              and 0 < value["expiry_ts"] - value["created_ts"] <= GROUP_WELCOME_TTL
              and isinstance(value["ciphertext"], bytes) and len(value["ciphertext"]) >= 40,
@@ -159,10 +164,13 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
     _require(_fields(opened, "payload,signature") and _bytes(opened["signature"], 64), "Invalid signed group welcome")
     _require(plaintext == marshal_canonical(opened), "Signed group welcome must use canonical CBOR")
     payload = opened["payload"]
-    _require(_fields(payload, "proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id")
-             and payload["proto"] == _DOMAIN and _bytes(payload["inviter_ik_pk"], 32)
-             and _bytes(payload["recipient_ik_pk"], 32) and _bytes(payload["group_key"], 32)
-             and _bytes(payload["addition_id"], 16) and _bytes(payload["rekey_id"], 16), "Invalid group welcome payload")
+    addition = (_fields(payload, "proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id")
+                and payload["proto"] == _DOMAIN and _bytes(payload["addition_id"], 16)
+                and _bytes(payload["rekey_id"], 16) and value["conv_epoch"] > 0)
+    refresh = (_fields(payload, "proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state")
+               and payload["proto"] == _REFRESH_DOMAIN)
+    _require((addition or refresh) and _bytes(payload["inviter_ik_pk"], 32)
+             and _bytes(payload["recipient_ik_pk"], 32) and _bytes(payload["group_key"], 32), "Invalid group welcome payload")
     _require(payload["inviter_ik_pk"] == inviter_public_key and payload["recipient_ik_pk"] == identity["publicKey"],
              "Welcome contact binding differs")
     _require(marshal_canonical(payload["envelope"]) == marshal_canonical(_header(value)),
@@ -179,4 +187,5 @@ def open_group_welcome(identity, wire, *, conversation_id, inviter_public_key, a
                     "keys": {"root": payload["group_key"], "aeadKey": aead, "nonceKey": nonce},
                     "participants": state.list_members(), "createdAt": state.created_at, "currentEpoch": value["conv_epoch"]}
     return {"conversation": conversation, "state": state, "inviter_public_key": inviter_public_key,
-            "addition_id": payload["addition_id"], "rekey_id": payload["rekey_id"], "message_id": value["msg_id"]}
+            "purpose": "addition" if addition else "refresh", "message_id": value["msg_id"],
+            **({"addition_id": payload["addition_id"], "rekey_id": payload["rekey_id"]} if addition else {})}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added matching Python/TypeScript current-key welcome refresh helpers and CLI/MCP `group refresh`. An existing member who missed the welcome delivery window can receive current keys without another admission or key rotation. Signed refreshes are distinct from admission welcomes and cannot undo saved removal. A remaining member can also finish an interrupted rotation before refreshing the new contact. Tests cover expiry, exact retries, noncreator recovery and fresh cross-language exchanges. Recovery across expired replay gaps and conflicting saved operations remains unfinished.
+
 - Added ordinary-group contact addition to the Python CLI and MCP: pin a known address, add it, and share a public group link containing no encryption keys. The client rotates keys and delivers a recipient-encrypted welcome through the existing relay. Removal and readmission preserve exclusion from traffic sent while absent. Pending operations, receive state and plaintext history persist atomically; retries reuse the exact encrypted messages after uncertain delivery. Tests include fresh CLI processes talking to a TypeScript peer through a real relay, failed writes, lost responses and removal after restart. Browser, terminal, OpenClaw, gateway-governed welcomes and complete concurrent-operation recovery remain unfinished.
 
 - Added matching Python and TypeScript ordinary-group receive checkpoints. The libraries validate membership controls, preserve removal across restart, require complete rekey rosters, and resolve delayed competing rekeys without treating old application traffic as current. A shared private JSON format supports cross-language recovery. Sender helpers require verified acceptance of the exact addition and rekey before releasing welcomes.

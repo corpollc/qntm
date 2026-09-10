@@ -32,6 +32,9 @@ if phase == 'prepare':
     command('contact', 'add', 'TypeScript peer', sys.argv[4])
     result = command('--dropbox-url', relay, 'group', 'add', cid, 'TypeScript peer')
     print(json.dumps({'conversation_id': cid, 'group_link': result['group_link']}))
+elif phase == 'refresh':
+    result = command('group', 'refresh', sys.argv[4], 'TypeScript peer')
+    print(json.dumps({'group_link': result['group_link'], 'epoch': result['current_epoch']}))
 elif phase == 'finish':
     cid = sys.argv[4]
     received = command('recv', cid)

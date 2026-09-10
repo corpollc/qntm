@@ -86,6 +86,7 @@ Add to your `.cursor/mcp.json`:
 | `contact_add`, `contact_list`, `contact_remove` | Pin, inspect or remove local contact names and full public keys (unreleased) |
 | `group_add_contact`, `group_remove_contact` | Change ordinary-group membership and rotate keys; addition delivers an encrypted welcome and returns a public group link (unreleased) |
 | `group_rekey`, `group_retry` | Rotate ordinary-group keys or resume the exact saved operation after uncertain delivery (unreleased) |
+| `group_refresh` | Send a current-key welcome to an existing member without admission or rotation (unreleased) |
 | `group_link` | Retrieve the public locator for welcomes issued by this identity; no network access or membership change (unreleased) |
 
 The unreleased group tools share the CLI profile and require host authorization

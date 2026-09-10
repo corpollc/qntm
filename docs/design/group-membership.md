@@ -6,6 +6,14 @@ public link opening, backed by matching Python/TypeScript library checkpoints.
 Browser, terminal and OpenClaw interfaces, gateway governance and complete
 recovery across competing rekeys remain unfinished.
 
+Public links have no expiry. Opening order is independent of addition order:
+later rotations include already-added contacts before they open their links.
+Welcome expiry and relay retention bound delivery, not membership. The CLI/MCP
+`group refresh` operation and matching library helpers now let a member with
+current state resend current keys to a still-admitted contact. This changes no
+membership and supplies no earlier epoch keys. A refresh cannot undo saved
+removal; readmission requires a new authorized addition.
+
 ## Contact addition
 
 The normal flow starts with a known identity in the address book:

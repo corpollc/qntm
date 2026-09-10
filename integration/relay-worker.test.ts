@@ -361,6 +361,13 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     const joined = openGroupWelcome(contact, welcome, locator);
     let checkpoint = createGroupSession(contact, joined.conversation, joined.state);
     expect(() => decryptMessage(deserializeEnvelope(replay.messages[1]), joined.conversation)).toThrow();
+    const refreshed = await invoke('refresh', prepared.conversation_id);
+    expect(refreshed).toMatchObject({ group_link: prepared.group_link, epoch: 1 });
+    const refreshReplay = await relay.receiveMessages(locator.conversationId, replay.sequence);
+    expect(refreshReplay.messages).toHaveLength(1);
+    const refreshedWelcome = openGroupWelcome(contact, refreshReplay.messages[0], locator);
+    expect(refreshedWelcome.purpose).toBe('refresh');
+    expect(refreshedWelcome.conversation.keys).toEqual(joined.conversation.keys);
     const reply = createMessage(contact, joined.conversation, 'text', new TextEncoder().encode('TypeScript contact reply'));
     await relay.postMessage(locator.conversationId, marshalCanonical(reply));
     const finished = await invoke('finish', prepared.conversation_id);
@@ -370,6 +377,11 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     let sawExcludedMessage = false;
     for (const wire of changes.messages) {
       const envelope = deserializeEnvelope(wire);
+      if (isGroupWelcomeEnvelope(envelope)) {
+        // Recipient-box messages use the welcome parser, not group decryption.
+        expect(openGroupWelcome(contact, wire, locator).purpose).toBe('refresh');
+        continue;
+      }
       if (Buffer.from(envelope.msg_id).toString('hex') === finished.future_message_id) {
         expect(() => receiveGroupEvent(contact, envelope, checkpoint)).toThrow();
         sawExcludedMessage = true;

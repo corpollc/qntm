@@ -100,6 +100,7 @@ from .group_session import (
     create_group_session, restore_group_session, group_session_conversation,
     assert_group_can_send, create_group_control_message, receive_group_event,
     prepare_group_session_addition, assert_group_addition_accepted,
+    prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
     GROUP_REKEY_GRACE_SECONDS, MAX_GROUP_REKEY_CHECKPOINTS,
 )
 from .governance import (

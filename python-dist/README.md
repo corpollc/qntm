@@ -75,7 +75,9 @@ This checkout also adds unreleased CLI and MCP contact-add workflows for ordinar
 groups. Pin a full public address, add the contact, and share the returned public
 group link; their existing identity decrypts the welcome automatically. MCP adds
 `contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
-`group_remove_contact`, `group_rekey`, `group_retry` and `group_link`.
+`group_remove_contact`, `group_rekey`, `group_refresh`, `group_retry` and `group_link`.
+`qntm group refresh GROUP CONTACT` renews welcome delivery for an existing member
+using current keys; it does not change membership or rotate keys.
 See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)

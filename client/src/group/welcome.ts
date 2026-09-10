@@ -16,6 +16,7 @@ import type { Conversation, Identity, OuterEnvelope } from '../types.js';
 
 const suite = new QSP1Suite();
 const DOMAIN = 'qntm/group-welcome/v1';
+const REFRESH_DOMAIN = 'qntm/group-refresh/v1';
 export const MAX_GROUP_WELCOME_BYTES = 65536;
 export const GROUP_WELCOME_TTL = 604800;
 const MAX_EPOCH = 0xffffffff;
@@ -43,28 +44,44 @@ export interface GroupAddition {
   /** Post after the addition and rekey, never before them. */
   welcomes: GroupWelcomeEnvelope[];
 }
-export interface GroupWelcome {
+export type GroupWelcome = {
   conversation: Conversation;
   state: GroupState;
   inviterPublicKey: Uint8Array;
-  additionId: Uint8Array;
-  rekeyId: Uint8Array;
   messageId: Uint8Array;
-}
-interface WelcomePayload {
-  proto: typeof DOMAIN;
+} & ({ purpose: 'addition'; additionId: Uint8Array; rekeyId: Uint8Array }
+  | { purpose: 'refresh'; additionId?: never; rekeyId?: never });
+interface WelcomeContext {
   envelope: ReturnType<typeof header>;
   inviter_ik_pk: Uint8Array;
   recipient_ik_pk: Uint8Array;
   group_key: Uint8Array;
   group_state: GroupGenesisBody;
-  addition_id: Uint8Array;
-  rekey_id: Uint8Array;
 }
+type WelcomePayload = WelcomeContext & ({ proto: typeof DOMAIN; addition_id: Uint8Array; rekey_id: Uint8Array }
+  | { proto: typeof REFRESH_DOMAIN });
 function header(envelope: GroupWelcomeEnvelope) {
   return { v: envelope.v, suite: envelope.suite, kind: envelope.kind,
     conv_id: envelope.conv_id, msg_id: envelope.msg_id, conv_epoch: envelope.conv_epoch,
     created_ts: envelope.created_ts, expiry_ts: envelope.expiry_ts };
+}
+
+/** Internal sealing primitive. Call the checkpoint-aware refresh helper for recovery. */
+export function sealGroupWelcome(identity: Identity, conversation: Conversation, state: GroupState,
+  recipient: Uint8Array, createdAt: number, ttl: number,
+  admission?: { additionId: Uint8Array; rekeyId: Uint8Array }): GroupWelcomeEnvelope {
+  const envelope: GroupWelcomeEnvelope = { v: 1, suite: 'QSP-1', kind: 'group_welcome',
+    conv_id: new Uint8Array(conversation.id), msg_id: generateMessageID(), conv_epoch: conversation.currentEpoch,
+    created_ts: createdAt, expiry_ts: createdAt + ttl, ciphertext: new Uint8Array() };
+  const context: WelcomeContext = { envelope: header(envelope), inviter_ik_pk: identity.publicKey,
+    recipient_ik_pk: recipient, group_key: conversation.keys.root, group_state: state.snapshot() };
+  const payload: WelcomePayload = admission
+    ? { ...context, proto: DOMAIN, addition_id: admission.additionId, rekey_id: admission.rekeyId }
+    : { ...context, proto: REFRESH_DOMAIN };
+  const signature = suite.sign(identity.privateKey, marshalCanonical(payload));
+  envelope.ciphertext = sealSecret(identity.privateKey, recipient, marshalCanonical({ payload, signature }));
+  requireValue(marshalCanonical(envelope).length <= MAX_GROUP_WELCOME_BYTES, 'Group welcome exceeds size limit');
+  return envelope;
 }
 
 /** Validate a roster before applying any of it. Creator identity stays first. */
@@ -135,18 +152,8 @@ export function prepareGroupAddition(identity: Identity, conversation: Conversat
   applyRekey(next, newGroupKey, conversation.currentEpoch + 1);
   // A welcome never carries an old invite token or saved epoch-key archive.
   delete next.inviteToken;
-  const welcomes = recipients.map(recipient => {
-    const envelope: GroupWelcomeEnvelope = { v: 1, suite: 'QSP-1', kind: 'group_welcome',
-      conv_id: new Uint8Array(next.id), msg_id: generateMessageID(), conv_epoch: next.currentEpoch,
-      created_ts: addition.created_ts, expiry_ts: addition.expiry_ts, ciphertext: new Uint8Array() };
-    const payload: WelcomePayload = { proto: DOMAIN, envelope: header(envelope),
-      inviter_ik_pk: identity.publicKey, recipient_ik_pk: recipient, group_key: newGroupKey,
-      group_state: nextState.snapshot(), addition_id: addition.msg_id, rekey_id: rekey.msg_id };
-    const signature = suite.sign(identity.privateKey, marshalCanonical(payload));
-    envelope.ciphertext = sealSecret(identity.privateKey, recipient, marshalCanonical({ payload, signature }));
-    requireValue(marshalCanonical(envelope).length <= MAX_GROUP_WELCOME_BYTES, 'Group welcome exceeds size limit');
-    return envelope;
-  });
+  const welcomes = recipients.map(recipient => sealGroupWelcome(identity, next, nextState, recipient,
+    addition.created_ts, ttl, { additionId: addition.msg_id, rekeyId: rekey.msg_id }));
   return { conversation: next, state: nextState, addition, rekey, welcomes };
 }
 
@@ -170,7 +177,7 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   requireValue(fields(value, 'v,suite,kind,conv_id,msg_id,conv_epoch,created_ts,expiry_ts,ciphertext')
     && value.v === 1 && value.suite === 'QSP-1' && value.kind === 'group_welcome'
     && bytes(value.conv_id, 16) && bytes(value.msg_id, 16)
-    && uint(value.conv_epoch) && value.conv_epoch > 0 && value.conv_epoch <= MAX_EPOCH
+    && uint(value.conv_epoch) && value.conv_epoch <= MAX_EPOCH
     && uint(value.created_ts) && value.created_ts > 0 && uint(value.expiry_ts)
     && value.expiry_ts > value.created_ts && value.expiry_ts - value.created_ts <= GROUP_WELCOME_TTL
     && value.ciphertext instanceof Uint8Array && value.ciphertext.length >= 40, 'Invalid group welcome envelope');
@@ -182,9 +189,12 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   requireValue(fields(opened, 'payload,signature') && bytes(opened.signature, 64), 'Invalid signed group welcome');
   requireValue(equal(plaintext, marshalCanonical(opened)), 'Signed group welcome must use canonical CBOR');
   const payload = opened.payload;
-  requireValue(fields(payload, 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id')
-    && payload.proto === DOMAIN && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
-    && bytes(payload.group_key, 32) && bytes(payload.addition_id, 16) && bytes(payload.rekey_id, 16),
+  const addition = fields(payload, 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state,addition_id,rekey_id')
+    && payload.proto === DOMAIN && bytes(payload.addition_id, 16) && bytes(payload.rekey_id, 16) && value.conv_epoch > 0;
+  const refresh = fields(payload, 'proto,envelope,inviter_ik_pk,recipient_ik_pk,group_key,group_state')
+    && payload.proto === REFRESH_DOMAIN;
+  requireValue((addition || refresh) && bytes(payload.inviter_ik_pk, 32) && bytes(payload.recipient_ik_pk, 32)
+    && bytes(payload.group_key, 32),
   'Invalid group welcome payload');
   requireValue(equal(payload.inviter_ik_pk, expected.inviterPublicKey)
     && equal(payload.recipient_ik_pk, identity.publicKey), 'Welcome contact binding differs');
@@ -199,6 +209,8 @@ export function openGroupWelcome(identity: Identity, wire: Uint8Array,
   const conversation: Conversation = { id: new Uint8Array(value.conv_id), type: 'group', name: state.groupName,
     keys: { root: payload.group_key, ...suite.deriveEpochKeys(payload.group_key, value.conv_id, value.conv_epoch) },
     participants: state.listMembers(), createdAt: new Date(state.createdAt * 1000), currentEpoch: value.conv_epoch };
-  return { conversation, state, inviterPublicKey: new Uint8Array(expected.inviterPublicKey),
-    additionId: payload.addition_id, rekeyId: payload.rekey_id, messageId: value.msg_id };
+  const result = { conversation, state, inviterPublicKey: new Uint8Array(expected.inviterPublicKey), messageId: value.msg_id };
+  return addition
+    ? { ...result, purpose: 'addition', additionId: payload.addition_id as Uint8Array, rekeyId: payload.rekey_id as Uint8Array }
+    : { ...result, purpose: 'refresh' };
 }

@@ -21,6 +21,7 @@ from .group_link import create_group_link, parse_group_link
 from .group_session import (
     create_group_session, restore_group_session, receive_group_event, group_session_conversation,
     prepare_group_session_addition, assert_group_addition_accepted, assert_group_can_send,
+    prepare_group_welcome_refresh, assert_group_welcome_refresh_current, prepare_group_session_rekey,
     create_group_control_message,
 )
 from .group_welcome import open_group_welcome, is_group_welcome_envelope
@@ -289,7 +290,8 @@ class GroupClient:
         with self._operation_lock(record['id']):
             record = self.sync(record['id'])
             state = record['group_session']
-            assert_group_can_send(self.identity, state)
+            if member is not None:
+                assert_group_can_send(self.identity, state)
             conversation, group = group_session_conversation(state), _group(state)
             controls = []
             if member is not None:
@@ -298,8 +300,11 @@ class GroupClient:
                 applied = receive_group_event(self.identity, envelope, state)
                 group = applied['group']
                 controls.append(envelope)
-            body, _ = create_rekey(self.identity, conversation, group, conversation['id'])
-            controls.append(create_group_control_message(self.identity, conversation, 'group_rekey', body))
+            if member is None:
+                controls.append(prepare_group_session_rekey(self.identity, state)['rekey'])
+            else:
+                body, _ = create_rekey(self.identity, conversation, group, conversation['id'])
+                controls.append(create_group_control_message(self.identity, conversation, 'group_rekey', body))
             # Verify every transition locally before saving or sending any part.
             trial = state
             for envelope in controls:
@@ -307,6 +312,19 @@ class GroupClient:
             self._save_operation(record['id'], {'kind': 'remove' if member is not None else 'rekey',
                                                 'controls': [base64.b64encode(serialize_envelope(e)).decode() for e in controls],
                                                 'welcomes': [], 'welcomes_sent': 0, 'expected': trial})
+            return self._resume(record['id'])
+
+    def refresh(self, conversation_id, address):
+        key = resolve_contact(self.config_dir, address)
+        record = self.enable(conversation_id)
+        with self._operation_lock(record['id']):
+            record = self.sync(record['id'])
+            operation = prepare_group_welcome_refresh(self.identity, record['group_session'], [key])
+            expected = create_group_session(self.identity, operation['conversation'], operation['state'],
+                                            signed_epoch=record['group_session']['signedEpoch'])
+            self._save_operation(record['id'], {'kind': 'refresh', 'controls': [],
+                                                'welcomes': [base64.b64encode(serialize_envelope(w)).decode() for w in operation['welcomes']],
+                                                'welcomes_sent': 0, 'expected': expected})
             return self._resume(record['id'])
 
     def retry(self, conversation_id):
@@ -342,6 +360,10 @@ class GroupClient:
                         'addition': deserialize_envelope(base64.b64decode(operation['controls'][0])),
                         'rekey': deserialize_envelope(base64.b64decode(operation['controls'][1]))}
             assert_group_addition_accepted(self.identity, record['group_session'], prepared)
+        elif operation['kind'] == 'refresh':
+            prepared = {'conversation': group_session_conversation(operation['expected']), 'state': _group(operation['expected']),
+                        'welcomes': [deserialize_envelope(base64.b64decode(w)) for w in operation['welcomes']]}
+            assert_group_welcome_refresh_current(self.identity, record['group_session'], prepared)
         for position in range(operation['welcomes_sent'], len(operation['welcomes'])):
             cli._http_send(self.relay_url, conversation_id, base64.b64decode(operation['welcomes'][position], validate=True))
             with self._lock():
@@ -371,7 +393,11 @@ def join(config_dir, identity, link, name=''):
             continue
     if not candidates:
         raise ValueError('No current welcome for this identity; ask the contact to add or welcome this identity')
-    candidates.sort(key=lambda candidate: (-candidate[0]['conversation']['currentEpoch'], candidate[0]['rekey_id']))
+    # At a given epoch, a later refresh is the inviter's latest signed current
+    # snapshot. Addition-only candidates retain the canonical rekey-ID order.
+    candidates.sort(key=lambda candidate: (-candidate[0]['conversation']['currentEpoch'],
+                    0 if candidate[0]['purpose'] == 'refresh' else 1,
+                    -candidate[1] if candidate[0]['purpose'] == 'refresh' else candidate[0]['rekey_id']))
     welcome, welcome_sequence = candidates[0]
     with private_lock(os.path.join(config_dir, 'receive.lock')):
         records = cli._load_conversations(config_dir)
@@ -386,6 +412,13 @@ def join(config_dir, identity, link, name=''):
                 raise ValueError('Welcome is older than or conflicts with saved group state')
             if saved:
                 saved = restore_group_session(identity, saved)
+                if saved['removed'] and welcome['purpose'] == 'refresh':
+                    readmissions = [candidate for candidate in candidates if candidate[0]['purpose'] == 'addition'
+                                    and candidate[0]['conversation']['currentEpoch'] > saved['epoch']
+                                    and candidate[1] > previous.get('group_removed_sequence', 0)]
+                    if not readmissions:
+                        raise ValueError('A welcome refresh cannot undo saved removal; a new admission welcome is required')
+                    welcome, welcome_sequence = readmissions[0]
                 if _group(saved).creator != welcome['state'].creator:
                     raise ValueError('Group creator differs from saved state')
                 if welcome['conversation']['currentEpoch'] < saved['epoch']:

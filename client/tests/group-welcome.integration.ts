@@ -7,7 +7,7 @@ import {
   createMessage, decryptMessage, marshalCanonical, deserializeEnvelope,
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink,
   createGroupSession, restoreGroupSession, receiveGroupEvent, createGroupControlMessage,
-  createGroupRemoveBody, createRekey,
+  createGroupRemoveBody, createRekey, prepareGroupWelcomeRefresh,
 } from '../src/index.js';
 import type { Identity } from '../src/index.js';
 
@@ -27,6 +27,29 @@ function python(request: Record<string, unknown>): any {
 }
 
 describe('fresh Python / TypeScript contact addition interoperability', () => {
+  it('Python finishes a TypeScript addition interrupted before key rotation', () => {
+    const owner = generateIdentity(), peer = generateIdentity(), late = generateIdentity();
+    const invite = createInvite(owner, 'group');
+    const source = createConversation(invite, deriveConversationKeys(invite));
+    const group = new GroupState();
+    group.applyGenesis(parseGroupGenesisBody(createGroupGenesisBody('Interrupted team', '', owner, [peer.publicKey])));
+    source.participants = group.listMembers();
+    const addition = prepareGroupAddition(owner, source, group, [late.publicKey]);
+    const pending = receiveGroupEvent(peer, addition.addition, createGroupSession(peer, source, group));
+    const result = python({ action: 'session_rekey', identity: Object.fromEntries(Object.entries(peer).map(([k, v]) => [k, hex(v)])),
+      state: pending.state });
+    const completed = receiveGroupEvent(peer, deserializeEnvelope(bytes(result.rekey)), pending.state);
+    expect(completed.state.needsRekey).toBe(false);
+    expect(completed.state.root).toBe(result.root);
+    expect(completed.state.epoch).toBe(1);
+    expect(completed.group.snapshot()).toEqual(addition.state.snapshot());
+    const refresh = prepareGroupWelcomeRefresh(peer, completed.state, [late.publicKey]);
+    const joined = openGroupWelcome(late, marshalCanonical(refresh.welcomes[0]),
+      { conversationId: source.id, inviterPublicKey: peer.publicKey });
+    expect(joined.conversation.keys).toEqual(completed.conversation.keys);
+    expect(joined.state.snapshot().founding_members[0].key_id).toEqual(owner.keyID);
+  });
+
   it('exchanges private checkpoints between Python and TypeScript through addition and removal', () => {
     const owner = generateIdentity(), peer = generateIdentity(), late = generateIdentity();
     const invite = createInvite(owner, 'group');
@@ -74,8 +97,8 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
     expect(resumed.rekeys[0].messageId).toBe(hex(low.msg_id));
   });
 
-  for (const epoch of [0, 7]) {
-    it(`Python opens a TypeScript welcome after epoch ${epoch} and replies without old keys`, () => {
+  for (const epoch of [0, 7]) for (const refresh of [false, true]) {
+    it(`Python opens a TypeScript ${refresh ? 'refresh' : 'addition'} after epoch ${epoch} and replies without old keys`, () => {
       const owner = generateIdentity(), late = generateIdentity();
       const invite = createInvite(owner, 'group');
       const source = createConversation(invite, deriveConversationKeys(invite));
@@ -85,19 +108,22 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
       if (epoch) applyRekey(source, suite.generateGroupKey(), epoch);
       const before = createMessage(owner, source, 'text', new TextEncoder().encode('before addition'));
       const added = prepareGroupAddition(owner, source, state, [late.publicKey]);
+      let checkpoint = createGroupSession(owner, source, state);
+      for (const envelope of [added.addition, added.rekey]) checkpoint = receiveGroupEvent(owner, envelope, checkpoint).state;
+      const welcome = refresh ? prepareGroupWelcomeRefresh(owner, checkpoint, [late.publicKey]).welcomes[0] : added.welcomes[0];
       const after = createMessage(owner, added.conversation, 'text', new TextEncoder().encode('after addition'));
       const result = python({ action: 'open', identity: Object.fromEntries(Object.entries(late).map(([k, v]) => [k, hex(v)])),
         link: createGroupLink({ conversationId: source.id, inviterPublicKey: owner.publicKey, relayUrl: 'https://inbox.qntm.corpo.llc' }),
-        welcome: hex(marshalCanonical(added.welcomes[0])), conversation_id: hex(source.id), inviter_public_key: hex(owner.publicKey),
+        welcome: hex(marshalCanonical(welcome)), conversation_id: hex(source.id), inviter_public_key: hex(owner.publicKey),
         before: hex(marshalCanonical(before)), after: hex(marshalCanonical(after)) });
-      expect(result).toMatchObject({ old_decrypts: false, epoch: epoch + 1, after: 'after addition' });
+      expect(result).toMatchObject({ old_decrypts: false, epoch: epoch + 1, after: 'after addition', purpose: refresh ? 'refresh' : 'addition' });
       const reply = decryptMessage(deserializeEnvelope(bytes(result.reply)), added.conversation);
       expect(new TextDecoder().decode(reply.inner.body)).toBe('Python recipient reply');
       expect(reply.inner.sender_ik_pk).toEqual(late.publicKey);
     });
 
-    it(`TypeScript opens a Python welcome after epoch ${epoch} without earlier history`, () => {
-      const result = python({ action: 'prepare', epoch });
+    it(`TypeScript opens a Python ${refresh ? 'refresh' : 'addition'} after epoch ${epoch} without earlier history`, () => {
+      const result = python({ action: 'prepare', epoch, refresh });
       const late = identity(result.late);
       const locator = parseGroupLink(result.link);
       expect(locator.conversationId).toEqual(bytes(result.conversation_id));
@@ -105,8 +131,14 @@ describe('fresh Python / TypeScript contact addition interoperability', () => {
       const joined = openGroupWelcome(late, bytes(result.welcome), locator);
       expect(joined.conversation.currentEpoch).toBe(epoch + 1);
       expect(hex(joined.conversation.keys.root)).toBe(result.root);
-      expect(hex(joined.additionId)).toBe(result.addition_id);
-      expect(hex(joined.rekeyId)).toBe(result.rekey_id);
+      expect(joined.purpose).toBe(refresh ? 'refresh' : 'addition');
+      if (joined.purpose === 'addition') {
+        expect(hex(joined.additionId)).toBe(result.addition_id);
+        expect(hex(joined.rekeyId)).toBe(result.rekey_id);
+      } else {
+        expect(joined).not.toHaveProperty('additionId');
+        expect(joined).not.toHaveProperty('rekeyId');
+      }
       expect(() => decryptMessage(deserializeEnvelope(bytes(result.before)), joined.conversation)).toThrow();
       const after = decryptMessage(deserializeEnvelope(bytes(result.after)), joined.conversation);
       expect(new TextDecoder().decode(after.inner.body)).toBe('after addition');

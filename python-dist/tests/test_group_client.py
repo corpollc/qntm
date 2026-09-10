@@ -284,3 +284,90 @@ def test_mcp_contact_addition_and_local_pin_removal(setup, monkeypatch):
     assert mcp.contact_remove('MCP colleague') == {'removed': 'MCP colleague'}
     assert all(row['name'] != 'MCP colleague' for row in mcp.contact_list()['contacts'])
     assert join(f.contact_dir, f.contact, result['group_link'])['current_epoch'] == 1
+
+
+def test_cli_refresh_after_delivery_expiry_does_not_add_or_rotate(setup, monkeypatch):
+    f = setup
+    client = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = client.add(f.cid, 'Colleague')['group_link']
+    before = cli._load_conversations(f.owner_dir)[0]
+    expiry = deserialize_envelope(f.rows[f.cid][-1])['expiry_ts']
+    monkeypatch.setattr('time.time', lambda: expiry + 1)
+    with pytest.raises(ValueError, match='No current welcome'):
+        join(f.contact_dir, f.contact, link)
+    count = len(f.rows[f.cid])
+    refreshed = f.command(f.owner_dir, 'group', 'refresh', f.cid, 'Colleague')
+    assert refreshed['group_link'] == link and refreshed['current_epoch'] == 1
+    assert len(f.rows[f.cid]) == count + 1
+    after = cli._load_conversations(f.owner_dir)[0]
+    assert after['keys'] == before['keys'] and after['participants'] == before['participants']
+    assert join(f.contact_dir, f.contact, link)['current_epoch'] == 1
+    f.command(f.contact_dir, 'send', f.cid, 'recovered after expiry')
+    assert any(row.get('unsafe_body') == 'recovered after expiry'
+               for row in f.command(f.owner_dir, 'recv', f.cid)['messages'])
+
+
+def test_mcp_refresh_exact_retry_and_removed_recipient_guard(setup, monkeypatch):
+    from qntm import mcp_server as mcp
+    f = setup
+    client = GroupClient(f.owner_dir, f.owner, f.relay)
+    result = client.add(f.cid, 'Colleague')
+    monkeypatch.setenv('QNTM_CONFIG_DIR', f.owner_dir)
+    monkeypatch.setenv('QNTM_RELAY_URL', f.relay)
+    sent = []
+
+    def uncertain(url, cid, wire):
+        sent.append(wire)
+        f.send(url, cid, wire)
+        raise cli.SendDeliveryUnknown(cid, deserialize_envelope(wire)['msg_id'].hex(), OSError())
+
+    monkeypatch.setattr(cli, '_http_send', uncertain)
+    assert mcp.group_refresh(f.cid, 'Colleague')['delivery'] == 'unknown'
+    assert len(sent) == 1
+    monkeypatch.setattr(cli, '_http_send', f.send)
+    assert mcp.group_retry(f.cid)['current_epoch'] == 1
+    assert f.attempted[-1] == sent[0] and len(f.rows[f.cid]) == 5
+    join(f.contact_dir, f.contact, result['group_link'])
+    client.change(f.cid, 'Colleague')
+    f.command(f.contact_dir, 'recv', f.cid)
+    count = len(f.attempted)
+    assert 'error' in mcp.group_refresh(f.cid, 'Colleague')
+    assert len(f.attempted) == count
+    with pytest.raises(ValueError, match='cannot undo saved removal'):
+        join(f.contact_dir, f.contact, result['group_link'])
+
+
+def test_admission_welcome_still_allows_readmission_when_a_refresh_also_exists(setup):
+    f = setup
+    client = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = client.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    client.change(f.cid, 'Colleague')
+    f.command(f.contact_dir, 'recv', f.cid)
+    client.add(f.cid, 'Colleague')
+    client.refresh(f.cid, 'Colleague')
+    assert join(f.contact_dir, f.contact, link)['current_epoch'] == 3
+
+
+def test_cli_member_can_finish_partial_rotation_and_refresh_the_new_contact(setup):
+    from qntm import prepare_group_session_addition
+    f = setup
+    client = GroupClient(f.owner_dir, f.owner, f.relay)
+    link = client.add(f.cid, 'Colleague')['group_link']
+    join(f.contact_dir, f.contact, link)
+    newcomer = generate_identity()
+    new_dir = f.contact_dir + '-newcomer'
+    cli._save_identity(new_dir, newcomer)
+    owner_state = cli._load_conversations(f.owner_dir)[0]['group_session']
+    operation = prepare_group_session_addition(f.owner, owner_state, [newcomer['publicKey']])
+    # The creator disappears after publishing only the addition.
+    f.send(f.relay, f.cid, serialize_envelope(operation['addition']))
+    f.command(f.contact_dir, 'recv', f.cid)
+    with pytest.raises(SystemExit):
+        f.command(f.contact_dir, 'send', f.cid, 'must await rotation')
+    assert f.command(f.contact_dir, 'group', 'rekey', f.cid)['current_epoch'] == 2
+    refreshed = f.command(f.contact_dir, 'group', 'refresh', f.cid, newcomer['publicKey'].hex())
+    assert join(new_dir, newcomer, refreshed['group_link'])['current_epoch'] == 2
+    f.command(new_dir, 'send', f.cid, 'recovered after interrupted rotation')
+    assert any(row.get('unsafe_body') == 'recovered after interrupted rotation'
+               for row in f.command(f.contact_dir, 'recv', f.cid)['messages'])

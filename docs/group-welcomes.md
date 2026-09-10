@@ -11,8 +11,8 @@ order from their additions. An added contact is already a member: later rekeys
 include that identity, so their client can replay from its welcome to the current
 epoch. The welcome itself has a seven-day maximum lifetime; relay retention may
 also remove it or a needed rekey. Missing that delivery window does not end
-membership. Recovery requires a current member to send fresh, current keys to
-the still-admitted recipient; that refresh path is not yet implemented.
+membership. A member with current state can now send a new welcome containing
+current keys with `group refresh`, without changing membership or rotating keys.
 
 ## CLI and MCP
 
@@ -33,6 +33,21 @@ qntm send GROUP_ID "Hello"
 qntm group remove GROUP_ID Colleague
 ```
 
+For a still-admitted contact who missed the welcome's delivery window:
+
+```bash
+qntm group refresh GROUP_ID Colleague
+# Share the returned group_link; the same inviter produces the same link.
+```
+
+The command verifies the recipient against the current local roster after relay
+replay and saves the exact encrypted refresh for `group retry`. The receiver
+distinguishes this signed refresh from an admission welcome: a refresh cannot
+undo saved removal. A new, valid admission welcome is required for readmission.
+Neither refresh nor admission can recover keys for an interval of exclusion.
+If another current member sends the refresh, use that member's returned link,
+which pins their signing identity.
+
 `group add` saves the exact encrypted operation before sending, verifies the
 addition and rekey from relay replay, then sends the recipient-encrypted welcome.
 If delivery is uncertain, keep the profile and use `qntm group retry GROUP_ID`;
@@ -46,7 +61,7 @@ deliver a replacement welcome. `contact list` and `contact remove NAME` manage
 local pins; deleting a contact pin does not remove that person from any group.
 
 MCP exposes `contact_add`, `contact_list`, `contact_remove`, `group_add_contact`,
-`group_remove_contact`, `group_rekey`, `group_retry` and `group_link`.
+`group_remove_contact`, `group_rekey`, `group_refresh`, `group_retry` and `group_link`.
 `conversation_join` opens the public link. These tools share the CLI profile,
 receiver and recovery state. Membership changes and sends require the host's
 existing authorization; incoming messages cannot supply that authorization.
@@ -60,8 +75,11 @@ does not grant keys for the interval when that identity was absent.
 
 This increment supports newly created ordinary groups and legacy profiles with
 a complete, trusted local roster. It does not reconstruct missing legacy roster
-history, refresh expired welcomes, recover an addition superseded by another
-rekey, or integrate gateway admission/governance. A saved operation that no
+history, automatically detect and recover every expired replay gap, recover an
+addition superseded by another rekey, or integrate gateway admission/governance.
+A refresh requires a sender whose saved membership and keys are current;
+completion of a relay subscription alone cannot establish that if needed
+controls have expired. A saved operation that no
 longer matches accepted state fails without releasing its welcome; `group retry`
 does not yet resolve that conflict automatically. These are release gaps, not
 additional admission steps.
@@ -151,6 +169,23 @@ Before releasing its welcomes, `assertGroupAdditionAccepted` /
 addition and rekey and checks that the result still matches current state. A
 successful relay POST alone is insufficient.
 
+`prepareGroupWelcomeRefresh` / `prepare_group_welcome_refresh` takes the local
+identity, authenticated checkpoint and existing recipients' full public keys.
+It produces only signed, recipient-encrypted welcomes with the current keys and
+roster. It validates every recipient before producing an operation and includes
+no invite token, old keys or invented admission/rekey references.
+`assertGroupWelcomeRefreshCurrent` / `assert_group_welcome_refresh_current`
+rejects release after expiry or a change to the checkpoint's keys or roster.
+Both helpers refuse a removed sender or an unfinished membership rotation.
+
+`prepareGroupSessionRekey` / `prepare_group_session_rekey` lets any remaining
+ordinary-group member finish an interrupted rotation. Unlike application sends,
+rotation is allowed while `needsRekey` is set. The CLI/MCP `group rekey` path uses
+this helper, saves the exact control and verifies replay before completion.
+After that rotation, an existing member can refresh the newly added contact's
+welcome. This does not automatically reconcile the original sender's unfinished
+operation or authorize a removed sender to rotate keys.
+
 The reducer implements QSP v1.1's lowest-message-ID rekey rule using at most 64
 prior source-key/roster checkpoints, eligible for at most 24 hours and no longer
 than the rekey's message lifetime. Those old keys authenticate only competing
@@ -200,6 +235,12 @@ canonical CBOR of the complete payload:
  addition_id: bytes(16), rekey_id: bytes(16)}
 ```
 
+A refresh uses the same outer envelope and signature/box construction with
+`proto: "qntm/group-refresh/v1"`. Its exact payload omits `addition_id` and
+`rekey_id`; the signed domain identifies recovery of existing membership.
+`openGroupWelcome` / `open_group_welcome` returns `purpose: "addition"` or
+`purpose: "refresh"`, and admission references exist only for an addition.
+
 The snapshot is bootstrap state, not a second genesis event. Signatures use the
 shared strict Ed25519 profile. The separate signature is necessary: a recipient
 can construct a valid box using the shared encryption key, but cannot sign a
@@ -208,7 +249,8 @@ signed outer context, signatures, roster/key bindings and their own admission
 before returning any state.
 
 Welcomes are bounded to 64 KiB and 128 members, with names up to 256 UTF-8 bytes
-and descriptions up to 4096. Epochs range from 1 through 2^32-1. The maximum
+and descriptions up to 4096. Addition epochs range from 1 through 2^32-1;
+refreshes also support existing members at epoch zero. The maximum
 lifetime is seven days; expiry is inclusive of its Unix second, matching normal
 QSP messages. The client permits at most 600 seconds of future clock skew.
 Normal relay retention still applies independently.

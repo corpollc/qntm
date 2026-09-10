@@ -1561,6 +1561,11 @@ def cmd_group_retry(args):
     _group_output('group.retry', lambda: client.retry(conversation_id))
 
 
+def cmd_group_refresh(args):
+    client, conversation_id = _group_client(args)
+    _group_output('group.refresh', lambda: client.refresh(conversation_id, args.contact))
+
+
 def cmd_group_link(args):
     client, conversation_id = _group_client(args)
     _group_output('group.link', lambda: client.link(conversation_id))
@@ -3121,6 +3126,9 @@ claude code channel:
 
     group_retry_p = group_sub.add_parser('retry', help='Resume the saved group operation using its exact encrypted messages')
     group_retry_p.add_argument('conversation', help='Conversation ID or prefix')
+    group_refresh_p = group_sub.add_parser('refresh', help='Resend current keys to an existing member without changing membership')
+    group_refresh_p.add_argument('conversation', help='Conversation ID or prefix')
+    group_refresh_p.add_argument('contact', help='Local contact name or full public key')
     group_link_p = group_sub.add_parser('link', help='Show a public group locator link containing no group keys')
     group_link_p.add_argument('conversation', help='Conversation ID or prefix')
 
@@ -3301,6 +3309,8 @@ claude code channel:
             cmd_group_rekey(args)
         elif args.group_command == 'retry':
             cmd_group_retry(args)
+        elif args.group_command == 'refresh':
+            cmd_group_refresh(args)
         elif args.group_command == 'link':
             cmd_group_link(args)
         elif args.group_command == "list":

@@ -6,8 +6,9 @@ import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { base64UrlDecode, base64UrlEncode, uint8ArrayEquals, validateIdentity } from '../identity/index.js';
 import { createMessage, decryptMessage, serializeEnvelope } from '../message/index.js';
-import { GroupState, applyRekey, type GroupGenesisBody } from './index.js';
-import { validateGroupSnapshot, prepareGroupAddition, type GroupAddition } from './welcome.js';
+import { GroupState, applyRekey, createRekey, type GroupGenesisBody } from './index.js';
+import { validateGroupSnapshot, prepareGroupAddition, sealGroupWelcome, GROUP_WELCOME_TTL,
+  type GroupAddition, type GroupWelcomeEnvelope } from './welcome.js';
 import type { Conversation, Identity, Message, OuterEnvelope } from '../types.js';
 
 const suite = new QSP1Suite();
@@ -76,6 +77,17 @@ export type GroupEvent = {
   /** Hosts replay retained, undecryptable envelopes after a canonical rewind. */
   rewound: boolean;
 } & ({ duplicate: true } | { duplicate: false; message: Message });
+
+export interface GroupWelcomeRefresh {
+  conversation: Conversation;
+  state: GroupState;
+  welcomes: GroupWelcomeEnvelope[];
+}
+export interface GroupSessionRekey {
+  conversation: Conversation;
+  state: GroupState;
+  rekey: OuterEnvelope;
+}
 
 /** Use only a trusted local roster or the result of openGroupWelcome. */
 export function createGroupSession(identity: Identity, conversation: Conversation, group: GroupState,
@@ -150,6 +162,56 @@ export function prepareGroupSessionAddition(identity: Identity, state: GroupSess
   recipients: Uint8Array[], ttl?: number): GroupAddition {
   assertGroupCanSend(identity, state);
   return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl);
+}
+
+/** Refresh current keys for existing members without admission or rotation.
+ * Hosts finish relay replay first, persist the exact operation and recheck it
+ * immediately before release. Gateway-governed groups use their own reducer.
+ */
+export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSessionState,
+  recipients: Uint8Array[], ttl = GROUP_WELCOME_TTL): GroupWelcomeRefresh {
+  const state = restoreGroupSession(identity, previous);
+  assertGroupCanSend(identity, state);
+  const conversation = groupSessionConversation(state), group = roster(state.snapshot);
+  requireValue(uint(ttl) && ttl > 0 && ttl <= GROUP_WELCOME_TTL, 'Invalid welcome lifetime');
+  requireValue(Array.isArray(recipients) && recipients.length > 0 && recipients.length <= 128,
+    'Invalid refresh recipient count');
+  const members = group.snapshot().founding_members;
+  const seen = new Set<string>();
+  for (const recipient of recipients) {
+    requireValue(recipient instanceof Uint8Array && recipient.length === 32
+      && members.some(member => uint8ArrayEquals(member.public_key, recipient)), 'Refresh recipient is not a current member');
+    requireValue(!seen.has(hex(recipient)), 'Duplicate refresh recipient');
+    seen.add(hex(recipient));
+  }
+  const at = Math.floor(Date.now() / 1000);
+  return { conversation, state: group,
+    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl)) };
+}
+
+/** Any remaining ordinary-group member can finish an interrupted rotation.
+ * Application traffic stays blocked until this exact control is accepted.
+ */
+export function prepareGroupSessionRekey(identity: Identity, previous: GroupSessionState, ttl?: number): GroupSessionRekey {
+  const state = restoreGroupSession(identity, previous);
+  // Rotation itself is allowed while membership awaits its new keys.
+  assertGroupCanSend(identity, { ...state, needsRekey: false });
+  const conversation = groupSessionConversation(state), group = roster(state.snapshot);
+  const rekey = createGroupControlMessage(identity, conversation, 'group_rekey', createRekey(identity, conversation, group).bodyBytes, ttl);
+  const received = receiveGroupEvent(identity, rekey, state);
+  return { conversation: received.conversation, state: received.group, rekey };
+}
+
+/** A refresh must still describe the accepted keys and roster when released. */
+export function assertGroupWelcomeRefreshCurrent(identity: Identity, state: GroupSessionState,
+  operation: GroupWelcomeRefresh): void {
+  assertGroupCanSend(identity, state);
+  requireValue(state.conversationId === hex(operation.conversation.id) && state.epoch === operation.conversation.currentEpoch
+    && state.root === hex(operation.conversation.keys.root) && state.snapshot === encodeRoster(operation.state),
+  'Prepared welcome refresh differs from accepted group state');
+  const at = Math.floor(Date.now() / 1000);
+  requireValue(operation.welcomes.length > 0 && operation.welcomes.every(welcome => welcome.created_ts <= at + 600
+    && welcome.expiry_ts >= at), 'Prepared welcome refresh expired');
 }
 
 /** Before publishing welcomes, require the exact prepared add/rekey to have

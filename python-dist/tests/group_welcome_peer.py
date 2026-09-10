@@ -11,7 +11,7 @@ from qntm import (
     derive_conversation_keys, create_group_genesis_body, parse_group_genesis_body,
     apply_rekey, create_message, decrypt_message, marshal_canonical, unmarshal,
     prepare_group_addition, open_group_welcome, create_group_link, parse_group_link,
-    restore_group_session, receive_group_event,
+    restore_group_session, receive_group_event, create_group_session, prepare_group_welcome_refresh, prepare_group_session_rekey,
 )
 
 request = json.load(sys.stdin)
@@ -28,12 +28,17 @@ if request["action"] == "prepare":
         apply_rekey(source, suite.generate_group_key(), request["epoch"])
     before = create_message(owner, source, "text", b"before addition")
     addition = prepare_group_addition(owner, source, state, [late["publicKey"]])
+    checkpoint = create_group_session(owner, source, state)
+    for envelope in [addition['addition'], addition['rekey']]:
+        checkpoint = receive_group_event(owner, envelope, checkpoint)['state']
+    welcome = (prepare_group_welcome_refresh(owner, checkpoint, [late['publicKey']])['welcomes'][0]
+               if request.get('refresh') else addition['welcomes'][0])
     after = create_message(owner, addition["conversation"], "text", b"after addition")
     print(json.dumps({
         "owner": {key: value.hex() for key, value in owner.items()},
         "late": {key: value.hex() for key, value in late.items()},
         "conversation_id": source["id"].hex(),
-        "welcome": marshal_canonical(addition["welcomes"][0]).hex(),
+        "welcome": marshal_canonical(welcome).hex(),
         "before": marshal_canonical(before).hex(), "after": marshal_canonical(after).hex(),
         "root": addition["conversation"]["keys"]["root"].hex(),
         "addition_id": addition["addition"]["msg_id"].hex(), "rekey_id": addition["rekey"]["msg_id"].hex(),
@@ -56,7 +61,12 @@ elif request["action"] == "open":
     after = decrypt_message(unmarshal(bytes.fromhex(request["after"])), joined["conversation"])
     reply = create_message(identity, joined["conversation"], "text", b"Python recipient reply")
     print(json.dumps({"old_decrypts": old_decrypts, "after": after["inner"]["body"].decode(),
-                      "epoch": joined["conversation"]["currentEpoch"], "reply": marshal_canonical(reply).hex()}))
+                      "epoch": joined["conversation"]["currentEpoch"], "purpose": joined['purpose'], "reply": marshal_canonical(reply).hex()}))
+elif request['action'] == 'session_rekey':
+    identity = {key: bytes.fromhex(value) for key, value in request['identity'].items()}
+    state = restore_group_session(identity, request['state'])
+    operation = prepare_group_session_rekey(identity, state)
+    print(json.dumps({'rekey': marshal_canonical(operation['rekey']).hex(), 'root': operation['conversation']['keys']['root'].hex()}))
 elif request["action"] == "session_receive":
     identity = {key: bytes.fromhex(value) for key, value in request["identity"].items()}
     state = restore_group_session(identity, request["state"])

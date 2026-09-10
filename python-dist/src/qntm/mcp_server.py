@@ -662,6 +662,16 @@ def group_retry(conversation: str) -> dict:
 
 
 @mcp.tool()
+def group_refresh(conversation: str, contact: str) -> dict:
+    """Resend current keys to an existing member under host authorization.
+
+    No membership change, new rotation or older keys. Saves the exact encrypted
+    welcome for retry and returns the public group link.
+    """
+    return _group_action(conversation, 'refresh', contact)
+
+
+@mcp.tool()
 def group_link(conversation: str) -> dict:
     """Get the public locator for welcomes you issued. No network access or membership change."""
     return _group_action(conversation, 'link')

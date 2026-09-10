@@ -363,10 +363,10 @@ options:
 ## `qntm group`
 
 ```text
-usage: qntm group [-h] {create,join,add,remove,rekey,retry,link,list} ...
+usage: qntm group [-h] {create,join,add,remove,rekey,retry,refresh,link,list} ...
 
 positional arguments:
-  {create,join,add,remove,rekey,retry,link,list}
+  {create,join,add,remove,rekey,retry,refresh,link,list}
     create              Create a new group
     join                Open a group link or legacy invite
     add                 Add a contact, rotate keys and deliver their encrypted welcome
@@ -374,6 +374,8 @@ positional arguments:
     rekey               Rekey group (new epoch)
     retry               Resume the saved group operation using its exact encrypted
                         messages
+    refresh             Resend current keys to an existing member without changing
+                        membership
     link                Show a public group locator link containing no group keys
     list                List group conversations
 
@@ -454,6 +456,19 @@ usage: qntm group retry [-h] conversation
 
 positional arguments:
   conversation  Conversation ID or prefix
+
+options:
+  -h, --help    show this help message and exit
+```
+
+## `qntm group refresh`
+
+```text
+usage: qntm group refresh [-h] conversation contact
+
+positional arguments:
+  conversation  Conversation ID or prefix
+  contact       Local contact name or full public key
 
 options:
   -h, --help    show this help message and exit
