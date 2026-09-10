@@ -27,7 +27,8 @@ envelope after the signed position therefore also pauses the client, except for
 the exact addition/rekey ciphertext hashes signed into its welcome. A current
 member can process the winning branch and issue a challenged refresh. That fresh
 response may replace a losing root at the same epoch; an unsolicited conflicting
-welcome still cannot replace saved state, and a refresh cannot undo saved removal.
+welcome still cannot replace saved state. A generic refresh cannot undo saved
+removal; an admission renewal must prove a later admission.
 After bootstrap, older-source ciphertext also pauses a client that has neither a
 usable source-key archive nor an exact previously verified digest.
 
@@ -343,10 +344,11 @@ rotates keys. `assertGroupAdmissionRenewalCurrent` /
 expiry immediately before publication. Hosts still persist the exact operation
 and finish replay before release. Python CLI/MCP `group retry` uses it for a
 completed saved addition whose original delivery is stale. Python CLI/MCP
-`group refresh` also chooses renewal for a recipient with a complete current
-admission; the terminal delegates these operations to Python. Browser and OpenClaw receive renewals but do not yet issue
-them through their recovery actions. Full pending-operation reconciliation remains
-under `qntm-qp22`.
+`group refresh`, browser **Refresh welcome**, and OpenClaw's reviewed `refresh`
+action choose renewal for a recipient with a complete current admission. Founding
+members and checkpoints without admission proof retain generic refresh behavior.
+The terminal delegates its refresh and retry operations to Python. Full
+pending-operation reconciliation remains under `qntm-qp22`.
 
 Private checkpoints keep an `admissions` map keyed by current member ID. Each
 entry identifies the accepted add ID, exact ciphertext digest and signed source
