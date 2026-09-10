@@ -91,6 +91,20 @@ A losing rekey, its descendants, or a replacement welcome leave invalidated
 history, which overrides a leftover cache entry and is not completion proof.
 HTTP acknowledgements, message IDs alone, expected roots, and application text
 are not used.
+When a saved removal is proven accepted that way but its completing rekey
+expired, no longer fits the verified roster, or was never posted, retry saves a
+fresh rotation for the current membership (including a sole surviving creator)
+before posting it, keeping the original ciphertext as bounded evidence. A helper
+member's verified rotation, a later readmission, or another removal that already
+left the removal's epoch finishes the operation without posting; nothing is ever
+re-removed. A saved removal pins its target's member record and admission, so an
+exact retry refuses a later readmission of the same identity. A removal that was
+never accepted stays preserved when it expires or its epoch is superseded; that
+case has no replacement yet. A standalone `group rekey` journal is retried
+exactly while valid, replaced from current membership when its bytes expired or
+no longer apply, and finished without posting once any verified rotation left
+its source epoch. Every release rechecks the journal, current authority, replay
+and the removal proof under the receive lock.
 See the [workflow, recovery limits and local storage details](https://github.com/corpollc/qntm/blob/main/docs/group-welcomes.md).
 
 [Full MCP docs →](https://github.com/corpollc/qntm/blob/main/docs/mcp-server.md)

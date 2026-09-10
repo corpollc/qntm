@@ -15,7 +15,7 @@ import { GroupState, createInvite, createConversation, deriveConversationKeys, c
   prepareGroupAddition, openGroupWelcome, createGroupLink, parseGroupLink, isGroupWelcomeEnvelope,
   createGroupSession, restoreGroupSession, receiveGroupEvent, assertGroupAdditionAccepted,
   createGroupControlMessage, createGroupRemoveBody, createRekey, assertGroupCanSend,
-  groupSessionFromWelcome, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch,
+  groupSessionFromWelcome, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl,
   groupSessionConversation, prepareGroupSessionAddition, prepareGroupSessionRekey, serializeEnvelope,
   DropboxClient } from '@corpollc/qntm';
 import type { GroupSessionState } from '@corpollc/qntm';
@@ -707,6 +707,208 @@ describe.sequential('real relay worker subscribe acceptance', () => {
           evidenceRecordsBeforePost: pending.superseded_operations!.length,
           lostAcknowledgements: proxy.droppedAcknowledgements, blockedReplays: proxy.blockedReplays,
           purpose: welcome.purpose, currentEpoch: fresh.epoch, replayAnchor: welcome.replayFromSequence,
+          replaySequences: replay.entries.map(entry => entry.seq), receivedReply: true,
+        }, null, 2));
+      } finally { await proxy.stop(); }
+    }, 90_000);
+  }
+
+  for (const surface of ['CLI', 'MCP']) {
+    it(`finishes an accepted removal whose rekey expired through fresh ${surface} processes, TypeScript peers and a lost ACK`, async () => {
+      type Journal = { kind: string; controls: string[]; welcomes: string[]; welcomes_sent: number; expected: GroupSessionState;
+        target?: Record<string, unknown>; origin?: Record<string, unknown>; superseded_operations?: Array<Record<string, unknown>> };
+      type RecordState = { id: string; current_epoch: number; participants: string[]; group_cursor: number;
+        group_session: GroupSessionState; group_operation?: Journal };
+      const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+      const profile = join(stateDir, `${surface.toLowerCase()}-removal-recovery`);
+      const python = process.env.QNTM_MONITOR_PYTHON || 'python3';
+      const env = { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') };
+      const readRecord = (id: string): RecordState => JSON.parse(readFileSync(join(profile, 'conversations.json'), 'utf8'))
+        .find((record: RecordState) => record.id === id);
+      const beforePost: Array<Journal | undefined> = [];
+      let capture = false;
+      const proxy = await recordingRelay(relayUrl, { onSend(send) {
+        if (capture) beforePost.push(structuredClone(readRecord(send.conv_id).group_operation));
+      } });
+      const command = async (...args: string[]) => {
+        const { stdout } = await promisify(execFile)(python, ['-m', 'qntm.cli', '--config-dir', profile,
+          '--dropbox-url', proxy.url, ...args], { env, timeout: 30_000, maxBuffer: 1024 * 1024 });
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(JSON.stringify(result));
+        return result.data;
+      };
+      const retry = async (id: string): Promise<Record<string, unknown>> => {
+        if (surface === 'CLI') return command('group', 'retry', id);
+        const client = new Client({ name: 'fresh-removal-retry', version: '1' });
+        try {
+          await client.connect(new StdioClientTransport({ command: python, args: ['-m', 'qntm.mcp_server'],
+            env: { ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+              QNTM_CONFIG_DIR: profile, QNTM_RELAY_URL: proxy.url }, stderr: 'pipe' }));
+          const response = await client.callTool({ name: 'group_retry', arguments: { conversation: id } });
+          const result = response.structuredContent as Record<string, unknown>
+            ?? JSON.parse((response.content as Array<{ text: string }>)[0].text);
+          if (response.isError || result.error) throw new Error(JSON.stringify(result));
+          return result;
+        } finally { await client.close(); }
+      };
+      const transport = new DropboxClient(proxy.url);
+      const survivor = generateIdentity(), target = generateIdentity();
+      type Peer = { identity: ReturnType<typeof generateIdentity>; state: GroupSessionState; cursor: number };
+      // A TypeScript peer replays exactly like a maintained client: coverage,
+      // unverifiable-epoch preflight, expired-control detection, then the reducer.
+      const advance = async (peer: Peer, conversationId: Uint8Array, bootstrap?: Awaited<ReturnType<DropboxClient['receiveMessages']>>) => {
+        const result = bootstrap ?? await transport.receiveMessages(conversationId, peer.cursor);
+        if (!bootstrap) {
+          peer.state = checkGroupReplayCoverage(peer.state, peer.cursor, result.sequence, result.entries.map(row => row.seq));
+          for (const row of result.entries) peer.state = checkGroupUnverifiableEpoch(peer.state, deserializeEnvelope(row.envelope), row.seq);
+        }
+        const texts: string[] = [], rejected: string[] = [];
+        for (const row of [...result.entries].filter(row => row.seq > peer.cursor).sort((a, b) => a.seq - b.seq)) {
+          const envelope = deserializeEnvelope(row.envelope);
+          if (isGroupWelcomeEnvelope(envelope)) continue;
+          // Bootstrap already checked signed exact hashes and the anchor; rows
+          // sourced before admission never supply keys or history to a newcomer.
+          if (bootstrap && envelope.conv_epoch < peer.state.epoch) continue;
+          peer.state = checkExpiredGroupControl(peer.identity, peer.state, envelope, row.seq);
+          if (peer.state.recovery || envelope.expiry_ts < Math.floor(Date.now() / 1000)) continue;
+          try {
+            const event = receiveGroupEvent(peer.identity, envelope, peer.state);
+            peer.state = event.state;
+            if (!event.duplicate && event.message.inner.body_type === 'text') texts.push(new TextDecoder().decode(event.message.inner.body));
+          } catch (error) {
+            if (!peer.state.removed) throw error;
+            rejected.push(hex(envelope.msg_id));
+          }
+        }
+        peer.cursor = result.sequence;
+        return { texts, rejected };
+      };
+      const open = async (identity: ReturnType<typeof generateIdentity>, link: string): Promise<Peer> => {
+        const locator = parseGroupLink(link);
+        const replay = await transport.receiveMessages(locator.conversationId);
+        const welcomes = replay.entries.flatMap(row => {
+          try { return [{ seq: row.seq, welcome: openGroupWelcome(identity, row.envelope, locator) }]; } catch { return []; }
+        });
+        const { welcome, seq } = welcomes.at(-1)!;
+        expect(welcome.purpose).toBe('addition');
+        const state = checkGroupWelcomeReplay(groupSessionFromWelcome(identity, welcome, seq), welcome, replay.sequence, replay.entries);
+        const peer: Peer = { identity, state, cursor: welcome.replayFromSequence };
+        await advance(peer, locator.conversationId, replay);
+        expect(peer.state.recovery).toBeNull();
+        assertGroupCanSend(identity, peer.state);
+        return peer;
+      };
+      try {
+        await command('identity', 'generate');
+        const created = await command('group', 'create', `${surface} removal recovery`);
+        const id: string = created.conversation_id, conversationId = Buffer.from(id, 'hex');
+        await command('contact', 'add', 'Survivor', hex(survivor.publicKey));
+        await command('contact', 'add', 'Target', hex(target.publicKey));
+        expect((await command('group', 'add', id, 'Survivor')).current_epoch).toBe(1);
+        const admitted = await command('group', 'add', id, 'Target');
+        expect(admitted.current_epoch).toBe(2);
+        const survivorPeer = await open(survivor, admitted.group_link);
+        const targetPeer = await open(target, admitted.group_link);
+        expect(survivorPeer.state.epoch).toBe(2);
+        expect(targetPeer.state.epoch).toBe(2);
+        expect(survivorPeer.state.root).toBe(targetPeer.state.root);
+
+        // Real crash window: the removal is accepted through authenticated
+        // receive, the short-lived completing rekey is never posted.
+        const stagedSends = proxy.sends.length;
+        const staged = await promisify(execFile)(python, [join(REPO_ROOT, 'integration/src/stage-pending-removal.py'),
+          profile, proxy.url, id, hex(target.keyID)], { env, timeout: 30_000 });
+        const stage = JSON.parse(staged.stdout) as { cursor: number; epoch: number; removal_id: string; rekey_id: string;
+          rekey_expires_at: number; target: Record<string, unknown> };
+        expect(proxy.sends.slice(stagedSends)).toHaveLength(1);
+        const removalWire = proxy.sends.at(-1)!.envelope_b64;
+        const original = readRecord(id).group_operation!;
+        expect(original).toMatchObject({ kind: 'remove', welcomes: [], welcomes_sent: 0, target: stage.target });
+        expect(original.controls[0]).toBe(removalWire);
+        expect(original.target).toMatchObject({ key_id: hex(target.keyID), public_key: hex(target.publicKey) });
+        expect(hex(deserializeEnvelope(Buffer.from(original.controls[1], 'base64')).msg_id)).toBe(stage.rekey_id);
+        const beforeRepair = readRecord(id);
+        expect(beforeRepair.group_session).toMatchObject({ epoch: 2, needsRekey: true, recovery: null });
+        expect(beforeRepair.participants).not.toContain(hex(target.keyID));
+        expect(await advance(survivorPeer, conversationId)).toEqual({ texts: [], rejected: [] });
+        expect(survivorPeer.state).toMatchObject({ epoch: 2, needsRekey: true, removed: false });
+        expect(() => assertGroupCanSend(survivor, survivorPeer.state)).toThrow();
+        await advance(targetPeer, conversationId);
+        expect(targetPeer.state.removed).toBe(true);
+        const wait = Math.max(0, stage.rekey_expires_at * 1000 - Date.now() + 1100);
+        expect(wait).toBeLessThanOrEqual(10_000);
+        await delay(wait);
+        expect(Math.floor(Date.now() / 1000)).toBeGreaterThan(stage.rekey_expires_at);
+
+        const beforeRetry = proxy.sends.length;
+        capture = true;
+        proxy.loseNextSendAcknowledgement({ pauseReplay: true });
+        await expect(retry(id)).rejects.toThrow();
+        capture = false;
+        expect(proxy.droppedAcknowledgements).toBe(1);
+        expect(proxy.blockedReplays).toBeGreaterThan(0);
+        expect(proxy.sends.slice(beforeRetry)).toHaveLength(1);
+        const rotationWire = proxy.sends.at(-1)!.envelope_b64;
+        const rotation = deserializeEnvelope(Buffer.from(rotationWire, 'base64'));
+        expect(rotation.conv_epoch).toBe(2);
+        expect(hex(rotation.msg_id)).not.toBe(stage.rekey_id);
+        const pending = readRecord(id).group_operation!;
+        expect(pending).toMatchObject({ kind: 'removal_rekey', controls: [rotationWire], welcomes: [], welcomes_sent: 0,
+          origin: { kind: 'remove', controls: original.controls, welcomes: [], welcomes_sent: 0, target: original.target, delivery: 'unknown' } });
+        expect(pending).not.toHaveProperty('superseded_operations');
+        expect(pending.expected.epoch).toBe(3);
+        expect(beforePost).toEqual([pending]); // The repair was durable before its POST.
+        const uncertain = readRecord(id);
+        expect(uncertain.group_session).toMatchObject({ epoch: 2, needsRekey: true, root: beforeRepair.group_session.root });
+        expect(JSON.stringify(uncertain.group_session)).not.toContain(pending.expected.root); // No predicted keys installed.
+
+        proxy.resumeReplay();
+        capture = true;
+        const result = await retry(id);
+        capture = false;
+        expect(result).toMatchObject({ current_epoch: 3, members: 2 });
+        // Verified replay proved the accepted rotation; the fresh process posted nothing more.
+        expect(proxy.sends.slice(beforeRetry).map(send => send.envelope_b64)).toEqual([rotationWire]);
+        expect(beforePost).toEqual([pending]);
+        const replacementAttempts = proxy.sends.slice(beforeRetry).length;
+        const settled = readRecord(id);
+        expect(settled.group_operation).toBeUndefined();
+        expect(settled.group_session).toMatchObject({ epoch: 3, needsRekey: false, recovery: null, root: pending.expected.root });
+        expect(settled.participants).toHaveLength(2);
+        expect(settled.participants).toContain(hex(survivor.keyID));
+        expect(settled.participants).not.toContain(hex(target.keyID));
+        const replay = await transport.receiveMessages(conversationId);
+        const later = replay.entries.filter(row => row.seq > stage.cursor);
+        expect(later.map(row => Buffer.from(row.envelope).toString('base64'))).toEqual([rotationWire]);
+        expect(replay.entries.some(row => hex(deserializeEnvelope(row.envelope).msg_id) === stage.rekey_id)).toBe(false);
+        expect(replay.entries.filter(row => hex(deserializeEnvelope(row.envelope).msg_id) === stage.removal_id)).toHaveLength(1);
+
+        expect(await advance(survivorPeer, conversationId)).toEqual({ texts: [], rejected: [] });
+        expect(survivorPeer.state).toMatchObject({ epoch: 3, needsRekey: false, removed: false, recovery: null, root: settled.group_session.root });
+        expect(survivorPeer.state.rekeys.at(-1)).toMatchObject({ epoch: 2, messageId: hex(rotation.msg_id) });
+        assertGroupCanSend(survivor, survivorPeer.state);
+        const targetReplay = await advance(targetPeer, conversationId);
+        expect(targetPeer.state).toMatchObject({ epoch: 2, removed: true });
+        expect(targetPeer.state.root).not.toBe(settled.group_session.root);
+        expect(targetReplay.texts).toEqual([]);
+
+        const text = `${surface} text after the repaired removal`;
+        await command('send', id, text);
+        expect((await advance(survivorPeer, conversationId)).texts).toEqual([text]);
+        const excluded = await advance(targetPeer, conversationId);
+        expect(excluded.texts).toEqual([]);
+        expect(excluded.rejected).toHaveLength(1);
+        const reply = `${surface} survivor reply`;
+        await transport.postMessage(conversationId, serializeEnvelope(createMessage(survivor, groupSessionConversation(survivorPeer.state), 'text', new TextEncoder().encode(reply))));
+        const received = await command('recv', id);
+        expect(received.messages.filter((message: { unsafe_body?: string }) => message.unsafe_body === reply)).toHaveLength(1);
+        await expect(retry(id)).rejects.toThrow(/No pending group operation/);
+        writeFileSync(join(artifactDir, `${surface.toLowerCase()}-removal-recovery.json`), JSON.stringify({
+          conversation: id, surface, removal: stage.removal_id, expiredRekey: stage.rekey_id,
+          replacementRotation: hex(rotation.msg_id), replacementAttempts,
+          replacementRelayRows: later.map(row => row.seq), lostAcknowledgements: proxy.droppedAcknowledgements,
+          blockedReplays: proxy.blockedReplays, journalBeforePost: pending.kind, evidenceOrigin: pending.origin?.kind,
+          finalEpoch: settled.group_session.epoch, survivorEpoch: survivorPeer.state.epoch, targetRemoved: targetPeer.state.removed,
           replaySequences: replay.entries.map(entry => entry.seq), receivedReply: true,
         }, null, 2));
       } finally { await proxy.stop(); }

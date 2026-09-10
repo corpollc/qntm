@@ -372,8 +372,9 @@ positional arguments:
     add                 Add a contact, rotate keys and deliver their encrypted welcome
     remove              Remove member from group
     rekey               Rekey group (new epoch)
-    retry               Resume saved group delivery; renew completed additions when
-                        original delivery is stale
+    retry               Resume saved group delivery; renew completed additions and
+                        finish accepted removals or stale rotations from current
+                        membership
     refresh             Resend current keys to an existing member without changing
                         membership
     link                Show a public group locator link containing no group keys

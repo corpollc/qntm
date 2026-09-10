@@ -3,7 +3,6 @@ import base64
 import copy
 
 import pytest
-from nacl.exceptions import CryptoError
 
 from qntm import (cli, create_message, deserialize_envelope, group_session_conversation,
                   prepare_group_session_rekey, serialize_envelope)
@@ -75,10 +74,11 @@ def test_losing_rekey_history_overrides_its_retained_seen_marker(setup, monkeypa
     assert not _control_accepted(record, wire)
     assert any(row['msg_id'] == mid and row['receive_binding']['valid'] is False for row in record['group_history'])
     before = len(f.attempted)
-    with pytest.raises(ValueError, match='current epoch'):
-        owner.retry(f.cid)
+    # The losing rotation is never republished; the verified competitor already
+    # rotated keys away from the intent's source epoch, which fulfils it.
+    assert owner.retry(f.cid)['current_epoch'] == record['group_session']['epoch']
     assert len(f.attempted) == before
-    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == operation
+    assert not cli._load_conversations(f.owner_dir)[0].get('group_operation')
 
 
 def test_losing_descendant_control_history_does_not_finish_retry(setup, monkeypatch):
@@ -112,11 +112,17 @@ def test_losing_descendant_control_history_does_not_finish_retry(setup, monkeypa
     assert row['verified'] is True and row['receive_binding']['valid'] is False
     assert row['sequence'] > 0 and row['receive_binding']['epoch'] == deserialize_envelope(wire)['conv_epoch']
     assert not _control_accepted(record, wire)
+    assert record['group_session']['epoch'] == deserialize_envelope(wire)['conv_epoch']
     before = len(f.attempted)
-    with pytest.raises((ValueError, CryptoError)):
-        owner.retry(f.cid)
-    assert len(f.attempted) == before
-    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == descendant
+    # Invalidated history never finishes the descendant. Its source epoch is
+    # current again on the winning branch, so a fresh current-roster rotation
+    # replaces the unusable exact bytes instead of republishing them.
+    result = owner.retry(f.cid)
+    assert result['current_epoch'] == record['group_session']['epoch'] + 1
+    assert f.attempted[before:] != [wire] and len(f.attempted[before:]) == 1
+    assert deserialize_envelope(f.attempted[-1])['conv_epoch'] == record['group_session']['epoch']
+    assert not cli._load_conversations(f.owner_dir)[0].get('group_operation')
+    assert GroupClient(f.contact_dir, f.contact, f.relay).sync(f.cid)['group_session']['root'] == cli._load_conversations(f.owner_dir)[0]['group_session']['root']
 
 
 def test_challenged_welcome_replacement_does_not_keep_earlier_control_proof(setup, monkeypatch):
@@ -164,11 +170,13 @@ def test_challenged_welcome_replacement_does_not_keep_earlier_control_proof(setu
     row = next(row for row in record['group_history'] if row['msg_id'] == mid)
     assert row['verified'] is True and row['receive_binding']['valid'] is False
     assert not _control_accepted(record, wire)
+    assert record['group_session']['epoch'] > deserialize_envelope(wire)['conv_epoch']
     before = len(f.attempted)
-    with pytest.raises(ValueError):
-        GroupClient(f.contact_dir, f.contact, f.relay).retry(f.cid)
+    # The replaced checkpoint attests a later epoch; the old rotation intent is
+    # fulfilled without claiming its own delivery or republishing old bytes.
+    assert GroupClient(f.contact_dir, f.contact, f.relay).retry(f.cid)['current_epoch'] == record['group_session']['epoch']
     assert len(f.attempted) == before
-    assert cli._load_conversations(f.contact_dir)[0].get('group_operation') == operation
+    assert not cli._load_conversations(f.contact_dir)[0].get('group_operation')
 
 
 @pytest.mark.parametrize('evidence', ['missing', 'wrong_digest', 'wrong_epoch', 'unverified', 'future_sequence', 'invalidated'])
@@ -194,7 +202,11 @@ def test_invalid_or_missing_history_does_not_invent_delivery_after_eviction(setu
     assert not _control_accepted(record, wire)
     cli._save_conversations(f.owner_dir, [record])
     before = len(f.attempted)
-    with pytest.raises(ValueError, match='current epoch'):
-        owner.retry(f.cid)
+    # No delivery is invented: the exact bytes are never republished into an
+    # obsolete epoch, and the verified later epoch alone fulfils a rotation intent.
+    assert owner.retry(f.cid)['current_epoch'] == record['group_session']['epoch']
     assert len(f.attempted) == before
-    assert cli._load_conversations(f.owner_dir)[0]['group_operation'] == operation
+    assert not cli._load_conversations(f.owner_dir)[0].get('group_operation')
+    if evidence == 'missing':
+        # Contrast: an accepted removal awaiting its rotation needs real proof.
+        assert not _control_accepted(record, wire)
