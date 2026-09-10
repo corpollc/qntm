@@ -105,10 +105,13 @@ qntm group refresh GROUP_ID Colleague
 ```
 
 The command verifies the recipient against the current local roster after relay
-replay and saves the exact encrypted refresh for `group retry`. The receiver
-distinguishes this signed refresh from an admission welcome: a refresh cannot
-undo saved removal. A new, valid admission welcome is required for readmission.
-Neither refresh nor admission can recover keys for an interval of exclusion.
+replay and saves the exact encrypted welcome for `group retry`. When the saved
+state proves the recipient's completed admission, it issues an admission renewal.
+This also recovers delivery after a legitimate later readmission whose welcome
+expired: the original admission must be newer than the receiver's saved removal.
+Founding members and older checkpoints without that proof receive a generic
+refresh, which cannot undo saved removal. No form of welcome recovers keys for
+an interval of exclusion.
 If another current member sends the refresh, use that member's returned link,
 which pins their signing identity.
 
@@ -327,8 +330,9 @@ rotates keys. `assertGroupAdmissionRenewalCurrent` /
 `assert_group_admission_renewal_current` rechecks the admission, roster, keys and
 expiry immediately before publication. Hosts still persist the exact operation
 and finish replay before release. Python CLI/MCP `group retry` uses it for a
-completed saved addition whose original delivery is stale; the terminal delegates
-that retry to Python. Browser and OpenClaw receive renewals but do not yet issue
+completed saved addition whose original delivery is stale. Python CLI/MCP
+`group refresh` also chooses renewal for a recipient with a complete current
+admission; the terminal delegates these operations to Python. Browser and OpenClaw receive renewals but do not yet issue
 them through their recovery actions. Full pending-operation reconciliation remains
 under `qntm-qp22`.
 
