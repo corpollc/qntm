@@ -139,13 +139,24 @@ export function validateBackup(json: string): StoreData {
         if (pendingBytes > 4 * 1024 * 1024) fail('pending group ciphertext exceeds 4 MiB')
         for (const seq of list(host.receipts, 'group receipts', 10_000)) integer(seq, 'group receipt', 1)
         if (host.operation !== null) {
-          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected'])
-          if (!['addition', 'refresh', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
+          const op = object(host.operation, 'group operation fields', ['kind', 'controls', 'welcomes', 'delivered', 'expected', 'recipient', 'admission'])
+          if (!['addition', 'refresh', 'renewal', 'remove', 'rekey', 'create'].includes(op.kind)) fail('group operation kind')
           const expected = restoreGroupSession(localIdentity, op.expected)
           if (expected.conversationId !== conv.id) fail('group operation conversation mismatch')
           const controls = list(op.controls, 'saved group controls', 2), welcomes = list(op.welcomes, 'saved group welcomes', 128)
-          const expectedControls = ({ addition: 2, remove: 2, rekey: 1, create: 1, refresh: 0 } as Record<string, number>)[op.kind]
-          if (controls.length !== expectedControls || (['addition', 'refresh'].includes(op.kind) ? !welcomes.length : welcomes.length !== 0)) fail('group operation shape')
+          const expectedControls = ({ addition: 2, remove: 2, rekey: 1, create: 1, refresh: 0, renewal: 0 } as Record<string, number>)[op.kind]
+          if (controls.length !== expectedControls || (['addition', 'refresh', 'renewal'].includes(op.kind) ? !welcomes.length : welcomes.length !== 0)) fail('group operation shape')
+          if (op.kind === 'renewal') {
+            const recipient = hex(op.recipient, 32, 'renewal recipient'), kid = encodedHex(keyIDFromPublicKey(hexBytes(recipient)))
+            const admission = object(op.admission, 'renewal admission', ['addId', 'addDigest', 'sourceEpoch', 'completion'])
+            const completion = object(admission.completion, 'renewal completion', ['rekeyId', 'rekeyDigest'])
+            const accepted = expected.admissions[kid]
+            const roster = parseGroupGenesisBody(base64UrlDecode(expected.snapshot)).founding_members
+            if (welcomes.length !== 1 || !roster.some(member => encodedHex(member.public_key) === recipient)
+              || !accepted?.completion || admission.addId !== accepted.addId || admission.addDigest !== accepted.addDigest
+              || admission.sourceEpoch !== accepted.sourceEpoch || completion.rekeyId !== accepted.completion.rekeyId
+              || completion.rekeyDigest !== accepted.completion.rekeyDigest) fail('renewal admission binding')
+          } else if (op.recipient !== undefined || op.admission !== undefined) fail('unexpected renewal fields')
           for (const wire of [...controls, ...welcomes]) {
             const envelope = deserializeEnvelope(b64(wire, 'saved group wire'))
             if (encodedHex(envelope.conv_id) !== conv.id) fail('saved operation envelope conversation mismatch')

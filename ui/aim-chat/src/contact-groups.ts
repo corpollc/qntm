@@ -4,13 +4,13 @@ import {
   createInvite, deriveConversationKeys, createConversation, addParticipant, createGroupGenesisBody,
   parseGroupGenesisBody, GroupState, createGroupSession, restoreGroupSession,
   groupSessionConversation, createGroupControlMessage, createGroupRemoveBody,
-  prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupWelcomeRefresh,
-  assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, assertGroupCanSend,
+  prepareGroupSessionAddition, prepareGroupSessionRekey, prepareGroupWelcomeRefresh, prepareGroupAdmissionRenewal,
+  assertGroupAdditionAccepted, assertGroupWelcomeRefreshCurrent, assertGroupAdmissionRenewalCurrent, assertGroupCanSend,
   receiveGroupEvent, checkGroupReplayCoverage, checkGroupWelcomeReplay, checkGroupUnverifiableEpoch, checkExpiredGroupControl, requireGroupRecovery,
   createGroupLink, parseGroupLink, openGroupWelcome, groupSessionFromWelcome,
   serializeEnvelope, deserializeEnvelope, isGroupWelcomeEnvelope, createMessage, defaultTTL, DropboxClient,
 } from '@corpollc/qntm'
-import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, SubscriptionMessage } from '@corpollc/qntm'
+import type { Identity, GroupSessionState, GroupAddition, GroupWelcomeRefresh, GroupAdmissionRenewal, SubscriptionMessage } from '@corpollc/qntm'
 import * as store from './store'
 
 export const hex = (value: Uint8Array) => Array.from(value, b => b.toString(16).padStart(2, '0')).join('')
@@ -182,11 +182,14 @@ async function syncUnlocked(profile: string, id: string) {
   return applyGroupBatch(profile, id, batch.entries, batch.sequence)
 }
 export function syncContactGroup(profile: string, id: string) { return withGroupLock(profile, id, () => syncUnlocked(profile, id)) }
-function operationValue(op: store.StoredGroupOperation): GroupAddition | GroupWelcomeRefresh {
+function operationValue(op: store.StoredGroupOperation): GroupAddition | GroupWelcomeRefresh | GroupAdmissionRenewal {
   const conversation = groupSessionConversation(op.expected), state = groupState(op.expected)
   const welcomes = op.welcomes.map(wire => deserializeEnvelope(base64UrlDecode(wire)) as GroupAddition['welcomes'][number])
-  return op.kind === 'addition' ? { conversation, state, welcomes,
-    addition: deserializeEnvelope(base64UrlDecode(op.controls[0])), rekey: deserializeEnvelope(base64UrlDecode(op.controls[1])) } : { conversation, state, welcomes }
+  if (op.kind === 'addition') return { conversation, state, welcomes,
+    addition: deserializeEnvelope(base64UrlDecode(op.controls[0])), rekey: deserializeEnvelope(base64UrlDecode(op.controls[1])) }
+  if (op.kind === 'renewal') return { conversation, state, welcomes, recipient: bytes(op.recipient),
+    admission: op.admission, admissions: op.expected.admissions }
+  return { conversation, state, welcomes }
 }
 async function resumeUnlocked(profile: string, id: string): Promise<string> {
   await syncUnlocked(profile, id)
@@ -206,6 +209,7 @@ async function resumeUnlocked(profile: string, id: string): Promise<string> {
   }
   const identity = identityFor(profile)
   if (op.kind === 'addition') assertGroupAdditionAccepted(identity, record.group.session, operationValue(op) as GroupAddition)
+  else if (op.kind === 'renewal') assertGroupAdmissionRenewalCurrent(identity, record.group.session, operationValue(op) as GroupAdmissionRenewal)
   else if (op.kind === 'refresh') assertGroupWelcomeRefreshCurrent(identity, record.group.session, operationValue(op))
   else if (record.group.session.root !== op.expected.root || record.group.session.snapshot !== op.expected.snapshot || record.group.session.epoch !== op.expected.epoch) throw new Error('Saved operation no longer matches the accepted group state')
   for (let index = op.delivered; index < op.welcomes.length; index++) {
@@ -239,11 +243,16 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     if (record.group.operation) throw new Error('Retry the saved group operation before starting another')
     const controls = [], welcomes = []
     let expected = session
+    let renewal: GroupAdmissionRenewal | undefined
     if (action === 'add') {
       const op = prepareGroupSessionAddition(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge), record.group.cursor)
       controls.push(op.addition, op.rekey); welcomes.push(...op.welcomes)
     } else if (action === 'refresh') {
-      const op = prepareGroupWelcomeRefresh(identity, session, [contactKey(profile, contact!)], undefined, challengeBytes(challenge), record.group.cursor)
+      const recipient = contactKey(profile, contact!), admission = session.admissions[hex(keyIDFromPublicKey(recipient))]
+      const op = admission?.completion
+        ? (renewal = prepareGroupAdmissionRenewal(identity, session, recipient,
+          { addId: admission.addId, addDigest: admission.addDigest }, undefined, challengeBytes(challenge), record.group.cursor))
+        : prepareGroupWelcomeRefresh(identity, session, [recipient], undefined, challengeBytes(challenge), record.group.cursor)
       welcomes.push(...op.welcomes)
     } else if (action === 'remove') {
       assertGroupCanSend(identity, session)
@@ -255,7 +264,10 @@ export async function changeContactGroup(profile: string, id: string, action: 'a
     } else controls.push(prepareGroupSessionRekey(identity, session).rekey)
     expected = session
     for (const control of controls) expected = receiveGroupEvent(identity, control, expected).state
-    record.group.operation = { kind: action === 'add' ? 'addition' : action, controls: controls.map(c => base64UrlEncode(serializeEnvelope(c))), welcomes: welcomes.map(c => base64UrlEncode(serializeEnvelope(c))), delivered: 0, expected }
+    const operation = { controls: controls.map(c => base64UrlEncode(serializeEnvelope(c))), welcomes: welcomes.map(c => base64UrlEncode(serializeEnvelope(c))), delivered: 0, expected }
+    record.group.operation = renewal
+      ? { ...operation, kind: 'renewal', recipient: hex(renewal.recipient), admission: renewal.admission }
+      : { ...operation, kind: action === 'add' ? 'addition' : action }
     save(profile, record)
     return resumeUnlocked(profile, id)
   })

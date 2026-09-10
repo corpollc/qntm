@@ -4,7 +4,7 @@
  * All state lives in the browser — no server needed.
  */
 
-import type { GroupSessionState, GatewayInvitation, GatewayBootstrapRequest } from '@corpollc/qntm'
+import type { GroupAdmission, GroupSessionState, GatewayInvitation, GatewayBootstrapRequest } from '@corpollc/qntm'
 import type { GuidanceContact } from './guidance'
 
 const STORE_KEY = 'aim-store'
@@ -37,13 +37,13 @@ export interface StoredGatewayIdentity {
   keyId: string     // base64url
 }
 
-export interface StoredGroupOperation {
-  kind: 'addition' | 'refresh' | 'remove' | 'rekey' | 'create'
+export type StoredGroupOperation = {
   controls: string[]
   welcomes: string[]
   delivered: number
   expected: GroupSessionState
-}
+} & ({ kind: 'addition' | 'refresh' | 'remove' | 'rekey' | 'create'; recipient?: never; admission?: never }
+  | { kind: 'renewal'; recipient: string; admission: GroupAdmission })
 
 export interface StoredGroup {
   session: GroupSessionState
