@@ -8,8 +8,8 @@ import { QSP1Suite } from '../crypto/qsp1.js';
 import { base64UrlDecode, base64UrlEncode, uint8ArrayEquals, validateIdentity } from '../identity/index.js';
 import { createMessage, decryptMessage, serializeEnvelope, deserializeEnvelope } from '../message/index.js';
 import { GroupState, applyRekey, createRekey, type GroupGenesisBody } from './index.js';
-import { validateGroupSnapshot, prepareGroupAddition, sealGroupWelcome, GROUP_WELCOME_TTL,
-  type GroupAddition, type GroupWelcomeEnvelope, type GroupWelcome } from './welcome.js';
+import { validateGroupSnapshot, validateGroupAdmissions, prepareGroupAddition, sealGroupWelcome, GROUP_WELCOME_TTL,
+  type GroupAddition, type GroupWelcomeEnvelope, type GroupWelcome, type GroupAdmission, type GroupAdmissions } from './welcome.js';
 import type { Conversation, Identity, Message, OuterEnvelope } from '../types.js';
 
 const suite = new QSP1Suite();
@@ -55,6 +55,7 @@ interface RekeyCheckpoint {
   snapshot: string;
   messageId: string;
   expiresAt: number;
+  admissions: GroupAdmissions;
 }
 export interface GroupSessionState {
   version: 1;
@@ -65,6 +66,9 @@ export interface GroupSessionState {
   snapshot: string;
   /** Sticky across ordinary replay. Readmission requires a new welcome. */
   removed: boolean;
+  /** Local authenticated removal fence, sticky even across canonical rewinds. */
+  removedAtEpoch: number | null;
+  admissions: GroupAdmissions;
   needsRekey: boolean;
   /** Set false only when migrating an existing QSP v1.1 local checkpoint. */
   signedEpoch: boolean;
@@ -96,10 +100,15 @@ export interface GroupSessionRekey {
   state: GroupState;
   rekey: OuterEnvelope;
 }
+export interface GroupAdmissionRenewal extends GroupWelcomeRefresh {
+  recipient: Uint8Array;
+  admission: GroupAdmission;
+  admissions: GroupAdmissions;
+}
 
 /** Use only a trusted local roster or the result of openGroupWelcome. */
 export function createGroupSession(identity: Identity, conversation: Conversation, group: GroupState,
-  options: { signedEpoch?: boolean } = {}): GroupSessionState {
+  options: { signedEpoch?: boolean; admissions?: GroupAdmissions } = {}): GroupSessionState {
   validateIdentity(identity);
   requireValue(conversation.type === 'group' && conversation.id.length === 16
     && uint(conversation.currentEpoch) && conversation.currentEpoch <= MAX_EPOCH, 'Invalid group session context');
@@ -111,9 +120,12 @@ export function createGroupSession(identity: Identity, conversation: Conversatio
   const derived = suite.deriveEpochKeys(conversation.keys.root, conversation.id, conversation.currentEpoch);
   requireValue(uint8ArrayEquals(derived.aeadKey, conversation.keys.aeadKey)
     && uint8ArrayEquals(derived.nonceKey, conversation.keys.nonceKey), 'Group keys differ from epoch');
+  const admissions = options.admissions === undefined ? {} : options.admissions;
+  validateGroupAdmissions(admissions, group, conversation.currentEpoch);
   return { version: 1, conversationId: hex(conversation.id), identityKid: hex(identity.keyID),
     epoch: conversation.currentEpoch, root: hex(conversation.keys.root), snapshot: encoded,
-    removed: false, needsRekey: false, signedEpoch: options.signedEpoch !== false, rekeys: [], seen: {}, recovery: null };
+    removed: false, removedAtEpoch: null, admissions: structuredClone(admissions),
+    needsRekey: false, signedEpoch: options.signedEpoch !== false, rekeys: [], seen: {}, recovery: null };
 }
 
 /** Validate a private JSON checkpoint after restart, binding it to this identity.
@@ -121,22 +133,34 @@ export function createGroupSession(identity: Identity, conversation: Conversatio
  */
 export function restoreGroupSession(identity: Identity, value: unknown): GroupSessionState {
   validateIdentity(identity);
-  requireValue((fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen,recovery')
-    || fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen'))
+  const optional = value && typeof value === 'object'
+    ? ['recovery', 'admissions', 'removedAtEpoch'].filter(key => Object.hasOwn(value, key)).map(key => ',' + key).join('') : '';
+  requireValue(fields(value, 'version,conversationId,identityKid,epoch,root,snapshot,removed,needsRekey,signedEpoch,rekeys,seen' + optional)
     && value.version === 1 && fixedHex(value.conversationId, 16) && value.identityKid === hex(identity.keyID)
     && uint(value.epoch) && value.epoch <= MAX_EPOCH && fixedHex(value.root, 32)
     && typeof value.removed === 'boolean' && typeof value.needsRekey === 'boolean' && typeof value.signedEpoch === 'boolean',
   'Invalid saved group session');
   const group = roster(value.snapshot as string);
   requireValue(value.removed || group.isMember(identity.keyID), 'Saved group omits local identity');
+  const admissions = value.admissions === undefined ? {} : value.admissions;
+  validateGroupAdmissions(admissions, group, value.epoch, true);
+  requireValue(value.needsRekey || Object.values(admissions).every(record => record.completion !== null), 'Pending admission requires key rotation');
+  const removedAtEpoch = value.removedAtEpoch ?? null;
+  requireValue(removedAtEpoch === null || uint(removedAtEpoch) && removedAtEpoch <= MAX_EPOCH, 'Invalid saved removal epoch');
   requireValue(Array.isArray(value.rekeys) && value.rekeys.length <= MAX_GROUP_REKEY_CHECKPOINTS, 'Invalid rekey archive');
   let last = -1;
+  const rekeys: RekeyCheckpoint[] = [];
   for (const frame of value.rekeys) {
-    requireValue(fields(frame, 'epoch,root,snapshot,messageId,expiresAt') && uint(frame.epoch)
+    requireValue((fields(frame, 'epoch,root,snapshot,messageId,expiresAt')
+      || fields(frame, 'epoch,root,snapshot,messageId,expiresAt,admissions')) && uint(frame.epoch)
       && frame.epoch > last && frame.epoch < value.epoch && fixedHex(frame.root, 32)
       && fixedHex(frame.messageId, 16) && uint(frame.expiresAt), 'Invalid rekey checkpoint');
     const prior = snapshot(frame.snapshot as string);
     requireValue(uint8ArrayEquals(prior.founding_members[0].key_id, group.snapshot().founding_members[0].key_id), 'Saved creator changed');
+    const priorGroup = new GroupState(); priorGroup.applyGenesis(prior);
+    const priorAdmissions = frame.admissions === undefined ? {} : frame.admissions;
+    validateGroupAdmissions(priorAdmissions, priorGroup, frame.epoch, true);
+    rekeys.push({ ...frame, admissions: priorAdmissions } as unknown as RekeyCheckpoint);
     last = frame.epoch;
   }
   requireValue(value.seen !== null && typeof value.seen === 'object' && !Array.isArray(value.seen)
@@ -149,7 +173,7 @@ export function restoreGroupSession(identity: Identity, value: unknown): GroupSe
   requireValue(recovery === null || fields(recovery, 'afterSequence,reason,challenge') && uint(recovery.afterSequence)
     && recovery.afterSequence > 0 && fixedHex(recovery.challenge, 32)
     && ['missing_history', 'expired_control'].includes(recovery.reason as string), 'Invalid group recovery state');
-  return structuredClone({ ...value, recovery }) as unknown as GroupSessionState;
+  return structuredClone({ ...value, recovery, admissions, removedAtEpoch, rekeys }) as unknown as GroupSessionState;
 }
 
 /** Record a transport gap; only a subsequent authenticated welcome can clear it. */
@@ -249,7 +273,12 @@ export function groupSessionFromWelcome(identity: Identity, welcome: GroupWelcom
     requireValue(!saved.recovery || sequence > saved.recovery.afterSequence, 'Welcome predates missing group history');
     requireValue(!saved.recovery || welcome.recoveryChallenge instanceof Uint8Array
       && hex(welcome.recoveryChallenge) === saved.recovery.challenge, 'Welcome does not answer the current recovery challenge');
-    requireValue(!saved.removed || welcome.purpose === 'addition', 'A welcome refresh cannot undo saved removal');
+    requireValue(!saved.removed || welcome.purpose !== 'refresh', 'A welcome refresh cannot undo saved removal');
+    if (saved.removed && welcome.purpose === 'renewal') {
+      const admission = welcome.admissions?.[hex(identity.keyID)];
+      requireValue(saved.removedAtEpoch !== null && admission?.completion
+        && admission.sourceEpoch > saved.removedAtEpoch, 'Admission renewal cannot undo this saved removal');
+    }
     requireValue(welcome.conversation.currentEpoch >= saved.epoch, 'Welcome is older than saved group state');
     if (welcome.conversation.currentEpoch === saved.epoch) {
       requireValue(!saved.removed && !saved.needsRekey,
@@ -257,11 +286,20 @@ export function groupSessionFromWelcome(identity: Identity, welcome: GroupWelcom
       if (!saved.recovery) {
         requireValue(hex(welcome.conversation.keys.root) === saved.root, 'Welcome cannot replace the saved epoch or removal');
         requireValue(encodeRoster(welcome.state) === saved.snapshot, 'Welcome roster conflicts with the saved epoch');
+        const incoming = welcome.admissions ?? {};
+        validateGroupAdmissions(incoming, welcome.state, welcome.conversation.currentEpoch);
+        for (const [kid, admission] of Object.entries(incoming)) {
+          requireValue(!saved.admissions[kid] || uint8ArrayEquals(marshalCanonical(saved.admissions[kid]), marshalCanonical(admission)),
+            'Welcome admission provenance conflicts with saved state');
+          saved.admissions[kid] = structuredClone(admission);
+        }
         return saved;
       }
     }
   }
-  return createGroupSession(identity, welcome.conversation, welcome.state);
+  const state = createGroupSession(identity, welcome.conversation, welcome.state, { admissions: welcome.admissions ?? {} });
+  state.removedAtEpoch = previous?.removedAtEpoch ?? null;
+  return state;
 }
 
 /** Reconstruct keys from a trusted, validated checkpoint. No archived key is
@@ -287,7 +325,7 @@ export function assertGroupCanSend(identity: Identity, state: GroupSessionState)
 export function prepareGroupSessionAddition(identity: Identity, state: GroupSessionState,
   recipients: Uint8Array[], ttl?: number, recoveryChallenge?: Uint8Array, replayFromSequence = 0): GroupAddition {
   assertGroupCanSend(identity, state);
-  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl, recoveryChallenge, replayFromSequence);
+  return prepareGroupAddition(identity, groupSessionConversation(state), roster(state.snapshot), recipients, ttl, recoveryChallenge, replayFromSequence, state.admissions);
 }
 
 /** Refresh current keys for existing members without admission or rotation.
@@ -315,7 +353,37 @@ export function prepareGroupWelcomeRefresh(identity: Identity, previous: GroupSe
   }
   const at = Math.floor(Date.now() / 1000);
   return { conversation, state: group,
-    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl, undefined, recoveryChallenge, replayFromSequence)) };
+    welcomes: recipients.map(recipient => sealGroupWelcome(identity, conversation, group, recipient, at, ttl, undefined, recoveryChallenge, replayFromSequence, state.admissions)) };
+}
+
+/** Renew delivery for one exact still-current admission. This neither admits nor rotates. */
+export function prepareGroupAdmissionRenewal(identity: Identity, previous: GroupSessionState, recipient: Uint8Array,
+  expectedAdmission: Pick<GroupAdmission, 'addId' | 'addDigest'>, ttl = GROUP_WELCOME_TTL,
+  recoveryChallenge?: Uint8Array, replayFromSequence = 0): GroupAdmissionRenewal {
+  const state = restoreGroupSession(identity, previous);
+  const refreshed = prepareGroupWelcomeRefresh(identity, state, [recipient], ttl, recoveryChallenge, replayFromSequence);
+  const member = refreshed.state.snapshot().founding_members.find(member => uint8ArrayEquals(member.public_key, recipient))!;
+  const admission = state.admissions[hex(member.key_id)];
+  requireValue(fields(expectedAdmission, 'addId,addDigest') && fixedHex(expectedAdmission.addId, 16)
+    && fixedHex(expectedAdmission.addDigest, 32) && admission?.completion
+    && admission.addId === expectedAdmission.addId && admission.addDigest === expectedAdmission.addDigest,
+  'Current admission provenance is unknown or differs from renewal');
+  const at = Math.floor(Date.now() / 1000);
+  return { conversation: refreshed.conversation, state: refreshed.state, recipient: new Uint8Array(recipient),
+    admission: structuredClone(admission), admissions: structuredClone(state.admissions),
+    welcomes: [sealGroupWelcome(identity, refreshed.conversation, refreshed.state, recipient, at, ttl,
+      undefined, recoveryChallenge, replayFromSequence, state.admissions, true)] };
+}
+
+/** Release only the same admitted incarnation and exact current state prepared above. */
+export function assertGroupAdmissionRenewalCurrent(identity: Identity, state: GroupSessionState, operation: GroupAdmissionRenewal): void {
+  const saved = restoreGroupSession(identity, state);
+  assertGroupWelcomeRefreshCurrent(identity, saved, operation);
+  const member = operation.state.snapshot().founding_members.find(member => uint8ArrayEquals(member.public_key, operation.recipient));
+  requireValue(member && saved.admissions[hex(member.key_id)]?.completion
+    && uint8ArrayEquals(marshalCanonical(saved.admissions[hex(member.key_id)]), marshalCanonical(operation.admission))
+    && uint8ArrayEquals(marshalCanonical(saved.admissions), marshalCanonical(operation.admissions)),
+  'Prepared admission renewal differs from current provenance');
 }
 
 /** Any remaining ordinary-group member can finish an interrupted rotation.
@@ -387,11 +455,14 @@ export function receiveGroupEvent(identity: Identity, envelope: OuterEnvelope, p
   requireValue(!previous.recovery, 'Group history is incomplete; open a fresh welcome from a current member');
   const at = Math.floor(Date.now() / 1000);
   const state = structuredClone(previous);
+  state.admissions ??= {};
+  state.removedAtEpoch ??= null;
   state.rekeys = state.rekeys.filter(frame => frame.expiresAt >= at);
   const rewound = envelope.conv_epoch < state.epoch;
   const source = rewound ? state.rekeys.find(frame => frame.epoch === envelope.conv_epoch) : undefined;
   requireValue(envelope.conv_epoch === state.epoch || source && id < source.messageId, 'Stale, future or superseded group epoch');
-  const sourceState = source ? { ...state, epoch: source.epoch, root: source.root, snapshot: source.snapshot } : state;
+  const sourceState = source ? { ...state, epoch: source.epoch, root: source.root, snapshot: source.snapshot,
+    admissions: structuredClone(source.admissions ?? {}) } : state;
   const conversation = groupSessionConversation(sourceState);
   const message = decryptMessage(envelope, conversation);
   const { body_type: type, sender_kid: sender } = message.inner;
@@ -417,6 +488,11 @@ export function receiveGroupEvent(identity: Identity, envelope: OuterEnvelope, p
       merged.founding_members.push(...members);
       validateGroupSnapshot(merged);
       group.applyAdd({ added_at: body.added_at, new_members: members });
+      if (body.group_epoch === envelope.conv_epoch) {
+        for (const member of members) state.admissions[hex(member.key_id)] = {
+          addId: id, addDigest: digest, sourceEpoch: envelope.conv_epoch, completion: null,
+        };
+      }
       state.needsRekey = true;
     } else if (type === 'group_remove') {
       const members = body.removed_members;
@@ -430,6 +506,10 @@ export function receiveGroupEvent(identity: Identity, envelope: OuterEnvelope, p
         seen.add(hex(kid));
       }
       group.applyRemove({ removed_at: body.removed_at, removed_members: members, reason: body.reason });
+      for (const kid of members) delete state.admissions[hex(kid)];
+      if (members.some(kid => uint8ArrayEquals(kid, identity.keyID)) && body.group_epoch === envelope.conv_epoch) {
+        state.removedAtEpoch = Math.max(state.removedAtEpoch ?? -1, envelope.conv_epoch);
+      }
       state.needsRekey = true;
       state.removed ||= !group.isMember(identity.keyID);
     } else {
@@ -450,11 +530,22 @@ export function receiveGroupEvent(identity: Identity, envelope: OuterEnvelope, p
           for (const [seenId, event] of Object.entries(state.seen)) if (event.epoch > source.epoch) delete state.seen[seenId];
         }
         state.rekeys.push({ epoch: conversation.currentEpoch, root: hex(conversation.keys.root),
-          snapshot: sourceState.snapshot, messageId: id, expiresAt: Math.min(envelope.expiry_ts, at + GROUP_REKEY_GRACE_SECONDS) });
+          snapshot: sourceState.snapshot, admissions: structuredClone(sourceState.admissions),
+          messageId: id, expiresAt: Math.min(envelope.expiry_ts, at + GROUP_REKEY_GRACE_SECONDS) });
         state.rekeys = state.rekeys.slice(-MAX_GROUP_REKEY_CHECKPOINTS);
         applyRekey(conversation, root, body.new_conv_epoch);
         state.root = hex(root); state.epoch = body.new_conv_epoch;
-      } else state.removed = true;
+        state.admissions = structuredClone(sourceState.admissions);
+        for (const [kid, admission] of Object.entries(state.admissions)) if (admission.completion === null) {
+          if (body.group_epoch === envelope.conv_epoch) admission.completion = { rekeyId: id, rekeyDigest: digest };
+          else delete state.admissions[kid];
+        }
+      } else {
+        state.removed = true;
+        // No destination key was installed. Do not claim a completed admission
+        // for old-key additions observed after this identity's removal.
+        state.admissions = Object.fromEntries(Object.entries(sourceState.admissions).filter(([, admission]) => admission.completion !== null));
+      }
       state.needsRekey = false;
     }
     state.snapshot = encodeRoster(group);
