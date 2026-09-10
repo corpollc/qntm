@@ -211,6 +211,13 @@ restricted to a single recipient per operation.
 
 `checkGroupReplayCoverage` / `check_group_replay_coverage` takes the saved cursor,
 captured replay head and every received sequence, including unreadable rows.
+TypeScript `DropboxClient.receiveMessages` exposes these as `entries` (each with
+`seq` and `envelope`) and `sequence` (the captured relay head), retaining the old
+`messages` byte array. `subscribeMessages` accepts an asynchronous
+`onReady(headSequence)` callback serialized after backlog and before live rows,
+once per connection. Buffer backlog until that callback, validate its coverage,
+then commit state and cursor atomically. Set `getCursor` to read durable progress
+on reconnect; the transport callback alone does not establish group validity.
 Missing sequences persist a recovery requirement with a random challenge;
 later complete replay alone does not clear it. `checkExpiredGroupControl` /
 `check_expired_group_control` recognizes expired authenticated controls with

@@ -120,7 +120,9 @@ function base64ToUint8(s: string): Uint8Array {
 export interface ReceiveResult {
   /** Decoded envelope bytes, one per message */
   messages: Uint8Array[];
-  /** Highest sequence number seen — use as fromSequence on the next poll */
+  /** Exact transport sequences, including gaps; same order/bytes as messages. */
+  entries: SubscriptionMessage[];
+  /** Captured relay head — persist only after validating/processing the replay. */
   sequence: number;
 }
 
@@ -137,6 +139,11 @@ export interface SubscriptionCloseEvent {
 
 export interface DropboxSubscriptionHandlers {
   onMessage: (message: SubscriptionMessage) => void | Promise<void>;
+  /** Serialized after backlog and before live messages, once per connection.
+   * Buffer replay until this callback when complete history is needed to act.
+   * Use getCursor to resume from durably committed application progress.
+   */
+  onReady?: (headSequence: number) => void | Promise<void>;
   getCursor?: () => number | Promise<number>;
   onOpen?: () => void;
   onClose?: (event: SubscriptionCloseEvent) => void;
@@ -279,6 +286,7 @@ export class DropboxClient {
     fromSequence: number = 0,
     _maxMessages?: number,
   ): Promise<ReceiveResult> {
+    if (!Number.isSafeInteger(fromSequence) || fromSequence < 0) throw new Error('invalid receive cursor');
     if (typeof WebSocket === 'undefined') {
       throw new Error('WebSocket is not available in this runtime');
     }
@@ -286,6 +294,8 @@ export class DropboxClient {
     const conversationIdHex = toHex(conversationId);
     return new Promise<ReceiveResult>((resolve, reject) => {
       const messages: Uint8Array[] = [];
+      const entries: SubscriptionMessage[] = [];
+      let messageQueue = Promise.resolve();
       let settled = false;
       let currentSequence = fromSequence;
       let headSequence: number | null = null;
@@ -296,7 +306,8 @@ export class DropboxClient {
         settled = true;
         resolve({
           messages,
-          sequence: headSequence === null ? currentSequence : Math.max(currentSequence, headSequence),
+          entries,
+          sequence: headSequence!,
         });
         try {
           socket.close(1000, 'receive complete');
@@ -317,23 +328,26 @@ export class DropboxClient {
       };
 
       socket.addEventListener('message', (event) => {
-        void (async () => {
-          try {
-            const payload = await webSocketDataToText(event.data);
-            const frame = JSON.parse(payload) as SubscribeFrame;
-            if (frame.type === 'message') {
-              messages.push(base64ToUint8(frame.envelope_b64));
-              currentSequence = Math.max(currentSequence, frame.seq);
-              return;
-            }
-            if (frame.type === 'ready') {
-              headSequence = Math.max(fromSequence, frame.head_seq);
-              finish();
-            }
-          } catch (error) {
-            fail(error);
+        messageQueue = messageQueue.then(async () => {
+          if (settled) return;
+          const payload = await webSocketDataToText(event.data);
+          const frame = JSON.parse(payload) as SubscribeFrame;
+          if (frame.type === 'message') {
+            if (!Number.isSafeInteger(frame.seq) || frame.seq <= 0) throw new Error('invalid subscription sequence');
+            const envelope = base64ToUint8(frame.envelope_b64);
+            messages.push(envelope);
+            entries.push({ seq: frame.seq, envelope });
+            currentSequence = Math.max(currentSequence, frame.seq);
+            return;
           }
-        })();
+          if (frame.type === 'ready') {
+            if (!Number.isSafeInteger(frame.head_seq) || frame.head_seq < currentSequence) throw new Error('invalid subscription head');
+            headSequence = frame.head_seq;
+            finish();
+            return;
+          }
+          if (frame.type !== 'pong') throw new Error('unsupported subscription frame');
+        }).catch(fail);
       });
 
       socket.addEventListener('error', () => {
@@ -341,17 +355,12 @@ export class DropboxClient {
       });
 
       socket.addEventListener('close', (event) => {
-        if (settled) {
-          return;
-        }
-        if (headSequence !== null) {
-          finish();
-          return;
-        }
-        fail(new Error(
-          `dropbox receive closed before reaching relay head for conversation ${conversationIdHex}: ` +
-          `${event.code}${event.reason ? ` ${event.reason}` : ''}`,
-        ));
+        void messageQueue.then(() => {
+          if (!settled) fail(new Error(
+            `dropbox receive closed before reaching relay head for conversation ${conversationIdHex}: ` +
+            `${event.code}${event.reason ? ` ${event.reason}` : ''}`,
+          ));
+        });
       });
     });
   }
@@ -361,6 +370,7 @@ export class DropboxClient {
     fromSequence: number = 0,
     handlers: DropboxSubscriptionHandlers,
   ): DropboxSubscription {
+    if (!Number.isSafeInteger(fromSequence) || fromSequence < 0) throw new Error('invalid receive cursor');
     if (typeof WebSocket === 'undefined') {
       throw new Error('WebSocket is not available in this runtime');
     }
@@ -417,11 +427,14 @@ export class DropboxClient {
         ? await Promise.resolve(handlers.getCursor())
         : currentSequence;
       if (closedByCaller) return;
+      if (!Number.isSafeInteger(resumeSequence) || resumeSequence < 0) throw new Error('invalid receive cursor');
       currentSequence = resumeSequence;
 
       const ws = new WebSocket(toWebSocketUrl(this.baseUrl, conversationIdHex, resumeSequence));
       socket = ws;
       let failed = false;
+      let ready = false;
+      let receivedSequence = resumeSequence;
 
       ws.addEventListener('open', () => {
         if (socket !== ws || closedByCaller) {
@@ -438,9 +451,16 @@ export class DropboxClient {
             if (closedByCaller || failed) return;
             const payload = await webSocketDataToText(event.data);
             const frame = JSON.parse(payload) as SubscribeFrame;
-            if (frame.type !== 'message') {
+            if (frame.type === 'pong') return;
+            if (frame.type === 'ready') {
+              if (ready || !Number.isSafeInteger(frame.head_seq) || frame.head_seq < receivedSequence) throw new Error('invalid subscription head');
+              await handlers.onReady?.(frame.head_seq);
+              ready = true;
+              // Only a successful ready callback can commit a buffered replay.
+              if (handlers.onReady) currentSequence = frame.head_seq;
               return;
             }
+            if (frame.type !== 'message') throw new Error('unsupported subscription frame');
             if (!Number.isSafeInteger(frame.seq) || frame.seq <= 0) {
               throw new Error('invalid subscription sequence');
             }
@@ -449,7 +469,8 @@ export class DropboxClient {
               seq: frame.seq,
               envelope: base64ToUint8(frame.envelope_b64),
             });
-            currentSequence = Math.max(currentSequence, frame.seq);
+            receivedSequence = Math.max(receivedSequence, frame.seq);
+            if (!handlers.onReady || ready) currentSequence = Math.max(currentSequence, frame.seq);
           })
           .catch((error) => {
             // Never let a later callback acknowledge past this failed event.
