@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { ManagedProcess } from './src/runtime.js';
+import { ManagedProcess, darwinOwnedGroupState } from './src/runtime.js';
 
 const children: ManagedProcess[] = [];
 afterEach(async () => { await Promise.all(children.splice(0).map(child => child.stop())); });
@@ -18,3 +18,15 @@ it('runs two actual Vite UI servers on distinct assigned ports and releases them
   await Promise.all(children.map(child => child.stop()));
   for (const url of urls) await expect(fetch(url)).rejects.toThrow();
 }, 30_000);
+
+
+it('waits for Darwin exiting-only owned groups without hiding live permission failures', () => {
+  expect(darwinOwnedGroupState(' 100 ?Es\n 101 S', 100)).toBe('exiting');
+  expect(darwinOwnedGroupState(' 100 ?Es\n 100 Z', 100)).toBe('exiting');
+  expect(darwinOwnedGroupState(' 100 Z\n 101 S', 100)).toBe('gone');
+  expect(darwinOwnedGroupState(' 101 S', 100)).toBe('gone');
+  expect(darwinOwnedGroupState(' 100 ?Es\n 100 S', 100)).toBe('live');
+  expect(darwinOwnedGroupState(' 100 S', 100)).toBe('live');
+  expect(darwinOwnedGroupState(' 100 ?', 100)).toBe('live');
+  expect(() => darwinOwnedGroupState('unparseable', 100)).toThrow('Cannot verify');
+});

@@ -1,6 +1,6 @@
 {
   "name": "@qntm/tui",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Terminal UI chat client for qntm",
   "type": "module",
   "scripts": {

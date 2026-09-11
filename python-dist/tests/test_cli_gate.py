@@ -470,6 +470,10 @@ class TestRecvParticipantLearning:
 
         tmpdir, alice = _make_config_dir_with_identity()
         conv_id_hex, conv_record = _make_conversation(tmpdir, alice)
+        # Direct conversations learn their peer; groups require signed admission.
+        conv_record["type"]="direct"
+        from qntm.cli import _save_conversations
+        _save_conversations(tmpdir,[conv_record])
         bob = generate_identity()
 
         conv_crypto = {

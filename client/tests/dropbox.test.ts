@@ -209,6 +209,30 @@ describe('DropboxClient', () => {
     });
   });
 
+  describe('bounded attachment replay', () => {
+    it('rejects excess frames rather than silently returning an incomplete attachment', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const receiving=client.receiveMessages(fakeConvID(),0,1,1000);
+      const assertion=expect(receiving).rejects.toThrow(/message limit/);
+      FakeWebSocket.instances[0]!.message(JSON.stringify({type:'message',seq:1,envelope_b64:'YQ=='}));
+      FakeWebSocket.instances[0]!.message(JSON.stringify({type:'message',seq:2,envelope_b64:'YQ=='}));
+      await assertion;
+    });
+    it('rejects oversized relay frames', async () => {
+      vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const receiving=client.receiveMessages(fakeConvID(),0,512,1000);
+      const assertion=expect(receiving).rejects.toThrow(/size limit/);
+      FakeWebSocket.instances[0]!.message('x'.repeat(100001));
+      await assertion;
+    });
+    it('closes a relay that never reaches its head', async () => {
+      vi.useFakeTimers();vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+      const receiving=client.receiveMessages(fakeConvID(),0,512,1000);
+      const assertion=expect(receiving).rejects.toThrow(/timed out/);
+      await vi.advanceTimersByTimeAsync(1000);await assertion;
+    });
+  });
+
   describe('subscribeMessages', () => {
     it('replays a failed callback before processing later queued messages', async () => {
       vi.useFakeTimers();

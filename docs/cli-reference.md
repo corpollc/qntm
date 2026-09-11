@@ -222,13 +222,16 @@ options:
 ## `qntm convo invite`
 
 ```text
-usage: qntm convo invite [-h] conv
+usage: qntm convo invite [-h] [--recipient RECIPIENT] conv
 
 positional arguments:
-  conv        Conversation ID or prefix
+  conv                  Conversation ID or prefix
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+  --recipient RECIPIENT
+                        Admitted participant public key (hex); required after key
+                        rotation
 ```
 
 ## `qntm convo list`
@@ -313,15 +316,16 @@ options:
 ## `qntm group`
 
 ```text
-usage: qntm group [-h] {create,join,add,remove,rekey,list} ...
+usage: qntm group [-h] {create,join,add,remove,rekey,retry,list} ...
 
 positional arguments:
-  {create,join,add,remove,rekey,list}
+  {create,join,add,remove,rekey,retry,list}
     create              Create a new group
     join                Join a group via invite token
     add                 Add member to group
     remove              Remove member from group
     rekey               Rekey group (new epoch)
+    retry               Retry the exact pending encrypted group update
     list                List group conversations
 
 options:
@@ -386,6 +390,18 @@ options:
 
 ```text
 usage: qntm group rekey [-h] conversation
+
+positional arguments:
+  conversation  Conversation ID or prefix
+
+options:
+  -h, --help    show this help message and exit
+```
+
+## `qntm group retry`
+
+```text
+usage: qntm group retry [-h] conversation
 
 positional arguments:
   conversation  Conversation ID or prefix

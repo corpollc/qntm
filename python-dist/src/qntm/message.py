@@ -34,6 +34,11 @@ def create_message(
         raise ValueError("message TTL must be a positive safe integer within the timestamp range")
     expiry_ts = now + ttl_seconds
 
+    # QSP v1.2 binds membership controls to their signed source epoch.
+    if conversation.get('type') == 'group' and body_type in ('group_genesis','group_add','group_remove','group_rekey'):
+        control = unmarshal(body)
+        body = marshal_canonical({**control, 'group_epoch': conversation['currentEpoch']})
+
     # Build body structure for hashing
     body_struct = {"body": body, "body_type": body_type}
     if refs:

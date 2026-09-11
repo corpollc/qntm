@@ -277,8 +277,11 @@ export class DropboxClient {
   async receiveMessages(
     conversationId: Uint8Array,
     fromSequence: number = 0,
-    _maxMessages?: number,
+    maxMessages?: number,
+    timeoutMs?: number,
   ): Promise<ReceiveResult> {
+    if (maxMessages !== undefined && (!Number.isSafeInteger(maxMessages) || maxMessages < 1)) throw new Error('invalid receive message limit');
+    if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) throw new Error('invalid receive timeout');
     if (typeof WebSocket === 'undefined') {
       throw new Error('WebSocket is not available in this runtime');
     }
@@ -291,9 +294,11 @@ export class DropboxClient {
       let headSequence: number | null = null;
       const socket = new WebSocket(toWebSocketUrl(this.baseUrl, conversationIdHex, fromSequence));
 
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
         if (settled) return;
         settled = true;
+        if (timer) clearTimeout(timer);
         resolve({
           messages,
           sequence: headSequence === null ? currentSequence : Math.max(currentSequence, headSequence),
@@ -308,6 +313,7 @@ export class DropboxClient {
       const fail = (error: unknown) => {
         if (settled) return;
         settled = true;
+        if (timer) clearTimeout(timer);
         reject(error instanceof Error ? error : new Error(String(error)));
         try {
           socket.close(1011, 'receive failed');
@@ -316,12 +322,16 @@ export class DropboxClient {
         }
       };
 
+      if (timeoutMs !== undefined) timer = setTimeout(() => fail(new Error('dropbox receive timed out')), timeoutMs);
       socket.addEventListener('message', (event) => {
         void (async () => {
           try {
+            if (settled) return;
             const payload = await webSocketDataToText(event.data);
+            if (maxMessages !== undefined && payload.length > 100000) throw new Error('dropbox envelope frame exceeds the size limit');
             const frame = JSON.parse(payload) as SubscribeFrame;
             if (frame.type === 'message') {
+              if (maxMessages !== undefined && messages.length >= maxMessages) throw new Error('dropbox receive exceeds the message limit');
               messages.push(base64ToUint8(frame.envelope_b64));
               currentSequence = Math.max(currentSequence, frame.seq);
               return;

@@ -95,3 +95,11 @@ export type { GatewayWorkflowStatus, GatewayWorkflowState } from './gate/workflo
 
 export { createReceiveEvent } from './receive/index.js';
 export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/index.js';
+
+export { ATTACHMENT_TYPE, ATTACHMENT_PART_BYTES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_PARTS,
+  MAX_ATTACHMENT_DESCRIPTOR_BYTES, parseAttachment, prepareAttachment, assembleAttachment,
+  uploadAttachment, downloadAttachment } from './attachment/index.js';
+export type { AttachmentContext, AttachmentDescriptor, PreparedAttachment, AttachmentTransport } from './attachment/index.js';
+
+export * from './group-bootstrap/index.js';
+export * from './group-bootstrap/rekey.js';
