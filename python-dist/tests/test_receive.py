@@ -8,6 +8,7 @@ import pytest
 
 from qntm import cli, mcp_server as mcp
 from qntm.crypto import QSP1Suite
+from qntm.group import GroupState, parse_group_genesis_body
 from qntm.group import (create_group_genesis_body, create_group_add_body,
                         create_group_remove_body, create_group_rekey_body)
 from qntm.guidance import pin_contact, prepare_request
@@ -24,6 +25,9 @@ def conversation(tmp_path, monkeypatch):
     record = {"id": invite["conv_id"].hex(), "name": "Receive test", "type": "group",
               "participants": [alice["keyID"].hex(), bob["keyID"].hex()], "current_epoch": 0,
               "keys": {"root": keys["root"].hex(), "aead_key": keys["aeadKey"].hex(), "nonce_key": keys["nonceKey"].hex()}}
+    state=GroupState();state.apply_genesis(parse_group_genesis_body(create_group_genesis_body("test","",alice,[bob["publicKey"]])))
+    record["group_state"]=state.to_dict()
+    record["participant_public_keys"]=[alice["publicKey"].hex(),bob["publicKey"].hex()]
     path = str(tmp_path)
     cli._save_identity(path, alice)
     cli._save_conversations(path, [record])
@@ -41,7 +45,7 @@ def rotated(record, identity, epoch=1):
     suite = QSP1Suite()
     key = suite.generate_group_key()
     conv_id = bytes.fromhex(record["id"])
-    body = create_group_rekey_body(key, epoch, [{"kid": identity["keyID"], "public_key": identity["publicKey"]}], conv_id)
+    body = create_group_rekey_body(key, epoch, [{"kid":bytes.fromhex(row["key_id"]),"public_key":bytes.fromhex(row["public_key"])} for row in record["group_state"]["members"]], conv_id)
     updated = deepcopy(record)
     aead, nonce = suite.derive_epoch_keys(key, conv_id, epoch)
     updated.update(current_epoch=epoch, keys={"root": key.hex(), "aead_key": aead.hex(), "nonce_key": nonce.hex()})
@@ -51,12 +55,15 @@ def rotated(record, identity, epoch=1):
 @pytest.mark.parametrize("surface", ["cli", "mcp"])
 def test_membership_rekey_and_nontext_survive_restart(conversation, monkeypatch, capsys, surface):
     path, record, alice, bob, charlie = conversation
-    rekey, updated = rotated(record, alice)
+    record.pop("group_state")
+    cli._save_conversations(path,[record])
+    state=GroupState();state.apply_genesis(parse_group_genesis_body(create_group_genesis_body("test","",alice,[charlie["publicKey"]])))
+    rekey, updated = rotated({**record,"group_state":state.to_dict()}, alice)
     batch = [
-        wire(bob, record, "group_genesis", create_group_genesis_body("test", "", alice, [bob["publicKey"]])),
-        wire(bob, record, "group_add", create_group_add_body(bob, [charlie["publicKey"]])),
-        wire(bob, record, "group_remove", create_group_remove_body([bob["keyID"]], "left")),
-        wire(bob, record, "group_rekey", rekey),
+        wire(alice, record, "group_genesis", create_group_genesis_body("test", "", alice, [bob["publicKey"]])),
+        wire(alice, record, "group_add", create_group_add_body(alice, [charlie["publicKey"]])),
+        wire(alice, record, "group_remove", create_group_remove_body([bob["keyID"]], "left")),
+        wire(alice, record, "group_rekey", rekey),
         wire(alice, updated, "text", b"after rekey in the same batch"),
         wire(alice, updated, "gate.result", b'{"status":200,"body":"untrusted"}'),
         wire(alice, updated, "attachment", b"\xff\x00\xfe"),
@@ -108,13 +115,17 @@ def test_removed_pinned_contact_blocks_guidance(conversation, monkeypatch):
 
 def test_excluded_member_does_not_obtain_rekey(conversation, monkeypatch):
     path, record, alice, bob, _ = conversation
-    rekey, updated = rotated(record, bob)
-    batch = [wire(bob, record, "group_rekey", rekey), wire(bob, updated, "text", b"excluded")]
-    monkeypatch.setattr(mcp, "_recv_once", lambda *args: (batch, 2))
-    result = mcp.receive_messages(record["id"])
-    assert result["count"] == 1
-    assert cli._load_conversations(path)[0]["current_epoch"] == 0
-    assert all(e.get("unsafe_body") != "excluded" for e in cli._load_history(path, record["id"]))
+    cli._save_identity(path,bob)
+    removal=wire(alice,record,"group_remove",create_group_remove_body([bob["keyID"]],"left"))
+    state=GroupState();state.apply_genesis(parse_group_genesis_body(create_group_genesis_body("test","",alice,[])))
+    rekey,updated=rotated({**record,"group_state":state.to_dict()},alice)
+    batch=[removal,wire(alice,record,"group_rekey",rekey),wire(alice,updated,"text",b"excluded")]
+    monkeypatch.setattr(mcp,"_recv_once",lambda *args:(batch,3))
+    result=mcp.receive_messages(record["id"])
+    assert result["count"]==2
+    assert cli._load_conversations(path)[0]["current_epoch"]==0
+    assert cli._load_conversations(path)[0]["excluded"]
+    assert all(e.get("unsafe_body")!="excluded" for e in cli._load_history(path,record["id"]))
 
 
 def test_history_write_failure_does_not_advance_cursor_or_keys(conversation, monkeypatch):
@@ -139,5 +150,5 @@ def test_stale_rekey_cannot_roll_back_epoch(conversation, monkeypatch):
     cli._save_conversations(path, [updated])
     old_rekey, _ = rotated(record, alice, 1)
     monkeypatch.setattr(mcp, "_recv_once", lambda *args: ([wire(alice, updated, "group_rekey", old_rekey)], 1))
-    assert mcp.receive_messages(record["id"])["count"] == 1
+    assert mcp.receive_messages(record["id"])["count"] == 0
     assert cli._load_conversations(path)[0]["keys"] == updated["keys"]

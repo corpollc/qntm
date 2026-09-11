@@ -1,6 +1,6 @@
 """QSP protocol constants."""
 
-SPEC_VERSION = "QSP-v1.1"
+SPEC_VERSION = "QSP-v1.2"
 PROTOCOL_VERSION = 1
 DEFAULT_SUITE = "QSP-1"
 MAX_GROUP_SIZE = 128

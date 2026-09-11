@@ -12,7 +12,7 @@ def test_python_package_exports_spec_version():
 
     project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
     assert __version__ == project["project"]["version"]
-    assert SPEC_VERSION == "QSP-v1.1"
+    assert SPEC_VERSION == "QSP-v1.2"
     assert PROTOCOL_VERSION == 1
 
 

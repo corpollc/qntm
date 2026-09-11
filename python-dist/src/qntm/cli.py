@@ -20,6 +20,7 @@ from websockets.exceptions import WebSocketException
 
 from . import __version__
 from .constants import PROTOCOL_VERSION, SPEC_VERSION
+from .cbor import marshal_canonical
 from .identity import (
     base64url_encode,
     generate_identity,
@@ -581,93 +582,6 @@ def _find_gov_proposal_in_history(history_entries, proposal_id):
     )
 
 
-def _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity, *, persist=True):
-    """Apply group membership/epoch state changes from a received group event.
-
-    Mutates conv_record in-place; the shared receiver batches persistence.
-    """
-    if body_type not in _GROUP_BODY_TYPES:
-        return
-
-    try:
-        if body_type == "group_genesis":
-            parsed = parse_group_genesis_body(body_bytes)
-            existing = set(conv_record.get("participants", []))
-            existing_pks = set(conv_record.get("participant_public_keys", []))
-            for m in parsed.get("founding_members", []):
-                kid_hex = bytes(m["key_id"]).hex().lower()
-                pk_hex = bytes(m["public_key"]).hex()
-                existing.add(kid_hex)
-                existing_pks.add(pk_hex)
-            conv_record["participants"] = list(existing)
-            conv_record["participant_public_keys"] = list(existing_pks)
-            if persist:
-                _save_conversations(config_dir, conversations)
-
-        elif body_type == "group_add":
-            parsed = parse_group_add_body(body_bytes)
-            existing = set(conv_record.get("participants", []))
-            existing_pks = set(conv_record.get("participant_public_keys", []))
-            for m in parsed.get("new_members", []):
-                kid_hex = bytes(m["key_id"]).hex().lower()
-                pk_hex = bytes(m["public_key"]).hex()
-                existing.add(kid_hex)
-                existing_pks.add(pk_hex)
-            conv_record["participants"] = list(existing)
-            conv_record["participant_public_keys"] = list(existing_pks)
-            if persist:
-                _save_conversations(config_dir, conversations)
-
-        elif body_type == "group_remove":
-            parsed = parse_group_remove_body(body_bytes)
-            removed_kids = set()
-            for kid_raw in parsed.get("removed_members", []):
-                removed_kids.add(bytes(kid_raw).hex().lower())
-            conv_record["participants"] = [
-                p for p in conv_record.get("participants", [])
-                if p.lower() not in removed_kids
-            ]
-            # Also remove from public keys cache
-            from .identity import key_id_from_public_key as _kid_from_pk
-            conv_record["participant_public_keys"] = [
-                pk for pk in conv_record.get("participant_public_keys", [])
-                if _kid_from_pk(bytes.fromhex(pk)).hex().lower() not in removed_kids
-            ]
-            if persist:
-                _save_conversations(config_dir, conversations)
-
-        elif body_type == "group_rekey":
-            if not identity:
-                return
-            parsed = parse_group_rekey_body(body_bytes)
-            new_epoch = parsed["new_conv_epoch"]
-            if not isinstance(new_epoch, int) or new_epoch <= conv_record.get("current_epoch", 0):
-                return
-            local_kid = identity["keyID"]
-            local_kid_b64 = base64url_encode(local_kid)
-            wrapped = parsed.get("wrapped_keys", {}).get(local_kid_b64)
-            if wrapped is None:
-                # Excluded from rekey — don't update keys
-                return
-            conv_id_bytes = _conv_id_to_bytes(conv_record["id"])
-            from .crypto import QSP1Suite as _Suite
-            _s = _Suite()
-            new_group_key = _s.unwrap_key_for_recipient(
-                bytes(wrapped), identity["privateKey"], local_kid, conv_id_bytes,
-            )
-            new_epoch = parsed["new_conv_epoch"]
-            aead_key, nonce_key = _s.derive_epoch_keys(
-                new_group_key, conv_id_bytes, new_epoch,
-            )
-            conv_record["current_epoch"] = new_epoch
-            conv_record["keys"]["root"] = new_group_key.hex()
-            conv_record["keys"]["aead_key"] = aead_key.hex()
-            conv_record["keys"]["nonce_key"] = nonce_key.hex()
-            if persist:
-                _save_conversations(config_dir, conversations)
-    except (ValueError, TypeError, KeyError, AttributeError):
-        pass  # Ignore malformed events; storage errors must propagate to the caller.
-
 
 def _conv_to_crypto(conv_record):
     """Convert a stored conversation record to crypto-ready dict."""
@@ -957,6 +871,9 @@ def cmd_convo_join(args):
         _error("no identity found; run 'qntm identity generate' first")
 
     token = args.token
+    from .group_bootstrap import is_current_epoch_invite
+    if is_current_epoch_invite(token):
+        return _join_current_group(args,config_dir,identity,token)
     invite = invite_from_url(token)
     keys = derive_conversation_keys(invite)
     conv = create_conversation(invite, keys)
@@ -988,6 +905,8 @@ def cmd_convo_join(args):
         "participants": [p.hex() for p in conv["participants"]],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
+        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -1002,6 +921,22 @@ def cmd_convo_join(args):
     })
 
 
+def _join_current_group(args, config_dir, identity, token):
+    from .group_bootstrap import open_current_epoch_invite
+    from .group_session import import_current_invite, state_for_record
+    joined = open_current_epoch_invite(identity,token)
+    conversations = _load_conversations(config_dir)
+    existing = _find_conversation(conversations,joined["conversation"]["id"].hex())
+    if existing and not existing.get("group_state"):
+        existing["group_state"] = _load_group_state(config_dir,existing["id"]).to_dict()
+    record = import_current_invite(existing,identity,token)
+    if not existing: conversations.append(record)
+    if getattr(args,"name",None): record["name"]=args.name
+    _save_conversations(config_dir,conversations)
+    _save_group_state(config_dir,record["id"],state_for_record(record))
+    _output("group.join", {"conversation_id":record["id"],"type":"group","name":record["name"],"epoch":record["current_epoch"],"participants":len(record["participants"])})
+
+
 def cmd_convo_invite(args):
     config_dir = _get_config_dir(args)
     conversations = _load_conversations(config_dir)
@@ -1009,11 +944,28 @@ def cmd_convo_invite(args):
     if not conv:
         _error(f"conversation not found: {args.conv}")
 
-    token = conv.get("invite_token")
+    recipient = getattr(args,"recipient",None)
+    if conv.get("type")=="group" and (conv.get("current_epoch",0)>0 or recipient):
+        from .group_bootstrap import create_current_epoch_invite
+        from .group_session import state_for_record
+        if not recipient: _error("a rotated group invitation requires --recipient PUBLIC_KEY_HEX")
+        identity = _load_identity(config_dir)
+        if not identity: _error("no local identity")
+        if conv.get("needs_rekey") or conv.get("recovery_required"): _error("complete pending group key rotation before inviting")
+        previous=next((row["id"] for row in conv.get("rekeys",[]) if row["epoch"]==conv.get("current_epoch")),None) or (conv.get("group_checkpoint") or {}).get("rekey_id")
+        if not previous: _error("a signed current rekey is required; receive updates and rotate keys first")
+        try:
+            token=create_current_epoch_invite(identity,_conv_to_crypto(conv),state_for_record(conv,_load_group_state(config_dir,conv["id"])),bytes.fromhex(recipient),bytes.fromhex(previous))
+        except ValueError as error: _error(str(error))
+    else:
+        token = conv.get("invite_token")
     if not token:
         _error("no invite token stored for this conversation (created before token persistence was added)")
 
-    link = invite_to_url(invite_from_url(token), "https://chat.corpo.llc")
+    from .group_bootstrap import is_current_epoch_invite
+    # Current-epoch tokens require a compatible client. Legacy links retain
+    # the private URL fragment used by current hosted clients.
+    link = None if is_current_epoch_invite(token) else invite_to_url(invite_from_url(token), "https://chat.corpo.llc")
     _output("convo.invite", {
         "conversation_id": conv["id"],
         "name": conv.get("name", ""),
@@ -1066,6 +1018,8 @@ def cmd_send(args):
     text = args.message
     body = text.encode("utf-8")
 
+    if conv_record.get("type")=="group" and (conv_record.get("needs_rekey") or conv_record.get("pending_control") or conv_record.get("excluded") or conv_record.get("recovery_required")):
+        _error("Complete the pending group update or restore authorized access before sending")
     envelope = create_message(identity, conv_crypto, "text", body, None, default_ttl())
     envelope_bytes = serialize_envelope(envelope)
 
@@ -1112,7 +1066,14 @@ def _process_received_messages(config_dir, identity, conversations, conv_record,
 def _process_received_messages_locked(config_dir, identity, conversations, conv_record, raw_messages, up_to_seq):
     """Decrypt and persist a batch for both CLI and MCP, applying rekeys in order."""
     conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
+    from .group_session import apply_control, decrypt_for_receive, state_for_record, GROUP_TYPES
+
+    # Older releases stored authenticated group state in its own local file.
+    # Carry that state forward without replacing learned bearer participants.
+    if conv_record.get("type") == "group" and not conv_record.get("group_state"):
+        prior_state = _load_group_state(config_dir, conv_id_hex)
+        if prior_state.creator is not None:
+            conv_record["group_state"] = prior_state.to_dict()
 
     cursors = _load_cursors(config_dir)
     from_seq = cursors.get(conv_id_hex, 0)
@@ -1123,23 +1084,40 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
     history = _load_history(config_dir, conv_id_hex)
     output_messages = []
 
-    for raw_msg in raw_messages:
+    waiting = {}
+    for pending in conv_record.get("waiting_envelopes", [])[:512]:
         try:
+            pending={"envelope_b64":pending} if isinstance(pending,str) else pending
+            env = deserialize_envelope(base64.b64decode(pending["envelope_b64"]))
+            if env["expiry_ts"] > time.time(): waiting[env["msg_id"].hex()] = pending
+        except Exception:
+            continue
+    archived = [{"envelope_b64":row["group_envelope_b64"], "archive":True} for row in history if row.get("group_envelope_b64")]
+    queue = list(raw_messages) + list(waiting.values()) + archived
+    attempted = set()
+    for raw_msg in queue:
+        if len(attempted) >= 4096: break
+        try:
+            if len(raw_msg["envelope_b64"]) > 87384: continue
             envelope_bytes = base64.b64decode(raw_msg["envelope_b64"])
             envelope = deserialize_envelope(envelope_bytes)
         except Exception:
             continue
 
         msg_id_hex = bytes(envelope["msg_id"]).hex()
-        if conv_seen.get(msg_id_hex):
-            continue
-
+        revision = (msg_id_hex, conv_record.get("current_epoch",0), conv_record["keys"]["root"])
+        if revision in attempted: continue
+        attempted.add(revision)
+        if msg_id_hex in conv_record.get("control_ids",[]): continue
+        if conv_seen.get(msg_id_hex) and not raw_msg.get("archive"): continue
         try:
-            msg = decrypt_message(envelope, conv_crypto)
+            if not raw_msg.get("archive") and envelope["expiry_ts"] <= time.time(): continue
+            msg = decrypt_for_receive(conv_record,envelope) if conv_record.get("type")=="group" else decrypt_message(envelope,_conv_to_crypto(conv_record))
         except Exception:
+            if not raw_msg.get("archive") and not conv_record.get("excluded") and envelope["expiry_ts"] > time.time() and len(waiting)<512:
+                waiting[msg_id_hex]={key:raw_msg[key] for key in ("envelope_b64","seq") if key in raw_msg}
             continue
-
-        conv_seen[msg_id_hex] = True
+        waiting.pop(msg_id_hex,None)
         inner = msg["inner"]
 
         sender_kid_hex = bytes(inner["sender_kid"]).hex().lower()
@@ -1156,19 +1134,63 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
                     continue
                 if gateway.get("invitationId") and gateway["invitationId"] != acceptance["invitation_id"]:
                     continue
+                from .group_gateway import accept_gateway_membership
+                membership_authority = gateway.get("membership_authority") if gateway.get("invitationId") == acceptance["invitation_id"] else None
+                if membership_authority is None:
+                    membership_authority = accept_gateway_membership(conv_record, json.loads(invitation["unsafe_body"]),
+                        bytes.fromhex(invitation["sender_kid"]) if invitation.get("sender_kid") else identity["keyID"], invitation["msg_id"])
                 conv_record["gateway"] = {"publicKey": acceptance["gateway_public_key"], "keyId": acceptance["gateway_kid"], "status": "active",
+                                          "membership_authority": membership_authority,
+                                          "membership_offer": json.loads(invitation["unsafe_body"])["participants"],
                                           "invitationId": acceptance["invitation_id"], "floor": json.loads(invitation["unsafe_body"])["floor"],
                                           "bootstrap": gateway.get("pending") or gateway.get("bootstrap")}
             except (ValueError, KeyError, TypeError):
                 continue
-        if gateway.get("status") == "active" and body_type in NON_MEMBER_SYSTEM_BODY_TYPES - {"gate.promote", "gate.accept"} and kid_to_wire(inner["sender_kid"]) != gateway["keyId"]:
+        if gateway.get("status") == "active" and body_type in NON_MEMBER_SYSTEM_BODY_TYPES - GROUP_TYPES - {"gate.promote", "gate.accept"} and kid_to_wire(inner["sender_kid"]) != gateway["keyId"]:
             continue
 
         # Apply group membership/epoch state changes before learning senders so
         # governed membership updates can adjust the roster deterministically.
-        _apply_group_event(config_dir, conv_record, conversations, body_type, body_bytes, identity, persist=False)
-        if body_type == "group_rekey":
-            conv_crypto = _conv_to_crypto(conv_record)
+        if body_type in GROUP_TYPES:
+            try:
+                from .group_gateway import prepare_gateway_control
+                import copy
+                candidate = copy.deepcopy(conv_record)
+                # Pre-extension gateway records have no promotion roster cache.
+                # Learned epoch-zero keys are only a candidate list: the proof
+                # still requires the exact roster, majority, and existing admin.
+                old_gateway = candidate.get("gateway") or {}
+                if (candidate.get("current_epoch", 0) == 0 and not candidate.get("group_checkpoint")
+                        and old_gateway.get("status") == "active" and not old_gateway.get("membership_offer")):
+                    known = _load_known_participant_public_keys(config_dir, candidate, identity=identity)
+                    for member in state_for_record(candidate).members.values():
+                        known[member["key_id"].hex()] = member["public_key"]
+                    old_gateway["membership_offer"] = {kid_to_wire(bytes.fromhex(kid)): pubkey_to_wire(public) for kid, public in known.items()}
+                delegate = prepare_gateway_control(candidate, envelope, msg, history, raw_msg.get("seq"))
+                changed = apply_control(candidate,identity,envelope,msg,envelope_bytes,
+                    fallback=_load_group_state(config_dir,conv_id_hex),allow_expired=bool(raw_msg.get("archive")),
+                    authorized_control_signer=delegate)
+                if body_type == "group_rekey": candidate.pop("pending_governed_membership", None)
+                conv_record.clear(); conv_record.update(candidate)
+            except (ValueError,TypeError,KeyError):
+                # Retain a detected need for recovery, but never partial roster,
+                # authority, key, or proposal mutations from a rejected control.
+                if candidate.get("recovery_required"):
+                    conv_record["recovery_required"] = candidate["recovery_required"]
+                continue
+            if changed:
+                queue.extend(list(waiting.values()))
+                queue.extend(archived)
+        elif conv_record.get("type")=="group" and body_type not in NON_MEMBER_SYSTEM_BODY_TYPES:
+            if conv_record.get("needs_rekey") or conv_record.get("excluded") or conv_record.get("recovery_required"):continue
+            # QSP v1.0 invitations are bearer membership at epoch zero. A
+            # verified sender can introduce itself without acquiring any
+            # administrator or control-event authority. Rotated/checkpointed
+            # groups require their authenticated explicit roster instead.
+            legacy_bearer = conv_record.get("current_epoch", 0) == 0 and not conv_record.get("group_checkpoint")
+            if not legacy_bearer and not state_for_record(conv_record,_load_group_state(config_dir,conv_id_hex)).is_member(inner["sender_kid"]): continue
+        already_seen = bool(conv_seen.get(msg_id_hex))
+        conv_seen[msg_id_hex] = True
 
         if _should_track_sender_as_participant(conv_record, body_type, sender_kid_hex):
             _merge_participant_public_key(config_dir, conv_id_hex, sender_pk)
@@ -1200,7 +1222,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             except UnicodeDecodeError:
                 entry["unsafe_body_b64"] = base64.b64encode(body_bytes).decode()
 
-        output_messages.append(entry)
+        if not already_seen: output_messages.append(entry)
 
         # Save to history
         hist_entry = {
@@ -1211,9 +1233,33 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             "created_ts": envelope["created_ts"],
             "verified": entry["verified"],
         }
+        if body_type in {"gov.propose", "gov.approve", "gov.disapprove"}:
+            hist_entry["gateway_envelope_b64"] = raw_msg["envelope_b64"]
+        if body_type in GROUP_TYPES:
+            hist_entry["group_envelope_b64"] = raw_msg["envelope_b64"]
+            if not any(row["envelope_b64"]==raw_msg["envelope_b64"] for row in archived): archived.append({"envelope_b64":raw_msg["envelope_b64"],"archive":True})
+        if body_type == "blobref" and (conv_record.get("type") != "group" or sender_kid_hex in conv_record.get("participants", [])):
+            # Only saved after decrypt_message authenticated this parent envelope.
+            # Retain the public binding so downloaded history survives later rekeys.
+            hist_entry["attachment_context"] = {
+                "conversation_id": bytes(envelope["conv_id"]).hex(),
+                "epoch": envelope["conv_epoch"],
+                "sender_public_key": sender_pk.hex(),
+            }
+            # Keep the original signed body for archive verification even after
+            # epoch keys rotate; a cached verified flag is not a signature.
+            hist_entry["attachment_parent"] = {
+                "envelope_b64": base64.b64encode(serialize_envelope(envelope)).decode(),
+                "inner_b64": base64.b64encode(marshal_canonical(msg["inner"])).decode(),
+            }
         if "sequence" in entry:
             hist_entry["sequence"] = entry["sequence"]
             hist_entry["receive_event"] = create_receive_event(msg, entry["sequence"])
+            # A delayed rekey may decrypt an earlier relay sequence after hooks
+            # consumed newer messages. Keep that authenticated relay sequence in
+            # the event and use a separate monotonic private delivery cursor.
+            previous=next((row for row in history if row.get("msg_id")==msg_id_hex),None)
+            hist_entry["receive_order"] = (previous or {}).get("receive_order") or max(entry["sequence"],1+max((row.get("receive_order",row.get("sequence",0)) for row in history),default=0))
         if "system_message" in entry:
             hist_entry["system_message"] = entry["system_message"]
         if group_json is not None:
@@ -1230,8 +1276,10 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
 
     # Store plaintext history before rotating persisted keys. A retry after a
     # failed write can then neither lose a message nor advance past unsaved data.
+    conv_record["waiting_envelopes"] = list(waiting.values())[-512:]
     _save_history(config_dir, conv_id_hex, history)
     _save_conversations(config_dir, conversations)
+    if conv_record.get("group_state"): _save_group_state(config_dir,conv_id_hex,state_for_record(conv_record))
     _save_seen(config_dir, seen)
     if up_to_seq > from_seq:
         cursors[conv_id_hex] = up_to_seq
@@ -1355,29 +1403,13 @@ def cmd_group_create(args):
     _save_conversations(config_dir, conversations)
     _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
-    # Create and send genesis message
-    body_bytes = create_group_genesis_body(
-        group_name=group_name,
-        description=getattr(args, "description", "") or "",
-        creator_identity=identity,
-        founding_member_keys=[],
-    )
-    conv_crypto = _conv_to_crypto(conv_record)
-    envelope = create_message(
-        identity, conv_crypto, "group_genesis", body_bytes, None, default_ttl()
-    )
-    envelope_bytes = serialize_envelope(envelope)
-
+    body_bytes = create_group_genesis_body(group_name,getattr(args,"description","") or "",identity,[])
     try:
-        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+        _publish_group_control(config_dir,dropbox_url,identity,conv_id_hex,"group_genesis",body_bytes)
     except Exception:
-        pass  # Group created locally even if dropbox unreachable
-
-    # Initialize and save group state
-    from .group import parse_group_genesis_body
-    state = GroupState()
-    state.apply_genesis(parse_group_genesis_body(body_bytes))
-    _save_group_state(config_dir, conv_id_hex, state)
+        # Durable pending ciphertext is retried with qntm group retry.
+        pass
+    state=_load_group_state(config_dir,conv_id_hex)
 
     _output("group.create", {
         "conversation_id": conv_id_hex,
@@ -1396,6 +1428,9 @@ def cmd_group_join(args):
         _error("no identity found; run 'qntm identity generate' first")
 
     token = args.token
+    from .group_bootstrap import is_current_epoch_invite
+    if is_current_epoch_invite(token):
+        return _join_current_group(args,config_dir,identity,token)
     invite = invite_from_url(token)
 
     if invite["type"] != "group":
@@ -1431,6 +1466,8 @@ def cmd_group_join(args):
         "participants": [p.hex() for p in conv["participants"]],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
+        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -1445,187 +1482,94 @@ def cmd_group_join(args):
     })
 
 
+def _publish_group_control(config_dir, dropbox_url, identity, conv_id, body_type, body):
+    from .group_session import apply_control, state_for_record
+    with private_lock(os.path.join(config_dir,"receive.lock")):
+        conversations=_load_conversations(config_dir)
+        record=_resolve_conversation(conversations,conv_id)
+        if not record or record.get("type")!="group": raise ValueError("Group not found")
+        if record.get("pending_control"): raise ValueError("Retry the pending group update first with 'qntm group retry'")
+        if record.get("excluded") or record.get("recovery_required"): raise ValueError("Group access needs recovery before publishing controls")
+        envelope=create_message(identity,_conv_to_crypto(record),body_type,body,None,default_ttl())
+        wire=serialize_envelope(envelope)
+        message=decrypt_message(envelope,_conv_to_crypto(record))
+        apply_control(record,identity,envelope,message,wire,fallback=_load_group_state(config_dir,record["id"]))
+        encoded=base64.b64encode(wire).decode()
+        record["pending_control"]={"envelope_b64":encoded,"msg_id":envelope["msg_id"].hex()}
+        history=_load_history(config_dir,record["id"])
+        history.append({"msg_id":envelope["msg_id"].hex(),"direction":"outgoing","body_type":body_type,
+            "created_ts":envelope["created_ts"],"group_envelope_b64":encoded,
+            "unsafe_body":_decode_group_body(body_type,message["inner"]["body"])})
+        _save_history(config_dir,record["id"],history)
+        _save_conversations(config_dir,conversations)
+        _save_group_state(config_dir,record["id"],state_for_record(record))
+    _retry_group_control(config_dir,dropbox_url,record["id"])
+    return envelope
+
+
+def _retry_group_control(config_dir,dropbox_url,conv_id):
+    with private_lock(os.path.join(config_dir,"receive.lock")):
+        conversations=_load_conversations(config_dir);record=_resolve_conversation(conversations,conv_id)
+        if not record: raise ValueError("Group not found")
+        pending=record.get("pending_control")
+        if not pending: return
+        wire=base64.b64decode(pending["envelope_b64"])
+        envelope=deserialize_envelope(wire)
+        if envelope["expiry_ts"]<=time.time(): raise ValueError("Pending group update expired; restore a creator invitation before making further changes")
+        _http_send(dropbox_url,record["id"],wire)
+        record.pop("pending_control",None);_save_conversations(config_dir,conversations)
+
+
+def cmd_group_retry(args):
+    config_dir=_get_config_dir(args)
+    _retry_group_control(config_dir,_get_dropbox_url(args),args.conversation)
+    _output("group.retry",{"conversation_id":args.conversation,"sent":True})
+
+
+def _group_command_context(args):
+    config_dir=_get_config_dir(args);identity=_load_identity(config_dir)
+    if not identity: _error("no identity found; run 'qntm identity generate' first")
+    record=_resolve_conversation(_load_conversations(config_dir),args.conversation)
+    if not record or record.get("type")!="group": _error("Group conversation not found")
+    return config_dir,identity,record
+
+
 def cmd_group_add(args):
-    """Add a member to a group conversation."""
-    config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
-    identity = _load_identity(config_dir)
-    if not identity:
-        _error("no identity found; run 'qntm identity generate' first")
-
-    conversations = _load_conversations(config_dir)
-    conv_record = _resolve_conversation(conversations, args.conversation)
-    if not conv_record:
-        _error(f"conversation {args.conversation} not found")
-
-    if conv_record.get("type") != "group":
-        _error("conversation is not a group")
-
-    conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
-
-    # Parse public key (base64url-encoded)
+    config_dir,identity,record=_group_command_context(args)
     try:
-        new_member_pk = base64url_decode(args.public_key)
-    except Exception:
-        # Try hex
-        try:
-            new_member_pk = bytes.fromhex(args.public_key)
-        except Exception:
-            _error("invalid public key format (expected base64url or hex)")
-
-    if len(new_member_pk) != 32:
-        _error(f"invalid public key length: {len(new_member_pk)}")
-
-    # Create and send group_add message
-    body_bytes = create_group_add_body(
-        adder_identity=identity,
-        new_member_keys=[new_member_pk],
-    )
-    envelope = create_message(
-        identity, conv_crypto, "group_add", body_bytes, None, default_ttl()
-    )
-    envelope_bytes = serialize_envelope(envelope)
-
-    try:
-        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
-    except Exception:
-        pass
-
-    # Update local group state
-    state = _load_group_state(config_dir, conv_id_hex)
-    from .group import parse_group_add_body
-    state.apply_add(parse_group_add_body(body_bytes))
-    _save_group_state(config_dir, conv_id_hex, state)
-
-    # Update conversation participants
-    add_participant(conv_crypto, new_member_pk)
-    conv_record["participants"] = [p.hex() for p in conv_crypto["participants"]]
-    _save_conversations(config_dir, conversations)
-    _merge_participant_public_key(config_dir, conv_id_hex, new_member_pk)
-
-    new_member_kid = key_id_from_public_key(new_member_pk)
-    _output("group.add", {
-        "conversation_id": conv_id_hex,
-        "added_key_id": new_member_kid.hex(),
-        "members": state.member_count(),
-    })
+        public_key=bytes.fromhex(args.public_key) if len(args.public_key)==64 else base64url_decode(args.public_key)
+        if len(public_key)!=32: raise ValueError("Invalid public key length")
+        body=create_group_add_body(identity,[public_key])
+        _publish_group_control(config_dir,_get_dropbox_url(args),identity,record["id"],"group_add",body)
+        _rotate_group(config_dir,_get_dropbox_url(args),identity,record["id"])
+    except ValueError as error: _error(str(error))
+    _output("group.add",{"conversation_id":record["id"],"added_key_id":key_id_from_public_key(public_key).hex(),"keys_rotated":True})
 
 
 def cmd_group_remove(args):
-    """Remove a member from a group conversation."""
-    config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
-    identity = _load_identity(config_dir)
-    if not identity:
-        _error("no identity found; run 'qntm identity generate' first")
-
-    conversations = _load_conversations(config_dir)
-    conv_record = _resolve_conversation(conversations, args.conversation)
-    if not conv_record:
-        _error(f"conversation {args.conversation} not found")
-
-    if conv_record.get("type") != "group":
-        _error("conversation is not a group")
-
-    conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
-
-    # Parse key ID (hex)
+    config_dir,identity,record=_group_command_context(args)
     try:
-        member_kid = bytes.fromhex(args.key_id)
-    except Exception:
-        _error("invalid key ID format (expected hex)")
+        kid=bytes.fromhex(args.key_id)
+        body=create_group_remove_body([kid],getattr(args,"reason","") or "removed by admin")
+        _publish_group_control(config_dir,_get_dropbox_url(args),identity,record["id"],"group_remove",body)
+        _rotate_group(config_dir,_get_dropbox_url(args),identity,record["id"])
+    except ValueError as error: _error(str(error))
+    _output("group.remove",{"conversation_id":record["id"],"removed_key_id":kid.hex(),"keys_rotated":True})
 
-    # Create and send group_remove message
-    body_bytes = create_group_remove_body(
-        removed_member_kids=[member_kid],
-        reason=getattr(args, "reason", "") or "removed by admin",
-    )
-    envelope = create_message(
-        identity, conv_crypto, "group_remove", body_bytes, None, default_ttl()
-    )
-    envelope_bytes = serialize_envelope(envelope)
 
-    try:
-        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
-    except Exception:
-        pass
-
-    # Update local group state
-    state = _load_group_state(config_dir, conv_id_hex)
-    from .group import parse_group_remove_body
-    state.apply_remove(parse_group_remove_body(body_bytes))
-    _save_group_state(config_dir, conv_id_hex, state)
-
-    _output("group.remove", {
-        "conversation_id": conv_id_hex,
-        "removed_key_id": member_kid.hex(),
-        "members": state.member_count(),
-    })
+def _rotate_group(config_dir,dropbox_url,identity,conv_id):
+    from .group_session import state_for_record
+    record=_resolve_conversation(_load_conversations(config_dir),conv_id)
+    state=state_for_record(record,_load_group_state(config_dir,conv_id))
+    body,_=create_rekey(identity,_conv_to_crypto(record),state,bytes.fromhex(conv_id))
+    return _publish_group_control(config_dir,dropbox_url,identity,conv_id,"group_rekey",body)
 
 
 def cmd_group_rekey(args):
-    """Rekey a group conversation (new epoch)."""
-    config_dir = _get_config_dir(args)
-    dropbox_url = _get_dropbox_url(args)
-
-    identity = _load_identity(config_dir)
-    if not identity:
-        _error("no identity found; run 'qntm identity generate' first")
-
-    conversations = _load_conversations(config_dir)
-    conv_record = _resolve_conversation(conversations, args.conversation)
-    if not conv_record:
-        _error(f"conversation {args.conversation} not found")
-
-    if conv_record.get("type") != "group":
-        _error("conversation is not a group")
-
-    conv_id_hex = conv_record["id"]
-    conv_crypto = _conv_to_crypto(conv_record)
-    state = _load_group_state(config_dir, conv_id_hex)
-
-    if state.member_count() == 0:
-        _error("group has no members; cannot rekey")
-
-    # Create rekey
-    rekey_body_bytes, new_group_key = create_rekey(
-        sender_identity=identity,
-        conversation=conv_crypto,
-        state=state,
-        conv_id=conv_crypto["id"],
-    )
-
-    # Send rekey message (encrypted under current epoch keys)
-    envelope = create_message(
-        identity, conv_crypto, "group_rekey", rekey_body_bytes, None, default_ttl()
-    )
-    envelope_bytes = serialize_envelope(envelope)
-
-    try:
-        _http_send(dropbox_url, conv_id_hex, envelope_bytes)
-    except Exception:
-        pass
-
-    # Apply rekey locally
-    new_epoch = conv_crypto["currentEpoch"] + 1
-    apply_rekey(conv_crypto, new_group_key, new_epoch)
-
-    # Update stored conversation
-    conv_record["keys"]["root"] = conv_crypto["keys"]["root"].hex()
-    conv_record["keys"]["aead_key"] = conv_crypto["keys"]["aeadKey"].hex()
-    conv_record["keys"]["nonce_key"] = conv_crypto["keys"]["nonceKey"].hex()
-    conv_record["current_epoch"] = new_epoch
-    _save_conversations(config_dir, conversations)
-
-    _output("group.rekey", {
-        "conversation_id": conv_id_hex,
-        "new_epoch": new_epoch,
-        "members": state.member_count(),
-    })
+    config_dir,identity,record=_group_command_context(args)
+    _rotate_group(config_dir,_get_dropbox_url(args),identity,record["id"])
+    fresh=_resolve_conversation(_load_conversations(config_dir),record["id"])
+    _output("group.rekey",{"conversation_id":record["id"],"new_epoch":fresh["current_epoch"],"members":len(fresh["participants"])})
 
 
 def cmd_group_list(args):
@@ -1691,6 +1635,8 @@ def cmd_announce_create(args):
         "participants": [],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
+        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -1837,6 +1783,8 @@ def cmd_announce_subscribe(args):
         "participants": [],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
+        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -3099,6 +3047,7 @@ claude code channel:
 
     invite_p = convo_sub.add_parser("invite", help="Get token and fragment link for existing conversation")
     invite_p.add_argument("conv", help="Conversation ID or prefix")
+    invite_p.add_argument("--recipient", help="Admitted participant public key (hex); required after key rotation")
 
     convo_sub.add_parser("list", help="List conversations")
 
@@ -3155,6 +3104,8 @@ claude code channel:
     group_rekey_p = group_sub.add_parser("rekey", help="Rekey group (new epoch)")
     group_rekey_p.add_argument("conversation", help="Conversation ID or prefix")
 
+    group_retry_p = group_sub.add_parser("retry", help="Retry the exact pending encrypted group update")
+    group_retry_p.add_argument("conversation", help="Conversation ID or prefix")
     group_sub.add_parser("list", help="List group conversations")
 
     # announce

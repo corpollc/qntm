@@ -39,7 +39,7 @@ describe('Crypto Constants', () => {
   const packageJSON = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
   it('has correct spec version', () => {
-    expect(SPEC_VERSION).toBe('QSP-v1.1');
+    expect(SPEC_VERSION).toBe('QSP-v1.2');
     expect(packageJSON.qntmSpecVersion).toBe(SPEC_VERSION);
   });
 
