@@ -12,6 +12,27 @@ test.beforeEach(async ({ page }) => {
 })
 test.afterEach(async () => { await relay.stop() })
 
+test('welcome action opens the invite controls and creates a conversation', async ({ page }) => {
+  const invites = page.getByRole('button', { name: /^Invites$/i })
+  await expect(invites).toHaveAttribute('aria-expanded', 'false')
+  await page.getByRole('button', { name: 'Open Invites panel', exact: true }).click()
+  await expect(invites).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('button', { name: 'Join', exact: true })).toBeVisible()
+  await page.getByPlaceholder('Name your conversation').fill('Welcome conversation')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Copy Invite Link', exact: true })).toBeVisible()
+})
+
+test('chat shortcuts expand the sidebar panels and focus their inputs', async ({ page }) => {
+  await page.keyboard.press('Control+Shift+N')
+  await expect(page.getByRole('button', { name: /^Invites$/i })).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByPlaceholder('Name your conversation')).toBeFocused()
+  await page.getByRole('button', { name: /^Conversations$/i }).click()
+  await page.keyboard.press('Control+k')
+  await expect(page.getByRole('button', { name: /^Conversations$/i })).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('textbox', { name: 'Filter conversations' })).toBeFocused()
+})
+
 test('collapsed panels exclude controls from agent discovery and keyboard navigation', async ({ page }) => {
   const invites = page.getByRole('button', { name: /^Invites$/i })
   await expect(invites).toHaveAttribute('aria-expanded', 'false')

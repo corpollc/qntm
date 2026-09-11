@@ -1229,6 +1229,7 @@ export default function App() {
           <Route path="*" element={
           <>
           <Sidebar
+            ref={sidebarRef}
             profiles={profiles}
             activeProfileId={activeProfileId}
             identity={identity}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restored the browser welcome screen's Open Invites action and chat-page sidebar keyboard shortcuts by reconnecting their existing sidebar handle. Real-browser regressions cover opening the controls, creating a conversation and focusing the shortcut destinations.
+
 ## v0.6.2 (2026-09-10)
 
 [Full release notes](releases/v0.6.2.md)
