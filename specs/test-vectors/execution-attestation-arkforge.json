@@ -1,0 +1,188 @@
+{
+  "version": "0.3.1",
+  "spec": "CTEF (Composable Trust Evidence Format)",
+  "contributor": "ArkForge Trust Layer (did:web:trust.arkforge.tech)",
+  "reference_implementation": "https://github.com/ark-forge/proof-spec (v2.1.3)",
+  "cross_validation": {
+    "agentgraph_vectors": "https://agentgraph.co/.well-known/cte-test-vectors.json",
+    "result": "4/4 pass (byte-exact canonical + SHA-256 reproduction)",
+    "validated_at": "2026-04-30T12:00:00Z",
+    "implementation": "Python json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False)"
+  },
+  "constraint_evaluation_schema": {
+    "origin": "corpollc/qntm#6 (constraint_evaluation shape)",
+    "fields": {
+      "facet": "string: constraint dimension (e.g. token_budget, api_rate, delegation_depth)",
+      "limit": "number: declared ceiling",
+      "actual": "number: observed value",
+      "delta": "number: limit minus actual (positive = headroom, negative = exceeded)",
+      "result": "string: within_limit | exceeded"
+    },
+    "note": "delta enables near-miss detection: a positive delta close to zero is a leading indicator of future constraint violations."
+  },
+  "execution_attestation_minimal": {
+    "note": "Execution attestation as CTEF authority claim. ArkForge chain hash (canonical_json_sha256, proof-spec v2.1.3) composed into CTEF v0.3.1 envelope. Verifier reproduces canonical_sha256; chain_hash in payload is independently verifiable against the ArkForge proof-spec test vectors.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "execution_attestation",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "attestation": {
+        "type": "ExecutionAttestation",
+        "confidence": 1.0,
+        "payload": {
+          "proof_id": "prf_20260430_120000_a1b2c3",
+          "chain_hash": "sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3",
+          "request_hash": "sha256:0987aa49eb45583406b66c77ea6f35498bd318b81040bec9c54ab439114abe42",
+          "response_hash": "sha256:bad7c7f7f632182e9d746c9a4a02aea5f526a6a76c5108c4a98a7c4823fdbef2",
+          "target": "api.example.com",
+          "algorithm": "canonical_json_sha256"
+        }
+      },
+      "issued_at": "2026-04-30T12:00:00Z",
+      "expires_at": "2026-04-30T13:00:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"attestation\":{\"confidence\":1.0,\"payload\":{\"algorithm\":\"canonical_json_sha256\",\"chain_hash\":\"sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3\",\"proof_id\":\"prf_20260430_120000_a1b2c3\",\"request_hash\":\"sha256:0987aa49eb45583406b66c77ea6f35498bd318b81040bec9c54ab439114abe42\",\"response_hash\":\"sha256:bad7c7f7f632182e9d746c9a4a02aea5f526a6a76c5108c4a98a7c4823fdbef2\",\"target\":\"api.example.com\"},\"type\":\"ExecutionAttestation\"},\"claim_type\":\"authority\",\"expires_at\":\"2026-04-30T13:00:00Z\",\"issued_at\":\"2026-04-30T12:00:00Z\",\"provider\":{\"category\":\"execution_attestation\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "801955711399c150ebbdaa0145f352abb76a43cab8fb60efe00484e3e2790442",
+    "expected_result": "pass"
+  },
+  "constraint_evaluation_within_limit": {
+    "note": "Authority claim with constraint_evaluation object (facet/limit/actual/delta shape from #6). delta=250 (25% headroom). Verifier checks canonical_sha256 and confirms constraint_evaluation.result matches sign(delta).",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "execution_attestation",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "attestation": {
+        "type": "ExecutionAttestation",
+        "confidence": 1.0,
+        "payload": {
+          "proof_id": "prf_20260430_120100_b2c3d4",
+          "chain_hash": "sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3",
+          "constraint_evaluation": {
+            "facet": "token_budget",
+            "limit": 1000,
+            "actual": 750,
+            "delta": 250,
+            "result": "within_limit"
+          }
+        }
+      },
+      "issued_at": "2026-04-30T12:01:00Z",
+      "expires_at": "2026-04-30T13:01:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"attestation\":{\"confidence\":1.0,\"payload\":{\"chain_hash\":\"sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3\",\"constraint_evaluation\":{\"actual\":750,\"delta\":250,\"facet\":\"token_budget\",\"limit\":1000,\"result\":\"within_limit\"},\"proof_id\":\"prf_20260430_120100_b2c3d4\"},\"type\":\"ExecutionAttestation\"},\"claim_type\":\"authority\",\"expires_at\":\"2026-04-30T13:01:00Z\",\"issued_at\":\"2026-04-30T12:01:00Z\",\"provider\":{\"category\":\"execution_attestation\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "22e934a0cdb9da965cb7f7469b3e2f839c45cf9eee6e166a702d74ce865e209a",
+    "expected_result": "pass"
+  },
+  "constraint_evaluation_near_miss": {
+    "note": "Near-miss constraint evaluation: delta=5 (0.5% headroom). Same shape as vector 2 but tests boundary detection. A monitoring system SHOULD alert on delta < threshold even when result=within_limit.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "execution_attestation",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "attestation": {
+        "type": "ExecutionAttestation",
+        "confidence": 1.0,
+        "payload": {
+          "proof_id": "prf_20260430_120200_c3d4e5",
+          "chain_hash": "sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3",
+          "constraint_evaluation": {
+            "facet": "token_budget",
+            "limit": 1000,
+            "actual": 995,
+            "delta": 5,
+            "result": "within_limit"
+          }
+        }
+      },
+      "issued_at": "2026-04-30T12:02:00Z",
+      "expires_at": "2026-04-30T13:02:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"attestation\":{\"confidence\":1.0,\"payload\":{\"chain_hash\":\"sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3\",\"constraint_evaluation\":{\"actual\":995,\"delta\":5,\"facet\":\"token_budget\",\"limit\":1000,\"result\":\"within_limit\"},\"proof_id\":\"prf_20260430_120200_c3d4e5\"},\"type\":\"ExecutionAttestation\"},\"claim_type\":\"authority\",\"expires_at\":\"2026-04-30T13:02:00Z\",\"issued_at\":\"2026-04-30T12:02:00Z\",\"provider\":{\"category\":\"execution_attestation\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "1d2788a87dcb5502a8775ed687fa68b67ea2e86943c4ced3801ffbf2457a4ef6",
+    "expected_result": "pass"
+  },
+  "constraint_evaluation_exceeded": {
+    "note": "Exceeded constraint evaluation: delta=-150 (15% over limit). result=exceeded. A conformant enforcement layer receiving this attestation MUST NOT grant the requested authority scope. The attestation itself is valid (canonical + hash match); the enforcement decision is derived from result=exceeded.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "execution_attestation",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "attestation": {
+        "type": "ExecutionAttestation",
+        "confidence": 1.0,
+        "payload": {
+          "proof_id": "prf_20260430_120300_d4e5f6",
+          "chain_hash": "sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3",
+          "constraint_evaluation": {
+            "facet": "token_budget",
+            "limit": 1000,
+            "actual": 1150,
+            "delta": -150,
+            "result": "exceeded"
+          }
+        }
+      },
+      "issued_at": "2026-04-30T12:03:00Z",
+      "expires_at": "2026-04-30T13:03:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"attestation\":{\"confidence\":1.0,\"payload\":{\"chain_hash\":\"sha256:d37d4d5afab5f3c489fd1191f9823381ab02c4750ec3078e64680d63ea29fae3\",\"constraint_evaluation\":{\"actual\":1150,\"delta\":-150,\"facet\":\"token_budget\",\"limit\":1000,\"result\":\"exceeded\"},\"proof_id\":\"prf_20260430_120300_d4e5f6\"},\"type\":\"ExecutionAttestation\"},\"claim_type\":\"authority\",\"expires_at\":\"2026-04-30T13:03:00Z\",\"issued_at\":\"2026-04-30T12:03:00Z\",\"provider\":{\"category\":\"execution_attestation\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "f0c1389e1162328578a1aa4148663f3eecda99cb1098780115a4dddabd8742ae",
+    "expected_result": "pass"
+  }
+}

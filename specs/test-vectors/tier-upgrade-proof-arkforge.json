@@ -1,0 +1,163 @@
+{
+  "version": "0.3.1",
+  "spec": "CTEF (Composable Trust Evidence Format)",
+  "contributor": "ArkForge Trust Layer (did:web:trust.arkforge.tech)",
+  "reference": "a2aproject/A2A#1734 — tier_upgrade_proof schema convergence (kenneives × desiorac × pmyers-abundance)",
+  "schema_origin": {
+    "base_shape": "kenneives CTEF v0.3.1 tier_upgrade schema (2026-04-30T23:54Z)",
+    "requester_did_required": "desiorac correction — replay surface closure (2026-05-01T03:31Z)",
+    "policy_ref_addition": "pmyers-abundance AEP 0.1.1 adoption per ArkForge suggestion (2026-05-01T01:43Z)"
+  },
+  "tier_upgrade_granted": {
+    "note": "T1→T2 tier upgrade with enforcement verdict. Exercises full schema: requester_did (required per desiorac), policy_ref (optional per pmyers-abundance/AEP 0.1.1), scope_boundary + use_count_max for replay prevention. The verdict_jws is a placeholder — conformance test verifies canonical hash, not JWS signature.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "claim_subtype": "tier_upgrade",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "enforcement_gateway",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "tier_upgrade_proof": {
+        "from_tier": "T1",
+        "to_tier": "T2",
+        "intent_code": "TIER_UPGRADE_REQUEST",
+        "requester_did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "requested_action": {
+          "facet": "scope.scheduling.write",
+          "limit": 1,
+          "actual": 0
+        },
+        "approval_evidence": {
+          "verdict_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDp3ZWI6dHJ1c3QuYXJrZm9yZ2UudGVjaCJ9.eyJjZXJ0aWZpZWQiOnRydWUsImF0dGVzdGF0aW9uX2hhc2giOiJzaGEyNTY6YWJjMTIzIiwiY29uc3RyYWludF9ldmFsdWF0aW9uIjp7ImZhY2V0Ijoic2NvcGUuc2NoZWR1bGluZy53cml0ZSIsImxpbWl0IjoxLCJhY3R1YWwiOjAsImRlbHRhIjoxLCJyZXN1bHQiOiJ3aXRoaW5fbGltaXQifX0.SIGNATURE_PLACEHOLDER",
+          "approver_did": "did:web:trust.arkforge.tech",
+          "evaluated_at": "2026-05-01T12:00:00Z",
+          "policy_ref": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "validity": {
+          "valid_until": "2026-05-01T13:00:00Z",
+          "scope_boundary": "session:tier_upgrade_test_001",
+          "use_count_max": 1
+        }
+      },
+      "issued_at": "2026-05-01T12:00:00Z",
+      "expires_at": "2026-05-01T13:00:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"claim_subtype\":\"tier_upgrade\",\"claim_type\":\"authority\",\"expires_at\":\"2026-05-01T13:00:00Z\",\"issued_at\":\"2026-05-01T12:00:00Z\",\"provider\":{\"category\":\"enforcement_gateway\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"tier_upgrade_proof\":{\"approval_evidence\":{\"approver_did\":\"did:web:trust.arkforge.tech\",\"evaluated_at\":\"2026-05-01T12:00:00Z\",\"policy_ref\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"verdict_jws\":\"eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDp3ZWI6dHJ1c3QuYXJrZm9yZ2UudGVjaCJ9.eyJjZXJ0aWZpZWQiOnRydWUsImF0dGVzdGF0aW9uX2hhc2giOiJzaGEyNTY6YWJjMTIzIiwiY29uc3RyYWludF9ldmFsdWF0aW9uIjp7ImZhY2V0Ijoic2NvcGUuc2NoZWR1bGluZy53cml0ZSIsImxpbWl0IjoxLCJhY3R1YWwiOjAsImRlbHRhIjoxLCJyZXN1bHQiOiJ3aXRoaW5fbGltaXQifX0.SIGNATURE_PLACEHOLDER\"},\"from_tier\":\"T1\",\"intent_code\":\"TIER_UPGRADE_REQUEST\",\"requested_action\":{\"actual\":0,\"facet\":\"scope.scheduling.write\",\"limit\":1},\"requester_did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\",\"to_tier\":\"T2\",\"validity\":{\"scope_boundary\":\"session:tier_upgrade_test_001\",\"use_count_max\":1,\"valid_until\":\"2026-05-01T13:00:00Z\"}},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "7b971451dd035f1f98659c1cfcd62633abe2097b96ce960f1703e44b2d2fafaa",
+    "expected_result": "pass",
+    "enforcement_decision": "grant — constraint_evaluation.result=within_limit, requester_did bound, validity window active"
+  },
+  "tier_upgrade_denied": {
+    "note": "T2→T3 tier upgrade denied — requested_action.actual already at limit. Tests that a conformant enforcement layer rejects the upgrade when the constraint is already saturated. Canonical hash is still valid; enforcement decision is deny.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "claim_subtype": "tier_upgrade",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "enforcement_gateway",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "tier_upgrade_proof": {
+        "from_tier": "T2",
+        "to_tier": "T3",
+        "intent_code": "TIER_UPGRADE_REQUEST",
+        "requester_did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "requested_action": {
+          "facet": "scope.scheduling.write",
+          "limit": 1,
+          "actual": 1
+        },
+        "approval_evidence": {
+          "verdict_jws": "eyJhbGciOiJFZERTQSJ9.eyJjZXJ0aWZpZWQiOmZhbHNlLCJyZXN1bHQiOiJleGNlZWRlZCJ9.SIGNATURE_DENIED",
+          "approver_did": "did:web:trust.arkforge.tech",
+          "evaluated_at": "2026-05-01T12:05:00Z",
+          "policy_ref": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "validity": {
+          "valid_until": "2026-05-01T13:05:00Z",
+          "scope_boundary": "session:tier_upgrade_test_002",
+          "use_count_max": 1
+        }
+      },
+      "issued_at": "2026-05-01T12:05:00Z",
+      "expires_at": "2026-05-01T13:05:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"claim_subtype\":\"tier_upgrade\",\"claim_type\":\"authority\",\"expires_at\":\"2026-05-01T13:05:00Z\",\"issued_at\":\"2026-05-01T12:05:00Z\",\"provider\":{\"category\":\"enforcement_gateway\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"tier_upgrade_proof\":{\"approval_evidence\":{\"approver_did\":\"did:web:trust.arkforge.tech\",\"evaluated_at\":\"2026-05-01T12:05:00Z\",\"policy_ref\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"verdict_jws\":\"eyJhbGciOiJFZERTQSJ9.eyJjZXJ0aWZpZWQiOmZhbHNlLCJyZXN1bHQiOiJleGNlZWRlZCJ9.SIGNATURE_DENIED\"},\"from_tier\":\"T2\",\"intent_code\":\"TIER_UPGRADE_REQUEST\",\"requested_action\":{\"actual\":1,\"facet\":\"scope.scheduling.write\",\"limit\":1},\"requester_did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\",\"to_tier\":\"T3\",\"validity\":{\"scope_boundary\":\"session:tier_upgrade_test_002\",\"use_count_max\":1,\"valid_until\":\"2026-05-01T13:05:00Z\"}},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "818a01235fb35345f6c21a2d87c024fbbfecfb11e60aeafc47644278b84997e8",
+    "expected_result": "pass",
+    "enforcement_decision": "deny — requested_action.actual >= requested_action.limit"
+  },
+  "tier_upgrade_replay_vulnerable": {
+    "note": "Missing requester_did — per desiorac (2026-05-01T03:31Z), this proof is replay-vulnerable. An intercepted proof without requester_did binding can be replayed by any agent within the same session before use_count_max increments. Conformant implementations MUST reject proofs missing requester_did.",
+    "input_object": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://arkforge.tech/ns/execution-attestation/v1"
+      ],
+      "type": "TrustAttestation",
+      "version": "0.3.1",
+      "claim_type": "authority",
+      "claim_subtype": "tier_upgrade",
+      "provider": {
+        "id": "did:web:trust.arkforge.tech",
+        "name": "ArkForge Trust Layer",
+        "category": "enforcement_gateway",
+        "version": "2.1.3"
+      },
+      "subject": {
+        "did": "did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8",
+        "agent_fingerprint": "7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11"
+      },
+      "tier_upgrade_proof": {
+        "from_tier": "T1",
+        "to_tier": "T2",
+        "intent_code": "TIER_UPGRADE_REQUEST",
+        "requested_action": {
+          "facet": "scope.scheduling.write",
+          "limit": 1,
+          "actual": 0
+        },
+        "approval_evidence": {
+          "verdict_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDp3ZWI6dHJ1c3QuYXJrZm9yZ2UudGVjaCJ9.eyJjZXJ0aWZpZWQiOnRydWUsImF0dGVzdGF0aW9uX2hhc2giOiJzaGEyNTY6YWJjMTIzIiwiY29uc3RyYWludF9ldmFsdWF0aW9uIjp7ImZhY2V0Ijoic2NvcGUuc2NoZWR1bGluZy53cml0ZSIsImxpbWl0IjoxLCJhY3R1YWwiOjAsImRlbHRhIjoxLCJyZXN1bHQiOiJ3aXRoaW5fbGltaXQifX0.SIGNATURE_PLACEHOLDER",
+          "approver_did": "did:web:trust.arkforge.tech",
+          "evaluated_at": "2026-05-01T12:10:00Z",
+          "policy_ref": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "validity": {
+          "valid_until": "2026-05-01T13:10:00Z",
+          "scope_boundary": "session:tier_upgrade_test_003",
+          "use_count_max": 1
+        }
+      },
+      "issued_at": "2026-05-01T12:10:00Z",
+      "expires_at": "2026-05-01T13:10:00Z"
+    },
+    "canonical_bytes_utf8": "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://arkforge.tech/ns/execution-attestation/v1\"],\"claim_subtype\":\"tier_upgrade\",\"claim_type\":\"authority\",\"expires_at\":\"2026-05-01T13:10:00Z\",\"issued_at\":\"2026-05-01T12:10:00Z\",\"provider\":{\"category\":\"enforcement_gateway\",\"id\":\"did:web:trust.arkforge.tech\",\"name\":\"ArkForge Trust Layer\",\"version\":\"2.1.3\"},\"subject\":{\"agent_fingerprint\":\"7c8f263e06d5ce4681f750ad64ede882a4ebd87de60f9ae0e6b06f0300645a11\",\"did\":\"did:key:z6MkpTHR8VNs5xhPjVcMZnr3X7PvNmZgPEJaSbH3hZ6yzK8\"},\"tier_upgrade_proof\":{\"approval_evidence\":{\"approver_did\":\"did:web:trust.arkforge.tech\",\"evaluated_at\":\"2026-05-01T12:10:00Z\",\"policy_ref\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"verdict_jws\":\"eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDp3ZWI6dHJ1c3QuYXJrZm9yZ2UudGVjaCJ9.eyJjZXJ0aWZpZWQiOnRydWUsImF0dGVzdGF0aW9uX2hhc2giOiJzaGEyNTY6YWJjMTIzIiwiY29uc3RyYWludF9ldmFsdWF0aW9uIjp7ImZhY2V0Ijoic2NvcGUuc2NoZWR1bGluZy53cml0ZSIsImxpbWl0IjoxLCJhY3R1YWwiOjAsImRlbHRhIjoxLCJyZXN1bHQiOiJ3aXRoaW5fbGltaXQifX0.SIGNATURE_PLACEHOLDER\"},\"from_tier\":\"T1\",\"intent_code\":\"TIER_UPGRADE_REQUEST\",\"requested_action\":{\"actual\":0,\"facet\":\"scope.scheduling.write\",\"limit\":1},\"to_tier\":\"T2\",\"validity\":{\"scope_boundary\":\"session:tier_upgrade_test_003\",\"use_count_max\":1,\"valid_until\":\"2026-05-01T13:10:00Z\"}},\"type\":\"TrustAttestation\",\"version\":\"0.3.1\"}",
+    "canonical_sha256": "3e19f0d2da59be2c64481d52b58226339c290bd724a9208ac0b01a06e9abecb4",
+    "expected_result": "fail",
+    "enforcement_decision": "reject — requester_did is required (replay surface)"
+  }
+}
