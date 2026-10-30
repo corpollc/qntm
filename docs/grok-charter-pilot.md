@@ -61,6 +61,11 @@ are `2b97830d5fd58a368b8a919aba90e26c47c829cfd0eaf1a02f461cebba8101ba`
 and `6d549f6ecc2ebd0d9abf79fdeafaadc60ae49cee8a7f3fe02af1dc5ecf4d3dc9`.
 This was a real authenticated Grok CLI run; no continuous listener was installed.
 
+For proposed-action assessments across arbitrary JSON documents and parent/child
+histories, use the [charter integration lab](charter-integration-lab.md). It adds
+research, PII, MNPI, conflicting authority and uncertainty scenarios with cited
+model judgments and separate cryptographic checks.
+
 ## Recovery and verification
 
 Files use owner-only permissions, commands hold a local lock, and identity,
