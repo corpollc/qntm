@@ -2,6 +2,7 @@
 
 import base64
 from typing import Literal, TypedDict
+from .charter_info import CharterInfo, local_charter_info
 
 
 class _ReceivedMessageRequired(TypedDict):
@@ -12,6 +13,7 @@ class _ReceivedMessageRequired(TypedDict):
     body_type: str
     verified: Literal[True]
     sequence: int
+    charter_info: CharterInfo
 
 
 class ReceivedMessage(_ReceivedMessageRequired, total=False):
@@ -60,6 +62,7 @@ def create_receive_event(message: dict, sequence: int) -> ReceiveEvent:
         "conversation_id": conversation_id, "message_id": message_id,
         "sender_kid": _id(inner["sender_kid"]), "created_ts": _positive_integer(envelope["created_ts"]),
         "body_type": inner["body_type"], "verified": True, "sequence": sequence,
+        "charter_info": local_charter_info(message),
     }
     try:
         received["unsafe_body"] = bytes(body).decode("utf-8")

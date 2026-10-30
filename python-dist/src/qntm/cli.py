@@ -61,6 +61,7 @@ from .message import (
     serialize_envelope,
 )
 from .receive import create_receive_event
+from .charter_info import local_charter_info
 from .announce import (
     create_channel,
     derive_announce_keys,
@@ -1204,6 +1205,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             "sender": sender_kid_hex[:3],
             "body_type": body_type,
             "verified": msg.get("verified", False),
+            "charter_info": local_charter_info(msg),
         }
         if type(raw_msg.get("seq")) is int and raw_msg["seq"] > 0:
             entry["sequence"] = raw_msg["seq"]
@@ -1232,6 +1234,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             "body_type": body_type,
             "created_ts": envelope["created_ts"],
             "verified": entry["verified"],
+            "charter_info": entry["charter_info"],
         }
         if body_type in {"gov.propose", "gov.approve", "gov.disapprove"}:
             hist_entry["gateway_envelope_b64"] = raw_msg["envelope_b64"]

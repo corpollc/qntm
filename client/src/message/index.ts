@@ -1,4 +1,5 @@
 import { QSP1Suite } from '../crypto/qsp1.js';
+import { withLocalCharterInfo } from '../charter-info/index.js';
 import { marshalCanonical, unmarshalCanonical } from '../crypto/cbor.js';
 import { keyIDFromPublicKey, validateIdentity, generateMessageID, uint8ArrayEquals } from '../identity/index.js';
 import { PROTOCOL_VERSION, DEFAULT_SUITE, PROTO_PREFIX, DEFAULT_TTL_SECONDS, DEFAULT_HANDSHAKE_TTL_SECONDS } from '../constants.js';
@@ -169,11 +170,11 @@ export function decryptMessage(
     throw new Error('sender key ID does not match public key');
   }
 
-  return {
+  return withLocalCharterInfo({
     envelope,
     inner,
     verified,
-  };
+  });
 }
 
 export function verifyMessageSignature(
