@@ -3,6 +3,15 @@ name: Publish npm
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish after its full release gate passes
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: read
@@ -15,12 +24,18 @@ jobs:
       run:
         working-directory: client
     steps:
+      - name: Validate release tag
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]'
+        working-directory: .
+
       - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Wait for all release checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/wait_for_release_gate.py
+        run: GITHUB_SHA="$(git rev-parse HEAD)" GITHUB_REF_NAME="$RELEASE_TAG" python3 scripts/wait_for_release_gate.py
         working-directory: .
 
       - uses: actions/setup-node@v6
@@ -42,7 +57,7 @@ jobs:
       - run: npm pack --ignore-scripts
 
       - name: Verify tagged version
-        run: python3 ../scripts/check_release.py --tag "$GITHUB_REF_NAME"
+        run: python3 ../scripts/check_release.py --tag "$RELEASE_TAG"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -70,5 +85,5 @@ jobs:
       - name: Publish verified artifact
         run: |
           RELEASE_CHANNEL=latest
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then RELEASE_CHANNEL=beta; fi
-          npm publish package/*.tgz --ignore-scripts --access public --provenance --tag "$RELEASE_CHANNEL"
+          if [[ "$RELEASE_TAG" == *-* ]]; then RELEASE_CHANNEL=beta; fi
+          npm publish ./package/*.tgz --ignore-scripts --access public --provenance --tag "$RELEASE_CHANNEL"

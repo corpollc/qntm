@@ -44,6 +44,8 @@ curl --fail https://gateway.corpo.llc/health
 curl --fail https://charter.qntm.corpo.llc/healthz
 ```
 
+If npm publication needs a workflow fix after a tag has shipped, keep the tag unchanged. Push the workflow correction to `main`, then run `gh workflow run publish-npm.yml --ref main -f tag=vX.Y.Z`. The retry checks out that existing tag, waits for its exact commit's successful Release gate, checks package versions, and selects `beta` for prereleases. The privileged publish job receives only the built tarball and publishes it with lifecycle scripts disabled.
+
 Open `https://chat.corpo.llc`, check its version and a private messaging conversation, and exercise gateway admission against the deployed worker. See [relay operations](relay-operations.md) for a two-client transport check and certificate diagnostics.
 
 ## Credentials and recovery
