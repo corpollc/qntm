@@ -97,6 +97,8 @@ The synchronous transport has the same verified `submit`, `heads`, `chain`, `con
 
 Clients do not silently save trust or checkpoints. Persist authenticated heads in your own private storage, enforce your freshness policy, and use `consistency()` when advancing them. A stale but correctly signed snapshot remains valid historical evidence. Independent witnesses and checkpoint gossip are still separate work.
 
+The [Grok charter pilot](../docs/grok-charter-pilot.md) is an on-demand terminal example with a persistent agent identity, verified current history, locally signed response drafts, and explicit public submission.
+
 ## Reference HTTP profile
 
 This transport makes the draft executable; it is not a ratified protocol. JSON bodies use the draft's canonical wire encodings. HTTPS is required by the client except for loopback development. Writes are authorized by statement signatures, with no operator admission token. Responses have `Cache-Control: no-store`.
