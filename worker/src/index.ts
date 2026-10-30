@@ -78,6 +78,8 @@ type AnnounceChannelMeta = {
 	conv_id: string;
 	master_pk: string; // base64url Ed25519 public key
 	posting_pk: string; // base64url Ed25519 public key
+	closed?: boolean;
+	legacy_unbound?: boolean;
 };
 
 type AnnounceRegisterPayload = {
@@ -182,10 +184,16 @@ function announceMetaKey(convID: string): string {
 	return `/__announce__/${convID}/meta.json`;
 }
 
+async function announceID(master: string): Promise<string> {
+	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${announceProto}|id|${master}`)));
+	return Array.from(digest.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function getAnnounceMeta(env: Env, convID: string): Promise<AnnounceChannelMeta | null> {
-	const raw = await env.QNTM_KV.get(announceMetaKey(convID), "text");
-	if (!raw) return null;
-	return JSON.parse(raw) as AnnounceChannelMeta;
+	const stub = env.CONVO_SEQ_DO.get(env.CONVO_SEQ_DO.idFromName(convID));
+	const response = await stub.fetch(`https://convo-seq/announce/info?conv_id=${convID}`);
+	if (!response.ok) throw new Error("announce lookup failed");
+	return response.json<AnnounceChannelMeta | null>();
 }
 
 async function verifyEd25519Hex(publicKeyBase64URL: string, message: Uint8Array, signatureHex: string): Promise<boolean> {
@@ -207,6 +215,7 @@ type RelayPublishPayload = {
 	conv_id: string;
 	envelope_b64: string;
 	msg_id?: string;
+	announce_sig?: string;
 };
 
 type RelayFrame =
@@ -246,16 +255,17 @@ async function publishConversationMessage(
 	convID: string,
 	envelope_b64: string,
 	msgID?: string,
-): Promise<number> {
+	announceSig?: string,
+): Promise<number | Response> {
 	const id = env.CONVO_SEQ_DO.idFromName(convID);
 	const stub = env.CONVO_SEQ_DO.get(id);
 	const response = await stub.fetch("https://convo-seq/publish", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ conv_id: convID, envelope_b64, msg_id: msgID } satisfies RelayPublishPayload),
+		body: JSON.stringify({ conv_id: convID, envelope_b64, msg_id: msgID, announce_sig: announceSig } satisfies RelayPublishPayload),
 	});
 	if (!response.ok) {
-		throw new Error(`conversation publish failed: HTTP ${response.status}`);
+		return new Response(response.body, { status: response.status, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
 	}
 	const payload = (await response.json()) as { seq?: number };
 	if (!payload || !Number.isInteger(payload.seq) || payload.seq! <= 0) {
@@ -276,6 +286,64 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 	private metricsOutbox: RelayMetricsOutbox;
 	private metricsFlush?: Promise<void>;
 
+	private async announceMeta(convID: string): Promise<AnnounceChannelMeta | null> {
+		const saved = await this.ctx.storage.get<{ meta: AnnounceChannelMeta | null }>("announce_policy");
+		if (saved) {
+			if (saved.meta && await announceID(saved.meta.master_pk) !== convID) return { ...saved.meta, closed: true, legacy_unbound: true };
+			return saved.meta;
+		}
+		// Existing announcements migrate once. New ownership is recorded in the
+		// same sequencer as publication, rather than an eventually consistent KV.
+		const raw = await this.env.QNTM_KV.get(announceMetaKey(convID), "text");
+		let meta = raw ? JSON.parse(raw) as AnnounceChannelMeta : null;
+		// Old arbitrary-ID claims cannot prove ownership. Quarantine them without
+		// granting mutation/delete rights or erasing any retained conversation.
+		if (meta && await announceID(meta.master_pk) !== convID) meta = { ...meta, closed: true, legacy_unbound: true };
+		await this.ctx.storage.put("announce_policy", { meta });
+		return meta;
+	}
+
+	private async manageAnnounce(request: Request, action: string): Promise<Response> {
+		const payload = await request.json<AnnounceChannelMeta>();
+		const existing = await this.announceMeta(payload.conv_id);
+		if (action === 'register') {
+			if (await announceID(payload.master_pk) !== payload.conv_id) return errorResponse('channel ID is not bound to master key', 403);
+			if (existing || (await this.ctx.storage.get<number>('next_seq') ?? 0) > 0) {
+				return errorResponse('conversation already exists', 409);
+			}
+			await this.ctx.storage.put('announce_policy', { meta: payload });
+			return jsonResponse({ registered: true, name: payload.name, conv_id: payload.conv_id }, 201);
+		}
+		if (!existing || existing.legacy_unbound || (existing.closed && action !== 'delete') || existing.master_pk !== payload.master_pk) {
+			return errorResponse('announce ownership conflict', 409);
+		}
+		if (action === 'rotate') {
+			await this.ctx.storage.put('announce_policy', { meta: { ...existing, posting_pk: payload.posting_pk } });
+			return jsonResponse({ rotated: true, conv_id: payload.conv_id }, 200);
+		}
+		// Deletion closes the ID permanently. Keep next_seq and the ownership
+		// tombstone so neither replay cursors nor a later registration can reset it.
+		await this.ctx.storage.put('announce_policy', { meta: { ...existing, closed: true } });
+		this.retention.clear();
+		await this.ctx.storage.put('announce_cleanup', { convID: payload.conv_id });
+		await this.armMetricsRetry();
+		await this.env.QNTM_KV.delete(announceMetaKey(payload.conv_id));
+		await this.cleanClosedAnnouncement();
+		return jsonResponse({ deleted: true, conv_id: payload.conv_id }, 200);
+	}
+
+	private async cleanClosedAnnouncement(): Promise<void> {
+		const cleanup = await this.ctx.storage.get<{ convID: string; cursor?: string }>('announce_cleanup');
+		if (!cleanup) return;
+		// Bound each pass and persist progress; the ownership tombstone and
+		// monotonic sequence survive cleanup, including across object restarts.
+		await this.armMetricsRetry();
+		const page = await this.env.QNTM_KV.list({ prefix: `/${cleanup.convID}/`, limit: 64, cursor: cleanup.cursor });
+		await Promise.all(page.keys.map(key => this.env.QNTM_KV.delete(key.name)));
+		if (page.list_complete) await this.ctx.storage.delete('announce_cleanup');
+		else await this.ctx.storage.put('announce_cleanup', { ...cleanup, cursor: page.cursor });
+	}
+
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.retention = new RelayRetention(ctx.storage, envelopeTTLSeconds(env.ENVELOPE_TTL_SECONDS));
@@ -288,6 +356,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 	async alarm(): Promise<void> {
 		await this.retention.maintain();
+		await this.cleanClosedAnnouncement();
 		await this.flushMetrics();
 	}
 
@@ -334,6 +403,12 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		}
 
 		const convID = payload.conv_id.toLowerCase();
+		const announce = await this.announceMeta(convID);
+		if (announce?.closed) return errorResponse('announce channel is closed', 403);
+		if (announce && (typeof payload.announce_sig !== 'string' ||
+			!await verifyAnnounceSig(announce.posting_pk, payload.envelope_b64, payload.announce_sig))) {
+			return errorResponse('invalid or missing announce channel signature', 403);
+		}
 		if (payload.msg_id !== undefined) {
 			if (typeof payload.msg_id !== "string" || !isHexID(payload.msg_id, 32)) {
 				return Response.json({ error: "invalid msg_id" }, { status: 400 });
@@ -490,18 +565,16 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		);
 	}
 
-	private async handleReset(): Promise<Response> {
-		await this.ctx.storage.deleteAll();
-		await this.ctx.storage.deleteAlarm();
-		this.retention = new RelayRetention(this.ctx.storage, envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS));
-		this.metricsOutbox = new RelayMetricsOutbox(this.ctx.storage);
-		return Response.json({ reset: true }, { status: 200 });
-	}
-
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (request.method === "POST" && url.pathname === "/publish") {
-			return this.handlePublish(request);
+			return this.ctx.blockConcurrencyWhile(() => this.handlePublish(request));
+		}
+		if (request.method === 'GET' && url.pathname === '/announce/info') {
+			return this.ctx.blockConcurrencyWhile(async () => Response.json(await this.announceMeta(url.searchParams.get('conv_id')!)));
+		}
+		if (request.method === 'POST' && ['/announce/register', '/announce/rotate', '/announce/delete'].includes(url.pathname)) {
+			return this.ctx.blockConcurrencyWhile(() => this.manageAnnounce(request, url.pathname.split('/').pop()!));
 		}
 
 		if (request.method === "GET" && url.pathname === "/subscribe") {
@@ -514,10 +587,6 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		if (request.method === "POST" && url.pathname === "/record-receipt") {
 			return this.handleRecordReceipt(request);
-		}
-
-		if (request.method === "POST" && url.pathname === "/reset") {
-			return this.handleReset();
 		}
 
 		if (request.method === "POST" && url.pathname === "/next") {
@@ -762,27 +831,14 @@ export default {
 					}
 				}
 
-				// Announce channel write gate: if this conv_id is an announce
-				// channel, require a valid transport-layer signature from the
-				// channel's posting key.
-				const announceMeta = await getAnnounceMeta(env, payload.conv_id);
-				if (announceMeta) {
-					if (!payload.announce_sig || typeof payload.announce_sig !== "string") {
-						return errorResponse("announce channel requires announce_sig", 403);
-					}
-					const sigValid = await verifyAnnounceSig(announceMeta.posting_pk, payload.envelope_b64, payload.announce_sig);
-					if (!sigValid) {
-						return errorResponse("invalid announce channel signature", 403);
-					}
-				}
-
 				const seq = await publishConversationMessage(
 					env,
 					payload.conv_id,
 					payload.envelope_b64,
 					payload.msg_id,
+					payload.announce_sig,
 				);
-
+				if (seq instanceof Response) return seq;
 				return jsonResponse({ seq }, 201);
 			}
 
@@ -859,8 +915,8 @@ export default {
 					master_pk: payload.master_pk,
 					posting_pk: payload.posting_pk,
 				};
-				await env.QNTM_KV.put(announceMetaKey(payload.conv_id), JSON.stringify(meta));
-				return jsonResponse({ registered: true, name: meta.name, conv_id: meta.conv_id }, 201);
+				const stub = env.CONVO_SEQ_DO.get(env.CONVO_SEQ_DO.idFromName(payload.conv_id));
+				return stub.fetch('https://convo-seq/announce/register', { method: 'POST', body: JSON.stringify(meta) });
 			}
 
 			if (request.method === "POST" && path === "/v1/announce/rotate") {
@@ -904,8 +960,8 @@ export default {
 				}
 
 				rotateMeta.posting_pk = payload.new_posting_pk;
-				await env.QNTM_KV.put(announceMetaKey(payload.conv_id), JSON.stringify(rotateMeta));
-				return jsonResponse({ rotated: true, conv_id: rotateMeta.conv_id }, 200);
+				const stub = env.CONVO_SEQ_DO.get(env.CONVO_SEQ_DO.idFromName(payload.conv_id));
+				return stub.fetch('https://convo-seq/announce/rotate', { method: 'POST', body: JSON.stringify(rotateMeta) });
 			}
 
 			if (request.method === "POST" && path === "/v1/announce/delete") {
@@ -945,23 +1001,9 @@ export default {
 					return errorResponse("invalid delete signature", 403);
 				}
 
-				// Delete channel metadata
-				await env.QNTM_KV.delete(announceMetaKey(payload.conv_id));
-
 				const announceDOId = env.CONVO_SEQ_DO.idFromName(payload.conv_id);
 				const announceStub = env.CONVO_SEQ_DO.get(announceDOId);
-				const headResponse = await announceStub.fetch("https://convo-seq/head");
-				if (!headResponse.ok) {
-					throw new Error(`announce head lookup failed: HTTP ${headResponse.status}`);
-				}
-				const headPayload = (await headResponse.json()) as { seq?: number };
-				const headSeq = Number.isInteger(headPayload.seq) && headPayload.seq! > 0 ? headPayload.seq! : 0;
-				for (let seq = 1; seq <= headSeq; seq += 1) {
-					await env.QNTM_KV.delete(conversationMessageKey(payload.conv_id, seq));
-				}
-				await announceStub.fetch("https://convo-seq/reset", { method: "POST" });
-
-				return jsonResponse({ deleted: true, conv_id: payload.conv_id }, 200);
+				return announceStub.fetch('https://convo-seq/announce/delete', { method: 'POST', body: JSON.stringify(deleteMeta) });
 			}
 
 			if (request.method === "GET" && path === "/v1/announce/info") {

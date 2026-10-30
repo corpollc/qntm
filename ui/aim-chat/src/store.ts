@@ -1,3 +1,4 @@
+import type { GroupControlState } from '@corpollc/qntm';
 /**
  * localStorage-backed store for AIM UI.
  * Replaces the Express server's filesystem storage.
@@ -28,6 +29,7 @@ export interface StoredConversationKeys {
 }
 
 export interface StoredGatewayIdentity {
+  membershipAuthority?: boolean
   status?: 'pending' | 'active'
   invitationId?: string
   floor?: number
@@ -38,6 +40,8 @@ export interface StoredGatewayIdentity {
 }
 
 export interface StoredConversation {
+  groupControl?: GroupControlState
+
   id: string
   name: string
   type: string
@@ -89,6 +93,7 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
       ? {
           status: raw.gateway.status,
           invitationId: raw.gateway.invitationId,
+          membershipAuthority: raw.gateway.membershipAuthority,
           floor: raw.gateway.floor,
           pending: raw.gateway.pending,
           publicKey: typeof raw.gateway.publicKey === 'string' ? raw.gateway.publicKey : '',
@@ -97,6 +102,7 @@ function normalizeConversation(raw: Partial<StoredConversation> | null | undefin
       : null,
     createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString(),
     currentEpoch: typeof raw?.currentEpoch === 'number' ? raw.currentEpoch : 0,
+    groupControl: raw?.groupControl,
     inviteToken: typeof raw?.inviteToken === 'string' ? raw.inviteToken : undefined,
   }
 }

@@ -57,3 +57,15 @@ it('advances past self or invalid frames without acknowledging a pending peer ev
   expect(new ChannelInbox(path).pending).toEqual([first]);
   expect(inbox.cursor).toBe(2);
 });
+
+it('does not redeliver a completed event at a later relay sequence after restart', async () => {
+  const { path, event } = fixture();
+  const first = event(1);
+  const inbox = new ChannelInbox(path);
+  inbox.capture(1, first);
+  await inbox.drain(async () => {});
+  const restarted = new ChannelInbox(path);
+  restarted.capture(2, { ...first, sequence: 2, message: { ...first.message, sequence: 2 } });
+  expect(restarted.pending).toEqual([]);
+  expect(restarted.cursor).toBe(2);
+});

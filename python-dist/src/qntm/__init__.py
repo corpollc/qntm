@@ -1,6 +1,6 @@
 """qntm - secure messaging protocol client library and CLI."""
 
-__version__ = "0.6.3"
+__version__ = "0.9.0b1"
 
 from .did import (
     DIDDocument,
@@ -63,6 +63,7 @@ from .message import (
 )
 from .cbor import marshal_canonical, unmarshal
 from .receive import ReceiveEvent, ReceivedMessage, create_receive_event
+from .charter_info import CharterInfo
 from .group import (
     GroupState,
     apply_rekey,

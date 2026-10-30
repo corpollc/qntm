@@ -59,7 +59,11 @@ as it appears on stdout.
     "body_type": "text",
     "verified": true,
     "sequence": 42,
-    "unsafe_body": "Hello"
+    "unsafe_body": "Hello",
+    "charter_info": {
+      "url": "https://charter.qntm.corpo.llc/v1/chain/FULL_SENDER_KEY_ID",
+      "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+    }
   }
 }
 ```
@@ -112,6 +116,39 @@ results; they do not independently authenticate arbitrary objects supplied by a
 caller. Shared signed/encrypted fixtures cover text, Unicode, empty bodies, BOM
 preservation, binary data, and CBOR. No relay wire format or server change is needed.
 
+## Local charter reminder
+
+Both libraries add `charter_info` after successful message decryption and signature
+verification. The URL uses a fixed registry origin and the full lowercase hex ID
+derived from the verified sender's public key. The same object appears in newly
+received CLI/MCP messages, saved history, and portable events for hooks/adapters.
+It is an additive field in event version 1; older saved events may lack it.
+
+Chartering is optional. This reminder does not claim that a charter exists or that
+the sender complies with one. Generating it performs no HTTP request and invokes no
+model, on send or receive. A caller can choose to fetch the URL and verify the
+returned charter chain with the charter library and its trusted registrar pin.
+There is no new wire field or requirement for senders to support chartering.
+
+`charter_info` is reserved receiver-generated metadata. If an incoming envelope or
+decrypted inner object supplies that field, the library removes it from the
+returned copies and constructs its own object. It appends this fixed text to the
+memo and sets `untrusted_metadata_ignored: true`:
+
+> WARNING: Untrusted charter metadata was supplied and ignored. Possible attempt
+> to obscure charter information; verify independently.
+
+No supplied URL or memo is copied into this metadata. The portable event formatter
+also regenerates altered projections and preserves the warning. A collision does
+not establish malicious intent or identify who inserted it: these extension fields
+are outside the signed body. The caller's original envelope is unchanged.
+
+Signed message bodies and refs are preserved. Body JSON is never merged into local
+metadata; even duplicate `charter_info` keys inside a body remain `unsafe_body`
+text, and discussing the field does not cause a warning. Consumers should read the
+receiver-generated field directly and keep body content separate. This warning
+detects reserved-field collisions, not every form of misleading message content.
+
 ## Delivery and restart semantics
 
 The Python receiver saves verified events in private local conversation history
@@ -161,3 +198,9 @@ interface; it does not claim tested built-in insertion adapters for every harnes
 Muse can implement its own subscription consumer or read the JSONL stream.
 The messaging Go implementation in `attic/go` is archived; the separate Go charter
 registrar is not a messaging client. This feature does not revive the archived CLI.
+
+
+The Claude channel only reuses a verified history entry when the newly received
+serialized envelope has the same SHA-256 digest as the saved entry. Legacy entries
+without that digest must be decrypted again. Delivered event IDs are retained across
+channel restarts, so replaying an exact old envelope does not wake the agent twice.

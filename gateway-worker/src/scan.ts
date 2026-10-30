@@ -49,6 +49,15 @@ export function scanRequestApprovals(
 
   if (!requestMsg) return null;
   if (currentConversationId && requestMsg.conv_id !== currentConversationId) return null;
+  // Revalidate older persisted requests before deriving executable authority.
+  // Missing fields must never fall back to a weaker legacy threshold.
+  if (!Number.isSafeInteger(requestMsg.required_approvals) || requestMsg.required_approvals < 1 ||
+      !Array.isArray(requestMsg.eligible_signer_kids) || !requestMsg.eligible_signer_kids.length ||
+      requestMsg.eligible_signer_kids.some(kid => typeof kid !== 'string') ||
+      new Set(requestMsg.eligible_signer_kids).size !== requestMsg.eligible_signer_kids.length ||
+      requestMsg.required_approvals > requestMsg.eligible_signer_kids.length ||
+      typeof requestMsg.expires_at !== 'string' || !Number.isFinite(Date.parse(requestMsg.expires_at)) ||
+      typeof requestMsg.request_id !== 'string' || !requestMsg.request_id.length || requestMsg.request_id.length > 256) return null;
 
   // Check for terminal state markers (executed / invalidated)
   // qntm-iv57: Only trust gate.executed markers authored by the gateway itself.
@@ -91,10 +100,7 @@ export function scanRequestApprovals(
     };
   }
 
-  // Determine threshold: prefer frozen required_approvals, fall back to rules
-  const threshold = requestMsg.required_approvals ?? (
-    lookupThreshold(rules, requestMsg.target_service, requestMsg.target_endpoint, requestMsg.verb)?.m ?? 1
-  );
+  const threshold = requestMsg.required_approvals;
 
   // Determine eligible signers roster (null = legacy mode, accept any non-gateway signer)
   const hasRoster = Array.isArray(requestMsg.eligible_signer_kids) && requestMsg.eligible_signer_kids.length > 0;

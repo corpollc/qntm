@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.error
+from urllib.parse import quote
+from ._identity_http import read_identity_json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -58,13 +60,16 @@ def verify_entity(
     Raises:
         EntityVerificationError: If the entity is not found or the API fails.
     """
-    url = f"{api_base}/entities/{entity_id}/verify"
+    url = f"{api_base.rstrip('/')}/entities/{quote(entity_id, safe='')}/verify"
 
     try:
         req = urllib.request.Request(url, method="GET")
         req.add_header("Accept", "application/json")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+        data = read_identity_json(req, timeout=timeout)
+        if data.get("entity_id") != entity_id:
+            raise ValueError("entity identifier mismatch")
+        if not all(isinstance(data.get(key), str) for key in ("name", "status", "entity_type")):
+            raise ValueError("invalid entity response")
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise EntityVerificationError(
@@ -81,6 +86,8 @@ def verify_entity(
         raise EntityVerificationError(
             f"Cannot reach Corpo API: {e.reason}"
         ) from e
+    except (ValueError, OSError) as e:
+        raise EntityVerificationError(f"Invalid entity response: {e}") from e
 
     return EntityVerification(
         entity_id=data["entity_id"],
@@ -99,6 +106,7 @@ def verify_sender_entity(
     entity_id: str,
     *,
     resolve_did_fn=None,
+    verify_binding_fn=None,
     api_base: str = CORPO_API_BASE,
 ) -> tuple[bool, Optional[EntityVerification]]:
     """Full verification chain: DID → key → sender match → entity.
@@ -108,7 +116,12 @@ def verify_sender_entity(
         did: DID URI from the envelope (optional).
         entity_id: Entity ID to verify against.
         resolve_did_fn: Callable(did_uri) → bytes(32) Ed25519 public key.
-            If None, DID verification is skipped (entity-only check).
+            Required for sender verification.
+        verify_binding_fn: Trusted local Callable(did, public_key, entity) → bool
+            that verifies the DID/key is authorized by this entity. Neither a
+            sender-supplied entity ID nor an active entity proves this binding.
+            Missing binding verification fails closed. Use verify_entity for a
+            standalone entity-status lookup.
         api_base: Base URL for the Corpo API.
 
     Returns:
@@ -116,19 +129,21 @@ def verify_sender_entity(
     """
     from .identity import key_id_from_public_key
 
-    # Step 1: If DID provided and resolver available, verify key matches sender
-    if did and resolve_did_fn:
-        try:
-            resolved_key = resolve_did_fn(did)
-            computed_kid = key_id_from_public_key(resolved_key)
-            if computed_kid != sender_key_id:
-                return False, None
-        except Exception:
+    if not did or not resolve_did_fn or not verify_binding_fn:
+        return False, None
+    try:
+        resolved_key = resolve_did_fn(did)
+        if len(resolved_key) != 32 or key_id_from_public_key(resolved_key) != sender_key_id:
             return False, None
+    except Exception:
+        return False, None
 
     # Step 2: Verify entity
     try:
         entity = verify_entity(entity_id, api_base=api_base)
-        return entity.is_active, entity
-    except EntityVerificationError:
+        if not entity.is_active or verify_binding_fn(did, resolved_key, entity) is not True:
+            return False, None
+        entity.verified = True
+        return True, entity
+    except Exception:
         return False, None

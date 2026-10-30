@@ -24,7 +24,7 @@ def accept_gateway(tmp_path, *, strict=False, admin_inviter=True):
     cli._save_conversations(str(tmp_path), [record])
     gateway = generate_identity()
     invitation = {'invitation_id': 'ab' * 16, 'gateway_public_key': base64url_encode(gateway['publicKey']),
-                  'gateway_kid': base64url_encode(gateway['keyID']), 'expires_at': '2099-01-01T00:00:00Z'}
+                  'gateway_kid': base64url_encode(gateway['keyID']), 'expires_at': 4070908800}
     participants = {base64url_encode(i['keyID']): base64url_encode(i['publicKey']) for i in (owner, member)}
     body = create_gateway_invite_body(invitation, crypto(record), participants, 2)
     text = json.dumps(body, separators=(',', ':'))
@@ -100,7 +100,9 @@ def test_gateway_acceptance_cannot_restore_members_during_pending_removal(tmp_pa
     invite = {'conv_id': record['id'], 'conv_epoch': 0, 'participants': participants, 'gateway_kid': base64url_encode(gateway['keyID'])}
     state.apply_remove({'removed_members': [member['keyID']]}); save_state(record, state)
     record['needs_rekey'] = True
-    assert accept_gateway_membership(record, invite, owner['keyID'], 'ab' * 16) is None
+    import pytest
+    with pytest.raises(ValueError, match='stale'):
+        accept_gateway_membership(record, invite, owner['keyID'], 'ab' * 16)
     assert not state_for_record(record).is_member(member['keyID'])
 
 
@@ -166,12 +168,13 @@ def test_latest_signed_withdrawal_blocks_membership_even_after_two_approvals(tmp
     assert not cli._load_conversations(str(tmp_path))[0].get('pending_governed_membership')
 
 
-def test_gateway_cannot_add_itself_and_does_not_suppress_creator_controls(tmp_path):
+def test_gateway_cannot_add_itself_or_allow_parallel_creator_controls(tmp_path):
     owner, _, newcomer, gateway, record = accept_gateway(tmp_path)
     own_add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [gateway['publicKey']]))
     assert receive(tmp_path, owner, record, [own_add], 3) == []
     owner_add = wire(owner, record, 'group_add', create_group_add_body(owner, [newcomer['publicKey']]))
-    assert receive(tmp_path, owner, record, [owner_add], 4)[0]['body_type'] == 'group_add'
+    assert receive(tmp_path, owner, record, [owner_add], 4) == []
+    assert not state_for_record(cli._load_conversations(str(tmp_path))[0]).is_member(newcomer['keyID'])
 
 
 def test_expired_transport_withdrawal_remains_authoritative(tmp_path, monkeypatch):

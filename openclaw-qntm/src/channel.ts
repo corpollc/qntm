@@ -52,6 +52,7 @@ async function sendOutbound(params: {
   }
   const latest = new QntmCheckpointStore(account).load(binding);
   if (latest.session.removed) throw new Error("qntm identity has been removed from this conversation");
+    if (latest.session.needsRekey) throw new Error("Complete the pending group rekey before sending");
   const result = await sendQntmText({
     client: new DropboxClient(account.relayUrl),
     identity: account.identity,

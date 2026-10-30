@@ -38,10 +38,11 @@ async function waitForFrame(
 async function openSubscription(
   relayUrl: string,
   fromSeq: number,
+  convId: string = CONV_ID,
 ): Promise<{ socket: WebSocket; frames: RelayFrame[] }> {
   const frames: RelayFrame[] = [];
   const socket = new WebSocket(
-    `${relayUrl.replace(/^http/, 'ws')}/v1/subscribe?conv_id=${CONV_ID}&from_seq=${fromSeq}`,
+    `${relayUrl.replace(/^http/, 'ws')}/v1/subscribe?conv_id=${convId}&from_seq=${fromSeq}`,
   );
   socket.addEventListener('message', (event) => {
     frames.push(JSON.parse(String(event.data)) as RelayFrame);
@@ -226,6 +227,33 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect(stdout).not.toContain('local-metrics-test-token');
   }, 45_000);
 
+  it('runs Python announcement create, post, subscribe, receive and delete against the relay', async () => {
+    const script = `
+import sys,json
+from types import SimpleNamespace
+from pathlib import Path
+from qntm import cli
+root=Path(sys.argv[2]); owner=root/'owner'; subscriber=root/'subscriber'
+outputs=[]
+cli._output=lambda command,data: outputs.append((command,data))
+a=SimpleNamespace(config_dir=str(owner),dropbox_url=sys.argv[1],name='News')
+cli.cmd_identity_generate(a);cli.cmd_announce_create(a)
+created=outputs[-1][1];a.channel=created['conversation_id'];a.message='announcement round trip'
+cli.cmd_announce_post(a)
+b=SimpleNamespace(config_dir=str(subscriber),dropbox_url=sys.argv[1],name='News',conv_id=a.channel,token=created['invite_secret'])
+cli.cmd_identity_generate(b);cli.cmd_announce_subscribe(b)
+b.conversation=a.channel;b.watch=False;b.from_seq=0
+cli.cmd_recv(b)
+assert 'announcement round trip' in json.dumps(outputs[-1]), outputs[-1][0]
+cli.cmd_announce_delete(a)
+print('announcement lifecycle passed')
+`;
+    const { stdout } = await promisify(execFile)(process.env.QNTM_MONITOR_PYTHON || 'python3', ['-c', script, relayUrl, join(stateDir, 'python-announce')], {
+      timeout: 30_000, env: { ...process.env, PYTHONPATH: join(REPO_ROOT, 'python-dist/src') },
+    });
+    expect(stdout).toContain('announcement lifecycle passed');
+  }, 40_000);
+
   it('rejects malformed public keys and invalid challenge signatures', async () => {
     for (const key of ['aa'.repeat(16), 'aa'.repeat(32), `01${'00'.repeat(31)}`, '00'.repeat(32)]) {
       const frames: Array<{ type: string }> = [];
@@ -255,7 +283,8 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     });
     expect(rejected.status).toBe(401);
     expect(await rejected.json()).toMatchObject({ error: 'invalid receipt signature' });
-    const conv_id = 'e1'.repeat(16), posting = generateIdentity(), master = generateIdentity();
+    const posting = generateIdentity(), master = generateIdentity();
+    const conv_id = Buffer.from(new QSP1Suite().hash(new TextEncoder().encode(`qntm-announce-v1|id|${base64UrlEncode(master.publicKey)}`))).subarray(0, 16).toString('hex');
     const registration = { name: 'signature-profile', conv_id, master_pk: base64UrlEncode(identityKey),
       posting_pk: base64UrlEncode(posting.publicKey), sig: Buffer.from(forgedSignature).toString('hex') };
     expect((await post('/v1/announce/register', registration)).status).toBe(403);
@@ -272,6 +301,47 @@ describe.sequential('real relay worker subscribe acceptance', () => {
     expect((await post('/v1/announce/rotate', { conv_id, master_pk: registration.master_pk, new_posting_pk,
       sig: sign(`qntm-announce-v1|rotate|${conv_id}|${new_posting_pk}`),
     })).status).toBe(400);
+  });
+
+  it('binds announcement ownership to a fresh conversation and keeps closed sequence state', async () => {
+    const post = (path: string, body: unknown) => fetch(`${relayUrl}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const master = generateIdentity(), posting = generateIdentity(), suite = new QSP1Suite();
+    const sign = (key: Uint8Array, value: string) => Buffer.from(suite.sign(key, suite.hash(new TextEncoder().encode(value)))).toString('hex');
+    const registration = (conv_id: string) => ({ name: 'owner-test', conv_id,
+      master_pk: base64UrlEncode(master.publicKey), posting_pk: base64UrlEncode(posting.publicKey),
+      sig: sign(master.privateKey, `qntm-announce-v1|register|owner-test|${conv_id}|${base64UrlEncode(posting.publicKey)}`),
+    });
+    const idFor = (key: Uint8Array) => Buffer.from(suite.hash(new TextEncoder().encode(`qntm-announce-v1|id|${base64UrlEncode(key)}`))).subarray(0, 16).toString('hex');
+    const raceMaster = generateIdentity();
+    const occupied = 'e2'.repeat(16), fresh = idFor(master.publicKey), racing = idFor(raceMaster.publicKey);
+    expect((await post('/v1/announce/register', registration('e3'.repeat(16)))).status).toBe(403);
+    const envelope_b64 = Buffer.from('synthetic ciphertext').toString('base64');
+    expect((await post('/v1/send', { conv_id: occupied, envelope_b64 })).status).toBe(201);
+    expect((await post('/v1/announce/register', registration(occupied))).status).toBe(403);
+    expect((await post('/v1/send', { conv_id: occupied, envelope_b64 })).status).toBe(201);
+    expect((await post('/v1/announce/register', registration(fresh))).status).toBe(201);
+    expect((await post('/v1/send', { conv_id: fresh, envelope_b64 })).status).toBe(403);
+    const sent = await post('/v1/send', { conv_id: fresh, envelope_b64, announce_sig: sign(posting.privateKey, envelope_b64) });
+    expect(sent.status).toBe(201);
+    expect(await sent.json()).toMatchObject({ seq: 1 });
+    expect((await post('/v1/announce/delete', { conv_id: fresh, master_pk: base64UrlEncode(master.publicKey),
+      sig: sign(master.privateKey, `qntm-announce-v1|delete|${fresh}`),
+    })).status).toBe(200);
+    expect((await post('/v1/announce/register', registration(fresh))).status).toBe(409);
+    expect((await post('/v1/send', { conv_id: fresh, envelope_b64, announce_sig: sign(posting.privateKey, envelope_b64) })).status).toBe(403);
+    const { socket, frames } = await openSubscription(relayUrl, 0, fresh);
+    expect(frames.find(frame => frame.type === 'ready')?.head_seq).toBe(1);
+    expect(frames.some(frame => frame.type === 'message')).toBe(false);
+    await closeSocket(socket);
+    const outcomes = await Promise.all([
+      post('/v1/announce/register', { ...registration(racing), master_pk: base64UrlEncode(raceMaster.publicKey),
+        sig: sign(raceMaster.privateKey, `qntm-announce-v1|register|owner-test|${racing}|${base64UrlEncode(posting.publicKey)}`) }),
+      post('/v1/send', { conv_id: racing, envelope_b64 }),
+    ]);
+    expect(outcomes.filter(response => response.status === 201)).toHaveLength(1);
+    expect(outcomes.every(response => [201, 403, 409].includes(response.status))).toBe(true);
   });
 
   it('expires SQLite content and receipt metadata by alarm while the channel is idle', async () => {

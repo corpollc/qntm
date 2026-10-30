@@ -1,6 +1,31 @@
 import { decryptVaultEntry } from './vault.js';
 import type { VaultEntry, GateRequestMessage } from './types.js';
 
+// Even worst-case JSON escaping fits comfortably inside a 64 KiB envelope.
+export const MAX_RESULT_BODY_BYTES = 8 * 1024;
+
+async function boundedResponseBody(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = MAX_RESULT_BODY_BYTES - length;
+      chunks.push(value.subarray(0, remaining));
+      length += Math.min(value.length, remaining);
+      if (value.length > remaining) { truncated = true; await reader.cancel(); break; }
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  return new TextDecoder().decode(bytes) + (truncated ? '\n[Response truncated]' : '');
+}
+
 export interface ExecutionResult {
   request_id: string;
   status_code: number;
@@ -59,14 +84,18 @@ export async function executeRequest(
         headers,
         body,
         signal: controller.signal,
+        redirect: 'manual',
       });
+      // Workers supports manual/follow, but not redirect:error. Never forward
+      // a vault header to the redirect destination.
+      if (response.status >= 300 && response.status < 400) throw new Error('Gateway redirects are not allowed');
 
-      const responseBody = await response.text();
+      const responseBody = await boundedResponseBody(response);
 
       return {
         request_id: request.request_id,
         status_code: response.status,
-        content_type: response.headers.get('Content-Type') || '',
+        content_type: (response.headers.get('Content-Type') || '').slice(0, 256),
         body: responseBody,
         executed_at: new Date().toISOString(),
       };

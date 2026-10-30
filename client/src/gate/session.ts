@@ -1,4 +1,5 @@
 /** Authenticated conversation state shared by local hosts. No I/O or permissions. */
+import { applyAuthenticatedGroupControl, type GroupControlState } from '../group/control.js';
 import { QSP1Suite } from '../crypto/qsp1.js';
 import { base64UrlDecode, base64UrlEncode, keyIDFromPublicKey } from '../identity/index.js';
 import { decryptMessage, serializeEnvelope } from '../message/index.js';
@@ -6,7 +7,7 @@ import { parseGroupGenesisBody, parseGroupAddBody, parseGroupRemoveBody, parseGr
 import type { Conversation, Identity, Message, OuterEnvelope } from '../types.js';
 import { gatewayAccess, gatewayAccessHash } from './handshake.js';
 import type { GatewayInviteBody } from './handshake.js';
-import { parseGatewayBody, requireGateway, validateGatewayContext, gatewayParticipants } from './workflow-parse.js';
+import { parseGatewayBody, requireGateway, validateGatewayContext } from './workflow-parse.js';
 import { verifyGatewayMessage } from './workflow-message.js';
 import type { VerifiedGatewayEvent, GatewayReferences } from './workflow-message.js';
 import { findGateRequest, findGatewayProposal } from './workflow-history.js';
@@ -21,10 +22,13 @@ export interface GatewaySessionState {
   participants: Record<string, string>;
   gateway?: {
     accepted: boolean;
+    membershipAuthority?: boolean;
     context: GatewayContext;
     invitation: { messageId: string; text: string; body: GatewayInviteBody };
   };
   removed: boolean;
+  needsRekey?: boolean;
+  groupControl?: GroupControlState;
   events: VerifiedGatewayEvent[];
   seen: Record<string, string>;
 }
@@ -49,11 +53,13 @@ export function createGatewaySession(conversation: Conversation, publicKeys: Uin
     requireGateway(known.has(hex(kid)), 'Public key is not a known conversation participant');
     participants[base64UrlEncode(kid)] = base64UrlEncode(pk);
   }
-  return { version: 1, participants, removed: false, events: [], seen: {} };
+  return { version: 1, participants, removed: false, events: [], seen: {},
+    ...(conversation.type === 'group' && conversation.participants[0] ? { groupControl: { creator: base64UrlEncode(conversation.participants[0]), needsRekey: false, removed: false } } : {}) };
 }
 
 export function sessionGatewayContext(state: GatewaySessionState): GatewayContext {
   requireGateway(!state.removed, 'You have been removed from this conversation');
+  requireGateway(!state.needsRekey, 'Complete the pending group rekey before sending');
   requireGateway(state.gateway?.accepted, 'No accepted gateway in this conversation');
   validateGatewayContext(state.gateway.context);
   return structuredClone(state.gateway.context);
@@ -91,7 +97,10 @@ export function receiveConversationEvent(envelope: OuterEnvelope, conversation: 
       gateway: { kid: body.gateway_kid, publicKey: body.gateway_public_key },
       participants: body.participants, floor: body.floor, rules: body.rules };
     gatewayEvent = verifyGatewayMessage(message, context);
-    state.gateway = { accepted: false, context, invitation: { messageId: id, text, body } };
+    const creator = state.groupControl?.creator;
+    requireGateway(body.conversation_type === undefined || body.conversation_type === next.type, 'Invitation changes conversation type');
+    requireGateway(body.group_creator_kid === undefined || body.group_creator_kid === creator, 'Invitation changes group creator');
+    state.gateway = { accepted: false, membershipAuthority: next.type === 'direct' || sender === creator, context, invitation: { messageId: id, text, body } };
   } else if (bodyType.startsWith('gate.') || bodyType.startsWith('gov.')) {
     requireGateway(state.gateway, 'Gateway event has no verified invitation');
     requireGateway(bodyType === 'gate.accept' || state.gateway.accepted, 'Gateway has not accepted its invitation');
@@ -105,7 +114,11 @@ export function receiveConversationEvent(envelope: OuterEnvelope, conversation: 
     gatewayEvent = verifyGatewayMessage(message, context, references);
     if (body.type === 'gate.accept') {
       requireGateway(envelope.created_ts <= state.gateway.invitation.body.expires_at, 'Gateway acceptance follows invitation expiry');
+      requireGateway(!state.needsRekey && !state.removed && state.gateway.invitation.body.keys_hash === gatewayAccessHash(gatewayAccess(next)), 'Gateway invitation is stale');
+      for (const [kid, key] of Object.entries(state.participants)) requireGateway(context.participants[kid] === key, 'Gateway invitation changes current membership');
+      if (state.groupControl?.roster && next.currentEpoch > 0) requireGateway(Object.keys(context.participants).length === Object.keys(state.participants).length, 'Gateway invitation changes current membership');
       state.gateway.accepted = true;
+      if (state.groupControl) delete state.groupControl.roster;
       state.participants = { ...context.participants };
     } else if (body.type === 'gov.applied') {
       if (body.proposal_type === 'floor_change') context.floor = body.applied_floor!;
@@ -119,50 +132,27 @@ export function receiveConversationEvent(envelope: OuterEnvelope, conversation: 
       validateGatewayContext(context);
     }
   } else if (groupTypes.has(bodyType)) {
-    const authority = state.gateway?.accepted ? state.gateway.context.gateway : null;
-    requireGateway(authority ? sender === authority.kid && pk === authority.publicKey : state.participants[sender] === pk,
-      'Group control is not from the configured authority');
-    let body: unknown;
-    if (bodyType === 'group_genesis' || bodyType === 'group_add') {
-      const members = bodyType === 'group_genesis'
-        ? (body = parseGroupGenesisBody(bodyBytes), (body as ReturnType<typeof parseGroupGenesisBody>).founding_members)
-        : (body = parseGroupAddBody(bodyBytes), (body as ReturnType<typeof parseGroupAddBody>).new_members);
-      requireGateway(Array.isArray(members) && members.length > 0 && members.length <= 1000, 'Invalid group members');
-      for (const member of members) {
-        const memberKey = base64UrlEncode(new Uint8Array(member.public_key));
-        const memberKid = base64UrlEncode(new Uint8Array(member.key_id));
-        gatewayParticipants({ [memberKid]: memberKey });
-        requireGateway(memberKid !== authority?.kid, 'Gateway cannot join signer roster');
-        state.participants[memberKid] = memberKey;
-      }
-    } else if (bodyType === 'group_remove') {
-      const removed = parseGroupRemoveBody(bodyBytes); body = removed;
-      requireGateway(Array.isArray(removed.removed_members) && removed.removed_members.length <= 1000, 'Invalid removed members');
-      for (const kid of removed.removed_members) {
-        requireGateway(kid instanceof Uint8Array && kid.length === 16, 'Invalid removed member ID');
-        delete state.participants[base64UrlEncode(kid)];
-      }
-    } else {
-      const rekey = parseGroupRekeyBody(bodyBytes); body = rekey;
-      requireGateway(Number.isSafeInteger(rekey.new_conv_epoch) && rekey.new_conv_epoch === next.currentEpoch + 1, 'Rekey must advance exactly one epoch');
-      requireGateway(rekey.wrapped_keys && typeof rekey.wrapped_keys === 'object' && !Array.isArray(rekey.wrapped_keys), 'Invalid wrapped keys');
-      const wrapped = rekey.wrapped_keys[base64UrlEncode(identity.keyID)];
-      if (wrapped) {
-        requireGateway(Object.hasOwn(state.participants, base64UrlEncode(identity.keyID)), 'Removed identity cannot accept a rekey');
-        requireGateway(wrapped instanceof Uint8Array, 'Invalid wrapped key');
-        const root = suite.unwrapKeyForRecipient(wrapped, identity.privateKey, identity.keyID, next.id);
-        next.keys = { root, ...suite.deriveEpochKeys(root, next.id, rekey.new_conv_epoch) };
-        next.currentEpoch = rekey.new_conv_epoch;
-      } else state.removed = true;
-    }
-    text = JSON.stringify(body, (_key, value) => value instanceof Uint8Array ? base64UrlEncode(value) : value);
+    const authority = state.gateway?.accepted ? state.gateway.context.gateway : undefined;
+    if (authority) {
+      requireGateway(state.gateway?.membershipAuthority && sender === authority.kid && pk === authority.publicKey, 'Group control is not from the configured authority');
+    } else requireGateway(next.type === 'group', 'Group control requires a group conversation');
+    const control = state.groupControl ?? { creator: base64UrlEncode(conversation.participants[0]), needsRekey: false, removed: false };
+    const applied = applyAuthenticatedGroupControl(envelope, message, next, identity, control, state.participants,
+      authority ? base64UrlDecode(authority.publicKey) : undefined);
+    Object.assign(next, applied.conversation);
+    state.groupControl = applied.state;
+    state.participants = applied.participants;
+    state.removed = applied.state.removed;
+    state.needsRekey = applied.state.needsRekey;
+    const parsed = bodyType === 'group_genesis' ? parseGroupGenesisBody(bodyBytes) : bodyType === 'group_add' ? parseGroupAddBody(bodyBytes)
+      : bodyType === 'group_remove' ? parseGroupRemoveBody(bodyBytes) : parseGroupRekeyBody(bodyBytes);
+    text = JSON.stringify(parsed, (_key, value) => value instanceof Uint8Array ? base64UrlEncode(value) : value);
     if (state.gateway?.accepted) {
       state.gateway.context.participants = { ...state.participants };
       state.gateway.context.epoch = next.currentEpoch;
     }
-    if (!Object.hasOwn(state.participants, base64UrlEncode(identity.keyID))) state.removed = true;
-  } else if (!state.gateway?.accepted) {
-    // Before gateway admission, ordinary authenticated chat discovers peers.
+  } else if (!state.gateway?.accepted && !(next.type === 'group' && state.groupControl?.roster)) {
+    // Bearer chat can discover peers only before an authenticated group roster.
     state.participants[sender] = pk;
   }
   if (state.gateway?.accepted && !Object.hasOwn(state.participants, base64UrlEncode(identity.keyID))) state.removed = true;

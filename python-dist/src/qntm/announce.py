@@ -9,11 +9,17 @@ An announce channel has:
 
 import json
 import os
+import hashlib
 
 from .crypto import QSP1Suite
-from .identity import base64url_encode, generate_conversation_id
+from .identity import base64url_encode
 
 _suite = QSP1Suite()
+
+
+def channel_id(master_public: bytes) -> bytes:
+    """Bind the channel namespace to its owning key (128-bit preimage binding)."""
+    return hashlib.sha256(f"qntm-announce-v1|id|{base64url_encode(master_public)}".encode()).digest()[:16]
 
 
 def generate_channel_keys() -> dict:
@@ -52,7 +58,7 @@ def create_channel(name: str) -> dict:
     Returns a dict with channel metadata, keys, invite secret, and conversation.
     """
     keys = generate_channel_keys()
-    conv_id = generate_conversation_id()
+    conv_id = channel_id(keys["master_public"])
     invite_secret = os.urandom(32)
 
     conv_keys = derive_announce_keys(invite_secret, conv_id)
@@ -84,7 +90,7 @@ def sign_register(
 
     Returns hex-encoded Ed25519 signature.
     """
-    message = f"register:{name}:{conv_id_hex}:{posting_pk_b64}".encode()
+    message = hashlib.sha256(f"qntm-announce-v1|register|{name}|{conv_id_hex}|{posting_pk_b64}".encode()).digest()
     sig = _suite.sign(master_private, message)
     return sig.hex()
 
@@ -93,7 +99,7 @@ def verify_register_signature(
     master_public: bytes, name: str, conv_id_hex: str, posting_pk_b64: str, sig_hex: str
 ) -> bool:
     """Verify a channel registration signature."""
-    message = f"register:{name}:{conv_id_hex}:{posting_pk_b64}".encode()
+    message = hashlib.sha256(f"qntm-announce-v1|register|{name}|{conv_id_hex}|{posting_pk_b64}".encode()).digest()
     sig = bytes.fromhex(sig_hex)
     return _suite.verify(master_public, message, sig)
 
@@ -103,7 +109,7 @@ def sign_delete(master_private: bytes, conv_id_hex: str) -> str:
 
     Returns hex-encoded Ed25519 signature.
     """
-    message = f"delete:{conv_id_hex}".encode()
+    message = hashlib.sha256(f"qntm-announce-v1|delete|{conv_id_hex}".encode()).digest()
     sig = _suite.sign(master_private, message)
     return sig.hex()
 
@@ -113,7 +119,7 @@ def sign_envelope(posting_private: bytes, envelope_b64: str) -> str:
 
     Returns hex-encoded Ed25519 signature.
     """
-    sig = _suite.sign(posting_private, envelope_b64.encode())
+    sig = _suite.sign(posting_private, hashlib.sha256(envelope_b64.encode()).digest())
     return sig.hex()
 
 

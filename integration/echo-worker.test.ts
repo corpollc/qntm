@@ -59,6 +59,15 @@ describe('echo delivery and public surface', () => {
     } finally { log.mockRestore(); err.mockRestore(); }
   });
 
+  it('bounds large echoes and advances to the next message', async () => {
+    const f = fixture(), sent: Uint8Array[] = [];
+    const receive = async () => ({ messages: [{ seq: 1, envelope: f.message('Ω'.repeat(30000)) }, { seq: 2, envelope: f.message('next') }], sequence: 2 });
+    const postMessage = async (_id: Uint8Array, bytes: Uint8Array) => { expect(bytes.length).toBeLessThan(65536); sent.push(bytes); return 3; };
+    expect(await handleConversation(f.env, f.bot, f.conv, { postMessage }, '', receive)).toBe(2);
+    expect(f.storage.get('echo-bot-cursor')).toBe('2');
+    expect(new TextDecoder().decode(decryptMessage(deserializeEnvelope(sent[0]), f.conv).inner.body)).toContain('[truncated]');
+  });
+
   it('exposes health but no plaintext trigger or replay endpoints', async () => {
     const f = fixture();
     expect((await echo.fetch(new Request('https://echo/healthz'), f.env)).status).toBe(200);

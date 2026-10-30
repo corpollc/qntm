@@ -142,6 +142,7 @@ export async function sendMessage(
   if (!convCrypto) return null;
 
   if (store.gatewaySession(convId, identity).removed) throw new Error('You have been removed from this conversation');
+  if (store.gatewaySession(convId, identity).needsRekey) throw new Error('Complete the pending group rekey before sending');
   const bodyBytes = new TextEncoder().encode(text);
   const envelope = createMessage(identity, convCrypto, bodyType, bodyBytes, undefined, defaultTTL());
   const serialized = serializeEnvelope(envelope);

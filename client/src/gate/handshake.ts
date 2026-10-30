@@ -22,6 +22,8 @@ export interface GatewayAccess {
 }
 export interface GatewayInviteBody {
   type: 'gate.promote';
+  conversation_type?: 'direct' | 'group';
+  group_creator_kid?: string;
   invitation_id: string;
   conv_id: string;
   conv_epoch: number;
@@ -68,9 +70,12 @@ export function validateGatewayIdentity(publicKey: string, kid: string): boolean
   } catch { return false; }
 }
 export function createGatewayInviteBody(invite: GatewayInvitation, conv: Conversation, participants: Record<string, string>, floor: number): GatewayInviteBody {
+  if (conv.type !== 'group' && conv.type !== 'direct') throw new Error('Gateway requires a direct or group conversation');
   if (!validateGatewayIdentity(invite.gateway_public_key, invite.gateway_kid)) throw new Error('Invalid gateway identity');
   if (!Number.isSafeInteger(floor) || floor < 1 || floor > Object.keys(participants).length) throw new Error('Invalid gateway approval threshold');
   return { type: 'gate.promote', invitation_id: invite.invitation_id, conv_id: hex(conv.id),
+    conversation_type: conv.type,
+    ...(conv.type === 'group' ? { group_creator_kid: base64UrlEncode(conv.participants[0]) } : {}),
     conv_epoch: conv.currentEpoch, gateway_kid: invite.gateway_kid, gateway_public_key: invite.gateway_public_key,
     expires_at: invite.expires_at, keys_hash: gatewayAccessHash(gatewayAccess(conv)), participants,
     rules: [{ service: '*', endpoint: '*', verb: '*', m: floor }], floor };

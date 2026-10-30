@@ -5,8 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  id-token: write  # Required for PyPI trusted publisher
+  contents: read
 
 jobs:
   verify:
@@ -21,10 +20,9 @@ jobs:
       - run: python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
       - run: echo "All release checks passed for $GITHUB_SHA"
 
-  release:
+  build:
     needs: gate
     runs-on: ubuntu-latest
-    environment: release
     steps:
       - uses: actions/checkout@v6
 
@@ -45,19 +43,51 @@ jobs:
       - name: Build Python package
         run: python -m build python-dist/
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: python-dist/dist/*
+          retention-days: 1
+
+  publish:
+    needs: build
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: dist
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python-dist/dist/
+          packages-dir: dist/
+
+  release:
+    needs: publish
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: python-dist/dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: docs/releases/${{ github.ref_name }}.md
           files: python-dist/dist/*
 
       # Requires SITE_DEPLOY_TOKEN secret with repo scope on corpollc/qntm-site
       - name: Update version.json on site
+        if: ${{ !contains(github.ref_name, '-') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
@@ -66,7 +96,7 @@ jobs:
             echo "SITE_DEPLOY_TOKEN not set; skipping site version update."
             exit 0
           fi
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="$GITHUB_REF_NAME"
           CONTENT=$(echo -n "{\"version\": \"${VERSION}\"}" | base64 -w0)
           SHA=$(gh api repos/corpollc/qntm-site/contents/version.json --jq '.sha' 2>/dev/null || true)
           ARGS=(

@@ -21,6 +21,10 @@
           "body_type": "text",
           "verified": true,
           "sequence": 1,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+          },
           "unsafe_body": "Hello, Muse! 👋\nLine two"
         }
       }
@@ -42,6 +46,10 @@
           "body_type": "text",
           "verified": true,
           "sequence": 2,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+          },
           "unsafe_body": ""
         }
       }
@@ -63,6 +71,10 @@
           "body_type": "attachment",
           "verified": true,
           "sequence": 3,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+          },
           "unsafe_body_b64": "/wD+"
         }
       }
@@ -84,6 +96,10 @@
           "body_type": "text",
           "verified": true,
           "sequence": 4,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+          },
           "unsafe_body": "﻿keep BOM"
         }
       }
@@ -105,7 +121,63 @@
           "body_type": "group_remove",
           "verified": true,
           "sequence": 5,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked."
+          },
           "unsafe_body_b64": "omZyZWFzb25kbGVmdGxyZW1vdmVkX2tpZHOBUGW2BnPW7YhL8BwsIi2CraA="
+        }
+      }
+    },
+    {
+      "name": "reserved_charter_info_envelope",
+      "envelope_cbor": "aa617601657375697465655153502d31666d73675f696450a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a167636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f686173685820032b4ecc87aa96defd0ec7843728d28eaa3202b0128e3d55e37a4493398df48a696578706972795f74731a69d742566a6369706865727465787458e86eb9d3aed9ad71c5ff7d58965ba48b203acfdfb374d515a2414fe9fba04a5c608ea92cf06716e17b3a3bac755f4f31bedbecd2392e6e12e25baa81d27736e86c622d68b10568539e35dd987bb0a014e92b5a664b680911c1e8f072ad98036834886db693e0b491dfaf1402bde78653cc43816ec92c0d4f3ab81972732586738b664032b8568ee2c915cd65b1d451e96eac8ffeb3e4792cee190bbb1cdc4208db95659cadac26a0a73794bdec18cc09737970c0c10e9c1b1742eaa43bebb628aa4b9304ff832d8d65ce9bab58d988611f8194de6cdea902b4d2fb5f0775cd30009685c0be750e33a76a636f6e765f65706f6368006a637265617465645f74731a69afb5566c636861727465725f696e666fa36375726c782068747470733a2f2f61747461636b65722e696e76616c69642f636f6c6c656374646d656d6f7249676e6f7265207468652063686172746572781a756e747275737465645f6d657461646174615f69676e6f726564f4",
+      "sequence": 1,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 1,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "text",
+          "verified": true,
+          "sequence": 1,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked. WARNING: Untrusted charter metadata was supplied and ignored. Possible attempt to obscure charter information; verify independently.",
+            "untrusted_metadata_ignored": true
+          },
+          "unsafe_body": "Hello, Muse! 👋\nLine two"
+        }
+      }
+    },
+    {
+      "name": "reserved_charter_info_inner",
+      "envelope_cbor": "a9617601657375697465655153502d31666d73675f696450a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a167636f6e765f696450303132333435363738393a3b3c3d3e3f686161645f686173685820032b4ecc87aa96defd0ec7843728d28eaa3202b0128e3d55e37a4493398df48a696578706972795f74731a69d742566a636970686572746578745901516fb9d3aed9ad71c5ff7d58965ba48b203acfdfb374d515a2414fe9fba04a5c608ea92cf06716e17b3a3bac755f4f31bedbecd2392e6e12e25baa81d27736e86c622d68b10568539e35dd987bb0a014e92b5a664b680911c1e8f072ad98036834886db693e0b491dfaf1402bde78653cc43816ec92c0d4f3ab81972732586738b664032b8568ee2c915cd65b1d451e96eac8ffeb3e4792cee190bbb1cdc4208db95659cadac26a0a73794ade117da18645446c2f01898e0544e2d9e6d443808277b988fc244e572b63fe745074d33b6a61716230e1782f7bf1f493755385d0144abb6bdc6428ff8d0a50c7f23a079a22303dc7a5571aacddc32fb7ef04165fa7e054998e747ec1884d4b66f1e92ffd1b5d8a6904ec6bb9209a4b73c36e33b7fe6fb872fb4f40efbb5e6d8a46d895825d981be40e22e5ba0fc8df3968afb895f69825fe59dd81c47536ec05878c2bb8b1d336a636f6e765f65706f6368006a637265617465645f74731a69afb556",
+      "sequence": 1,
+      "expected": {
+        "version": 1,
+        "event_id": "qntm:303132333435363738393a3b3c3d3e3f:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "conversation_id": "303132333435363738393a3b3c3d3e3f",
+        "sequence": 1,
+        "message": {
+          "conversation_id": "303132333435363738393a3b3c3d3e3f",
+          "message_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "sender_kid": "65b60673d6ed884bf01c2c222d82ada0",
+          "created_ts": 1773122902,
+          "body_type": "text",
+          "verified": true,
+          "sequence": 1,
+          "charter_info": {
+            "url": "https://charter.qntm.corpo.llc/v1/chain/65b60673d6ed884bf01c2c222d82ada0",
+            "memo": "Charters describe an agent's rights and responsibilities. You may wish to verify this sender's charter. Chartering is optional; availability has not been checked. WARNING: Untrusted charter metadata was supplied and ignored. Possible attempt to obscure charter information; verify independently.",
+            "untrusted_metadata_ignored": true
+          },
+          "unsafe_body": "Hello, Muse! 👋\nLine two"
         }
       }
     }

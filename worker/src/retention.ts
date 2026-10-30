@@ -40,6 +40,15 @@ export class RelayRetention {
 
 	constructor(private storage: DurableObjectStorage, private ttl: number) {}
 
+	/** Clear retained ciphertext without resetting the conversation sequence. */
+	clear(): void {
+		this.initialize();
+		this.storage.transactionSync(() => {
+			this.storage.sql.exec('DELETE FROM messages');
+			this.storage.sql.exec('DELETE FROM message_metadata');
+		});
+	}
+
 	private initialize(): void {
 		if (this.initialized) return;
 		this.storage.transactionSync(() => {

@@ -1,5 +1,6 @@
 /** Portable adapter event format. Storage, acknowledgements and scheduling are app-owned. */
-import type { Message } from '../types.js';
+import type { CharterInfo, Message } from '../types.js';
+import { localCharterInfo } from '../charter-info/index.js';
 
 export type ReceiveEventBody =
   | { unsafe_body: string; unsafe_body_b64?: never }
@@ -13,6 +14,7 @@ export type ReceivedMessage = ReceiveEventBody & {
   body_type: string;
   verified: true;
   sequence: number;
+  charter_info: CharterInfo;
 };
 
 export interface ReceiveEvent {
@@ -68,6 +70,7 @@ export function createReceiveEvent(message: Message, sequence: number): ReceiveE
       conversation_id: conversationId, message_id: messageId,
       sender_kid: id(inner.sender_kid), created_ts: positiveInteger(envelope.created_ts),
       body_type: inner.body_type, verified: true, sequence, ...body,
+      charter_info: localCharterInfo(message),
     },
   };
 }

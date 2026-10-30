@@ -174,7 +174,8 @@ export async function handleConversation(
         const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(message.inner.body);
         if (!uint8ArrayEquals(message.inner.sender_kid, identity.keyID) &&
             ['text', 'text/plain'].includes(message.inner.body_type) && text.trim()) {
-          body = new TextEncoder().encode(`🔒 echo: ${text}`);
+          const bounded = text.length > 4096 ? `${text.slice(0, 4096)}… [truncated]` : text;
+          body = new TextEncoder().encode(`🔒 echo: ${bounded}`);
         }
       } catch { /* Invalid, expired, or unsigned legacy envelopes are not echoed. */ }
       if (body) {

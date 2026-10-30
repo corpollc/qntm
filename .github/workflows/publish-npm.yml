@@ -7,10 +7,9 @@ on:
 permissions:
   contents: read
   actions: read
-  id-token: write
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,7 +30,7 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.21.1
         working-directory: .
 
       - run: npm ci
@@ -40,9 +39,36 @@ jobs:
 
       - run: npm run build
 
-      - run: npm pack --dry-run
+      - run: npm pack --ignore-scripts
 
       - name: Verify tagged version
         run: python3 ../scripts/check_release.py --tag "$GITHUB_REF_NAME"
 
-      - run: npm publish --access public --provenance
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: client/*.tgz
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: package
+      - uses: actions/setup-node@v6
+        with:
+          package-manager-cache: false
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11.21.1 --ignore-scripts
+      - name: Publish verified artifact
+        run: |
+          RELEASE_CHANNEL=latest
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then RELEASE_CHANNEL=beta; fi
+          npm publish package/*.tgz --ignore-scripts --access public --provenance --tag "$RELEASE_CHANNEL"

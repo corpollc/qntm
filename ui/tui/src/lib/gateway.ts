@@ -109,6 +109,7 @@ export class GatewayActions {
     const state = this.store.gatewaySession(id, this.identity);
     const conversation = this.store.getConversationCrypto(id)!;
     invariant(!state.removed, 'You have been removed from this conversation');
+    invariant(!state.needsRekey, 'Complete the pending group rekey before sending');
     const checkpoint = fingerprint(this.store, id, state);
     let context: GatewayContext, body: GatewayBody;
     let references: GatewayReferences = {}, invitation: Pending['invitation'];

@@ -7,7 +7,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+SEMVER_RE = re.compile(r"^(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.(\d+))?$")
+
+
+def python_version(version: str) -> str:
+    match = SEMVER_RE.fullmatch(version)
+    if not match:
+        raise ValueError(f"unsupported release version: {version}")
+    base, stage, number = match.groups()
+    return base if stage is None else base + {"alpha": "a", "beta": "b", "rc": "rc"}[stage] + number
 
 
 def fail(message: str) -> None:
@@ -60,6 +68,7 @@ def main() -> None:
     if not SEMVER_RE.match(version):
         fail(f"invalid version: {version}")
 
+    py_version = python_version(version)
     update_json_version(REPO_ROOT / "client/package.json", version)
     update_json_version(REPO_ROOT / "client/package-lock.json", version)
     for directory in ["ui/aim-chat", "ui/tui", "channel"]:
@@ -70,13 +79,13 @@ def main() -> None:
     replace_in_file(
         REPO_ROOT / "python-dist/pyproject.toml",
         r'^version = ".*"$',
-        f'version = "{version}"',
+        f'version = "{py_version}"',
     )
-    update_uv_lock_project_version(REPO_ROOT / "python-dist/uv.lock", version)
+    update_uv_lock_project_version(REPO_ROOT / "python-dist/uv.lock", py_version)
     replace_in_file(
         REPO_ROOT / "python-dist/src/qntm/__init__.py",
         r'^__version__ = ".*"$',
-        f'__version__ = "{version}"',
+        f'__version__ = "{py_version}"',
     )
     update_json_version(REPO_ROOT / "channel/.claude-plugin/plugin.json", version)
 

@@ -89,11 +89,17 @@ export async function acceptInvitation(storage: DurableObjectStorage, relayUrl: 
         invite.conv_id !== material.conv_id || invite.conv_epoch !== material.conv_epoch || invite.expires_at !== invitation.expires_at || invite.keys_hash !== gatewayAccessHash(access)) throw new Error('invitation mismatch');
       const entries = Object.entries(invite.participants);
       const inviterKid = base64UrlEncode(keyIDFromPublicKey(base64UrlDecode(body.inviter_public_key)));
-      if (entries.length < 1 || entries.length > 256 || invite.participants[inviterKid] !== body.inviter_public_key || invitation.gateway_kid in invite.participants ||
+      if (entries.length < 1 || entries.length > 128 || invite.participants[inviterKid] !== body.inviter_public_key || invitation.gateway_kid in invite.participants ||
         entries.some(([kid, pk]) => !validateGatewayIdentity(pk, kid))) throw new Error('invalid invitation participants');
       if (!Number.isSafeInteger(invite.floor) || invite.floor < 1 || invite.floor > entries.length || !Array.isArray(invite.rules) || invite.rules.length > 256 ||
         invite.rules.some(r => typeof r.service !== 'string' || typeof r.endpoint !== 'string' || typeof r.verb !== 'string' || !Number.isSafeInteger(r.m) || r.m < invite.floor || r.m > entries.length)) throw new Error('invalid invitation policy');
       // Check again after relay IO. An unverified candidate never becomes conversation state.
+      if (invite.conversation_type !== undefined && invite.conversation_type !== 'group' && invite.conversation_type !== 'direct') throw new Error('invalid conversation type');
+      if (invite.conversation_type === 'group' && (!invite.group_creator_kid || !Object.prototype.hasOwnProperty.call(invite.participants, invite.group_creator_kid))) throw new Error('missing group creator');
+      state.conversation_type = invite.conversation_type;
+      state.group_creator_kid = invite.group_creator_kid;
+      state.membership_authority = invite.conversation_type === 'direct' ||
+        (invite.conversation_type === 'group' && invite.group_creator_kid === inviterKid);
       if (invitation.expires_at * 1000 <= Date.now()) throw new Error('invitation expired');
     } catch { return Response.json({ error: 'signed invitation could not be verified in the conversation' }, { status: 403 }); }
     state.rules = invite.rules;

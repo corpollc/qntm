@@ -95,7 +95,7 @@ API keys can have a time-to-live (TTL). After the TTL expires, the gateway will 
 
 ### Revoking Keys
 
-Keys can be revoked by service name or by secret ID. Once revoked, the gateway deletes the key from memory and will no longer use it for any requests.
+The maintained gateway does not yet implement a `gate.revoke` command. Revoke a compromised credential at its provider; an installed gateway credential otherwise remains usable until its TTL expires or it is replaced. Any current participant can provision or replace a service credential. Credential replacement is not currently protected by the request-approval quorum; governed replacement and revocation are tracked in `qntm-uqug`.
 
 
 ## API Templates

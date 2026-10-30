@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   addParticipant, base64UrlDecode, base64UrlEncode, createGatewaySession, inviteFromURL,
-  keyIDFromPublicKey, parseGatewayBody, validateGatewayContext,
+  keyIDFromPublicKey, parseGatewayBody, validateGatewayContext, GroupState, parseGroupGenesisBody,
   type Conversation, type GatewaySessionState,
 } from '@corpollc/qntm';
 import { normalizeAccountId } from 'openclaw/plugin-sdk/account-id';
@@ -40,7 +40,7 @@ export interface QntmCheckpoint {
 const SessionSchema = z.object({
   version: z.literal(1), participants: z.record(z.string(), z.string()),
   gateway: z.object({
-    accepted: z.boolean(), context: z.unknown(),
+    accepted: z.boolean(), membershipAuthority: z.boolean().optional(), context: z.unknown(),
     invitation: z.object({ messageId: hex16, text: z.string().max(65536), body: z.unknown() }).strict(),
   }).strict().optional(),
   removed: z.boolean(), events: z.array(z.object({
@@ -48,6 +48,9 @@ const SessionSchema = z.object({
     epoch, messageId: hex16, createdAt: sequence,
   }).strict()).max(4096),
   seen: z.record(hex16, digest),
+  needsRekey: z.boolean().optional(),
+  groupControl: z.object({ creator: z.string().max(24), roster: z.string().max(65536).optional(),
+    needsRekey: z.boolean(), removed: z.boolean() }).strict().optional(),
 }).strict();
 const CheckpointSchema = z.object({
   version: z.literal(1), seedHash: digest, identityKid: hex16, cursor: sequence, suppressThrough: sequence,
@@ -121,6 +124,14 @@ export class QntmCheckpointStore {
       const conversation = parseStoredConversationRecord(parsed.conversation as Parameters<typeof parseStoredConversationRecord>[0]);
       if (toHex(conversation.id) !== binding.conversationId) throw new Error('conversation mismatch');
       const session = parsed.session as GatewaySessionState;
+      if (session.groupControl) {
+        if (base64UrlDecode(session.groupControl.creator).length !== 16) throw new Error('invalid group creator');
+        if (session.groupControl.roster) {
+          const roster = new GroupState();
+          roster.applyGenesis(parseGroupGenesisBody(base64UrlDecode(session.groupControl.roster)));
+          if (conversation.type === 'group' && (!roster.creatorKeyID() || base64UrlEncode(roster.creatorKeyID()!) !== session.groupControl.creator)) throw new Error('group creator mismatch');
+        }
+      }
       if (Object.keys(session.participants).length > 1000 || Object.keys(session.seen).length > 8192) throw new Error('state limit exceeded');
       for (const [kid, publicKey] of Object.entries(session.participants)) {
         const key = base64UrlDecode(publicKey);

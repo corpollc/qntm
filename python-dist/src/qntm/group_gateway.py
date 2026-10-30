@@ -13,11 +13,15 @@ def accept_gateway_membership(record, invite, inviter_key_id, invitation_message
         return None
     state = state_for_record(record)
     if any(record.get(flag) for flag in ('needs_rekey', 'pending_control', 'excluded', 'recovery_required')):
-        return None
+        raise ValueError('Gateway invitation is stale during a group transition')
     if state.creator is None:
         return None
     if invite.get('conv_id') != record['id'] or invite.get('conv_epoch') != record.get('current_epoch', 0):
         raise ValueError('Gateway invitation has the wrong group context')
+    if invite.get('conversation_type') not in (None, 'group'):
+        raise ValueError('Gateway invitation changes the conversation type')
+    if invite.get('group_creator_kid') is not None and invite['group_creator_kid'] != base64url_encode(state.creator):
+        raise ValueError('Gateway invitation changes the group creator')
     participants = invite.get('participants')
     if not isinstance(participants, dict) or not 1 <= len(participants) <= 128:
         raise ValueError('Invalid gateway participant roster')

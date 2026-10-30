@@ -10,7 +10,7 @@ def test_sealed_access_and_acceptance_bind_the_exact_invitation():
     alice, gateway = generate_identity(), generate_identity()
     invitation = {"invitation_id": "ab" * 16, "inviter_public_key": base64url_encode(alice["publicKey"]),
                   "gateway_public_key": base64url_encode(gateway["publicKey"]), "gateway_kid": base64url_encode(gateway["keyID"]), "expires_at": 123456}
-    conversation = {"id": bytes([8]) * 16, "keys": {"aeadKey": bytes([1]) * 32, "nonceKey": bytes([2]) * 32}, "currentEpoch": 3}
+    conversation = {"type": "direct", "id": bytes([8]) * 16, "keys": {"aeadKey": bytes([1]) * 32, "nonceKey": bytes([2]) * 32}, "currentEpoch": 3}
     body = create_gateway_invite_body(invitation, conversation, {base64url_encode(alice["keyID"]): base64url_encode(alice["publicKey"])}, 1)
     text = json.dumps(body, separators=(",", ":"))
     request = seal_gateway_bootstrap(alice, invitation, conversation, "ef" * 16, 7)

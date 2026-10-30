@@ -4,6 +4,17 @@
 
 - Restored the browser welcome screen's Open Invites action and chat-page sidebar keyboard shortcuts by reconnecting their existing sidebar handle. Real-browser regressions cover opening the controls, creating a conversation and focusing the shortcut destinations.
 
+## v0.9.0-beta.1
+
+[Full release notes](releases/v0.9.0-beta.1.md)
+
+- Add optional, receiver-generated charter discovery tied to the verified sender identity.
+- Harden gateway quorum validation, replay handling, durable membership publication and API-result recovery.
+- Bind new announcement IDs to master keys and quarantine legacy unbound ownership claims.
+- Align authenticated group controls across maintained clients and reject stale gateway acceptance.
+- Require trusted entity-to-sender bindings, strengthen channel cache verification and update audited dependencies.
+- Separate package builds from privileged publication and publish prereleases on the beta channel.
+
 ## v0.6.3
 
 - Add authenticated encrypted attachments in Python and TypeScript.

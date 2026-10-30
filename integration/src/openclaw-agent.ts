@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { generateIdentity, serializeIdentity, base64UrlEncode, type GatewaySessionState } from '@corpollc/qntm';
+import { generateIdentity, serializeIdentity, base64UrlEncode, type GatewaySessionState, type Identity } from '@corpollc/qntm';
 import { stagePlugin } from '../../openclaw-qntm/scripts/package.mjs';
 import { createToolProvider, type ToolPlan, type ToolResult } from '../../openclaw-qntm/tests/support/tool-provider.mjs';
 import { getFreePort, waitForCliHistory, type HistoryAgent } from './runtime.js';
@@ -14,14 +14,13 @@ import { getFreePort, waitForCliHistory, type HistoryAgent } from './runtime.js'
 const adapterRequire = createRequire(new URL('../../openclaw-qntm/package.json', import.meta.url));
 const host = fileURLToPath(new URL('../../openclaw.mjs', pathToFileURL(adapterRequire.resolve('openclaw/plugin-sdk/channel-core'))));
 export class OpenClawAgent {
-  readonly identity = generateIdentity();
   readonly stateDir: string;
   readonly configPath: string;
   log = '';
   private child?: ReturnType<typeof spawn>;
   private env: NodeJS.ProcessEnv;
   private provider!: Awaited<ReturnType<typeof createToolProvider>>;
-  constructor(readonly rootDir: string, readonly conversationId: string) {
+  constructor(readonly rootDir: string, readonly conversationId: string, readonly identity: Identity = generateIdentity()) {
     if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('OpenClaw acceptance requires Node 24.16+ or 26.1+');
     this.stateDir = join(rootDir, 'state'); this.configPath = join(this.stateDir, 'openclaw.json');
     this.env = { ...process.env };

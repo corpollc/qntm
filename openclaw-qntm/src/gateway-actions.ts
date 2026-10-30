@@ -89,6 +89,7 @@ function permitted(scope: GatewayScope, action?: PreparedAction): QntmCheckpoint
     'action_denied', 'This gateway action is not permitted by local configuration');
   const checkpoint = scope.store.load(scope.binding);
   requireState(!checkpoint.session.removed, 'removed', 'The local identity was removed from this conversation');
+  requireState(!checkpoint.session.needsRekey, 'rekey_pending', 'Complete the pending group rekey before sending');
   return checkpoint;
 }
 function bootstrapPath(scope: GatewayScope): string { return `${scope.store.path(scope.binding)}.gateway-bootstrap`; }

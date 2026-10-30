@@ -10,6 +10,8 @@ import {
   verifyProposal,
   verifyApproval,
   verifyRequest,
+  createGroupGenesisBody, parseGroupGenesisBody, createGroupRemoveBody, parseGroupRemoveBody,
+  GroupState, createRekey, applyRekey,
 } from '@corpollc/qntm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as store from './store'
@@ -625,5 +627,44 @@ describe('browser qntm adapter', () => {
     const payload = JSON.parse(secret.text)
     expect(payload.gateway_kid).toBe(invitation.gateway_kid)
     expect(new TextDecoder().decode(openSecret(relay.gateway.privateKey, hexToBytes(identityFor(alice.id).publicKey), base64UrlDecode(payload.encrypted_blob)))).toBe('secret')
+  })
+
+  it('keeps the receive roster current through genesis, gateway admission and a membership rekey in one batch', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    for (const profile of [alice, bob]) store.updateConversation(profile.id, conversationId, c => ({ ...c, type: 'group' }))
+    const saved = identityFor(alice.id)
+    const creator = { privateKey: hexToBytes(saved.privateKey), publicKey: hexToBytes(saved.publicKey), keyID: hexToBytes(saved.keyId) }
+    const removed = generateIdentity(), retained = generateIdentity()
+    const stored = store.findConversation(alice.id, conversationId)!
+    const conv = { id: hexToBytes(conversationId), type: 'group' as const,
+      keys: { root: hexToBytes(stored.keys.root), aeadKey: hexToBytes(stored.keys.aeadKey), nonceKey: hexToBytes(stored.keys.nonceKey) },
+      participants: [creator.keyID, hexToBytes(identityFor(bob.id).keyId), removed.keyID, retained.keyID], currentEpoch: 0, createdAt: new Date() }
+    const publish = async (sender: typeof creator, type: string, body: Uint8Array) => {
+      const wire = serializeEnvelope(createMessage(sender, conv, type, body))
+      await relay.handleFetch('http://relay.test/v1/send', { body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...wire)) }) })
+    }
+    const genesis = createGroupGenesisBody('Founding roster', '', creator, [hexToBytes(identityFor(bob.id).publicKey), removed.publicKey, retained.publicKey])
+    const roster = new GroupState(); roster.applyGenesis(parseGroupGenesisBody(genesis))
+    await publish(creator, 'group_genesis', genesis)
+    await receiveMessages(alice.id, alice.name, conversationId)
+    const offered = await gatePromoteRequest(alice.id, alice.name, conversationId, 'http://gateway.test', 2)
+    const invitation = JSON.parse(offered.text)
+    await publish(relay.gateway, 'gate.accept', new TextEncoder().encode(JSON.stringify({
+      type: 'gate.accept', invitation_id: invitation.invitation_id, invitation_msg_id: offered.id,
+      invitation_hash: gatewayInvitationHash(offered.text), conv_id: conversationId, conv_epoch: 0,
+      gateway_kid: invitation.gateway_kid, gateway_public_key: invitation.gateway_public_key,
+    })))
+    const removal = createGroupRemoveBody([removed.keyID])
+    roster.applyRemove(parseGroupRemoveBody(removal))
+    await publish(relay.gateway, 'group_remove', removal)
+    const rekey = createRekey(relay.gateway, conv, roster)
+    await publish(relay.gateway, 'group_rekey', rekey.bodyBytes)
+    applyRekey(conv, rekey.newGroupKey, 1)
+    await publish(creator, 'text', new TextEncoder().encode('after rekey'))
+    const result = await receiveMessages(bob.id, bob.name, conversationId)
+    expect(store.findConversation(bob.id, conversationId)!.currentEpoch).toBe(1)
+    expect(result.messages.map(m => m.bodyType)).toContain('group_remove')
+    expect(result.messages.at(-1)?.text).toBe('after rekey')
+    expect(store.findConversation(bob.id, conversationId)!.participants).not.toContain(Array.from(removed.keyID, b => b.toString(16).padStart(2, '0')).join(''))
   })
 })

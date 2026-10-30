@@ -164,7 +164,7 @@ def resolve_rekey_candidates(identity, source, roster, wires, *, allow_expired=F
             envelope = deserialize_envelope(wire)
             if envelope['conv_epoch'] != source['currentEpoch'] or envelope['conv_id'] != source['id'] or (not allow_expired and envelope['expiry_ts'] <= time.time()):
                 continue
-            message = decrypt_message(envelope,source)
+            message = decrypt_message(envelope,source,allow_expired=allow_expired)
             if not message['verified'] or message['inner']['body_type'] != 'group_rekey' or (not roster.is_member(message['inner']['sender_kid']) and (authorized_control_signer is None or message['inner']['sender_ik_pk'] != authorized_control_signer)):
                 continue
             body = parse_group_rekey_body(message['inner']['body'])

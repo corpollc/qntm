@@ -10,6 +10,9 @@ export interface Env {
 
 /** Stored state for a gateway-managed conversation */
 export interface ConversationState {
+  conversation_type?: 'direct' | 'group';
+  group_creator_kid?: string;
+  membership_authority?: boolean;
   /** Present for participant invitation/acceptance setup. */
   invitation_id?: string;
   conv_id: string;

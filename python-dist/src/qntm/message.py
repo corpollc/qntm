@@ -3,6 +3,7 @@
 import time
 
 from .cbor import marshal_canonical, unmarshal
+from .charter_info import with_local_charter_info
 from .constants import (
     DEFAULT_HANDSHAKE_TTL_SECONDS,
     DEFAULT_SUITE,
@@ -27,6 +28,8 @@ def create_message(
 ) -> dict:
     """Create and encrypt a message, returning an outer envelope dict."""
     validate_identity(sender_identity)
+    if conversation.get("controlsBlocked") or (conversation.get("sendBlocked") and body_type not in ("group_genesis", "group_add", "group_remove", "group_rekey")):
+        raise ValueError("Complete the pending group update or restore authorized access before sending")
 
     msg_id = generate_message_id()
     now = int(time.time())
@@ -173,11 +176,11 @@ def decrypt_message(envelope: dict, conversation: dict, *, allow_expired: bool =
     if sender_kid != computed_kid:
         raise ValueError("sender key ID does not match public key")
 
-    return {
+    return with_local_charter_info({
         "envelope": envelope,
         "inner": inner,
         "verified": verified,
-    }
+    })
 
 
 def verify_message_signature(envelope: dict, inner_payload: dict) -> bool:

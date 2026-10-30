@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qntm"
-version = "0.6.3"
+version = "0.9.0b1"
 description = "qntm secure messaging protocol client library and CLI"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -13,7 +13,7 @@ dependencies = [
     "PyNaCl>=1.5.0",
     "cryptography>=50.0",
     "cbor2>=5.9",
-    "certifi>=2024.0",
+    "certifi>=2026.10.23",
     "httpx>=0.27",
     "idna>=3.15",  # Security floor for the HTTP client dependency.
     "websockets>=13.0",
@@ -24,7 +24,7 @@ authors = [
 ]
 keywords = ["messaging", "encryption", "security", "cli", "mcp", "ai-agents"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: Other/Proprietary License",
@@ -47,6 +47,9 @@ qntm-mcp = "qntm.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qntm"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src/qntm", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 

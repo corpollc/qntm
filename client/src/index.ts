@@ -103,3 +103,4 @@ export type { AttachmentContext, AttachmentDescriptor, PreparedAttachment, Attac
 
 export * from './group-bootstrap/index.js';
 export * from './group-bootstrap/rekey.js';
+export * from './group/control.js';

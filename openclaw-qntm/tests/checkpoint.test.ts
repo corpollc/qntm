@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { createMessage, serializeEnvelope, createGroupRekeyBody, createGroupRemoveBody, generateIdentity, base64UrlEncode, serializeIdentity } from '@corpollc/qntm';
+import { receiveConversationEvent, createGroupGenesisBody, createMessage, serializeEnvelope, createGroupRekeyBody, createGroupRemoveBody, generateIdentity, base64UrlEncode, serializeIdentity } from '@corpollc/qntm';
 import { createConfig, createConversationFixture, createIdentityFixture } from './helpers.js';
 import { resolveQntmAccount } from '../src/accounts.js';
 import { loadQntmIdentityFromString, parseStoredConversationRecord, toHex } from '../src/qntm.js';
@@ -21,6 +21,13 @@ function fixture(options: ConstructorParameters<typeof QntmCheckpointStore>[1] =
   const store = new QntmCheckpointStore(account, { stateDir, ...options });
   const envelope = (text: string) => serializeEnvelope(createMessage(group.inviter, store.load(binding).conversation, 'text', new TextEncoder().encode(text)));
   return { stateDir, identity: identity.identity, group, account, binding, store, envelope };
+}
+
+function initializeGroup(f: ReturnType<typeof fixture>) {
+  const checkpoint = f.store.load(f.binding);
+  const envelope = createMessage(f.group.inviter, checkpoint.conversation, 'group_genesis', createGroupGenesisBody('Test', '', f.group.inviter, [f.identity.publicKey]));
+  const applied = receiveConversationEvent(envelope, checkpoint.conversation, f.identity, checkpoint.session);
+  f.store.commit(f.binding, { ...checkpoint, conversation: applied.conversation, session: applied.state });
 }
 
 describe('qntm authenticated checkpoints', () => {
@@ -42,6 +49,7 @@ describe('qntm authenticated checkpoints', () => {
   });
   test('rekeys even when mention filtering suppresses dispatch; exact old replay needs no old key', () => {
     const f = fixture();
+    initializeGroup(f);
     f.binding.trigger = 'mention'; f.binding.triggerNames = ['wake'];
     const root = new Uint8Array(32).fill(42);
     const body = createGroupRekeyBody(root, 1, [f.identity, f.group.inviter].map(identity => ({ kid: identity.keyID, publicKey: identity.publicKey })), f.group.conversation.id);
@@ -77,6 +85,7 @@ describe('qntm authenticated checkpoints', () => {
   });
   test('rejects wrong-epoch/tampered input and preserves removal across restart', () => {
     const f = fixture();
+    initializeGroup(f);
     const tampered = f.envelope('forged'); tampered[tampered.length - 1] ^= 1;
     expect(receiveQntmEnvelope(f.store, f.binding, 1, tampered)).toBe('invalid');
     expect(f.store.load(f.binding).cursor).toBe(1);

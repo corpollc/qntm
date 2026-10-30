@@ -4,7 +4,7 @@ import {
   createGatewaySession, receiveConversationEvent, sessionGatewayContext, createMessage,
   createGatewayInviteBody, gatewayInvitationHash, base64UrlEncode,
   createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, scanGateRequest,
-  createGroupRemoveBody, createGroupRekeyBody, QSP1Suite,
+  createGroupRemoveBody, createGroupRekeyBody, createGroupGenesisBody, createGroupAddBody, QSP1Suite,
 } from '../src/index.js';
 import type { GatewaySessionState, Identity, Conversation, OuterEnvelope } from '../src/index.js';
 
@@ -68,6 +68,50 @@ describe('portable authenticated gateway session', () => {
     const result = receiveConversationEvent(createMessage(f.bob, f.conversation, 'text', encode('Hello')), f.conversation, f.alice, state);
     expect(result.state.participants[base64UrlEncode(f.bob.keyID)]).toBe(base64UrlEncode(f.bob.publicKey));
     expect(result.conversation.participants.map(hex).sort()).toEqual(f.conversation.participants.map(hex).sort());
+  });
+
+  it('requires administrator authority and exact recipients before group mutation', () => {
+    const f = setup(), outsider = generateIdentity();
+    f.deliver(f.alice, 'group_genesis', createGroupGenesisBody('Test', '', f.alice, [f.bob.publicKey]));
+    const before = JSON.stringify(f.state);
+    expect(() => f.deliver(f.bob, 'group_remove', createGroupRemoveBody([f.alice.keyID]))).toThrow('administrator');
+    expect(() => f.deliver(f.bob, 'group_add', createGroupAddBody(f.bob, [outsider.publicKey]))).toThrow('administrator');
+    const incomplete = createGroupRekeyBody(new QSP1Suite().generateGroupKey(), 1, [{ kid: f.bob.keyID, publicKey: f.bob.publicKey }], f.conversation.id);
+    expect(() => f.deliver(f.bob, 'group_rekey', incomplete)).toThrow('recipients');
+    expect(JSON.stringify(f.state)).toBe(before);
+    f.deliver(f.alice, 'group_add', createGroupAddBody(f.alice, [outsider.publicKey]));
+    expect(f.state.needsRekey).toBe(true);
+    const all = [f.alice, f.bob, outsider].map(i => ({ kid: i.keyID, publicKey: i.publicKey }));
+    f.deliver(f.alice, 'group_rekey', createGroupRekeyBody(new QSP1Suite().generateGroupKey(), 1, all, f.conversation.id));
+    expect(f.state.needsRekey).toBe(false);
+    expect(f.conversation.currentEpoch).toBe(1);
+  });
+
+  it('rejects ordinary group controls in direct conversations', () => {
+    const f = setup(), direct = { ...f.conversation, type: 'direct' as const };
+    const state = createGatewaySession(direct, [f.alice.publicKey, f.bob.publicKey]);
+    const envelope = createMessage(f.bob, direct, 'group_remove', createGroupRemoveBody([f.alice.keyID]));
+    expect(() => receiveConversationEvent(envelope, direct, f.alice, state)).toThrow('group conversation');
+    expect(state.removed).toBe(false);
+  });
+
+  it('rejects a delayed acceptance after a membership transition without changing state', () => {
+    const f = setup(), newcomer = generateIdentity();
+    f.deliver(f.alice, 'group_genesis', createGroupGenesisBody('Test', '', f.alice, [f.bob.publicKey]));
+    f.receive(f.invitationEnvelope);
+    f.deliver(f.alice, 'group_add', createGroupAddBody(f.alice, [newcomer.publicKey]));
+    const before = JSON.stringify(f.state);
+    expect(() => f.deliver(f.gateway, 'gate.accept', f.acceptance)).toThrow('stale');
+    expect(JSON.stringify(f.state)).toBe(before);
+  });
+
+  it('retains the creator and rejects duplicate gateway membership updates', () => {
+    const f = setup(); f.accept();
+    const before = JSON.stringify(f.state);
+    expect(() => f.deliver(f.gateway, 'group_remove', createGroupRemoveBody([f.alice.keyID]))).toThrow('Invalid member removal');
+    expect(() => f.deliver(f.gateway, 'group_remove', createGroupRemoveBody([f.bob.keyID, f.bob.keyID]))).toThrow('Invalid member removal');
+    expect(() => f.deliver(f.gateway, 'group_add', createGroupAddBody(f.gateway, [f.bob.publicKey]))).toThrow('Duplicate');
+    expect(JSON.stringify(f.state)).toBe(before);
   });
 
   it('verifies request/vote signatures and retains relay-order votes across a saved checkpoint', () => {

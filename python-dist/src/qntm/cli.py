@@ -4,6 +4,7 @@ Matches the Go CLI's JSON output format for compatibility.
 """
 
 import argparse
+import hashlib
 import http.client
 import httpx
 import base64
@@ -61,6 +62,7 @@ from .message import (
     serialize_envelope,
 )
 from .receive import create_receive_event
+from .charter_info import local_charter_info
 from .announce import (
     create_channel,
     derive_announce_keys,
@@ -481,8 +483,14 @@ def _participant_kids_from_conversation(conv_record) -> list[str]:
 
 def _load_known_participant_public_keys(config_dir, conv_record, identity=None) -> dict[str, bytes]:
     """Load participant public keys known locally for promotion payload construction."""
+    from .group_session import state_for_record
+
     conv_id_hex = conv_record["id"]
     known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+    # Signed group controls already bind every member to a public key. A
+    # founding member need not send chat before the creator invites a gateway.
+    for member in state_for_record(conv_record).members.values():
+        known_pks[member["key_id"].hex().lower()] = member["public_key"]
     if identity is not None:
         known_pks[identity["keyID"].hex().lower()] = identity["publicKey"]
 
@@ -597,6 +605,12 @@ def _conv_to_crypto(conv_record):
             bytes.fromhex(p) for p in conv_record.get("participants", [])
         ],
         "currentEpoch": conv_record.get("current_epoch", 0),
+        "sendBlocked": conv_record.get("type") == "group" and any(
+            conv_record.get(key) for key in ("needs_rekey", "pending_control", "excluded", "recovery_required")
+        ),
+        "controlsBlocked": conv_record.get("type") == "group" and any(
+            conv_record.get(key) for key in ("excluded", "recovery_required")
+        ),
     }
 
 
@@ -630,13 +644,15 @@ class SendDeliveryUnknown(Exception):
         )
 
 
-def _http_send(dropbox_url, conv_id_hex, envelope_bytes):
+def _http_send(dropbox_url, conv_id_hex, envelope_bytes, *, announce_sig=None):
     """Send envelope to remote dropbox via POST /v1/send."""
     envelope_b64 = base64.b64encode(envelope_bytes).decode()
     payload_obj = {
         "conv_id": conv_id_hex,
         "envelope_b64": envelope_b64,
     }
+    if announce_sig is not None:
+        payload_obj["announce_sig"] = announce_sig
     try:
         payload_obj["msg_id"] = bytes(deserialize_envelope(envelope_bytes)["msg_id"]).hex()
     except Exception:
@@ -791,6 +807,9 @@ def _error(message, *, code=None, data=None):
 def cmd_identity_generate(args):
     config_dir = _get_config_dir(args)
     _ensure_config_dir(config_dir)
+
+    if os.path.exists(_identity_path(config_dir)):
+        _error("identity already exists; use a new config directory to generate another identity")
 
     identity = generate_identity()
     _save_identity(config_dir, identity)
@@ -1134,6 +1153,11 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
                     continue
                 if gateway.get("invitationId") and gateway["invitationId"] != acceptance["invitation_id"]:
                     continue
+                from .gateway_handshake import gateway_access
+                invitation_body = json.loads(invitation["unsafe_body"])
+                if (envelope["created_ts"] > invitation_body["expires_at"]
+                        or invitation_body["keys_hash"] != hashlib.sha256(marshal_canonical(gateway_access(_conv_to_crypto(conv_record)))).hexdigest()):
+                    continue
                 from .group_gateway import accept_gateway_membership
                 membership_authority = gateway.get("membership_authority") if gateway.get("invitationId") == acceptance["invitation_id"] else None
                 if membership_authority is None:
@@ -1204,6 +1228,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             "sender": sender_kid_hex[:3],
             "body_type": body_type,
             "verified": msg.get("verified", False),
+            "charter_info": local_charter_info(msg),
         }
         if type(raw_msg.get("seq")) is int and raw_msg["seq"] > 0:
             entry["sequence"] = raw_msg["seq"]
@@ -1232,6 +1257,8 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
             "body_type": body_type,
             "created_ts": envelope["created_ts"],
             "verified": entry["verified"],
+            "charter_info": entry["charter_info"],
+            "envelope_sha256": hashlib.sha256(envelope_bytes).hexdigest(),
         }
         if body_type in {"gov.propose", "gov.approve", "gov.disapprove"}:
             hist_entry["gateway_envelope_b64"] = raw_msg["envelope_b64"]
@@ -1606,6 +1633,15 @@ def _announce_store_path(config_dir):
     return os.path.join(config_dir, "announce_channels.json")
 
 
+def _http_announce(dropbox_url, action, payload):
+    req = urllib.request.Request(
+        f"{dropbox_url}/v1/announce/{action}", data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30, context=_ssl_context) as resp:
+        return json.loads(resp.read())
+
+
 def cmd_announce_create(args):
     """Create a new announce channel."""
     config_dir = _get_config_dir(args)
@@ -1635,8 +1671,8 @@ def cmd_announce_create(args):
         "participants": [],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
-        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
-        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
+        "inviter_key_id": identity["keyID"].hex(),
+        "inviter_public_key": identity["publicKey"].hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -1653,6 +1689,19 @@ def cmd_announce_create(args):
         "is_owner": True,
     }
     save_announce_store(config_dir, store)
+
+    # Persist ownership keys before contacting the relay so an ambiguous
+    # registration response cannot strand a channel without its master key.
+    posting_pk = base64url_encode(bytes.fromhex(channel["posting_public"]))
+    try:
+        _http_announce(_get_dropbox_url(args), "register", {
+            "name": channel_name, "conv_id": conv_id_hex,
+            "master_pk": base64url_encode(bytes.fromhex(channel["master_public"])),
+            "posting_pk": posting_pk,
+            "sig": sign_register(bytes.fromhex(channel["master_private"]), channel_name, conv_id_hex, posting_pk),
+        })
+    except Exception as e:
+        _error(f"announce registration failed; ownership keys saved for {conv_id_hex}: {e}")
 
     _output("announce.create", {
         "conversation_id": conv_id_hex,
@@ -1702,7 +1751,7 @@ def cmd_announce_post(args):
     # Send to dropbox
     dropbox_url = _get_dropbox_url(args)
     try:
-        result = _http_send(dropbox_url, conv_id_hex, envelope_bytes)
+        result = _http_send(dropbox_url, conv_id_hex, envelope_bytes, announce_sig=announce_sig)
     except Exception as e:
         _error(f"failed to send announce message: {e}")
 
@@ -1783,8 +1832,6 @@ def cmd_announce_subscribe(args):
         "participants": [],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
-        "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
-        "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
     conversations.append(conv_record)
     _save_conversations(config_dir, conversations)
@@ -1835,6 +1882,16 @@ def cmd_announce_delete(args):
         _error(str(e))
 
     conv_id_hex = entry["conv_id"]
+
+    if entry.get("is_owner"):
+        try:
+            _http_announce(_get_dropbox_url(args), "delete", {
+                "conv_id": conv_id_hex,
+                "master_pk": base64url_encode(bytes.fromhex(entry["master_public"])),
+                "sig": sign_delete(bytes.fromhex(entry["master_private"]), conv_id_hex),
+            })
+        except Exception as e:
+            _error(f"announce deletion failed; local ownership keys retained: {e}")
 
     # Remove from announce store
     if conv_id_hex in store["channels"]:
@@ -3281,6 +3338,8 @@ claude code channel:
             cmd_group_remove(args)
         elif args.group_command == "rekey":
             cmd_group_rekey(args)
+        elif args.group_command == "retry":
+            cmd_group_retry(args)
         elif args.group_command == "list":
             cmd_group_list(args)
         else:

@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   generateIdentity, createInvite, inviteToToken, createConversation, deriveConversationKeys,
   createMessage, serializeEnvelope, deserializeEnvelope, decryptMessage, serializeIdentity,
-  base64UrlEncode, DropboxClient, createGroupRekeyBody, createGroupRemoveBody, QSP1Suite,
+  base64UrlEncode, DropboxClient, createGroupGenesisBody, createGroupRekeyBody, createGroupRemoveBody, QSP1Suite,
   createGatewaySession, createGatewayInviteBody, gatewayInvitationHash, receiveConversationEvent,
   sessionGatewayContext, createGateRequestBody, createGatewayProposalBody, addParticipant,
 } from '@corpollc/qntm';
@@ -215,8 +215,10 @@ try {
   await toolJourney('gov-approve', 'gov-approve', { id: peerProposal.proposal_id });
   await toolJourney('gov-disapprove', 'gov-disapprove', { id: peerProposal.proposal_id });
   await sendAndExpect(conversations[0].conversation, 'direct-wire-smoke');
-  await sendAndExpect(conversations[1].conversation, 'group-wire-smoke');
   const group = conversations[1].conversation;
+  await client.postMessage(group.id, serializeEnvelope(createMessage(peer, group, 'group_genesis', createGroupGenesisBody('Host group', '', peer, [identity.publicKey]))));
+  await waitFor(async () => (await checkpoint(group))?.session.groupControl?.roster, 'authenticated group genesis in host checkpoint');
+  await sendAndExpect(group, 'group-wire-smoke');
   const root = new Uint8Array(32).fill(42);
   const rekey = serializeEnvelope(createMessage(peer, group, 'group_rekey', createGroupRekeyBody(root, 1,
     [peer, identity].map(value => ({ kid: value.keyID, publicKey: value.publicKey })), group.id)));

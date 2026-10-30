@@ -40,6 +40,10 @@ export function deserializeInvite(data: Uint8Array): InvitePayload {
 }
 
 export function validateInvite(invite: InvitePayload): void {
+  for (const field of ['conv_id', 'inviter_ik_pk', 'invite_salt', 'invite_secret'] as const) {
+    if (!(invite[field] instanceof Uint8Array)) throw new Error(`invalid invite byte field: ${field}`);
+  }
+  if (invite.conv_id.length !== 16) throw new Error('invalid conversation ID length');
   if (invite.v !== PROTOCOL_VERSION) {
     throw new Error(`unsupported protocol version: ${invite.v}`);
   }

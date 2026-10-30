@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateIdentity, createInvite, createConversation, deriveConversationKeys, createMessage,
@@ -88,7 +88,10 @@ it('decrypts a real Python-produced parent and multi-part file exactly',()=>{
   const f=JSON.parse(readFileSync(pythonFixture,'utf8'));
   const invite=inviteFromURL(f.parent_invite_token);const parent=createConversation(invite,deriveConversationKeys(invite));
   const envelope=deserializeEnvelope(Uint8Array.from(Buffer.from(f.parent_envelope_b64,'base64')));
-  const verified=decryptMessage(envelope,parent);
-  const data=assembleAttachment(verified.inner.body,{conversationId:envelope.conv_id,epoch:envelope.conv_epoch,senderPublicKey:verified.inner.sender_ik_pk},f.parts_b64.map((p:string)=>Uint8Array.from(Buffer.from(p,'base64'))));
-  expect(data).toEqual(Uint8Array.from(Buffer.from(f.plaintext_b64,'base64')));
+  const clock=vi.spyOn(Date,'now').mockReturnValue(envelope.created_ts*1000);
+  try {
+    const verified=decryptMessage(envelope,parent);
+    const data=assembleAttachment(verified.inner.body,{conversationId:envelope.conv_id,epoch:envelope.conv_epoch,senderPublicKey:verified.inner.sender_ik_pk},f.parts_b64.map((p:string)=>Uint8Array.from(Buffer.from(p,'base64'))));
+    expect(data).toEqual(Uint8Array.from(Buffer.from(f.plaintext_b64,'base64')));
+  } finally {clock.mockRestore();}
 });

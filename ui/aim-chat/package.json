@@ -1,7 +1,7 @@
 {
   "name": "qntm-aim-chat-ui",
   "private": true,
-  "version": "0.6.3",
+  "version": "0.9.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,7 +25,7 @@
     "@types/react-dom": "^18.3.5",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.4.1",
-    "happy-dom": "^20.8.4",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
     "vitest": "^4.1.0",

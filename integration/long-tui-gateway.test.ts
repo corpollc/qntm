@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createLongHarness, waitForCliHistory, waitForUiStoredHistory, type LongHarness } from './src/runtime.js';
 import { TuiAgent } from './src/tui-agent.js';
+import { createAuthenticatedTestGroup } from './long-helpers.js';
 import { LONG_TIMEOUT, historyMatchesRequest, historyMatchesProposal, requireUi, printDiagnostics } from './long-helpers.js';
 
 describe.sequential('real terminal gateway actions with Python, TypeScript and browser peers', () => {
@@ -16,14 +17,14 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
   beforeAll(async () => {
     h = await createLongHarness({ withUi: true });
     await h.alice.run(['identity', 'generate']); await h.charlie.run(['identity', 'generate']);
-    const created = await h.alice.run(['group', 'create', 'Terminal gateway acceptance']);
-    convId = String(created.data!.conversation_id); const token = String(created.data!.invite_token);
+    tui = new TuiAgent(join(h.rootDir, 'terminal'), h.relayUrl);
+    await tui.start();
+    const created = await createAuthenticatedTestGroup(h, 'Terminal gateway acceptance', new Uint8Array(Buffer.from(tui.readIdentity().public_key, 'hex')));
+    convId = created.convId; const token = created.token;
     await requireUi(h).joinConversation(token, 'Terminal gateway acceptance');
     await requireUi(h).sendText('hello from browser');
     await h.charlie.run(['group', 'join', '--', token]);
     await h.charlie.run(['send', convId, 'hello from typescript']);
-    tui = new TuiAgent(join(h.rootDir, 'terminal'), h.relayUrl);
-    await tui.start();
     const joined = await tui.command(`/join ${token}`); await tui.waitFor('Joined conversation', joined);
     await tui.command('hello from terminal');
     await waitForCliHistory(h.alice, convId, e => e.unsafe_body === 'hello from terminal', 'terminal participant discovery');
@@ -33,12 +34,14 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
     if (h && tui) { mkdirSync(h.artifactDir, { recursive: true }); writeFileSync(join(h.artifactDir, 'terminal.ansi'), tui.output); }
     await tui?.stop(); await h?.stop();
   }, LONG_TIMEOUT);
+  afterEach(async ({ task }) => {
+    if (task.result?.state === 'fail' && h && convId) await printDiagnostics(h, convId);
+  });
 
-  it('invites the gateway from a real PTY and waits for its signed acceptance on all four clients', async () => {
+  it('verifies creator-delegated gateway acceptance in the real PTY and all four clients', async () => {
     try {
-    await expect.poll(() => Object.keys(tui.conversation(convId)?.session?.participants ?? {}).length, { timeout: 20000 }).toBe(4);
-      const shown = await tui.review(`/gate invite ${h.gatewayUrl} 2`);
-      expect(shown).toContain('receive the current conversation keys');
+      await expect.poll(() => Object.keys(tui.conversation(convId)?.session?.participants ?? {}).length, { timeout: 20000 }).toBe(4);
+      await h.bootstrapGateway(convId, h.alice);
       await receiveTui('gate.accept');
       expect(tui.conversation(convId).session.gateway.accepted).toBe(true);
       await waitForCliHistory(h.alice, convId, e => e.body_type === 'gate.accept', 'terminal gateway accepted by Python');
@@ -106,6 +109,8 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
     await h.alice.run(['send', convId, 'after terminal restart and rekey']);
     await expect.poll(() => tui.history(convId).some(m => m.text === 'after terminal restart and rekey'), { timeout: 20000 }).toBe(true);
     const removeTerminal = await h.alice.run(['gov', 'propose-remove', '-c', convId, '--required-approvals', '2', '--', tui.readIdentity().key_id]);
+    expect(removeTerminal.ok).toBe(true);
+    await waitForUiStoredHistory(requireUi(h), convId, e => e.bodyType === 'gov.propose' && String(e.text).includes(String(removeTerminal.data!.proposal_id)), 'browser receives terminal removal proposal');
     await requireUi(h).approveLatestProposal();
     await waitForCliHistory(h.alice, convId, historyMatchesProposal('gov.applied', String(removeTerminal.data!.proposal_id)), 'terminal removal');
     await expect.poll(() => tui.conversation(convId).session.removed, { timeout: 20000 }).toBe(true);

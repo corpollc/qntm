@@ -48,6 +48,11 @@ def deserialize_invite(data: bytes) -> dict:
 
 
 def validate_invite(invite: dict) -> None:
+    for field in ('conv_id', 'inviter_ik_pk', 'invite_salt', 'invite_secret'):
+        if not isinstance(invite.get(field), (bytes, bytearray, memoryview)):
+            raise ValueError(f"invalid invite byte field: {field}")
+    if len(invite['conv_id']) != 16:
+        raise ValueError("invalid conversation ID length")
     if invite["v"] != PROTOCOL_VERSION:
         raise ValueError(f"unsupported protocol version: {invite['v']}")
     if invite["suite"] != DEFAULT_SUITE:

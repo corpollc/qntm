@@ -974,3 +974,17 @@ describe('Base64URL Encoding', () => {
     expect(decoded).toEqual(new Uint8Array(0));
   });
 });
+
+
+describe('invite binary field validation', () => {
+  it.each(['conv_id', 'inviter_ik_pk', 'invite_salt', 'invite_secret'])('rejects non-byte %s', field => {
+    const invite = createInvite(generateIdentity(), 'group');
+    for (const value of [16, 'a'.repeat(32), Array(32).fill(0), null]) {
+      expect(() => validateInvite({ ...invite, [field]: value } as never)).toThrow();
+    }
+  });
+  it('requires a 16-byte conversation ID', () => {
+    const invite = createInvite(generateIdentity(), 'group');
+    expect(() => validateInvite({ ...invite, conv_id: new Uint8Array(32) })).toThrow('conversation ID');
+  });
+});
