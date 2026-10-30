@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.error
+from urllib.parse import unquote
+from ._identity_http import read_identity_json
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -104,8 +106,12 @@ def resolve_did_web(did_uri: str, *, timeout: float = 10.0) -> DIDDocument:
 
     # Parse the domain and path
     parts = did_uri[8:].split(":")
-    domain = parts[0].replace("%3A", ":")  # percent-decode port
+    domain = unquote(parts[0])  # percent-decode port
     path_parts = parts[1:] if len(parts) > 1 else []
+    if not domain or any(c in domain for c in '/\\@?#') or any(c.isspace() or ord(c) < 32 for c in domain):
+        raise DIDResolutionError("Invalid did:web authority")
+    if any(not p or unquote(p) in ('.', '..') or any(c in unquote(p) for c in '/\\?#') for p in path_parts):
+        raise DIDResolutionError("Invalid did:web path")
 
     if path_parts:
         url = f"https://{domain}/{'/'.join(path_parts)}/did.json"
@@ -116,8 +122,9 @@ def resolve_did_web(did_uri: str, *, timeout: float = 10.0) -> DIDDocument:
         req = urllib.request.Request(url, method="GET")
         req.add_header("Accept", "application/did+json, application/json")
         req.add_header("User-Agent", "qntm-did-resolver/1.0")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+        data = read_identity_json(req, timeout=timeout)
+        if data.get("id") != did_uri:
+            raise ValueError("DID document identifier mismatch")
     except urllib.error.HTTPError as e:
         raise DIDResolutionError(
             f"HTTP {e.code} resolving {did_uri} at {url}"
@@ -126,6 +133,8 @@ def resolve_did_web(did_uri: str, *, timeout: float = 10.0) -> DIDDocument:
         raise DIDResolutionError(
             f"Cannot reach {url}: {e.reason}"
         ) from e
+    except (ValueError, OSError) as e:
+        raise DIDResolutionError(f"Invalid DID document: {e}") from e
 
     return _parse_did_document(data)
 
@@ -219,7 +228,7 @@ def resolve_did_to_ed25519(did_uri: str, *, timeout: float = 10.0) -> bytes:
             return vm["_raw_public_key"]
 
     key = doc.ed25519_public_key()
-    if key is None:
+    if key is None or len(key) != 32:
         raise DIDResolutionError(
             f"No Ed25519 public key found in DID Document for {did_uri}"
         )

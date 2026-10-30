@@ -150,6 +150,7 @@ async function dispatchInboundMessage(params: {
     }
     const latest = params.store.load(params.binding);
     if (latest.session.removed) throw new Error("qntm identity has been removed from this conversation");
+    if (latest.session.needsRekey) throw new Error("Complete the pending group rekey before sending");
     await sendQntmText({
       client: params.client,
       identity: params.account.identity!,

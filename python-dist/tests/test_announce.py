@@ -1,5 +1,6 @@
 """Tests for announce channel creation, posting, subscribing, and persistence."""
 
+import hashlib
 import json
 import os
 import tempfile
@@ -106,7 +107,7 @@ def test_sign_envelope():
     assert len(sig_bytes) == 64
 
     # Verify the signature
-    assert suite.verify(keys["posting_public"], envelope_b64.encode(), sig_bytes)
+    assert suite.verify(keys["posting_public"], hashlib.sha256(envelope_b64.encode()).digest(), sig_bytes)
 
 
 # --- Register signature ---
@@ -304,3 +305,33 @@ def test_delete_channel_from_store():
 
     del store["channels"][cid]
     assert cid not in store["channels"]
+
+
+def test_announce_cli_lifecycle_transports_owner_signatures(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from qntm import cli
+    from qntm.identity import base64url_decode
+    identity = generate_identity()
+    cli._save_identity(str(tmp_path), identity)
+    actions = []
+    monkeypatch.setattr(cli, '_http_announce', lambda url, action, payload: actions.append((action, payload)) or {})
+    monkeypatch.setattr(cli, '_output', lambda *a: None)
+    args = SimpleNamespace(config_dir=str(tmp_path), dropbox_url='https://relay.example', name='News')
+    cli.cmd_announce_create(args)
+    action, registration = actions[-1]
+    assert action == 'register'
+    suite = QSP1Suite()
+    prehash = hashlib.sha256(f"qntm-announce-v1|register|News|{registration['conv_id']}|{registration['posting_pk']}".encode()).digest()
+    assert suite.verify(base64url_decode(registration['master_pk']), prehash, bytes.fromhex(registration['sig']))
+    def send(url, cid, wire, *, announce_sig):
+        import base64
+        assert suite.verify(base64url_decode(registration['posting_pk']), hashlib.sha256(base64.b64encode(wire)).digest(), bytes.fromhex(announce_sig))
+        return {'seq': 1}
+    monkeypatch.setattr(cli, '_http_send', send)
+    args.channel = registration['conv_id']; args.message = 'Hello'
+    cli.cmd_announce_post(args)
+    cli.cmd_announce_delete(args)
+    action, deletion = actions[-1]
+    assert action == 'delete'
+    assert suite.verify(base64url_decode(deletion['master_pk']), hashlib.sha256(f"qntm-announce-v1|delete|{args.channel}".encode()).digest(), bytes.fromhex(deletion['sig']))
+    assert not load_announce_store(str(tmp_path))['channels']

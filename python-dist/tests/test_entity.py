@@ -114,6 +114,7 @@ def test_verify_sender_entity_full_chain(mock_api):
         did="did:test:abc",
         entity_id="test-entity",
         resolve_did_fn=mock_resolve,
+        verify_binding_fn=lambda did, key, entity: entity.entity_id == "test-entity",
         api_base=mock_api,
     )
     assert verified is True
@@ -134,6 +135,7 @@ def test_verify_sender_entity_key_mismatch(mock_api):
         did="did:test:wrong",
         entity_id="test-entity",
         resolve_did_fn=mock_resolve,
+        verify_binding_fn=lambda did, key, entity: entity.entity_id == "test-entity",
         api_base=mock_api,
     )
     assert verified is False
@@ -141,7 +143,7 @@ def test_verify_sender_entity_key_mismatch(mock_api):
 
 
 def test_verify_sender_entity_no_did(mock_api):
-    """No DID → entity-only verification."""
+    """No DID cannot verify a sender-to-entity binding."""
     identity = generate_identity()
 
     verified, entity = verify_sender_entity(
@@ -150,8 +152,8 @@ def test_verify_sender_entity_no_did(mock_api):
         entity_id="test-entity",
         api_base=mock_api,
     )
-    assert verified is True
-    assert entity is not None
+    assert verified is False
+    assert entity is None
 
 
 def test_verify_sender_entity_suspended(mock_api):
@@ -160,10 +162,29 @@ def test_verify_sender_entity_suspended(mock_api):
 
     verified, entity = verify_sender_entity(
         sender_key_id=identity["keyID"],
-        did=None,
+        did="did:test:suspended",
+        resolve_did_fn=lambda did: identity["publicKey"],
+        verify_binding_fn=lambda did, key, entity: True,
         entity_id="suspended-entity",
         api_base=mock_api,
     )
     assert verified is False
-    assert entity is not None
-    assert entity.status == "suspended"
+    assert entity is None
+
+
+def test_sender_entity_requires_trusted_binding(mock_api):
+    identity = generate_identity()
+    args = dict(sender_key_id=identity["keyID"], did="did:test:abc", entity_id="test-entity",
+                resolve_did_fn=lambda did: identity["publicKey"], api_base=mock_api)
+    assert verify_sender_entity(**args) == (False, None)
+    verified, entity = verify_sender_entity(**args, verify_binding_fn=lambda did, key, entity: False)
+    assert verified is False
+    assert entity is None
+
+
+def test_entity_response_identity_and_bounds(monkeypatch):
+    from qntm import entity
+    for response in [{**TEST_ENTITY, "entity_id": "different"}, {"entity_id": "test-entity"}]:
+        monkeypatch.setattr(entity, "read_identity_json", lambda *a, **kw: response)
+        with pytest.raises(EntityVerificationError):
+            verify_entity("test-entity")

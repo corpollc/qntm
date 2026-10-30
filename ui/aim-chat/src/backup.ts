@@ -1,4 +1,4 @@
-import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity } from '@corpollc/qntm'
+import { base64UrlDecode, base64UrlEncode, validateIdentity, validateGatewayIdentity, GroupState, parseGroupGenesisBody } from '@corpollc/qntm'
 import type { StoreData } from './store'
 
 export const MAX_BACKUP_BYTES = 10 * 1024 * 1024
@@ -98,7 +98,7 @@ export function validateBackup(json: string): StoreData {
     const conversations = list(data.conversations[pid] ?? [], 'conversations', 1000)
     unique(conversations.map(c => hex(object(c, 'conversation').id, 16, 'conversation ID')), 'duplicate conversation IDs')
     for (const conv of conversations) {
-      object(conv, 'conversation fields', ['id', 'name', 'type', 'keys', 'participants', 'participantPublicKeys', 'gateway', 'createdAt', 'currentEpoch', 'inviteToken'])
+      object(conv, 'conversation fields', ['id', 'name', 'type', 'keys', 'participants', 'participantPublicKeys', 'gateway', 'createdAt', 'currentEpoch', 'inviteToken', 'groupControl'])
       text(conv.name, 'conversation name', 1024, true)
       if (!['direct', 'group', 'announce'].includes(conv.type)) fail('conversation type')
       object(conv.keys, 'conversation keys', ['root', 'aeadKey', 'nonceKey'])
@@ -111,6 +111,16 @@ export function validateBackup(json: string): StoreData {
       }
       date(conv.createdAt, 'conversation creation time')
       integer(conv.currentEpoch, 'conversation epoch')
+      if (conv.groupControl !== undefined) {
+        const control = object(conv.groupControl, 'group control', ['creator', 'roster', 'needsRekey', 'removed'])
+        b64(control.creator, 'group creator', 16)
+        if (typeof control.needsRekey !== 'boolean' || typeof control.removed !== 'boolean') fail('group control flags')
+        if (control.roster !== undefined) {
+          const roster = new GroupState()
+          roster.applyGenesis(parseGroupGenesisBody(b64(control.roster, 'group roster')))
+          if (conv.type === 'group' && (!roster.creatorKeyID() || base64UrlEncode(roster.creatorKeyID()!) !== control.creator)) fail('group creator binding')
+        }
+      }
       if (conv.inviteToken !== undefined) text(conv.inviteToken, 'invite token', 65536)
       if (conv.gateway != null) validateGateway(conv.gateway, conv)
     }
@@ -150,7 +160,8 @@ export function validateBackup(json: string): StoreData {
 }
 
 function validateGateway(value: unknown, conv: Obj) {
-  const gw = object(value, 'gateway fields', ['status', 'invitationId', 'floor', 'pending', 'publicKey', 'keyId'])
+  const gw = object(value, 'gateway fields', ['status', 'invitationId', 'floor', 'pending', 'publicKey', 'keyId', 'membershipAuthority'])
+  if (gw.membershipAuthority !== undefined && typeof gw.membershipAuthority !== 'boolean') fail('gateway membership authority')
   if (!validateGatewayIdentity(gw.publicKey, gw.keyId)) fail('gateway identity')
   if (gw.status !== undefined && !['pending', 'active'].includes(gw.status)) fail('gateway status')
   if (gw.floor !== undefined) integer(gw.floor, 'gateway floor', 1)

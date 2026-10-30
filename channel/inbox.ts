@@ -18,7 +18,7 @@ export function saveJson(path: string, value: unknown): void {
   try { fsyncSync(directory); } finally { closeSync(directory); }
 }
 
-interface State { version: 1; cursor: number; pending: ReceiveEvent[] }
+interface State { version: 1; cursor: number; pending: ReceiveEvent[]; received_event_ids?: string[] }
 
 /** One bridge owns this journal. CLI cursors and seen state never acknowledge it. */
 export class ChannelInbox {
@@ -32,6 +32,10 @@ export class ChannelInbox {
     if (this.state.version !== 1 || !Number.isSafeInteger(this.state.cursor) || this.state.cursor < 0 || !Array.isArray(this.state.pending)) {
       throw new Error('Invalid channel inbox; refusing to discard pending notifications');
     }
+    this.state.received_event_ids ??= this.state.pending.map(event => event.event_id);
+    if (!Array.isArray(this.state.received_event_ids) || this.state.received_event_ids.some(id => typeof id !== 'string')) {
+      throw new Error('Invalid channel delivery history');
+    }
     saveJson(path, this.state);
   }
 
@@ -41,8 +45,12 @@ export class ChannelInbox {
   capture(sequence: number, event?: ReceiveEvent): void {
     if (sequence <= this.state.cursor) return;
     const pending = [...this.state.pending];
-    if (event && !pending.some(item => item.event_id === event.event_id)) pending.push(event);
-    const next: State = { version: 1, cursor: sequence, pending };
+    const received = [...this.state.received_event_ids!];
+    if (event && !received.includes(event.event_id)) {
+      pending.push(event);
+      received.push(event.event_id);
+    }
+    const next: State = { version: 1, cursor: sequence, pending, received_event_ids: received };
     saveJson(this.path, next);
     this.state = next;
   }

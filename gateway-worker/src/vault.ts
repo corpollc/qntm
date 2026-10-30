@@ -11,6 +11,7 @@ export async function processSecret(
   gatewayPrivateKey: Uint8Array,
   senderPublicKey: Uint8Array,
   vaultKey: CryptoKey,
+  createdAt = Date.now(),
 ): Promise<VaultEntry> {
   // Decrypt the NaCl box (X25519-XSalsa20-Poly1305)
   const encryptedBlob = base64UrlDecode(msg.encrypted_blob);
@@ -35,7 +36,7 @@ export async function processSecret(
   // Compute expiry
   let expiresAt = '';
   if (msg.ttl && msg.ttl > 0) {
-    expiresAt = new Date(Date.now() + msg.ttl * 1000).toISOString();
+    expiresAt = new Date(createdAt + msg.ttl * 1000).toISOString();
   }
 
   return {
@@ -75,7 +76,8 @@ export async function decryptVaultEntry(
  */
 export function isExpired(entry: VaultEntry, now: number = Date.now()): boolean {
   if (!entry.expires_at) return false;
-  return now > new Date(entry.expires_at).getTime();
+  const expiry = Date.parse(entry.expires_at);
+  return !Number.isFinite(expiry) || now >= expiry;
 }
 
 /**

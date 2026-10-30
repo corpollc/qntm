@@ -1,7 +1,7 @@
 import { createInvitation, acceptInvitation, finishAcceptance } from './handshake.js';
 import { DurableObject } from 'cloudflare:workers';
 import {
-  keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
+  keyIDFromPublicKey, base64UrlEncode, base64UrlDecode as decodeBase64Url,
   DropboxClient, deserializeEnvelope, decryptMessage,
   createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
@@ -20,12 +20,58 @@ import { scanRequestApprovals, findExecutableRequests } from './scan.js';
 import { processSecret, importVaultKey, isExpired } from './vault.js';
 import { executeRequest } from './execute.js';
 
+class GatewayValidationError extends Error {}
+function base64UrlDecode(value: string): Uint8Array {
+  try { return decodeBase64Url(value); } catch { throw new GatewayValidationError('Invalid base64url field'); }
+}
+function legacyActionKey(type: string, signer: string, body: string): string {
+  return `legacy_action:${bytesToHex(groupSuite.hash(new TextEncoder().encode(JSON.stringify([type, signer, body]))))}`;
+}
+
 const groupSuite = new QSP1Suite();
+
+function requirePositiveInteger(value: unknown, field: string): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new GatewayValidationError(`${field} must be a positive safe integer`);
+  }
+}
+
+function validateThresholdRules(rules: unknown): void {
+  if (!Array.isArray(rules)) throw new GatewayValidationError('threshold rules must be an array');
+  for (const rule of rules) {
+    if (!rule || typeof rule !== 'object' ||
+        !['service', 'endpoint', 'verb'].every(key => typeof rule[key] === 'string')) {
+      throw new GatewayValidationError('invalid threshold rule');
+    }
+    requirePositiveInteger(rule.m, 'rule threshold');
+  }
+}
+
+function validateGovernanceNumbers(msg: GovProposeMessage): void {
+  if (typeof msg.proposal_id !== 'string' || !msg.proposal_id || msg.proposal_id.length > 256) throw new GatewayValidationError('Invalid proposal ID');
+  requirePositiveInteger(msg.required_approvals, 'gov.propose required_approvals');
+  if (typeof msg.expires_at !== 'string' || !Number.isFinite(Date.parse(msg.expires_at))) {
+    throw new GatewayValidationError('gov.propose rejected: invalid expiry');
+  }
+  if (!Array.isArray(msg.eligible_signer_kids) ||
+      msg.eligible_signer_kids.some(kid => typeof kid !== 'string') ||
+      new Set(msg.eligible_signer_kids).size !== msg.eligible_signer_kids.length) {
+    throw new GatewayValidationError('gov.propose rejected: invalid eligible signer roster');
+  }
+  if (msg.required_approvals > msg.eligible_signer_kids.length) {
+    throw new GatewayValidationError('gov.propose rejected: required_approvals exceeds eligible_signer_kids roster size');
+  }
+  if (msg.proposal_type === 'floor_change') {
+    requirePositiveInteger(msg.proposed_floor, 'proposed floor');
+  } else if (msg.proposal_type === 'rules_change') {
+    validateThresholdRules(msg.proposed_rules);
+  }
+}
 
 function validateProposedMemberKeys(msg: GovProposeMessage): void {
   if (msg.proposal_type !== 'member_add') return;
   const members = msg.proposed_members;
-  if (!Array.isArray(members) || members.length === 0) throw new Error('gov.propose rejected: invalid proposed members');
+  if (!Array.isArray(members) || members.length === 0) throw new GatewayValidationError('gov.propose rejected: invalid proposed members');
   const seen = new Set<string>();
   for (const member of members) {
     let valid = false;
@@ -34,7 +80,7 @@ function validateProposedMemberKeys(msg: GovProposeMessage): void {
       valid = isValidEd25519PublicKey(key) && base64UrlEncode(key) === member.public_key &&
         base64UrlEncode(keyIDFromPublicKey(key)) === member.kid && !seen.has(member.kid);
     } catch { /* Report a fixed error without including untrusted key input. */ }
-    if (!valid) throw new Error('gov.propose rejected: invalid proposed member key');
+    if (!valid) throw new GatewayValidationError('gov.propose rejected: invalid proposed member key');
     seen.add(member.kid);
   }
 }
@@ -42,6 +88,32 @@ function validateProposedMemberKeys(msg: GovProposeMessage): void {
 function trustedGovernanceQuorum(convState: ConversationState): number {
   const participantCount = Object.keys(convState.participants).length;
   return Math.max(1, Math.floor(participantCount / 2) + 1);
+}
+
+function validateProposalState(msg: GovProposeMessage, state: ConversationState): void {
+  const members = Object.keys(state.participants);
+  if (msg.eligible_signer_kids.length !== members.length || members.some(kid => !msg.eligible_signer_kids.includes(kid))) {
+    throw new GatewayValidationError('Proposal signer roster differs from current membership');
+  }
+  if (msg.proposal_type === 'floor_change') {
+    // A quorum may intentionally suspend API execution by setting a floor
+    // above today's roster, then admit members through separate governance.
+  } else if (msg.proposal_type === 'rules_change') {
+    if (msg.proposed_rules!.some(rule => rule.m > members.length || rule.m < state.promotion_floor)) throw new GatewayValidationError('Rule threshold outside current policy');
+  } else if (msg.proposal_type === 'member_add' || msg.proposal_type === 'member_remove') {
+    if (!state.membership_authority) throw new GatewayValidationError('Membership governance requires a creator-authorized invitation');
+    if (msg.proposal_type === 'member_add') {
+      if (members.length + msg.proposed_members!.length > 128 || msg.proposed_members!.some(member => member.kid === state.kid || Object.prototype.hasOwnProperty.call(state.participants, member.kid))) {
+        throw new GatewayValidationError('Duplicate or excessive membership');
+      }
+    } else {
+      const removed = msg.removed_member_kids;
+      if (!Array.isArray(removed) || !removed.length || new Set(removed).size !== removed.length ||
+          removed.some(kid => typeof kid !== 'string' || !Object.prototype.hasOwnProperty.call(state.participants, kid) || kid === state.group_creator_kid) || removed.length >= members.length) {
+        throw new GatewayValidationError('Invalid member removal');
+      }
+    }
+  } else throw new GatewayValidationError('Unknown governance proposal type');
 }
 
 function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
@@ -62,7 +134,7 @@ function buildGovProposalSignable(msg: GovProposeMessage): GovProposalSignable {
 
 function assertConversationID(messageType: string, messageConvID: string, convState: ConversationState): void {
   if (messageConvID !== convState.conv_id) {
-    throw new Error(`${messageType} rejected: conv_id does not match gateway conversation`);
+    throw new GatewayValidationError(`${messageType} rejected: conv_id does not match gateway conversation`);
   }
 }
 
@@ -96,6 +168,37 @@ export class GatewayConversationDO extends DurableObject<Env> {
   private messageSeq = 0;
   private recovered = false;
   private relaySubscription: DropboxSubscription | null = null;
+  private transactionStorage?: DurableObjectTransaction;
+  private get storage(): DurableObjectStorage {
+    return (this.transactionStorage ?? this.ctx.storage) as DurableObjectStorage;
+  }
+  private async atomic<T>(action: () => Promise<T>): Promise<T> {
+    if (this.transactionStorage) return action();
+    return this.ctx.storage.transaction(async transaction => {
+      this.transactionStorage = transaction;
+      try { return await action(); } finally { this.transactionStorage = undefined; }
+    });
+  }
+
+  private async queuePublication(convId: string, wire: Uint8Array): Promise<void> {
+    const outbox = await this.storage.get<Array<{ convId: string; wire: string }>>('publication_outbox') ?? [];
+    if (outbox.length >= 256) throw new Error('Gateway publication outbox is full');
+    outbox.push({ convId, wire: base64UrlEncode(wire) });
+    await this.storage.put('publication_outbox', outbox);
+  }
+
+  private async flushPublications(): Promise<void> {
+    const outbox = await this.storage.get<Array<{ convId: string; wire: string }>>('publication_outbox') ?? [];
+    const relay = new DropboxClient(this.env.DROPBOX_URL);
+    while (outbox.length) {
+      const item = outbox[0];
+      try { await relay.postMessage(hexToBytes(item.convId), base64UrlDecode(item.wire)); }
+      catch { return; } // The alarm retries these exact bytes, in order.
+      outbox.shift();
+      await this.storage.put('publication_outbox', outbox);
+    }
+  }
+
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -109,24 +212,31 @@ export class GatewayConversationDO extends DurableObject<Env> {
    */
   private async recover(): Promise<void> {
     if (this.recovered) return;
-    const entries = await this.ctx.storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    const governance = await this.ctx.storage.list<StoredGovProposal>({ prefix: 'gov:' });
+    const entries = await this.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const governance = await this.storage.list<StoredGovProposal>({ prefix: 'gov:' });
     let maxSeq = 0;
     for (const msg of [...entries.values(), ...governance.values()]) {
       if (msg.seq > maxSeq) maxSeq = msg.seq;
     }
     this.messageSeq = maxSeq;
+    if (!await this.storage.get('replay_journal_version')) {
+      await this.atomic(async () => {
+        for (const msg of [...entries.values(), ...governance.values()]) {
+          if (msg.body && msg.signer_kid) await this.storage.put(legacyActionKey(msg.type, msg.signer_kid, msg.body), true);
+        }
+        const vault = await this.storage.list<VaultEntry>({ prefix: 'vault:' });
+        for (const entry of vault.values()) if (entry.secret_id) await this.storage.put(`used_secret:${entry.secret_id}`, true);
+        if (maxSeq || vault.size) await this.storage.put('legacy_secret_cutoff', Math.floor(Date.now() / 1000));
+        await this.storage.put('replay_journal_version', 1);
+      });
+    }
     this.recovered = true;
 
-    // qntm-qtw2 + qntm-iv57: Resolve incomplete executions from write-ahead log.
-    // If a WAL entry exists without a corresponding gate.executed marker,
-    // the execution likely completed but the marker wasn't durably posted.
-    // Store a local executed marker WITH the gateway's signer_kid so that
-    // scan trusts it as gateway-authored. Without signer_kid the marker
-    // would be ignored by scanRequestApprovals.
-    const walEntries = await this.ctx.storage.list<{ request_id: string }>({ prefix: 'wal:' });
+    // An unfinished attempt has an unknown outcome. Keep its durable guard;
+    // do not invent a successful execution or retry an external side effect.
+    const walEntries = await this.storage.list<{ request_id: string }>({ prefix: 'wal:' });
     if (walEntries.size > 0) {
-      const convState = await this.ctx.storage.get<ConversationState>('conv_state');
+      const convState = await this.storage.get<ConversationState>('conv_state');
       const gwKid = convState?.kid;
       const executedIds = new Set<string>();
       for (const [, msg] of entries) {
@@ -136,15 +246,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
         }
       }
       for (const [key, wal] of walEntries) {
-        if (!executedIds.has(wal.request_id)) {
-          await this.storeGateMessage({
-            seq: ++this.messageSeq,
-            type: 'gate.executed',
-            request_id: wal.request_id,
-            signer_kid: gwKid,
-          });
-        }
-        await this.ctx.storage.delete(key);
+        if (executedIds.has(wal.request_id)) await this.storage.delete(key);
       }
     }
   }
@@ -161,14 +263,14 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const url = new URL(request.url);
     if (request.method !== 'POST') return new Response('Not Found', { status: 404 });
     return this.serializeSetup(async () => {
-      if (url.pathname === '/invitations') return createInvitation(this.ctx.storage, await request.json());
+      if (url.pathname === '/invitations') return createInvitation(this.storage, await request.json());
       if (url.pathname !== '/promote') return new Response('Not Found', { status: 404 });
-      const response = await acceptInvitation(this.ctx.storage, this.env.DROPBOX_URL, await request.json());
-      const active = await this.ctx.storage.get<ConversationState>('conv_state');
+      const response = await acceptInvitation(this.storage, this.env.DROPBOX_URL, await request.json());
+      const active = await this.storage.get<ConversationState>('conv_state');
       if (active?.gate_promoted) {
         await this.recover();
         this.ensureRelaySubscription(active);
-        await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
+        await this.storage.setAlarm(Date.now() + this.pollIntervalMs());
       }
       return response;
     });
@@ -178,15 +280,23 @@ export class GatewayConversationDO extends DurableObject<Env> {
    * Alarm: keep the live relay subscription attached and run maintenance.
    */
   async alarm(): Promise<void> {
-    await this.serializeSetup(() => finishAcceptance(this.ctx.storage, this.env.DROPBOX_URL));
+    return this.serializeSetup(() => this.maintain());
+  }
+
+  private async maintain(): Promise<void> {
+    await finishAcceptance(this.storage, this.env.DROPBOX_URL);
     await this.recover();
-    const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
+    const initialState = await this.storage.get<ConversationState>('conv_state');
     if (!initialState) return;
 
     try {
       this.ensureRelaySubscription(initialState);
+      await this.flushPublications();
+      for (const [key, expiry] of await this.storage.list<number>({ prefix: 'seen_msg:' })) {
+        if (expiry <= Math.floor(Date.now() / 1000)) await this.storage.delete(key);
+      }
 
-      const currentState = await this.ctx.storage.get<ConversationState>('conv_state');
+      const currentState = await this.storage.get<ConversationState>('conv_state');
       if (!currentState) return;
 
       // Sweep expired secrets every poll cycle
@@ -194,7 +304,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
         await this.sweepExpiredSecrets(currentState);
       }
     } finally {
-      await this.ctx.storage.setAlarm(Date.now() + this.pollIntervalMs());
+      await this.storage.setAlarm(Date.now() + this.pollIntervalMs());
     }
   }
 
@@ -207,7 +317,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const convIdBytes = hexToBytes(convState.conv_id);
     this.relaySubscription = dropbox.subscribeMessages(convIdBytes, convState.poll_cursor, {
       getCursor: async () => {
-        const latest = await this.ctx.storage.get<ConversationState>('conv_state');
+        const latest = await this.storage.get<ConversationState>('conv_state');
         return latest?.poll_cursor ?? 0;
       },
       onMessage: async ({ seq, envelope }) => {
@@ -223,50 +333,58 @@ export class GatewayConversationDO extends DurableObject<Env> {
   }
 
   private async handleRelayEnvelope(seq: number, envelopeBytes: Uint8Array): Promise<void> {
+    return this.serializeSetup(() => this.applyRelayEnvelope(seq, envelopeBytes));
+  }
+
+  private async applyRelayEnvelope(seq: number, envelopeBytes: Uint8Array): Promise<void> {
     await this.recover();
-    const initialState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!initialState) return;
-
-    if (!Number.isSafeInteger(seq) || seq <= initialState.poll_cursor) return;
-
-    const conv = this.buildConversation(initialState, hexToBytes(initialState.conv_id));
+    const initialState = await this.storage.get<ConversationState>('conv_state');
+    if (!initialState || !Number.isSafeInteger(seq) || seq <= initialState.poll_cursor) return;
     let processed = false;
-
     try {
-      const envelope = deserializeEnvelope(envelopeBytes);
-      // Rekeys can precede our own old-epoch messages in subscription/restart
-      // replay. Those records are history, never new authority in this epoch.
-      // Do not retain old keys or try current keys against old ciphertext.
-      if (envelope.conv_epoch === initialState.conv_epoch) {
-        const msg = decryptMessage(envelope, conv);
-        await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk);
-        processed = true;
-      }
-    } catch {
+      await this.atomic(async () => {
+        let envelope;
+        try { envelope = deserializeEnvelope(envelopeBytes); } catch { throw new GatewayValidationError('Invalid envelope'); }
+        const seenKey = `seen_msg:${bytesToHex(envelope.msg_id)}`;
+        if (!await this.storage.get(seenKey) && envelope.conv_epoch === initialState.conv_epoch) {
+          const conv = this.buildConversation(initialState, hexToBytes(initialState.conv_id));
+          let msg;
+          try { msg = decryptMessage(envelope, conv); } catch { throw new GatewayValidationError('Envelope verification failed'); }
+          await this.processGateMessage(msg.inner.body_type, msg.inner.body, msg.inner.sender_kid, msg.inner.sender_ik_pk, envelope.created_ts);
+          await this.storage.put(seenKey, envelope.expiry_ts);
+          processed = true;
+        }
+        const latest = await this.storage.get<ConversationState>('conv_state');
+        if (latest) await this.storage.put('conv_state', { ...latest, poll_cursor: seq });
+      });
+    } catch (error) {
+      // Storage/commit failures must be retried, never acknowledged as bad input.
+      if (!(error instanceof GatewayValidationError) && !(error instanceof SyntaxError)) throw error;
       console.error('GatewayConversationDO rejected relay envelope');
+      // Invalid input must not pin the stream. Failed mutations were rolled back.
+      const latest = await this.storage.get<ConversationState>('conv_state');
+      if (latest) await this.storage.put('conv_state', { ...latest, poll_cursor: Math.max(seq, latest.poll_cursor) });
     }
-
-    const latestState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!latestState) return;
-
-    if (seq > latestState.poll_cursor) {
-      latestState.poll_cursor = seq;
-      await this.ctx.storage.put('conv_state', latestState);
-    }
-
-    if (processed && latestState.gate_promoted) {
-      await this.checkAndExecute(latestState);
-    }
+    await this.flushPublications();
+    const latest = await this.storage.get<ConversationState>('conv_state');
+    if (processed && latest?.gate_promoted) await this.checkAndExecute(latest);
   }
 
   /**
    * Route a decrypted gate message to the appropriate handler.
    */
-  private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
+  private async processGateMessage(bodyType: string, body: Uint8Array, senderKid: Uint8Array, senderPublicKey: Uint8Array, createdTs?: number): Promise<void> {
+    if (!GATEWAY_BODY_TYPES.has(bodyType)) return;
     const authenticatedKid = base64UrlEncode(senderKid);
     const bodyStr = new TextDecoder().decode(body);
+    const record = JSON.parse(bodyStr);
+    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new GatewayValidationError('Gateway body must be a JSON object');
+    if (await this.storage.get(legacyActionKey(bodyType, authenticatedKid, bodyStr))) return;
+    if (bodyType === 'gate.secret' && createdTs !== undefined && createdTs <= (await this.storage.get<number>('legacy_secret_cutoff') ?? 0)) {
+      throw new GatewayValidationError('Pre-upgrade credential must be provisioned again');
+    }
 
-    const targetState = await this.ctx.storage.get<ConversationState>('conv_state');
+    const targetState = await this.storage.get<ConversationState>('conv_state');
     if (targetState?.invitation_id) {
       // Admission is closed by the durable acceptance outbox. Further invitations cannot change it.
       if (bodyType === 'gate.promote') return;
@@ -275,15 +393,11 @@ export class GatewayConversationDO extends DurableObject<Env> {
         if (target.gateway_kid !== targetState.kid) return;
       }
     }
-    if (!GATEWAY_BODY_TYPES.has(bodyType)) {
-      return;
-    }
-
     // Reject gate actions before promotion (only gate.promote allowed pre-promotion)
     if (bodyType !== 'gate.promote') {
-      const convState = await this.ctx.storage.get<ConversationState>('conv_state');
+      const convState = await this.storage.get<ConversationState>('conv_state');
       if (!convState?.gate_promoted) {
-        throw new Error(`${bodyType} rejected: conversation not yet promoted`);
+        throw new GatewayValidationError(`${bodyType} rejected: conversation not yet promoted`);
       }
     }
 
@@ -301,12 +415,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
         await this.handleGateDisapproval(bodyStr, authenticatedKid);
         break;
       case 'gate.secret':
-        await this.handleGateSecret(bodyStr, senderKid, senderPublicKey);
+        await this.handleGateSecret(bodyStr, senderKid, senderPublicKey, createdTs);
         break;
       case 'gate.config':
         // qntm-d9qb: gate.config is rejected. Policy changes must go through
         // governed request/approval path. Fail closed.
-        throw new Error('gate.config rejected: direct policy mutation is not allowed; use governed request/approval workflow');
+        throw new GatewayValidationError('gate.config rejected: direct policy mutation is not allowed; use governed request/approval workflow');
       case 'gate.executed':
         await this.handleGateExecuted(bodyStr, authenticatedKid);
         break;
@@ -325,56 +439,69 @@ export class GatewayConversationDO extends DurableObject<Env> {
   }
 
   private async handleGatePromote(body: Uint8Array, authenticatedKid: string): Promise<void> {
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.promote: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.promote: no bootstrapped state');
 
     const msg = JSON.parse(new TextDecoder().decode(body)) as GatePromoteMessage;
 
     if (msg.gateway_kid !== convState.kid) {
-      throw new Error(`gate.promote gateway_kid mismatch: expected ${convState.kid}, got ${msg.gateway_kid}`);
+      throw new GatewayValidationError(`gate.promote gateway_kid mismatch: expected ${convState.kid}, got ${msg.gateway_kid}`);
     }
     if (msg.conv_id !== convState.conv_id) {
-      throw new Error(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
+      throw new GatewayValidationError(`gate.promote conv_id mismatch: expected ${convState.conv_id}, got ${msg.conv_id}`);
     }
 
     // qntm-d9qb / qntm-qko0: After initial promotion, reject all further
     // gate.promote messages. Policy and membership changes must go through a
     // governed request/approval workflow. Fail closed until that path exists.
     if (convState.gate_promoted) {
-      throw new Error('gate.promote rejected: conversation already promoted; policy and membership changes require governed approval');
+      throw new GatewayValidationError('gate.promote rejected: conversation already promoted; policy and membership changes require governed approval');
     }
 
     // qntm-qko0: Gateway KID must not appear in the participant set
     if (msg.participants && convState.kid in msg.participants) {
-      throw new Error('gate.promote rejected: gateway KID must not be included in participants');
+      throw new GatewayValidationError('gate.promote rejected: gateway KID must not be included in participants');
     }
 
     // qntm-qko0: Floor must be >= 1
-    if (msg.floor !== undefined && msg.floor < 1) {
-      throw new Error('gate.promote rejected: floor must be >= 1');
+    if (msg.floor !== undefined && (!Number.isSafeInteger(msg.floor) || msg.floor < 1)) {
+      throw new GatewayValidationError('gate.promote rejected: floor must be >= 1');
     }
+    validateThresholdRules(msg.rules ?? []);
 
     convState.gate_promoted = true;
     convState.rules = msg.rules || [];
     convState.participants = msg.participants || {};
     convState.promotion_floor = msg.floor ?? 1;
-    await this.ctx.storage.put('conv_state', convState);
+    await this.storage.put('conv_state', convState);
   }
 
   private async handleGateRequest(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
     const msg = JSON.parse(bodyStr) as GateRequestMessage;
+    requirePositiveInteger(msg.required_approvals, 'gate.request required_approvals');
+    if (!Array.isArray(msg.eligible_signer_kids) ||
+        new Set(msg.eligible_signer_kids).size !== msg.eligible_signer_kids.length ||
+        msg.required_approvals > msg.eligible_signer_kids.length) {
+      throw new GatewayValidationError('gate.request rejected: invalid signer roster or threshold');
+    }
+    if (typeof msg.expires_at !== 'string' || !Number.isFinite(Date.parse(msg.expires_at))) {
+      throw new GatewayValidationError('gate.request rejected: invalid expiry');
+    }
+    if (typeof msg.request_id !== 'string' || !msg.request_id.length || msg.request_id.length > 256) {
+      throw new GatewayValidationError('gate.request rejected: invalid request ID');
+    }
 
     // Validate JSON signer_kid matches authenticated envelope sender
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gate.request rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gate.request rejected: signer_kid does not match authenticated sender');
     }
 
     // Validate sender is a participant
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.request: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.request: no bootstrapped state');
     assertConversationID('gate.request', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gate.request rejected: sender is not a participant');
+      throw new GatewayValidationError('gate.request rejected: sender is not a participant');
     }
 
     // qntm-3gde: Verify the Ed25519 request signature against the authenticated sender's public key
@@ -393,18 +520,18 @@ export class GatewayConversationDO extends DurableObject<Env> {
     };
     const signature = base64UrlDecode(msg.signature);
     if (!verifyRequest(senderPublicKey, signable, signature)) {
-      throw new Error('gate.request rejected: invalid request signature');
+      throw new GatewayValidationError('gate.request rejected: invalid request signature');
     }
 
     // Check required_approvals >= promotion floor
     if (msg.required_approvals < convState.promotion_floor) {
-      throw new Error(`gate.request rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
+      throw new GatewayValidationError(`gate.request rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
     }
 
     // Check required_approvals >= applicable rule threshold
     const rule = lookupThreshold(convState.rules, msg.target_service, msg.target_endpoint, msg.verb);
     if (rule && msg.required_approvals < rule.m) {
-      throw new Error(`gate.request rejected: required_approvals ${msg.required_approvals} below rule threshold ${rule.m}`);
+      throw new GatewayValidationError(`gate.request rejected: required_approvals ${msg.required_approvals} below rule threshold ${rule.m}`);
     }
 
     // Check eligible_signer_kids matches current participants
@@ -413,12 +540,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     for (const kid of requestedSigners) {
       if (!currentParticipantKids.has(kid)) {
-        throw new Error(`gate.request rejected: eligible signer ${kid} is not a current participant`);
+        throw new GatewayValidationError(`gate.request rejected: eligible signer ${kid} is not a current participant`);
       }
     }
     for (const kid of currentParticipantKids) {
       if (!requestedSigners.has(kid)) {
-        throw new Error(`gate.request rejected: current participant ${kid} missing from eligible_signer_kids`);
+        throw new GatewayValidationError(`gate.request rejected: current participant ${kid} missing from eligible_signer_kids`);
       }
     }
 
@@ -437,22 +564,22 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     // Validate JSON signer_kid matches authenticated envelope sender
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gate.approval rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gate.approval rejected: signer_kid does not match authenticated sender');
     }
 
     // Validate sender is a participant
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.approval: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.approval: no bootstrapped state');
     assertConversationID('gate.approval', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gate.approval rejected: sender is not a participant');
+      throw new GatewayValidationError('gate.approval rejected: sender is not a participant');
     }
 
     // qntm-3gde: Verify the approval signature against the referenced request
     const messages = await this.loadGateMessages();
     const reqStored = messages.find(m => m.type === 'gate.request' && m.request_id === msg.request_id && m.body);
     if (!reqStored || !reqStored.body) {
-      throw new Error('gate.approval rejected: referenced request not found');
+      throw new GatewayValidationError('gate.approval rejected: referenced request not found');
     }
     const reqMsg = JSON.parse(reqStored.body) as GateRequestMessage;
     assertConversationID('gate.approval referenced request', reqMsg.conv_id, convState);
@@ -477,12 +604,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
     };
     const approvalSig = base64UrlDecode(msg.signature);
     if (!verifyApproval(senderPublicKey, approvalSignable, approvalSig)) {
-      throw new Error('gate.approval rejected: invalid approval signature');
+      throw new GatewayValidationError('gate.approval rejected: invalid approval signature');
     }
 
     // Validate approver is in the request's eligible signer roster
     if (Array.isArray(reqMsg.eligible_signer_kids) && !reqMsg.eligible_signer_kids.includes(authenticatedKid)) {
-      throw new Error('gate.approval rejected: sender is not in the request eligible_signer_kids roster');
+      throw new GatewayValidationError('gate.approval rejected: sender is not in the request eligible_signer_kids roster');
     }
 
     await this.storeGateMessage({
@@ -500,15 +627,15 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
     // Validate JSON signer_kid matches authenticated envelope sender
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gate.disapproval rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gate.disapproval rejected: signer_kid does not match authenticated sender');
     }
 
     // Validate sender is a participant
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.disapproval: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.disapproval: no bootstrapped state');
     assertConversationID('gate.disapproval', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gate.disapproval rejected: sender is not a participant');
+      throw new GatewayValidationError('gate.disapproval rejected: sender is not a participant');
     }
 
     await this.storeGateMessage({
@@ -523,10 +650,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
   private async handleGateExecuted(bodyStr: string, authenticatedKid: string): Promise<void> {
     // qntm-iv57: Only accept gate.executed from the gateway's own identity.
     // This prevents participants from forging terminal markers to suppress execution.
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.executed: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.executed: no bootstrapped state');
     if (authenticatedKid !== convState.kid) {
-      throw new Error('gate.executed rejected: only gateway-authored terminal markers are accepted');
+      throw new GatewayValidationError('gate.executed rejected: only gateway-authored terminal markers are accepted');
     }
 
     const msg = JSON.parse(bodyStr) as { request_id: string };
@@ -538,27 +665,39 @@ export class GatewayConversationDO extends DurableObject<Env> {
     });
   }
 
-  private async handleGateSecret(bodyStr: string, senderKid: Uint8Array, senderPublicKey: Uint8Array): Promise<void> {
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gate.secret: no bootstrapped state');
+  private async handleGateSecret(bodyStr: string, senderKid: Uint8Array, senderPublicKey: Uint8Array, createdTs?: number): Promise<void> {
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gate.secret: no bootstrapped state');
 
     // Validate sender is a participant
     const senderKidStr = base64UrlEncode(senderKid);
     if (!convState.participants[senderKidStr]) {
-      throw new Error('gate.secret rejected: sender is not a participant');
+      throw new GatewayValidationError('gate.secret rejected: sender is not a participant');
     }
 
     const msg = JSON.parse(bodyStr) as GateSecretMessage;
+    if (typeof msg.secret_id !== 'string' || !msg.secret_id || msg.secret_id.length > 128) throw new GatewayValidationError('Invalid secret ID');
+    if (await this.storage.get(`used_secret:${msg.secret_id}`)) return;
+    if (msg.ttl !== undefined) requirePositiveInteger(msg.ttl, 'Secret TTL');
+    const createdAt = createdTs === undefined ? Date.now() : createdTs * 1000;
+    if (msg.ttl !== undefined && !Number.isFinite(new Date(createdAt + msg.ttl * 1000).getTime())) throw new GatewayValidationError('Invalid secret expiry');
+    if (typeof msg.service !== 'string' || !msg.service || msg.service.length > 256 ||
+        typeof msg.header_name !== 'string' || typeof msg.header_template !== 'string' || typeof msg.encrypted_blob !== 'string') {
+      throw new GatewayValidationError('Invalid secret fields');
+    }
 
     const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
     const gatewayPrivateKey = base64UrlDecode(convState.private_key);
 
     // senderPublicKey is the sender's 32-byte Ed25519 public key (sender_ik_pk)
     // The openSecret function handles Ed25519→X25519 conversion internally
-    const entry = await processSecret(msg, gatewayPrivateKey, senderPublicKey, vaultKey);
+    let entry: VaultEntry;
+    try { entry = await processSecret(msg, gatewayPrivateKey, senderPublicKey, vaultKey, createdAt); }
+    catch { throw new GatewayValidationError('Invalid sealed credential'); }
 
     // Store in vault (keyed by service for lookup)
-    await this.ctx.storage.put(`vault:${msg.service}`, entry);
+    await this.storage.put(`vault:${msg.service}`, entry);
+    await this.storage.put(`used_secret:${msg.secret_id}`, true);
   }
 
   // handleGateConfig removed (qntm-d9qb): direct policy mutation is not allowed.
@@ -569,14 +708,14 @@ export class GatewayConversationDO extends DurableObject<Env> {
    * notifications to the conversation so participants know to re-provision.
    */
   private async sweepExpiredSecrets(convState: ConversationState): Promise<void> {
-    const entries = await this.ctx.storage.list<VaultEntry>({ prefix: 'vault:' });
+    const entries = await this.storage.list<VaultEntry>({ prefix: 'vault:' });
     const now = Date.now();
 
     for (const [key, entry] of entries) {
       if (!isExpired(entry, now)) continue;
 
       // Delete the expired entry
-      await this.ctx.storage.delete(key);
+      await this.storage.delete(key);
 
       // Post gate.expired notification to conversation
       const convIdBytes = hexToBytes(convState.conv_id);
@@ -609,14 +748,21 @@ export class GatewayConversationDO extends DurableObject<Env> {
    * Check for requests that have met their approval threshold and execute them.
    */
   private async checkAndExecute(convState: ConversationState): Promise<void> {
+    if ((await this.storage.get<unknown[]>('publication_outbox'))?.length) return;
     const messages = await this.loadGateMessages();
     const executable = findExecutableRequests(messages, convState.kid, convState.rules, convState.conv_id);
 
     for (const scan of executable) {
       if (!scan.request) continue;
+      if (JSON.stringify([...scan.request.eligible_signer_kids].sort()) !== JSON.stringify(Object.keys(convState.participants).sort())) continue;
+      if (await this.storage.get(`wal:${scan.request_id}`)) continue;
+      const rule = lookupThreshold(convState.rules, scan.request.target_service, scan.request.target_endpoint, scan.request.verb);
+      requirePositiveInteger(convState.promotion_floor, 'stored promotion floor');
+      if (rule) requirePositiveInteger(rule.m, 'stored rule threshold');
+      if (scan.approvals < Math.max(scan.threshold, convState.promotion_floor, rule?.m ?? 1)) continue;
 
       // Check if credential exists and is not expired
-      const vaultEntry = await this.ctx.storage.get<VaultEntry>(`vault:${scan.request.target_service}`);
+      const vaultEntry = await this.storage.get<VaultEntry>(`vault:${scan.request.target_service}`);
       if (!vaultEntry) continue;
       if (isExpired(vaultEntry)) continue;
 
@@ -630,7 +776,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       // qntm-qtw2: Write-ahead log — record execution intent before performing it.
       // If the DO crashes between execution and posting gate.executed, recovery
       // will find this marker and avoid re-execution.
-      await this.ctx.storage.put(`wal:${scan.request_id}`, {
+      await this.storage.put(`wal:${scan.request_id}`, {
         request_id: scan.request_id,
         started_at: new Date().toISOString(),
       });
@@ -639,50 +785,50 @@ export class GatewayConversationDO extends DurableObject<Env> {
       const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
       const result = await executeRequest(scan.request, vaultEntry, vaultKey);
 
-      // Post gate.executed and gate.result to the conversation FIRST.
-      // The conversation is the canonical record of execution.
-      const convIdBytes = hexToBytes(convState.conv_id);
-      const conv = this.buildConversation(convState, convIdBytes);
-      const identity = this.buildIdentity(convState);
-      const dropbox = new DropboxClient(this.env.DROPBOX_URL);
+      // Commit known completion and exact result envelopes together. A retry
+      // publishes this outbox only; it never repeats the external operation.
+      await this.atomic(async () => {
+        await this.storeGateMessage({ seq: ++this.messageSeq, type: 'gate.executed',
+          request_id: scan.request_id, signer_kid: convState.kid });
 
-      // Send gate.executed
-      const executedBody = JSON.stringify({
-        type: 'gate.executed',
-        request_id: scan.request_id,
-        executed_at: result.executed_at,
-        execution_status_code: result.status_code,
+        // Persist the exact signed notifications for ordered delivery.
+        const convIdBytes = hexToBytes(convState.conv_id);
+        const conv = this.buildConversation(convState, convIdBytes);
+        const identity = this.buildIdentity(convState);
+
+        // Send gate.executed
+        const executedBody = JSON.stringify({
+          type: 'gate.executed',
+          gateway_kid: convState.kid,
+          request_id: scan.request_id,
+          executed_at: result.executed_at,
+          execution_status_code: result.status_code,
+        });
+        const executedEnv = createMessage(
+          identity, conv, 'gate.executed',
+          new TextEncoder().encode(executedBody), undefined, defaultTTL(),
+        );
+        await this.queuePublication(convState.conv_id, serializeEnvelope(executedEnv));
+
+        // Send gate.result
+        const resultBody = JSON.stringify({
+          type: 'gate.result',
+          gateway_kid: convState.kid,
+          request_id: scan.request_id,
+          status_code: result.status_code,
+          content_type: result.content_type,
+          body: result.body,
+        });
+        const resultEnv = createMessage(
+          identity, conv, 'gate.result',
+          new TextEncoder().encode(resultBody), undefined, defaultTTL(),
+        );
+        await this.queuePublication(convState.conv_id, serializeEnvelope(resultEnv));
+
+        // Clean up WAL entry
+        await this.storage.delete(`wal:${scan.request_id}`);
       });
-      const executedEnv = createMessage(
-        identity, conv, 'gate.executed',
-        new TextEncoder().encode(executedBody), undefined, defaultTTL(),
-      );
-      await dropbox.postMessage(convIdBytes, serializeEnvelope(executedEnv));
-
-      // Send gate.result
-      const resultBody = JSON.stringify({
-        type: 'gate.result',
-        request_id: scan.request_id,
-        status_code: result.status_code,
-        content_type: result.content_type,
-        body: result.body,
-      });
-      const resultEnv = createMessage(
-        identity, conv, 'gate.result',
-        new TextEncoder().encode(resultBody), undefined, defaultTTL(),
-      );
-      await dropbox.postMessage(convIdBytes, serializeEnvelope(resultEnv));
-
-      // Store local marker AFTER successful conversation post.
-      await this.storeGateMessage({
-        seq: ++this.messageSeq,
-        type: 'gate.executed',
-        request_id: scan.request_id,
-        signer_kid: convState.kid,
-      });
-
-      // Clean up WAL entry
-      await this.ctx.storage.delete(`wal:${scan.request_id}`);
+      await this.flushPublications();
     }
   }
 
@@ -690,46 +836,41 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
   private async handleGovPropose(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
     const msg = JSON.parse(bodyStr) as GovProposeMessage;
+    validateGovernanceNumbers(msg);
 
     // Validate sender matches
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gov.propose rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gov.propose rejected: signer_kid does not match authenticated sender');
     }
 
     // Validate sender is a participant
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gov.propose: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gov.propose: no bootstrapped state');
     assertConversationID('gov.propose', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gov.propose rejected: sender is not a participant');
+      throw new GatewayValidationError('gov.propose rejected: sender is not a participant');
     }
 
     // Verify the proposal signature
     const signable = buildGovProposalSignable(msg);
     const signature = base64UrlDecode(msg.signature);
     if (!verifyProposal(senderPublicKey, signable, signature)) {
-      throw new Error('gov.propose rejected: invalid proposal signature');
+      throw new GatewayValidationError('gov.propose rejected: invalid proposal signature');
     }
     validateProposedMemberKeys(msg);
-
-    if (msg.required_approvals < 1) {
-      throw new Error('gov.propose rejected: required_approvals must be at least 1');
-    }
-    if (msg.required_approvals > msg.eligible_signer_kids.length) {
-      throw new Error('gov.propose rejected: required_approvals exceeds eligible_signer_kids roster size');
-    }
+    validateProposalState(msg, convState);
 
     // Validate eligible signers match current participants
     const currentParticipantKids = new Set(Object.keys(convState.participants));
     const requestedSignerKids = new Set(msg.eligible_signer_kids);
     for (const kid of requestedSignerKids) {
       if (!currentParticipantKids.has(kid)) {
-        throw new Error(`gov.propose rejected: eligible signer ${kid} is not a current participant`);
+        throw new GatewayValidationError(`gov.propose rejected: eligible signer ${kid} is not a current participant`);
       }
     }
     for (const kid of currentParticipantKids) {
       if (!requestedSignerKids.has(kid)) {
-        throw new Error(`gov.propose rejected: current participant ${kid} missing from eligible_signer_kids`);
+        throw new GatewayValidationError(`gov.propose rejected: current participant ${kid} missing from eligible_signer_kids`);
       }
     }
 
@@ -738,7 +879,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // majority of the current participant set.
     const trustedQuorum = trustedGovernanceQuorum(convState);
     if (msg.required_approvals < trustedQuorum) {
-      throw new Error(
+      throw new GatewayValidationError(
         `gov.propose rejected: required_approvals ${msg.required_approvals} below trusted governance quorum ${trustedQuorum}`,
       );
     }
@@ -758,27 +899,28 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const msg = JSON.parse(bodyStr) as GovApproveMessage;
 
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gov.approve rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gov.approve rejected: signer_kid does not match authenticated sender');
     }
 
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gov.approve: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gov.approve: no bootstrapped state');
     assertConversationID('gov.approve', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gov.approve rejected: sender is not a participant');
+      throw new GatewayValidationError('gov.approve rejected: sender is not a participant');
     }
 
     // Find the referenced proposal
     const proposals = await this.loadGovProposals();
     const proposalStored = proposals.find(p => p.type === 'gov.propose' && p.proposal_id === msg.proposal_id && p.body);
     if (!proposalStored?.body) {
-      throw new Error('gov.approve rejected: referenced proposal not found');
+      throw new GatewayValidationError('gov.approve rejected: referenced proposal not found');
     }
     if (proposals.some(p => p.type === 'gov.invalidated' && p.proposal_id === msg.proposal_id)) {
-      throw new Error('gov.approve rejected: referenced proposal has been invalidated');
+      throw new GatewayValidationError('gov.approve rejected: referenced proposal has been invalidated');
     }
     const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
     assertConversationID('gov.approve referenced proposal', proposalMsg.conv_id, convState);
+    validateGovernanceNumbers(proposalMsg);
 
     // Verify the approval signature against the proposal hash
     const proposalSignable = buildGovProposalSignable(proposalMsg);
@@ -790,12 +932,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
     };
     const approvalSig = base64UrlDecode(msg.signature);
     if (!verifyGovApproval(senderPublicKey, approvalSignable, approvalSig)) {
-      throw new Error('gov.approve rejected: invalid approval signature');
+      throw new GatewayValidationError('gov.approve rejected: invalid approval signature');
     }
 
     // Validate approver is in the proposal's eligible signer roster
     if (!proposalMsg.eligible_signer_kids.includes(authenticatedKid)) {
-      throw new Error('gov.approve rejected: sender is not in proposal eligible_signer_kids roster');
+      throw new GatewayValidationError('gov.approve rejected: sender is not in proposal eligible_signer_kids roster');
     }
 
     // Store the approval
@@ -816,14 +958,14 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const msg = JSON.parse(bodyStr) as { conv_id: string; proposal_id: string; signer_kid: string };
 
     if (msg.signer_kid && msg.signer_kid !== authenticatedKid) {
-      throw new Error('gov.disapprove rejected: signer_kid does not match authenticated sender');
+      throw new GatewayValidationError('gov.disapprove rejected: signer_kid does not match authenticated sender');
     }
 
-    const convState = await this.ctx.storage.get<ConversationState>('conv_state');
-    if (!convState) throw new Error('gov.disapprove: no bootstrapped state');
+    const convState = await this.storage.get<ConversationState>('conv_state');
+    if (!convState) throw new GatewayValidationError('gov.disapprove: no bootstrapped state');
     assertConversationID('gov.disapprove', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
-      throw new Error('gov.disapprove rejected: sender is not a participant');
+      throw new GatewayValidationError('gov.disapprove rejected: sender is not a participant');
     }
 
     await this.storeGovProposal({
@@ -840,12 +982,19 @@ export class GatewayConversationDO extends DurableObject<Env> {
    * The proposer counts as the first approval (like gate.request).
    */
   private async checkAndApplyProposal(convState: ConversationState, proposalId: string): Promise<void> {
+    return this.atomic(() => this.applyProposal(structuredClone(convState), proposalId));
+  }
+
+  private async applyProposal(convState: ConversationState, proposalId: string): Promise<void> {
     const proposals = await this.loadGovProposals();
 
     // Find the proposal
     const proposalStored = proposals.find(p => p.type === 'gov.propose' && p.proposal_id === proposalId && p.body);
     if (!proposalStored?.body) return;
     const proposalMsg = JSON.parse(proposalStored.body) as GovProposeMessage;
+    // Stored proposals may predate ingress validation. Never coerce their
+    // threshold through Math.max: NaN would disable the quorum comparison.
+    try { validateGovernanceNumbers(proposalMsg); } catch { return; }
 
     // Check expiry
     if (new Date(proposalMsg.expires_at) < new Date()) return;
@@ -866,7 +1015,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
         votes[p.signer_kid] = 'disapprove';
       }
     }
-    const approvalCount = Object.values(votes).filter(v => v === 'approve').length;
+    const approvalCount = Object.entries(votes).filter(([kid, vote]) => vote === 'approve' && convState.participants[kid]).length;
 
     // Check if already applied
     const alreadyApplied = proposals.some(p => p.type === 'gov.applied' && p.proposal_id === proposalId);
@@ -877,6 +1026,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     const requiredApprovals = Math.max(proposalMsg.required_approvals, trustedGovernanceQuorum(convState));
     if (approvalCount < requiredApprovals) return;
     validateProposedMemberKeys(proposalMsg);
+    validateProposalState(proposalMsg, convState);
 
     // Apply the proposal
     const preApplyState: ConversationState = {
@@ -903,7 +1053,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     if (proposalMsg.proposal_type === 'member_add' || proposalMsg.proposal_type === 'member_remove') {
       await this.emitGovernedMembershipEvents(preApplyState, convState, proposalMsg);
     }
-    await this.ctx.storage.put('conv_state', convState);
+    await this.storage.put('conv_state', convState);
 
     // Store applied marker
     await this.storeGovProposal({
@@ -932,11 +1082,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       identity, conv, 'gov.applied',
       new TextEncoder().encode(appliedBody), undefined, defaultTTL(),
     );
-    try {
-      await dropbox.postMessage(convIdBytes, serializeEnvelope(appliedEnv));
-    } catch {
-      // Best effort
-    }
+    await this.queuePublication(convState.conv_id, serializeEnvelope(appliedEnv));
 
     await this.invalidatePendingRequests(convState);
     await this.invalidatePendingProposals(convState, proposalId);
@@ -946,11 +1092,11 @@ export class GatewayConversationDO extends DurableObject<Env> {
 
   private async storeGovProposal(msg: StoredGovProposal): Promise<void> {
     const key = `gov:${String(msg.seq).padStart(8, '0')}`;
-    await this.ctx.storage.put(key, msg);
+    await this.storage.put(key, msg);
   }
 
   private async loadGovProposals(): Promise<StoredGovProposal[]> {
-    const entries = await this.ctx.storage.list<StoredGovProposal>({ prefix: 'gov:' });
+    const entries = await this.storage.list<StoredGovProposal>({ prefix: 'gov:' });
     const proposals: StoredGovProposal[] = [];
     for (const [, value] of entries) {
       proposals.push(value);
@@ -1079,11 +1225,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       undefined,
       defaultTTL(),
     );
-    try {
-      await dropbox.postMessage(convIdBytes, serializeEnvelope(env));
-    } catch {
-      // Best effort.
-    }
+    await this.queuePublication(bytesToHex(convIdBytes), serializeEnvelope(env));
   }
 
   private async postConversationBody(
@@ -1095,22 +1237,18 @@ export class GatewayConversationDO extends DurableObject<Env> {
     bodyBytes: Uint8Array,
   ): Promise<void> {
     const env = createMessage(identity, conv, bodyType, bodyBytes, undefined, defaultTTL());
-    try {
-      await dropbox.postMessage(convIdBytes, serializeEnvelope(env));
-    } catch {
-      // Best effort
-    }
+    await this.queuePublication(bytesToHex(convIdBytes), serializeEnvelope(env));
   }
 
   // ---- Storage helpers ----
 
   private async storeGateMessage(msg: StoredGateMessage): Promise<void> {
     const key = `msg:${String(msg.seq).padStart(8, '0')}`;
-    await this.ctx.storage.put(key, msg);
+    await this.storage.put(key, msg);
   }
 
   private async loadGateMessages(): Promise<StoredGateMessage[]> {
-    const entries = await this.ctx.storage.list<StoredGateMessage>({ prefix: 'msg:' });
+    const entries = await this.storage.list<StoredGateMessage>({ prefix: 'msg:' });
     const messages: StoredGateMessage[] = [];
     for (const [, value] of entries) {
       messages.push(value);
@@ -1154,3 +1292,5 @@ function hexToBytes(hex: string): Uint8Array {
   }
   return bytes;
 }
+
+function bytesToHex(bytes: Uint8Array): string { return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join(""); }

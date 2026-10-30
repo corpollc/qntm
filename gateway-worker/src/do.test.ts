@@ -17,11 +17,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   signRequest, signApproval, hashRequest, computePayloadHash,
-  createProposalBody, signGovApproval, hashProposal,
+  createProposalBody, signGovApproval, hashProposal, createGateSecretBody,
   deserializeEnvelope, decryptMessage, createMessage, serializeEnvelope, defaultTTL,
 } from '@corpollc/qntm';
 import { DropboxClient } from '@corpollc/qntm';
 import { GatewayConversationDO } from './do.js';
+import * as execution from './execute.js';
 import type { ConversationState, StoredGateMessage } from './types.js';
 
 // ---- Mock Durable Object storage ----
@@ -31,11 +32,16 @@ class MockStorage {
   alarmTimes: number[] = [];
 
   async get<T>(key: string): Promise<T | undefined> {
-    return this.data.get(key) as T | undefined;
+    return structuredClone(this.data.get(key)) as T | undefined;
   }
 
   async put(key: string, value: unknown): Promise<void> {
-    this.data.set(key, value);
+    this.data.set(key, structuredClone(value));
+  }
+
+  async transaction<T>(fn: (tx: MockStorage) => Promise<T>): Promise<T> {
+    const before = structuredClone(this.data);
+    try { return await fn(this); } catch (error) { this.data = before; throw error; }
   }
 
   async delete(key: string): Promise<boolean> {
@@ -96,6 +102,7 @@ afterEach(() => {
 function promotedState(overrides?: Partial<ConversationState>): ConversationState {
   return {
     conv_id: 'a'.repeat(32),
+    conversation_type: 'group', group_creator_kid: aliceKid, membership_authority: true,
     private_key: base64UrlEncode(gateway.privateKey),
     public_key: base64UrlEncode(gateway.publicKey),
     kid: gatewayKid,
@@ -123,7 +130,11 @@ type ProcessFn = (bodyType: string, body: Uint8Array, senderKid: Uint8Array, sen
 
 function makeProcessFn(doInstance: GatewayConversationDO): ProcessFn {
   // Access private method for testing
-  return (doInstance as unknown as { processGateMessage: ProcessFn }).processGateMessage.bind(doInstance);
+  return async (...args) => {
+    const internal = doInstance as unknown as { processGateMessage: ProcessFn; flushPublications(): Promise<void> };
+    await internal.processGateMessage(...args);
+    await internal.flushPublications();
+  };
 }
 
 function makeDO(): { doInstance: GatewayConversationDO; storage: MockStorage; process: ProcessFn } {
@@ -414,6 +425,68 @@ describe('qntm-iv57: gate.executed authentication', () => {
 });
 
 describe('governance member-change flow', () => {
+  const invalidThresholds = [undefined, null, '2', 'invalid', {}, [], 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1];
+
+  it.each(invalidThresholds)('rejects malformed governance approval thresholds: %j', async required => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id, proposalType: 'floor_change', proposedFloor: 1,
+      eligibleSignerKids: [aliceKid, bobKid], requiredApprovals: 2, expiresInSeconds: 3600,
+    });
+    await expect(process('gov.propose', encode({ ...proposal, required_approvals: required }), alice.keyID, alice.publicKey))
+      .rejects.toThrow('positive safe integer');
+    expect((await storage.list({ prefix: 'gov:' })).size).toBe(0);
+    expect(await storage.get('conv_state')).toEqual(state);
+  });
+
+  it.each(invalidThresholds)('rejects malformed request approval thresholds: %j', async required => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState());
+    const request = buildSignedRequest(alice, { required_approvals: required });
+    await expect(process('gate.request', encode(request.body), alice.keyID, alice.publicKey))
+      .rejects.toThrow('positive safe integer');
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(0);
+  });
+
+  it.each(invalidThresholds)('does not apply malformed proposals saved by older versions: %j', async required => {
+    const { doInstance, storage } = makeDO();
+    const state = promotedState();
+    const original = structuredClone(state);
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id, proposalType: 'floor_change', proposedFloor: 1,
+      eligibleSignerKids: [aliceKid, bobKid], requiredApprovals: 2, expiresInSeconds: 3600,
+    });
+    await storage.put('gov:00000001', {
+      seq: 1, type: 'gov.propose', proposal_id: proposal.proposal_id, signer_kid: aliceKid,
+      body: JSON.stringify({ ...proposal, required_approvals: required }),
+    });
+    await (doInstance as unknown as {
+      checkAndApplyProposal: (state: ConversationState, id: string) => Promise<void>;
+    }).checkAndApplyProposal(state, proposal.proposal_id);
+    expect(await storage.get('conv_state')).toEqual(original);
+    expect((await storage.list({ prefix: 'gov:' })).size).toBe(1);
+  });
+
+  it.each(['floor_change', 'rules_change'] as const)('rejects invalid numeric policy values for %s', async proposalType => {
+    const { storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id, proposalType, proposedFloor: proposalType === 'floor_change' ? 1 : undefined,
+      proposedRules: proposalType === 'rules_change' ? [{ service: '*', endpoint: '*', verb: '*', m: 2 }] : undefined,
+      eligibleSignerKids: [aliceKid, bobKid], requiredApprovals: 2, expiresInSeconds: 3600,
+    });
+    const malformed = proposalType === 'floor_change'
+      ? { ...proposal, proposed_floor: 'invalid' }
+      : { ...proposal, proposed_rules: [{ service: '*', endpoint: '*', verb: '*', m: 'invalid' }] };
+    await expect(process('gov.propose', encode(malformed), alice.keyID, alice.publicKey))
+      .rejects.toThrow('positive safe integer');
+    expect((await storage.list({ prefix: 'gov:' })).size).toBe(0);
+  });
+
   it('rejects a signed weak member key before storing the proposal or changing membership', async () => {
     const { storage, process } = makeDO();
     const state = promotedState(), original = structuredClone(state);
@@ -564,7 +637,7 @@ describe('governance member-change flow', () => {
     const staleProposal = createProposalBody(bob, {
       convId: state.conv_id,
       proposalType: 'member_remove',
-      removedMemberKids: [aliceKid],
+      removedMemberKids: [bobKid],
       eligibleSignerKids: [aliceKid, bobKid],
       requiredApprovals: 2,
       expiresInSeconds: 3600,
@@ -665,7 +738,7 @@ describe('governance member-change flow', () => {
 
     await expect(
       process('gov.propose', encode(proposal), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
-    ).rejects.toThrow('missing from eligible_signer_kids');
+    ).rejects.toThrow('signer roster differs');
   });
 
   it('rejects an author-selected quorum below the trusted participant majority', async () => {
@@ -1109,7 +1182,7 @@ describe('qntm-qko0: promotion and membership invariants', () => {
     const { body } = buildSignedRequest(alice, { eligible_signer_kids: [aliceKid] });
     await expect(
       process('gate.request', encode(body), keyIDFromPublicKey(alice.publicKey), alice.publicKey),
-    ).rejects.toThrow('missing from eligible_signer_kids');
+    ).rejects.toThrow('invalid signer roster or threshold');
   });
 
   it('rejects gate.request with unknown signer in eligible list', async () => {
@@ -1186,6 +1259,40 @@ describe('qntm-qko0: promotion and membership invariants', () => {
 });
 
 describe('qntm-qtw2: write-ahead execution recovery', () => {
+  it.each(['execution', 'publication'])('never retries an external action after %s failure', async failure => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState({ promotion_floor: 1, rules: [] });
+    await storage.put('conv_state', state);
+    const request = buildSignedRequest(alice, { required_approvals: 1 });
+    await process('gate.request', encode(request.body), alice.keyID, alice.publicKey);
+    await storage.put('vault:test-svc', { expires_at: '' });
+    const perform = vi.spyOn(execution, 'executeRequest');
+    if (failure === 'execution') perform.mockRejectedValue(new Error('upstream outcome unknown'));
+    else perform.mockResolvedValue({ request_id: request.requestId, status_code: 200, content_type: 'text/plain', body: 'done', executed_at: new Date().toISOString() });
+    const post = vi.spyOn(DropboxClient.prototype, 'postMessage').mockRejectedValue(new Error('relay unavailable'));
+    const run = (instance: GatewayConversationDO) => (instance as unknown as {
+      checkAndExecute: (state: ConversationState) => Promise<void>;
+    }).checkAndExecute(state);
+    if (failure === 'execution') await expect(run(doInstance)).rejects.toThrow();
+    else await run(doInstance);
+    await run(doInstance);
+    const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
+    await (restarted as unknown as { recover(): Promise<void> }).recover();
+    await run(restarted);
+    if (failure === 'publication') {
+      const outbox = await storage.get<Array<{ wire: string }>>('publication_outbox');
+      expect(outbox).toHaveLength(2);
+      post.mockClear().mockResolvedValue(8);
+      await (restarted as unknown as { flushPublications(): Promise<void> }).flushPublications();
+      expect(post.mock.calls.map(([, wire]) => base64UrlEncode(wire))).toEqual(outbox!.map(row => row.wire));
+      expect(await storage.get('publication_outbox')).toEqual([]);
+    }
+    expect(perform).toHaveBeenCalledTimes(1);
+    const markers = [...(await storage.list<StoredGateMessage>({ prefix: 'msg:' })).values()].filter(row => row.type === 'gate.executed');
+    expect(markers).toHaveLength(failure === 'execution' ? 0 : 1);
+    expect((await storage.list({ prefix: 'wal:' })).size).toBe(failure === 'execution' ? 1 : 0);
+  });
+
   it('preserves governance records newer than the last gate message after restart', async () => {
     const { doInstance, storage } = makeDO();
     await storage.put('conv_state', promotedState());
@@ -1197,10 +1304,12 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     await (doInstance as unknown as { recover(): Promise<void> }).recover();
     expect(await storage.get('gov:00000004')).toEqual(proposal);
     const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
-    expect([...messages.values()].find(msg => msg.request_id === 'recover-me')?.seq).toBe(10);
+    expect([...messages.values()].find(msg => msg.request_id === 'recover-me')).toBeUndefined();
+    expect(await storage.get('wal:recover-me')).toBeDefined();
+    expect((doInstance as unknown as { messageSeq: number }).messageSeq).toBe(9);
   });
 
-  it('recover() creates executed marker for WAL entries without gate.executed', async () => {
+  it('recover() retains unknown outcomes without inventing an executed marker', async () => {
     const { doInstance, storage } = makeDO();
     await storage.put('conv_state', promotedState());
 
@@ -1211,15 +1320,14 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     const recover = (doInstance as unknown as { recover: () => Promise<void> }).recover.bind(doInstance);
     await recover();
 
-    // WAL should be cleaned up
+    // An uncertain external call remains guarded against automatic retry.
     const walEntries = await storage.list({ prefix: 'wal:' });
-    expect(walEntries.size).toBe(0);
+    expect(walEntries.size).toBe(1);
 
-    // An executed marker should exist with gateway signer_kid (qntm-iv57)
+    // A crash does not establish that an external action completed.
     const messages = await storage.list<StoredGateMessage>({ prefix: 'msg:' });
     const executed = [...messages.values()].find(m => m.type === 'gate.executed' && m.request_id === 'req-crashed');
-    expect(executed).toBeDefined();
-    expect(executed!.signer_kid).toBe(gatewayKid);
+    expect(executed).toBeUndefined();
   });
 
   it('recover() does not duplicate executed marker if gate.executed already exists', async () => {
@@ -1304,5 +1412,139 @@ describe('participant governance (post-promotion immutability)', () => {
     await expect(
       process('gate.promote', promoteBody, keyIDFromPublicKey(alice.publicKey), alice.publicKey),
     ).rejects.toThrow('conversation already promoted');
+  });
+});
+
+
+describe('durable relay replay and governance delivery', () => {
+  it('ignores an exact old vote after withdrawal, including across restart', async () => {
+    const { doInstance, storage } = makeDO(), state = promotedState();
+    await storage.put('conv_state', state);
+    const request = buildSignedRequest(alice);
+    const approval = buildSignedApproval(bob, request.signable, request.requestId, state.conv_id);
+    const conversation = convFromState(state);
+    const wire = (sender: typeof alice, type: string, body: unknown) => serializeEnvelope(createMessage(sender, conversation, type, encode(body)));
+    const receive = (instance: GatewayConversationDO, seq: number, raw: Uint8Array) =>
+      (instance as unknown as { handleRelayEnvelope(seq: number, raw: Uint8Array): Promise<void> }).handleRelayEnvelope(seq, raw);
+    await receive(doInstance, 1, wire(alice, 'gate.request', request.body));
+    const vote = wire(bob, 'gate.approval', approval.body);
+    await receive(doInstance, 2, vote);
+    await receive(doInstance, 3, wire(bob, 'gate.disapproval', { type: 'gate.disapproval', conv_id: state.conv_id, request_id: request.requestId, signer_kid: bobKid }));
+    const count = (await storage.list({ prefix: 'msg:' })).size;
+    const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
+    await receive(restarted, 4, vote);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(count);
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(4);
+    expect((await storage.list({ prefix: 'seen_msg:' })).size).toBe(3);
+  });
+
+  it('uses signed credential creation time and refuses an older secret after replacement', async () => {
+    const { doInstance, storage } = makeDO(), state = promotedState();
+    await storage.put('conv_state', state);
+    const context = { conversationId: state.conv_id, epoch: 0, gateway: { kid: gatewayKid, publicKey: state.public_key },
+      participants: state.participants, floor: 2, rules: state.rules };
+    const first = createGateSecretBody(alice, context, { service: 'demo', value: 'first synthetic value', ttl: 300 });
+    const second = createGateSecretBody(alice, context, { service: 'demo', value: 'replacement synthetic value', ttl: 300 });
+    const created = Math.floor(Date.now() / 1000) - 120;
+    const process = (instance: GatewayConversationDO, body: unknown) =>
+      (instance as unknown as { processGateMessage(type: string, bytes: Uint8Array, kid: Uint8Array, pk: Uint8Array, at: number): Promise<void> })
+        .processGateMessage('gate.secret', encode(body), alice.keyID, alice.publicKey, created);
+    await process(doInstance, first);
+    expect((await storage.get<{ expires_at: string }>('vault:demo'))?.expires_at).toBe(new Date((created + 300) * 1000).toISOString());
+    await process(doInstance, second);
+    const replacement = await storage.get('vault:demo');
+    const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
+    await process(restarted, first);
+    expect(await storage.get('vault:demo')).toEqual(replacement);
+  });
+
+  it.each([null, [], { type: 'gate.secret', secret_id: 'invalid', service: 'demo', header_name: 'Authorization', header_template: '{value}', encrypted_blob: 'AA' }])('advances past invalid authenticated input without storing it: %j', async body => {
+    const { doInstance, storage } = makeDO(), state = promotedState();
+    await storage.put('conv_state', state);
+    const conversation = convFromState(state);
+    const receive = (seq: number, type: string, value: unknown) =>
+      (doInstance as unknown as { handleRelayEnvelope(seq: number, raw: Uint8Array): Promise<void> })
+        .handleRelayEnvelope(seq, serializeEnvelope(createMessage(alice, conversation, type, encode(value))));
+    await receive(1, 'gate.secret', body);
+    await receive(2, 'gate.request', buildSignedRequest(alice).body);
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(2);
+    expect((await storage.list({ prefix: 'vault:' })).size).toBe(0);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(1);
+  });
+
+  it('retries storage failures without acknowledging the relay cursor', async () => {
+    const { doInstance, storage } = makeDO(), state = promotedState();
+    await storage.put('conv_state', state);
+    const request = buildSignedRequest(alice);
+    const raw = serializeEnvelope(createMessage(alice, convFromState(state), 'gate.request', encode(request.body)));
+    const put = storage.put.bind(storage);
+    const fault = vi.spyOn(storage, 'put').mockImplementation(async (key, value) => {
+      if (key.startsWith('seen_msg:')) throw new Error('storage unavailable');
+      return put(key, value);
+    });
+    const receive = () => (doInstance as unknown as { handleRelayEnvelope(seq: number, raw: Uint8Array): Promise<void> }).handleRelayEnvelope(1, raw);
+    await expect(receive()).rejects.toThrow('storage unavailable');
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(0);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(0);
+    fault.mockRestore();
+    await receive();
+    expect((await storage.get<ConversationState>('conv_state'))?.poll_cursor).toBe(1);
+    expect((await storage.list({ prefix: 'msg:' })).size).toBe(1);
+  });
+
+  it.each(['creator', 'duplicate', 'unknown', 'existing', 'undelegated'] as const)('rejects invalid governed transitions: %s', async scenario => {
+    const { storage, process } = makeDO();
+    const state = promotedState({ membership_authority: scenario !== 'undelegated' });
+    await storage.put('conv_state', state);
+    const proposal = createProposalBody(alice, {
+      convId: state.conv_id, proposalType: scenario === 'existing' ? 'member_add' : 'member_remove',
+      proposedMembers: scenario === 'existing' ? [{ kid: bobKid, publicKey: base64UrlEncode(bob.publicKey) }] : undefined,
+      removedMemberKids: scenario === 'existing' ? undefined : scenario === 'creator' ? [aliceKid] : scenario === 'duplicate' ? [bobKid, bobKid] : scenario === 'unknown' ? [malloryKid] : [bobKid],
+      eligibleSignerKids: [aliceKid, bobKid], requiredApprovals: 2, expiresInSeconds: 3600,
+    });
+    await expect(process('gov.propose', encode(proposal), alice.keyID, alice.publicKey)).rejects.toThrow();
+    expect(await storage.get('conv_state')).toEqual(state);
+    expect((await storage.list({ prefix: 'gov:' })).size).toBe(0);
+  });
+
+  it('commits membership, applied markers and exact ordered publications together', async () => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState({ participants: { [aliceKid]: base64UrlEncode(alice.publicKey) }, promotion_floor: 1, rules: [] });
+    await storage.put('conv_state', state);
+    const post = vi.spyOn(DropboxClient.prototype, 'postMessage').mockRejectedValue(new Error('relay unavailable'));
+    const proposal = createProposalBody(alice, { convId: state.conv_id, proposalType: 'member_add',
+      proposedMembers: [{ kid: bobKid, publicKey: base64UrlEncode(bob.publicKey) }],
+      eligibleSignerKids: [aliceKid], requiredApprovals: 1, expiresInSeconds: 3600 });
+    await process('gov.propose', encode(proposal), alice.keyID, alice.publicKey);
+    await (doInstance as unknown as { checkAndApplyProposal(s: ConversationState, id: string): Promise<void> }).checkAndApplyProposal(state, proposal.proposal_id);
+    await (doInstance as unknown as { flushPublications(): Promise<void> }).flushPublications();
+    const outbox = await storage.get<Array<{ convId: string; wire: string }>>('publication_outbox');
+    expect(outbox).toHaveLength(3);
+    expect((await storage.get<ConversationState>('conv_state'))?.conv_epoch).toBe(1);
+    expect([...await storage.list<{ type: string }>({ prefix: 'gov:' })].some(([, value]) => value.type === 'gov.applied')).toBe(true);
+    post.mockResolvedValue(5);
+    const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
+    await (restarted as unknown as { flushPublications(): Promise<void> }).flushPublications();
+    expect(post.mock.calls.slice(1).map(([, wire]) => base64UrlEncode(wire))).toEqual(outbox!.map(item => item.wire));
+    expect(await storage.get('publication_outbox')).toEqual([]);
+    expect((await storage.get<ConversationState>('conv_state'))?.conv_epoch).toBe(1);
+  });
+
+  it('rolls back the new epoch if committing its applied marker fails', async () => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState({ participants: { [aliceKid]: base64UrlEncode(alice.publicKey) }, promotion_floor: 1, rules: [] });
+    await storage.put('conv_state', state);
+    const put = storage.put.bind(storage);
+    vi.spyOn(storage, 'put').mockImplementation(async (key, value) => {
+      if ((value as { type?: string })?.type === 'gov.applied') throw new Error('storage interrupted');
+      return put(key, value);
+    });
+    const proposal = createProposalBody(alice, { convId: state.conv_id, proposalType: 'member_add',
+      proposedMembers: [{ kid: bobKid, publicKey: base64UrlEncode(bob.publicKey) }],
+      eligibleSignerKids: [aliceKid], requiredApprovals: 1, expiresInSeconds: 3600 });
+    await process('gov.propose', encode(proposal), alice.keyID, alice.publicKey);
+    await expect((doInstance as unknown as { checkAndApplyProposal(s: ConversationState, id: string): Promise<void> }).checkAndApplyProposal(state, proposal.proposal_id)).rejects.toThrow('storage interrupted');
+    expect(await storage.get('conv_state')).toEqual(state);
+    expect(await storage.get('publication_outbox')).toBeUndefined();
   });
 });

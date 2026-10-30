@@ -1,3 +1,5 @@
+import pytest
+from qntm.invite import validate_invite
 """Tests for invite creation, serialization, and token roundtrip."""
 
 from qntm import (
@@ -120,3 +122,17 @@ def test_key_derivation_deterministic():
     assert keys1["root"] == keys2["root"]
     assert keys1["aeadKey"] == keys2["aeadKey"]
     assert keys1["nonceKey"] == keys2["nonceKey"]
+
+
+@pytest.mark.parametrize('field', ['conv_id', 'inviter_ik_pk', 'invite_salt', 'invite_secret'])
+@pytest.mark.parametrize('value', [16, 'a' * 32, [0] * 32, None])
+def test_invite_requires_binary_fields(field, value):
+    invite = create_invite(generate_identity(), 'group')
+    with pytest.raises(ValueError):
+        validate_invite({**invite, field: value})
+
+
+def test_invite_requires_16_byte_conversation_id():
+    invite = create_invite(generate_identity(), 'group')
+    with pytest.raises(ValueError, match='conversation ID'):
+        validate_invite({**invite, 'conv_id': bytes(32)})

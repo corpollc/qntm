@@ -150,7 +150,7 @@ describe('group event application on receive', () => {
     return { profileId: profile.id, identity, keyIdHex: storedId.keyId }
   }
 
-  function setupSharedConversation(aliceProfile: string, aliceIdentity: Identity) {
+  async function setupSharedConversation(aliceProfile: string, aliceIdentity: Identity, members: Identity[] = []) {
     const invite = createInviteForProfile(aliceProfile, 'Test Group')
     const convIdHex = invite.conversationId
 
@@ -169,14 +169,17 @@ describe('group event application on receive', () => {
       currentEpoch: convRecord.currentEpoch,
     }
 
+    store.updateConversation(aliceProfile, convIdHex, c => ({ ...c, type: 'group' }))
+    relay.push(convIdHex, serializeEnvelope(createMessage(aliceIdentity, convCrypto, 'group_genesis', createGroupGenesisBody('Test', '', aliceIdentity, members.map(m => m.publicKey)))))
+    await receiveMessages(aliceProfile, 'Alice', convIdHex)
     return { convIdHex, convCrypto }
   }
 
-  it('applies group_add and updates participant roster', async () => {
+  it('rejects group_add from an unadmitted peer', async () => {
     const { profileId: aliceProfileId, identity: alice } = createProfileWithIdentity('Alice')
     const bob = makeIdentity()
 
-    const { convIdHex, convCrypto } = setupSharedConversation(aliceProfileId, alice)
+    const { convIdHex, convCrypto } = await setupSharedConversation(aliceProfileId, alice)
 
     // Bob sends a group_add from outside (simulating another participant)
     const addBody = createGroupAddBody(bob, [bob.publicKey])
@@ -186,14 +189,13 @@ describe('group event application on receive', () => {
 
     // Alice receives
     const result = await receiveMessages(aliceProfileId, 'Alice', convIdHex)
-    expect(result.messages).toHaveLength(1)
-    expect(result.messages[0].bodyType).toBe('group_add')
+    expect(result.messages).toHaveLength(0)
 
     // Verify participant roster was updated
     const conv = store.findConversation(aliceProfileId, convIdHex)
     expect(conv).not.toBeNull()
     const bobKidHex = bytesToHex(keyIDFromPublicKey(bob.publicKey)).toLowerCase()
-    expect(conv!.participants).toContain(bobKidHex)
+    expect(conv!.participants).not.toContain(bobKidHex)
   })
 
   it('applies group_remove and updates participant roster', async () => {
@@ -201,7 +203,7 @@ describe('group event application on receive', () => {
     const bob = makeIdentity()
     const bobKid = keyIDFromPublicKey(bob.publicKey)
 
-    const { convIdHex, convCrypto } = setupSharedConversation(aliceProfileId, alice)
+    const { convIdHex, convCrypto } = await setupSharedConversation(aliceProfileId, alice, [bob])
 
     // First add Bob to participants manually
     store.updateConversation(aliceProfileId, convIdHex, (conv) => ({
@@ -230,7 +232,7 @@ describe('group event application on receive', () => {
   it('applies group_rekey and updates epoch and keys', async () => {
     const { profileId: aliceProfileId, identity: alice, keyIdHex: aliceKidHex } = createProfileWithIdentity('Alice')
 
-    const { convIdHex, convCrypto } = setupSharedConversation(aliceProfileId, alice)
+    const { convIdHex, convCrypto } = await setupSharedConversation(aliceProfileId, alice)
 
     // Build a GroupState with alice as member
     const groupState = new GroupState()
@@ -258,11 +260,11 @@ describe('group event application on receive', () => {
     expect(conv!.keys.root).not.toBe('') // non-empty
   })
 
-  it('group_rekey with excluded member does not update keys', async () => {
+  it('rejects a rekey with an unauthorized sender and mismatched roster', async () => {
     const { profileId: aliceProfileId, identity: alice } = createProfileWithIdentity('Alice')
     const bob = makeIdentity()
 
-    const { convIdHex, convCrypto } = setupSharedConversation(aliceProfileId, alice)
+    const { convIdHex, convCrypto } = await setupSharedConversation(aliceProfileId, alice)
 
     // Build a GroupState with only Bob as member (alice is excluded)
     const groupState = new GroupState()
@@ -281,7 +283,7 @@ describe('group event application on receive', () => {
 
     // Alice receives — she has no wrapped key
     const result = await receiveMessages(aliceProfileId, 'Alice', convIdHex)
-    expect(result.messages).toHaveLength(1)
+    expect(result.messages).toHaveLength(0)
 
     // Keys should NOT have changed (alice couldn't unwrap)
     const conv = store.findConversation(aliceProfileId, convIdHex)

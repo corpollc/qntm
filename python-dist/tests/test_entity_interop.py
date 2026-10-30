@@ -113,6 +113,7 @@ class TestEntityInterop(unittest.TestCase):
             did="did:agentid:z6QQ5asBUnXiM4JsgfnG36",
             entity_id="test-entity",
             resolve_did_fn=mock_resolve_did,
+            verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
             api_base=self.api_base,
         )
 
@@ -140,6 +141,7 @@ class TestEntityInterop(unittest.TestCase):
             did="did:aps:tima-founder-agent",
             entity_id="test-entity",
             resolve_did_fn=mock_resolve_did,
+            verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
             api_base=self.api_base,
         )
 
@@ -165,6 +167,7 @@ class TestEntityInterop(unittest.TestCase):
             did="did:aip:c1965a89866ecbfaad49",
             entity_id="test-entity",
             resolve_did_fn=mock_resolve_did,
+            verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
             api_base=self.api_base,
         )
 
@@ -200,6 +203,7 @@ class TestEntityInterop(unittest.TestCase):
                     did=did,
                     entity_id="test-entity",
                     resolve_did_fn=multi_resolve_did,
+                    verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
                     api_base=self.api_base,
                 )
                 self.assertTrue(verified, f"Failed for {did}")
@@ -218,6 +222,7 @@ class TestEntityInterop(unittest.TestCase):
             did="did:agentid:wrong-key-agent",
             entity_id="test-entity",
             resolve_did_fn=mock_resolve_did,
+            verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
             api_base=self.api_base,
         )
 
@@ -237,12 +242,12 @@ class TestEntityInterop(unittest.TestCase):
             did="did:agentid:suspended-agent",
             entity_id="revoked-entity",
             resolve_did_fn=mock_resolve_did,
+            verify_binding_fn=lambda did, key, entity: key == TEST_ED25519_PUBLIC_KEY and entity.entity_id == "test-entity",
             api_base=self.api_base,
         )
 
         self.assertFalse(verified)
-        self.assertIsNotNone(entity)  # entity returned even if suspended
-        self.assertEqual(entity.status, "suspended")
+        self.assertIsNone(entity)
 
     def test_resolver_failure_rejects(self):
         """If the DID resolver throws, reject gracefully."""
@@ -264,7 +269,7 @@ class TestEntityInterop(unittest.TestCase):
         self.assertIsNone(entity)
 
     def test_no_did_entity_only(self):
-        """No DID provided — entity-only verification (backwards compatible)."""
+        """No DID provided cannot verify a sender-to-entity binding."""
         verified, entity = verify_sender_entity(
             sender_key_id=b"\x00" * 16,  # any key ID
             did=None,
@@ -273,9 +278,8 @@ class TestEntityInterop(unittest.TestCase):
             api_base=self.api_base,
         )
 
-        self.assertTrue(verified)
-        self.assertIsNotNone(entity)
-        self.assertEqual(entity.name, "Test Verification DAO LLC")
+        self.assertFalse(verified)
+        self.assertIsNone(entity)
 
 
 if __name__ == "__main__":

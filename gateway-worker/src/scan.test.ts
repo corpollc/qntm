@@ -156,7 +156,7 @@ describe('scanRequestApprovals', () => {
     expect(result).toBeNull();
   });
 
-  it('falls back to rules lookup when eligible_signer_kids absent (backward compat)', () => {
+  it('refuses legacy requests without a validated roster and threshold', () => {
     const reqBody = JSON.stringify({
       type: 'gate.request',
       conv_id: 'conv-1',
@@ -175,9 +175,7 @@ describe('scanRequestApprovals', () => {
     ];
     const rules: ThresholdRuleState[] = [{ service: '*', endpoint: '', verb: '', m: 1 }];
     const result = scanRequestApprovals(messages, 'req-legacy', gatewayKid, rules);
-    expect(result).not.toBeNull();
-    expect(result!.threshold).toBe(1);
-    expect(result!.status).toBe('approved'); // signerA's submission counts
+    expect(result).toBeNull();
   });
 
   // Regression: forged gate.executed from non-gateway signer_kid is still stored

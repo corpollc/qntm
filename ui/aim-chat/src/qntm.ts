@@ -4,6 +4,8 @@
  */
 
 import {
+  applyAuthenticatedGroupControl,
+  gatewayAccess, gatewayAccessHash,
   GateClient, createGatewayInviteBody, sealGatewayBootstrap, matchesGatewayAcceptance,
   generateIdentity as clientGenerateIdentity,
   keyIDFromPublicKey,
@@ -36,7 +38,6 @@ import {
   parseGroupAddBody,
   parseGroupRemoveBody,
   parseGroupRekeyBody,
-  QSP1Suite,
   createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
   createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
   parseGatewayBody, validateGatewayContext,
@@ -47,112 +48,9 @@ import * as store from './store'
 import { rawBackup, importBackup as importValidatedBackup } from './backup'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
 
-const _suite = new QSP1Suite()
 const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
 // Conversation creators only know themselves until another participant is learned locally.
 const MIN_RECEIPT_ACKS = 2
-
-// ---- Group event state application ----
-
-/**
- * Apply group membership/epoch mutations from a received group event.
- * Mutates the stored conversation in localStorage.
- */
-function applyGroupEvent(
-  profileId: string,
-  conversationId: string,
-  bodyType: string,
-  bodyBytes: Uint8Array,
-  localIdentity: IdentityKeys | null,
-): void {
-  if (!GROUP_BODY_TYPES.has(bodyType)) return
-
-  try {
-    switch (bodyType) {
-      case 'group_genesis': {
-        const parsed = parseGroupGenesisBody(bodyBytes)
-        const newKids: string[] = []
-        const newPks: string[] = []
-        for (const m of parsed.founding_members ?? []) {
-          newKids.push(bytesToHex(new Uint8Array(m.key_id)).toLowerCase())
-          newPks.push(bytesToHex(new Uint8Array(m.public_key)))
-        }
-        store.updateConversation(profileId, conversationId, (conv) => ({
-          ...conv,
-          participants: dedupeHex([...conv.participants, ...newKids]),
-          participantPublicKeys: dedupeHex([...(conv.participantPublicKeys || []), ...newPks]),
-        }))
-        break
-      }
-      case 'group_add': {
-        const parsed = parseGroupAddBody(bodyBytes)
-        const newKids: string[] = []
-        const newPks: string[] = []
-        for (const m of parsed.new_members ?? []) {
-          newKids.push(bytesToHex(new Uint8Array(m.key_id)).toLowerCase())
-          newPks.push(bytesToHex(new Uint8Array(m.public_key)))
-        }
-        store.updateConversation(profileId, conversationId, (conv) => ({
-          ...conv,
-          participants: dedupeHex([...conv.participants, ...newKids]),
-          participantPublicKeys: dedupeHex([...(conv.participantPublicKeys || []), ...newPks]),
-        }))
-        break
-      }
-      case 'group_remove': {
-        const parsed = parseGroupRemoveBody(bodyBytes)
-        const removedKids = new Set(
-          (parsed.removed_members ?? []).map((kid: Uint8Array | ArrayBuffer) =>
-            bytesToHex(kid instanceof Uint8Array ? kid : new Uint8Array(kid)).toLowerCase()
-          ),
-        )
-        store.updateConversation(profileId, conversationId, (conv) => ({
-          ...conv,
-          participants: conv.participants.filter((p) => !removedKids.has(p.toLowerCase())),
-          participantPublicKeys: (conv.participantPublicKeys || []).filter((pk) => {
-            const kid = bytesToHex(keyIDFromPublicKey(hexToBytes(pk))).toLowerCase()
-            return !removedKids.has(kid)
-          }),
-        }))
-        break
-      }
-      case 'group_rekey': {
-        if (!localIdentity) break
-        const parsed = parseGroupRekeyBody(bodyBytes)
-        const localKidB64 = base64UrlEncode(localIdentity.keyID)
-        const wrappedBlob = parsed.wrapped_keys[localKidB64]
-        if (!wrappedBlob) {
-          // We're excluded from this rekey — don't update keys
-          break
-        }
-        // Unwrap the new group key
-        const conv = store.findConversation(profileId, conversationId)
-        if (!conv) break
-        const convIdBytes = hexToBytes(conv.id)
-        const newGroupKey = _suite.unwrapKeyForRecipient(
-          new Uint8Array(wrappedBlob),
-          localIdentity.privateKey,
-          localIdentity.keyID,
-          convIdBytes,
-        )
-        const newEpoch = parsed.new_conv_epoch
-        const { aeadKey, nonceKey } = _suite.deriveEpochKeys(newGroupKey, convIdBytes, newEpoch)
-        store.updateConversation(profileId, conversationId, (c) => ({
-          ...c,
-          currentEpoch: newEpoch,
-          keys: {
-            root: bytesToHex(newGroupKey),
-            aeadKey: bytesToHex(aeadKey),
-            nonceKey: bytesToHex(nonceKey),
-          },
-        }))
-        break
-      }
-    }
-  } catch {
-    // Silently ignore malformed group events — they'll still show as system messages
-  }
-}
 
 // ---- Group event CBOR → JSON ----
 
@@ -425,6 +323,7 @@ function shouldTrackSenderAsParticipant(
   if ((conv?.participants || []).some((participant) => participant.toLowerCase() === normalizedKid)) {
     return true
   }
+  if (conv?.groupControl?.roster || conv?.gateway?.status === 'active') return false
   return !NON_MEMBER_SYSTEM_BODY_TYPES.has(bodyType)
 }
 
@@ -625,23 +524,64 @@ async function applyReceivedEnvelope(
   const createdAt = new Date(envelope.created_ts * 1000).toISOString()
 
   const selectedGateway = store.findConversation(profileId, conversationId)?.gateway
+  if (bodyType === 'gate.promote') {
+    try {
+      const body = parseGatewayBody(bodyType, rawBodyBytes)
+      const current = store.findConversation(profileId, conversationId)!
+      if (body.type !== 'gate.promote' || selectedGateway?.status === 'active' || !current.participants.includes(senderKidHex)
+        || body.keys_hash !== gatewayAccessHash(gatewayAccess(activeConvCrypto))) throw new Error('Untrusted gateway invitation')
+      for (const kid of current.participants) if (!Object.prototype.hasOwnProperty.call(body.participants, base64UrlEncode(hexToBytes(kid)))) throw new Error('Invitation omits a known participant')
+      for (const pk of current.participantPublicKeys || []) if (body.participants[base64UrlEncode(keyIDFromPublicKey(hexToBytes(pk)))] !== base64UrlEncode(hexToBytes(pk))) throw new Error('Invitation changes a known key')
+      const creator = current.groupControl?.creator ?? base64UrlEncode(hexToBytes(current.participants[0]))
+      if ((body.conversation_type !== undefined && body.conversation_type !== current.type) ||
+        (body.group_creator_kid !== undefined && body.group_creator_kid !== creator)) throw new Error('Invitation changes group context')
+    } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
+  }
   if (bodyType === 'gate.accept') {
     try {
       const acceptance = JSON.parse(bodyText)
       const invitation = store.getHistory(profileId, conversationId).find(m => m.id === acceptance.invitation_msg_id && m.bodyType === 'gate.promote')
-      if (acceptance.conv_id !== conversationId || !invitation || !matchesGatewayAcceptance(acceptance, base64UrlEncode(decrypted.inner.sender_kid), invitation.id, invitation.text) ||
+      if (acceptance.conv_id !== conversationId || !invitation || envelope.created_ts > JSON.parse(invitation.text).expires_at || !matchesGatewayAcceptance(acceptance, base64UrlEncode(decrypted.inner.sender_kid), invitation.id, invitation.text) ||
         (selectedGateway?.invitationId && selectedGateway.invitationId !== acceptance.invitation_id)) {
         return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
       }
-      store.updateConversation(profileId, conversationId, c => ({ ...c, gateway: { publicKey: acceptance.gateway_public_key, keyId: acceptance.gateway_kid,
-        status: 'active', invitationId: acceptance.invitation_id, floor: JSON.parse(invitation.text).floor } }))
+      const admitted = parseGatewayBody('gate.promote', invitation.text)
+      if (admitted.type !== 'gate.promote') throw new Error('Invalid gateway invitation')
+      const current = store.findConversation(profileId, conversationId)!
+      if (current.groupControl?.needsRekey || current.groupControl?.removed ||
+        admitted.keys_hash !== gatewayAccessHash(gatewayAccess(activeConvCrypto))) throw new Error('Gateway invitation is stale')
+      for (const kid of current.participants) if (!Object.prototype.hasOwnProperty.call(admitted.participants, base64UrlEncode(hexToBytes(kid)))) throw new Error('Invitation changes current membership')
+      if (current.groupControl?.roster && current.currentEpoch > 0 && current.participants.length !== Object.keys(admitted.participants).length) throw new Error('Invitation changes current membership')
+      const inviter = invitation.direction === 'outgoing' ? base64UrlEncode(identity.keyID) : base64UrlEncode(hexToBytes(invitation.senderKey))
+      const creator = current.groupControl?.creator ?? base64UrlEncode(hexToBytes(current.participants[0]))
+      store.updateConversation(profileId, conversationId, c => ({ ...c,
+        participants: Object.keys(admitted.participants).map(kid => bytesToHex(base64UrlDecode(kid))),
+        participantPublicKeys: Object.values(admitted.participants).map(pk => bytesToHex(base64UrlDecode(pk))),
+        groupControl: c.groupControl ? { creator: c.groupControl.creator, needsRekey: false,
+          removed: !Object.prototype.hasOwnProperty.call(admitted.participants, base64UrlEncode(identity.keyID)) } : undefined,
+        gateway: { publicKey: acceptance.gateway_public_key, keyId: acceptance.gateway_kid,
+          membershipAuthority: current.type === 'direct' || inviter === creator,
+          status: 'active', invitationId: acceptance.invitation_id, floor: admitted.floor } }))
     } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
   }
   if (selectedGateway?.status === 'active' && NON_MEMBER_SYSTEM_BODY_TYPES.has(bodyType) && bodyType !== 'gate.promote' && bodyType !== 'gate.accept' &&
       base64UrlEncode(decrypted.inner.sender_kid) !== selectedGateway.keyId) {
     return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
   }
-  applyGroupEvent(profileId, conversationId, bodyType, rawBodyBytes, identity)
+  if (GROUP_BODY_TYPES.has(bodyType)) {
+    const current = store.findConversation(profileId, conversationId)
+    if (!current) return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+    try {
+      const known = Object.fromEntries((current.participantPublicKeys || []).map(pk => [base64UrlEncode(keyIDFromPublicKey(hexToBytes(pk))), base64UrlEncode(hexToBytes(pk))]))
+      const initial = current.groupControl ?? { creator: base64UrlEncode(hexToBytes(current.participants[0])), needsRekey: false, removed: false }
+      if (selectedGateway?.status === 'active' && !selectedGateway.membershipAuthority) throw new Error('Gateway has no delegated membership authority')
+      const result = applyAuthenticatedGroupControl(envelope, decrypted, activeConvCrypto, identity, initial, known,
+        selectedGateway?.status === 'active' ? base64UrlDecode(selectedGateway.publicKey) : undefined)
+      store.updateConversation(profileId, conversationId, c => ({ ...c, groupControl: result.state,
+        participants: result.conversation.participants.map(bytesToHex), participantPublicKeys: Object.values(result.participants).map(pk => bytesToHex(base64UrlDecode(pk))),
+        currentEpoch: result.conversation.currentEpoch, keys: { root: bytesToHex(result.conversation.keys.root), aeadKey: bytesToHex(result.conversation.keys.aeadKey), nonceKey: bytesToHex(result.conversation.keys.nonceKey) } }))
+    } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
+  }
 
   let nextConvCrypto: ConvCrypto | null = activeConvCrypto
   if (bodyType === 'group_rekey') {
@@ -694,6 +634,12 @@ async function applyReceivedEnvelope(
   }
 }
 
+function assertCanSend(profileId: string, conversationId: string): void {
+  const state = store.findConversation(profileId, conversationId)?.groupControl
+  if (state?.removed) throw new Error('You have been removed from this conversation')
+  if (state?.needsRekey) throw new Error('Complete the pending group rekey before sending')
+}
+
 export async function sendMessageToConversation(
   profileId: string, profileName: string, conversationId: string, text: string, bodyType = 'text'
 ): Promise<ChatMessage> {
@@ -707,6 +653,7 @@ export async function sendMessageToConversation(
     text = JSON.stringify({ ...JSON.parse(text), ...gatewayTarget(profileId, conversationId) })
   }
   const bodyBytes = new TextEncoder().encode(text)
+  assertCanSend(profileId, conversationId)
   const envelope = createMessage(identity, convCrypto, bodyType, bodyBytes, undefined, defaultTTL())
 
   await sendEnvelope(conversationId, envelope, {
@@ -1080,6 +1027,7 @@ export async function gatePromoteRequest(
   const participants: Record<string, string> = {}
   for (const pk of listKnownParticipantPublicKeys(conv, identity)) participants[base64UrlEncode(keyIDFromPublicKey(pk))] = base64UrlEncode(pk)
   const text = JSON.stringify(createGatewayInviteBody(invitation, convCrypto, participants, threshold))
+  assertCanSend(profileId, conversationId)
   const envelope = createMessage(identity, convCrypto, 'gate.promote', new TextEncoder().encode(text), undefined, defaultTTL())
   const sequence = await getDropbox().postMessage(convCrypto.id, serializeEnvelope(envelope))
   const message: store.StoredMessage = { id: bytesToHex(envelope.msg_id), conversationId, direction: 'outgoing', sender: profileName,

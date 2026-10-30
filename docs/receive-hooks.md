@@ -198,3 +198,9 @@ interface; it does not claim tested built-in insertion adapters for every harnes
 Muse can implement its own subscription consumer or read the JSONL stream.
 The messaging Go implementation in `attic/go` is archived; the separate Go charter
 registrar is not a messaging client. This feature does not revive the archived CLI.
+
+
+The Claude channel only reuses a verified history entry when the newly received
+serialized envelope has the same SHA-256 digest as the saved entry. Legacy entries
+without that digest must be decrypted again. Delivered event IDs are retained across
+channel restarts, so replaying an exact old envelope does not wake the agent twice.

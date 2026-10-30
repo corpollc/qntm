@@ -102,7 +102,9 @@ def test_cli_control_retry_keeps_identical_wire_and_rotates_after_admission(tmp_
     fresh=cli._load_conversations(str(tmp_path))[0]
     assert fresh['needs_rekey'] and fresh['pending_control']
     monkeypatch.setattr(cli,'_http_send',lambda url,cid,raw:attempted.append(raw) or {'seq':1})
-    cli._retry_group_control(str(tmp_path),'http://relay',record['id'])
+    import sys
+    monkeypatch.setattr(sys, 'argv', ['qntm', '--config-dir', str(tmp_path), '--dropbox-url', 'http://relay', 'group', 'retry', record['id']])
+    cli.main()
     assert attempted[0]==attempted[1]
     cli._rotate_group(str(tmp_path),'http://relay',owner,record['id'])
     fresh=cli._load_conversations(str(tmp_path))[0]
@@ -185,3 +187,29 @@ def test_rejected_late_rekey_preserves_required_recovery_without_partial_state(t
     after = cli._load_conversations(str(tmp_path))[0]
     assert after['recovery_required']
     assert after['keys'] == before_keys and after['group_state'] == saved['group_state']
+
+
+@pytest.mark.parametrize('flag', ['needs_rekey', 'pending_control', 'excluded', 'recovery_required'])
+@pytest.mark.parametrize('kind', ['text', 'gate.request', 'gate.secret', 'gov.propose'])
+def test_shared_outbound_creation_guards_group_state(tmp_path, flag, kind):
+    owner, member, _, record, _ = setup(tmp_path)
+    record[flag] = True
+    with pytest.raises(ValueError, match='pending group update'):
+        create_message(member, cli._conv_to_crypto(record), kind, b'{}')
+
+
+def test_generate_does_not_replace_identity(tmp_path):
+    cli._save_identity(str(tmp_path), generate_identity())
+    before = (tmp_path / 'identity.json').read_bytes()
+    with pytest.raises(SystemExit):
+        cli.cmd_identity_generate(SimpleNamespace(config_dir=str(tmp_path)))
+    assert (tmp_path / 'identity.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('flag', ['excluded', 'recovery_required'])
+@pytest.mark.parametrize('kind', ['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
+def test_removed_or_unrecovered_identity_cannot_create_controls(tmp_path, flag, kind):
+    owner, member, _, record, _ = setup(tmp_path)
+    record[flag] = True
+    with pytest.raises(ValueError, match='pending group update'):
+        create_message(member, cli._conv_to_crypto(record), kind, b'{}')

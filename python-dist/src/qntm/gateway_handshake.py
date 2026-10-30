@@ -26,6 +26,9 @@ def valid_gateway(public_key, kid):
 
 
 def create_gateway_invite_body(invitation, conversation, participants, floor):
+    conversation_type = conversation.get('type', 'direct')
+    if conversation_type not in ('direct', 'group'):
+        raise ValueError('Gateway requires a direct or group conversation')
     if not valid_gateway(invitation["gateway_public_key"], invitation["gateway_kid"]):
         raise ValueError("Invalid gateway identity")
     if type(floor) is not int or not 1 <= floor <= len(participants):
@@ -34,6 +37,8 @@ def create_gateway_invite_body(invitation, conversation, participants, floor):
         "type": "gate.promote", "invitation_id": invitation["invitation_id"],
         "conv_id": conversation["id"].hex(), "conv_epoch": conversation["currentEpoch"],
         "gateway_kid": invitation["gateway_kid"], "gateway_public_key": invitation["gateway_public_key"],
+        "conversation_type": conversation_type,
+        **({"group_creator_kid": base64url_encode(conversation["participants"][0])} if conversation_type == "group" else {}),
         "expires_at": invitation["expires_at"],
         "keys_hash": hashlib.sha256(marshal_canonical(gateway_access(conversation))).hexdigest(),
         "participants": participants, "rules": [{"service": "*", "endpoint": "*", "verb": "*", "m": floor}], "floor": floor,

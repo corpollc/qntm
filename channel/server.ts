@@ -17,6 +17,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createHash } from 'node:crypto';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -281,6 +282,7 @@ interface HistoryEntry {
   created_ts: number;
   body?: string;
   receive_event?: ReceiveEvent;
+  envelope_sha256?: string;
 }
 
 function loadHistory(convIdHex: string): HistoryEntry[] {
@@ -300,7 +302,9 @@ function saveHistory(convIdHex: string, entries: HistoryEntry[]): void {
 // ---------------------------------------------------------------------------
 
 function loadNames(): Record<string, string> {
-  return loadJson(join(CONFIG_DIR, 'names.json'), {});
+  const saved = loadJson<Record<string, unknown>>(join(CONFIG_DIR, 'names.json'), {});
+  const names = saved.identities && typeof saved.identities === 'object' ? saved.identities : saved;
+  return Object.fromEntries(Object.entries(names).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
 }
 
 function resolveName(kid: string, names: Record<string, string>): string {
@@ -573,7 +577,7 @@ async function emitHistory(): Promise<void> {
     method: 'notifications/claude/channel',
     params: {
       content: lines.join('\n'),
-      meta: { context: 'history', count: String(recent.length) },
+      meta: { context: 'history', count: String(recent.length), content_trust: 'untrusted' },
     },
   });
   console.error(`[qntm-channel] sent ${recent.length} history entries`);
@@ -592,6 +596,7 @@ async function deliverEvent(event: ReceiveEvent): Promise<void> {
         conversation_id: event.conversation_id,
         sequence: String(event.sequence),
         content_trust: 'untrusted',
+        ...(event.message.charter_info ? { charter_info: JSON.stringify(event.message.charter_info) } : {}),
       },
     },
   });
@@ -606,13 +611,15 @@ function drainInbox(): void {
 async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<void> {
   if (!convIdHex || !convCrypto || !inbox || seq <= inbox.cursor) return;
   const history = loadHistory(convIdHex);
+  const envelopeHash = createHash('sha256').update(rawEnvBytes).digest('hex');
   let event: ReceiveEvent;
   try {
     const envelope = deserializeEnvelope(rawEnvBytes);
     // A CLI receiver may already have advanced the epoch. Its verified history
     // preserves this event, but its shared cursor never acknowledges our handoff.
-    const previous = history.find(entry => entry.msg_id === toHex(envelope.msg_id))?.receive_event;
-    if (previous?.message.verified && previous.conversation_id === convIdHex) {
+    const saved = history.find(entry => entry.msg_id === toHex(envelope.msg_id));
+    const previous = saved?.receive_event;
+    if (saved?.envelope_sha256 === envelopeHash && previous?.message.verified && previous.conversation_id === convIdHex) {
       event = { ...previous, sequence: seq, message: { ...previous.message, sequence: seq } };
     } else {
       const record = findConversation(convIdHex);
@@ -639,6 +646,7 @@ async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<voi
       unsafe_body_b64: event.message.unsafe_body_b64,
       created_ts: event.message.created_ts,
       receive_event: event,
+      envelope_sha256: envelopeHash,
     });
     saveHistory(convIdHex, history);
   }

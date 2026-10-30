@@ -1,5 +1,5 @@
 import {
-  createMessage,
+  createMessage, createGroupGenesisBody, receiveConversationEvent,
   defaultTTL,
   generateIdentity,
   keyIDFromPublicKey,
@@ -280,6 +280,10 @@ describe('monitorQntmAccount durable dispatch', () => {
   test('a delayed reply uses the latest rekey and refuses delivery after removal', async () => {
     const f = await fixture();
     const binding = f.binding(f.group.conversationId);
+    const checkpoint = f.store.load(binding);
+    const genesis = createMessage(f.group.inviter, checkpoint.conversation, 'group_genesis', createGroupGenesisBody('Test', '', f.group.inviter, [f.identity.publicKey]));
+    const initialized = receiveConversationEvent(genesis, checkpoint.conversation, f.identity, checkpoint.session);
+    f.store.commit(binding, { ...checkpoint, conversation: initialized.conversation, session: initialized.state });
     binding.trigger = 'mention'; binding.triggerNames = ['wake'];
     let release!: () => void;
     f.runtime.dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions, replyOptions }) => {

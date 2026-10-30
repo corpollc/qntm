@@ -54,6 +54,8 @@ def apply_control(record, identity, envelope, message, wire, *, fallback=None, a
     inner=message['inner']; kind=inner['body_type']; sender=bytes(inner['sender_kid']); body=unmarshal(inner['body'])
     epoch=envelope['conv_epoch']; current=record.get('current_epoch',0); mid=envelope['msg_id'].hex()
     delegated = authorized_control_signer is not None and inner['sender_ik_pk'] == authorized_control_signer
+    if (record.get('gateway') or {}).get('status') == 'active' and not delegated:
+        raise ValueError('Active gateway membership must change through governance')
     if not isinstance(body,dict) or ('group_epoch' in body and (type(body['group_epoch']) is not int or body['group_epoch']!=epoch)) or record.get('group_checkpoint') and body.get('group_epoch')!=epoch:
         raise ValueError('Membership update is not signed for this epoch')
     if epoch!=current:
@@ -106,7 +108,7 @@ def apply_control(record, identity, envelope, message, wire, *, fallback=None, a
     elif kind=='group_remove':
         removed=body.get('removed_members')
         if not state.is_admin(sender) and not delegated:raise ValueError('Only a group administrator or accepted gateway may remove members')
-        if not isinstance(removed,list) or not 1<=len(removed)<=128 or any(not isinstance(kid,bytes) or not state.is_member(kid) or kid==state.creator for kid in removed):
+        if not isinstance(removed,list) or not 1<=len(removed)<=128 or any(not isinstance(kid,bytes) or not state.is_member(kid) or kid==state.creator for kid in removed) or len(set(removed)) != len(removed):
             raise ValueError('Invalid member removal; replacing the creator requires a successor group')
         state.apply_remove(body);record['needs_rekey']=True
         if identity['keyID'] in removed:record['excluded']=True

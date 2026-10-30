@@ -28,6 +28,8 @@ def create_message(
 ) -> dict:
     """Create and encrypt a message, returning an outer envelope dict."""
     validate_identity(sender_identity)
+    if conversation.get("controlsBlocked") or (conversation.get("sendBlocked") and body_type not in ("group_genesis", "group_add", "group_remove", "group_rekey")):
+        raise ValueError("Complete the pending group update or restore authorized access before sending")
 
     msg_id = generate_message_id()
     now = int(time.time())

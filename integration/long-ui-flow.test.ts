@@ -72,13 +72,13 @@ describe.sequential('real long-running gateway integration UI flow', () => {
         body: JSON.stringify(bootstrapBody),
       });
       expect(unauthenticated.status).toBe(400);
-      await ui.enableGateway(harness.gatewayUrl, 2);
+      await harness.bootstrapGateway(convId, harness.alice);
       await waitForCliHistory(harness.alice, convId, entry => entry.body_type === 'gate.accept', 'verified gateway acceptance', 30_000);
       const promoteEntry = await waitForCliHistory(
         harness.alice,
         convId,
         (entry) => entry.body_type === 'gate.promote',
-        'phase 1 ui gate.promote',
+        'phase 1 creator gate.promote',
         30_000,
       );
       const promoteBody = parseUnsafeBody(promoteEntry);

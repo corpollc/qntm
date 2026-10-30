@@ -5,6 +5,7 @@ import ast
 import json
 from pathlib import Path
 import tomllib
+from set_release_version import python_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,9 +19,9 @@ def main():
     if (ROOT / 'gate/recipes/starter.json').read_bytes() != (ROOT / 'python-dist/src/qntm/recipes.json').read_bytes():
         errors.append('Bundled Python recipes are stale: copy gate/recipes/starter.json to python-dist/src/qntm/recipes.json')
 
-    def check(label, actual):
-        if actual != version:
-            errors.append(f'{label}: {actual!r}, expected {version!r}')
+    def check(label, actual, expected=version):
+        if actual != expected:
+            errors.append(f'{label}: {actual!r}, expected {expected!r}')
 
     if args.tag:
         check('tag', args.tag.removeprefix('v'))
@@ -36,13 +37,13 @@ def main():
         for key, data in json.loads(path.read_text()).get('packages', {}).items():
             if key.endswith('/client') and data.get('name') == '@corpollc/qntm':
                 check(f'{path.relative_to(ROOT)} client link', data['version'])
-    check('Python project', tomllib.loads((ROOT / 'python-dist/pyproject.toml').read_text())['project']['version'])
+    check('Python project', tomllib.loads((ROOT / 'python-dist/pyproject.toml').read_text())['project']['version'], python_version(version))
     for package in tomllib.loads((ROOT / 'python-dist/uv.lock').read_text())['package']:
         if package['name'] == 'qntm':
-            check('Python lock', package['version'])
+            check('Python lock', package['version'], python_version(version))
     for node in ast.parse((ROOT / 'python-dist/src/qntm/__init__.py').read_text()).body:
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == '__version__' for target in node.targets):
-            check('Python runtime', ast.literal_eval(node.value))
+            check('Python runtime', ast.literal_eval(node.value), python_version(version))
     if not (ROOT / f'docs/releases/v{version}.md').is_file():
         errors.append(f'Missing curated release notes for v{version}')
     if f'## v{version}' not in (ROOT / 'docs/CHANGELOG.md').read_text():

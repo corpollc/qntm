@@ -84,3 +84,38 @@ CLI and MCP share membership and rekey processing. Receive pending messages befo
 ## Remaining limits
 
 qntm does not protect against compromised endpoints, malicious guidance, deceptive contact labels, leaked invites, approval mistakes, metadata analysis, or denial of service. Plaintext history is a local record, not a tamper-proof compliance archive. Relay retention and deletion are not proof that every recipient received or erased a message.
+
+
+### Audit hardening (October 2026)
+
+Group membership controls received by the TypeScript session and AIM browser require
+an authenticated creator/admin roster or the accepted gateway. Rekey recipients must
+match that roster. The local roster checkpoint is persisted with the keys; ordinary
+outbound messages are blocked during a pending membership rekey or after removal.
+Old local group records without an authenticated roster must replay genesis or use
+a supported authenticated recovery path before applying non-gateway group controls.
+The Python CLI, MCP, guidance and gateway commands share the outbound state guard.
+
+Announcement ownership is stored in the conversation sequencer. Registration requires
+an unused ID derived from the master public key. Unbound legacy claims are
+quarantined without mutation or deletion authority. Closing a channel preserves its ownership tombstone and
+monotonic sequence while removing replay data. KV ciphertext cleanup is batched;
+provider eventual consistency and recovery history remain separate retention limits.
+Announcement posting authorization is enforced by the relay; this does not give
+subscribers an end-to-end posting-key attestation against a malicious relay.
+
+Gateway execution intent is durable before contacting an upstream service. An unknown
+outcome stays blocked across restart; a failed relay publication cannot authorize a
+second upstream call. Results are bounded to 8 KiB and redirects are rejected. A
+durable ordered outbox retries known results and membership controls; a long outage
+can outlast a signed message's expiry. Do not blindly resubmit an uncertain
+non-idempotent action under a new request ID. Gateway replay records and membership
+transitions commit with the relay cursor; storage failures leave the cursor
+unacknowledged. Active gateways exclude concurrent standalone group controls.
+
+`verify_entity` checks entity status only. `verify_sender_entity` now requires a DID
+resolver and a trusted local `verify_binding_fn(did, public_key, entity)` proving the
+entity authorizes that DID/key. It fails closed if either check is absent. Identity
+HTTP reads reject redirects and oversized/mismatched documents. General `did:web`
+resolution still needs caller-controlled network egress when used on untrusted input;
+it is not a public-network-only resolver.

@@ -43,7 +43,7 @@ class TestResolveDidWeb:
             ],
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_open.return_value = self._mock_urlopen(doc_data)
             doc = resolve_did_web("did:web:example.com")
 
@@ -59,7 +59,7 @@ class TestResolveDidWeb:
             "id": "did:web:example.com:path:to",
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_open.return_value = self._mock_urlopen(doc_data)
             doc = resolve_did_web("did:web:example.com:path:to")
 
@@ -94,7 +94,7 @@ class TestResolveDidWeb:
             ],
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_open.return_value = self._mock_urlopen(doc_data)
             doc = resolve_did_web("did:web:example.com")
 
@@ -125,7 +125,7 @@ class TestResolveDidWeb:
             ],
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_open.return_value = self._mock_urlopen(doc_data)
             doc = resolve_did_web("did:web:example.com")
 
@@ -140,7 +140,7 @@ class TestResolveDidWeb:
             "service": [],
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_open.return_value = self._mock_urlopen(doc_data)
             doc = resolve_did_web("did:web:example.com")
 
@@ -229,7 +229,7 @@ class TestResolveDidToEd25519:
             "id": "did:web:example.com",
         }
 
-        with patch("qntm.did.urllib.request.urlopen") as mock_open:
+        with patch("qntm._identity_http._opener.open") as mock_open:
             mock_resp = MagicMock()
             mock_resp.read.return_value = json.dumps(doc_data).encode()
             mock_resp.__enter__ = lambda s: s
@@ -278,3 +278,26 @@ def _base58_encode(data: bytes) -> str:
             break
 
     return (b"1" * pad + b"".join(result)).decode()
+
+
+@pytest.mark.parametrize("did", ["did:web:user@example.com", "did:web:example.com/evil", "did:web:example.com:..", "did:web:example.com:%2Fprivate"])
+def test_invalid_web_authorities_and_paths(did):
+    with pytest.raises(DIDResolutionError):
+        resolve_did_web(did)
+
+
+def test_identity_http_bounds_and_no_redirects():
+    from qntm._identity_http import MAX_IDENTITY_DOCUMENT_BYTES, _NoRedirect, read_identity_json
+    assert _NoRedirect().redirect_request(None, None, 302, "redirect", {}, "https://elsewhere.invalid") is None
+    with patch("qntm._identity_http._opener.open") as op:
+        response = op.return_value.__enter__.return_value
+        response.read.return_value = b"x" * (MAX_IDENTITY_DOCUMENT_BYTES + 1)
+        with pytest.raises(ValueError, match="size limit"):
+            read_identity_json("https://example.com", timeout=1)
+        response.read.assert_called_once_with(MAX_IDENTITY_DOCUMENT_BYTES + 1)
+
+
+def test_did_web_document_id_must_match():
+    with patch("qntm.did.read_identity_json", return_value={"id": "did:web:elsewhere.example"}):
+        with pytest.raises(DIDResolutionError, match="identifier mismatch"):
+            resolve_did_web("did:web:example.com")
