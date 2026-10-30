@@ -33,12 +33,14 @@ def test_roundtrip_exact_part_boundaries(size):
     assert all(len(wire) <= 65536 for wire in value.envelopes)
 
 
-def test_typescript_fixture_authenticates_and_reassembles():
+def test_typescript_fixture_authenticates_and_reassembles(monkeypatch):
     path = Path(__file__).parents[2]/'client/tests/attachment-typescript.json'
     fixture = json.loads(path.read_text())
     invite = invite_from_url(fixture['parent_invite_token'])
     parent = create_conversation(invite, derive_conversation_keys(invite))
-    message = decrypt_message(deserialize_envelope(base64.b64decode(fixture['parent_envelope_b64'])), parent)
+    envelope = deserialize_envelope(base64.b64decode(fixture['parent_envelope_b64']))
+    monkeypatch.setattr(time, 'time', lambda: envelope['created_ts'])
+    message = decrypt_message(envelope, parent)
     data = assemble_attachment(message['inner']['body'], attachment_context(message),
                                [base64.b64decode(wire) for wire in fixture['parts_b64']])
     assert data == base64.b64decode(fixture['plaintext_b64'])

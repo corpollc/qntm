@@ -55,6 +55,15 @@ def test_same_lowest_winner_in_both_orders_for_both_participants():
     unauthorized=serialize_envelope(create_message(outsider,original,'group_rekey',create_rekey(outsider,original,state,original["id"])[0]))
     assert resolve_rekey_candidates(member,original,state,[unauthorized,*wires])['envelope']['msg_id']==candidates[0]['msg_id']
 
+def test_expired_rekey_requires_explicit_archive_mode_and_authentication(monkeypatch):
+    owner,member,_,state,original,_,envelope=setup()
+    wire=serialize_envelope(envelope)
+    monkeypatch.setattr('qntm.group_bootstrap.time.time',lambda:envelope['expiry_ts']+1)
+    assert resolve_rekey_candidates(member,original,state,[wire]) is None
+    assert resolve_rekey_candidates(member,original,state,[wire],allow_expired=True)['envelope']['msg_id']==envelope['msg_id']
+    envelope['ciphertext']=bytes([envelope['ciphertext'][0]^1])+envelope['ciphertext'][1:]
+    assert resolve_rekey_candidates(member,original,state,[serialize_envelope(envelope)],allow_expired=True) is None
+
 @pytest.mark.parametrize('language',['typescript','python'])
 def test_shared_current_epoch_and_rekey_vectors(language):
     import json,base64
