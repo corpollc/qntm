@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { OpenClawAgent } from './src/openclaw-agent.js';
 import { createLongHarness, waitForCliHistory, waitForUiStoredHistory, type LongHarness } from './src/runtime.js';
 import { LONG_TIMEOUT, historyMatchesRequest, historyMatchesProposal, requireUi, printDiagnostics } from './long-helpers.js';
 import type { ToolResult } from '../openclaw-qntm/tests/support/tool-provider.mjs';
+import { generateIdentity } from '@corpollc/qntm';
+import { createAuthenticatedTestGroup } from './long-helpers.js';
 
 describe.sequential('native OpenClaw gateway tools with Python, TypeScript and browser peers', () => {
   let h: LongHarness, host: OpenClawAgent, convId: string;
@@ -17,9 +19,10 @@ describe.sequential('native OpenClaw gateway tools with Python, TypeScript and b
   beforeAll(async () => {
     h = await createLongHarness({ withUi: true });
     await h.alice.run(['identity', 'generate']); await h.charlie.run(['identity', 'generate']);
-    const created = await h.alice.run(['group', 'create', 'OpenClaw gateway acceptance']);
-    convId = String(created.data!.conversation_id); const token = String(created.data!.invite_token);
-    host = new OpenClawAgent(join(h.rootDir, 'openclaw'), convId); await host.configure(h.relayUrl, token); await host.start();
+    const identity = generateIdentity();
+    const created = await createAuthenticatedTestGroup(h, 'OpenClaw gateway acceptance', identity.publicKey);
+    convId = created.convId; const token = created.token;
+    host = new OpenClawAgent(join(h.rootDir, 'openclaw'), convId, identity); await host.configure(h.relayUrl, token); await host.start();
     await requireUi(h).joinConversation(token, 'OpenClaw gateway acceptance');
     await requireUi(h).sendText('browser joins native tool test');
     await h.charlie.run(['group', 'join', '--', token]); await h.charlie.run(['send', convId, 'typescript joins native tool test']);
@@ -30,13 +33,14 @@ describe.sequential('native OpenClaw gateway tools with Python, TypeScript and b
     if (h && host) { mkdirSync(h.artifactDir, { recursive: true }); writeFileSync(join(h.artifactDir, 'openclaw.log'), host.log); }
     await host?.close(); await h?.stop();
   }, LONG_TIMEOUT);
+  afterEach(async ({ task }) => {
+    if (task.result?.state === 'fail' && h && convId) await printDiagnostics(h, convId);
+  });
 
-  it('admits the real gateway through the native agent tool and verifies signed acceptance on every client', async () => {
+  it('verifies creator-delegated gateway acceptance on the native host and every peer', async () => {
     try {
-      const result = last(await host.journey(h.alice, { id: 'admit', action: 'invite', options: { gatewayUrl: h.gatewayUrl, floor: 2 },
-        initialStatus: 'no_invitation', expectedStatus: 'awaiting_signed_acceptance' }));
-      expect(result.messageId).toMatch(/^[a-f0-9]{32}$/);
-      await host.waitFor(async () => Boolean((await host.checkpoint())?.session.gateway?.accepted), 'gateway accepts native invitation');
+      await h.bootstrapGateway(convId, h.alice);
+      await host.waitFor(async () => Boolean((await host.checkpoint())?.session.gateway?.accepted), 'native host verifies creator invitation acceptance');
       await waitForCliHistory(h.alice, convId, e => e.body_type === 'gate.accept', 'native admission visible to Python');
       await waitForCliHistory(h.charlie, convId, e => e.body_type === 'gate.accept', 'native admission visible to TypeScript');
       await waitForUiStoredHistory(requireUi(h), convId, e => e.bodyType === 'gate.accept', 'native admission visible in browser');
@@ -104,6 +108,8 @@ describe.sequential('native OpenClaw gateway tools with Python, TypeScript and b
     await waitForCliHistory(h.alice, convId, historyMatchesRequest('gate.result', freshId), 'native execution after restart and rekey');
     expect(h.getCounterExecutions()).toBe(3);
     const removeHost = await h.alice.run(['gov', 'propose-remove', '-c', convId, '--required-approvals', '2', '--', Buffer.from(host.identity.keyID).toString('hex')]);
+    expect(removeHost.ok).toBe(true);
+    await waitForUiStoredHistory(requireUi(h), convId, e => e.bodyType === 'gov.propose' && String(e.text).includes(String(removeHost.data!.proposal_id)), 'browser receives native identity removal proposal');
     await requireUi(h).approveLatestProposal();
     await waitForCliHistory(h.alice, convId, historyMatchesProposal('gov.applied', String(removeHost.data!.proposal_id)), 'native identity removal');
     await host.waitFor(async () => Boolean((await host.checkpoint())?.session.removed), 'native removed state');

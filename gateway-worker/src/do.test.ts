@@ -144,6 +144,26 @@ function makeDO(): { doInstance: GatewayConversationDO; storage: MockStorage; pr
 }
 
 describe('idempotent bootstrap recovery', () => {
+  it('executes an approved request after maintenance restores relay delivery without new traffic', async () => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState({ promotion_floor: 1, rules: [] });
+    await storage.put('conv_state', state);
+    const request = buildSignedRequest(alice, { required_approvals: 1 });
+    await process('gate.request', encode(request.body), alice.keyID, alice.publicKey);
+    await storage.put('vault:test-svc', { expires_at: '' });
+    const priorWire = serializeEnvelope(createMessage(gateway, convFromState(state), 'text', encode('retained notification')));
+    await storage.put('publication_outbox', [{ convId: state.conv_id, wire: base64UrlEncode(priorWire) }]);
+    vi.spyOn(doInstance as unknown as { ensureRelaySubscription(state: ConversationState): void }, 'ensureRelaySubscription').mockImplementation(() => undefined);
+    const posts = vi.spyOn(DropboxClient.prototype, 'postMessage').mockResolvedValue(3);
+    const execute = vi.spyOn(execution, 'executeRequest').mockResolvedValue({ request_id: request.requestId,
+      status_code: 200, content_type: 'text/plain', body: 'done', executed_at: new Date().toISOString() });
+    await doInstance.alarm();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(posts).toHaveBeenCalledTimes(3);
+    expect(new Uint8Array(posts.mock.calls[0][1])).toEqual(new Uint8Array(priorWire));
+    expect(await storage.get('publication_outbox')).toEqual([]);
+  });
+
   it('re-arms maintenance for an existing conversation after a worker restart', async () => {
     const { doInstance, storage } = makeDO();
     const state = promotedState();

@@ -37,6 +37,20 @@ def receive(path,identity,record,events,seq):
     return cli._process_received_messages(str(path),identity,[record],record,[{**event,'seq':seq-len(events)+index+1} for index,event in enumerate(events)],seq)
 
 
+def test_signed_genesis_supplies_gateway_roster_without_member_chat(tmp_path):
+    owner,member,_,record,_=setup(tmp_path)
+    record.pop('group_state')
+    record.pop('participant_public_keys')
+    record['participants']=[owner['keyID'].hex()]
+    cli._save_identity(str(tmp_path),owner)
+    cli._save_conversations(str(tmp_path),[record])
+    genesis=wire(owner,record,'group_genesis',create_group_genesis_body('Company','',owner,[member['publicKey']]))
+    assert len(receive(tmp_path,owner,record,[genesis],1))==1
+    persisted=cli._load_conversations(str(tmp_path))[0]
+    assert cli._load_known_participant_public_keys(str(tmp_path),persisted,identity=owner)=={
+        owner['keyID'].hex():owner['publicKey'], member['keyID'].hex():member['publicKey']}
+
+
 def test_delayed_lower_winner_rewinds_descendants_then_replays_winning_branch(tmp_path):
     owner,member,_,original,state=setup(tmp_path)
     candidates=sorted([rekey(owner,original,state),rekey(member,original,state)],key=lambda x:mid(x[0]))

@@ -302,6 +302,9 @@ export class GatewayConversationDO extends DurableObject<Env> {
       // Sweep expired secrets every poll cycle
       if (currentState.gate_promoted) {
         await this.sweepExpiredSecrets(currentState);
+        // Delivery recovery may unblock an already approved request even when
+        // no further conversation traffic arrives.
+        await this.checkAndExecute(currentState);
       }
     } finally {
       await this.storage.setAlarm(Date.now() + this.pollIntervalMs());

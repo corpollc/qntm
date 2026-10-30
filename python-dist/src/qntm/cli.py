@@ -483,8 +483,14 @@ def _participant_kids_from_conversation(conv_record) -> list[str]:
 
 def _load_known_participant_public_keys(config_dir, conv_record, identity=None) -> dict[str, bytes]:
     """Load participant public keys known locally for promotion payload construction."""
+    from .group_session import state_for_record
+
     conv_id_hex = conv_record["id"]
     known_pks = _load_participant_public_keys(config_dir, conv_id_hex)
+    # Signed group controls already bind every member to a public key. A
+    # founding member need not send chat before the creator invites a gateway.
+    for member in state_for_record(conv_record).members.values():
+        known_pks[member["key_id"].hex().lower()] = member["public_key"]
     if identity is not None:
         known_pks[identity["keyID"].hex().lower()] = identity["publicKey"]
 

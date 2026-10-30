@@ -584,7 +584,9 @@ async function applyReceivedEnvelope(
   }
 
   let nextConvCrypto: ConvCrypto | null = activeConvCrypto
-  if (bodyType === 'group_rekey') {
+  // Keep the live receive loop's membership aligned with the authenticated
+  // store even when an event changes only the roster, not the epoch keys.
+  if (GROUP_BODY_TYPES.has(bodyType) || bodyType === 'gate.accept') {
     nextConvCrypto = getConvCrypto(profileId, conversationId)
     if (!nextConvCrypto) {
       return { message: null, processedMsgId: null, nextConvCrypto: null }

@@ -7,8 +7,9 @@ baseline was commit `78712f5`. Claude Opus 5.5 and Grok 4.7 performed independen
 read-only reviews through their installed CLIs. Claude also completed a separate
 coverage pass over clients, adapters and workflows. Both reviewers subsequently
 reviewed the first remediation snapshot; their additional findings were triaged
-into fixes and the tracked follow-ups below, with regression and runtime checks. The final fixes were validated locally; the
-models did not review the final release artifacts. The coordinator checked the
+into fixes and the tracked follow-ups below, with regression and runtime checks.
+The final fixes were validated locally; the models did not review the final
+release artifacts. The coordinator checked the
 findings, implemented fixes and ran tests; the reviewers did not run tests.
 
 This is a broad source audit with targeted inspection, not a claim that every
@@ -23,15 +24,16 @@ verification boundary.
 | Boundary | Remediation |
 | --- | --- |
 | Gateway approval policy | Require positive safe integers for request/proposal thresholds, floors and rules before storage and again before applying legacy records. Missing, coercible and non-finite thresholds fail closed. |
-| Gateway execution | Check durable execution intent before an external call; persist completion before relay publication. Known results are retained in an exact-envelope outbox and delivered on retry; unknown attempts remain blocked across restart. Bound response bodies to 8 KiB and reject redirects carrying vault headers. |
+| Gateway execution | Check durable execution intent before an external call; persist completion before relay publication. Known results are retained in an exact-envelope outbox and delivered on retry; unknown attempts remain blocked across restart. Maintenance resumes approved requests after relay recovery without requiring new chat traffic. Bound response bodies to 8 KiB and reject redirects carrying vault headers. |
 | Gateway transitions | Transaction-bound message-ID journal and cursor prevent replayed votes; migration seeds protection from stored actions. Signed creation time and secret IDs prevent TTL extension. Membership state, applied markers, invalidations and exact ordered controls commit atomically. |
 | Relay announcements | Derive new channel IDs from master public keys. Quarantine unbound legacy claims without mutation/delete authority. Serialize ownership and publication in the conversation Durable Object. Refuse registration over an existing conversation; deletion preserves a closed ownership tombstone and monotonic sequence. Remove retained data and batch KV cleanup. |
 | Claude channel | Bind cached verified history to the exact serialized envelope hash; persist delivered IDs across restart. Include charter metadata and untrusted-content markers in channel notifications. |
 | Group authority | Share authenticated group-control checks between the TypeScript session and AIM: pinned creator/admin authority, protected creator, exact rekey roster and source epoch. Persist authority state in host checkpoints. Gateway membership delegation requires a creator-signed invitation; active gateways exclude parallel standalone controls. Reject stale acceptance before adopting a verified roster. Ordinary chat cannot widen an authenticated roster. |
 | Outbound group state | Block application messages while membership requires a rekey or access was removed. Python's guard covers CLI, MCP, guidance and gate/governance sends. Restore the `group retry` dispatcher. |
+| Browser receive state | Refresh the live receive roster after accepted group controls and gateway admission, so later valid rekeys are checked against the authenticated membership and subsequent traffic remains decryptable. |
 | Python announcements | Match relay domain-separated signature prehashes, register channels, send posting signatures and delete remotely before removing ownership keys. Repair create/subscribe record construction. |
 | Entity verification | Require both DID-to-sender matching and a trusted explicit entity-binding verifier. Encode entity IDs, reject redirects, bound identity documents, and verify returned document IDs. |
-| Defensive correctness | Refuse CLI identity overwrite; validate invitation byte types and conversation-ID lengths; bound echo replies so a large message cannot stop cursor progress. |
+| Defensive correctness | Refuse CLI identity overwrite; validate invitation byte types and conversation-ID lengths; bound echo replies so a large message cannot stop cursor progress. Use authenticated group public keys when inviting a gateway without requiring every founding member to send chat first. |
 | Release credentials | Scope Cloudflare/vault secrets to the steps that use them. Give reusable CI read-only permissions; build artifacts in unprivileged jobs and publish those artifacts in dedicated privileged jobs. Pin the npm CLI and keep beta releases off stable channels. |
 | Dependencies | Refresh audited npm lockfiles, use patched Worker tooling and scoped OpenClaw transitive overrides, update Python certifi/PyJWT and the Go toolchain. |
 
@@ -65,12 +67,13 @@ production validation remain separate.
 
 | Local gate | Result |
 | --- | --- |
-| Python 3.10 (WebSockets 13.0 minimum) and 3.12 | 702 passed, 1 optional live-network skip, 3 subtests on each |
+| Python 3.10 (WebSockets 13.0 minimum) and 3.12 | Full suites: 702 and 703 passed respectively, 1 optional live-network skip and 3 subtests on each; final roster regression suite also checked on 3.10 |
 | TypeScript library | 425 passed; build passed |
-| Gateway Worker | 137 passed; typecheck passed |
-| Browser | 117 unit tests, 21 Chromium journeys; build passed |
+| Gateway Worker | 138 passed; typecheck passed |
+| Browser | 118 unit tests, 21 Chromium journeys; build passed |
 | Terminal | 27 passed; build passed |
 | OpenClaw | 84 passed, typecheck/manifest and real native-host smoke passed |
+| Cross-client acceptance | 24 long-running browser, CLI, terminal and native OpenClaw journeys; 4 README and 2 relay/Vite runtime journeys passed |
 | Claude channel | 5 passed; typecheck passed |
 | Dependencies | Nine maintained npm graphs and locked Python runtime/MCP: zero reported advisories; Go 1.27.3 scan clean |
 | Package/release | SemVer/PEP 440 metadata, seven release-tool tests, sdist/wheel validation, installed-wheel runtime, npm tarball and workflow checks passed |
@@ -88,13 +91,15 @@ fails closed and must not acknowledge a failed storage commit.
 
 Any admitted participant can currently replace a gateway service credential;
 request quorum does not govern that replacement. The unsupported revocation
-claim has been removed from the documentation. Known gateway results retry through a durable outbox. An outage extending past
-a signed notification's expiry still needs operator recovery; the upstream
+claim has been removed from the documentation. Known gateway results retry
+through a durable outbox. An outage extending past a signed notification's expiry
+still needs operator recovery; the upstream
 action will not be automatically executed again. General `did:web` resolution
 still needs caller-controlled egress when handling untrusted identifiers.
 
 The public charter registry is experimental and unwitnessed. The lab distinguishes
 signed ancestry provenance from semantic policy assessment; founding authorization
 does not by itself prove perpetual parent control. These limitations are not
-changed by the locally generated charter reminder. Source metadata is prepared as `0.9.0-beta.1` (`0.9.0b1` for Python). No release
-tag, package publication or production deployment is part of this audit work.
+changed by the locally generated charter reminder. Source metadata is prepared
+as `0.9.0-beta.1` (`0.9.0b1` for Python). No release tag, package publication or
+production deployment is part of this audit work.

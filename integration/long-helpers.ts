@@ -3,8 +3,34 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import type { AimUiAgent, HistoryAgent, LongHarness } from './src/runtime.js';
 import { waitForCliHistory, waitForUiStoredHistory, waitForUiText } from './src/runtime.js';
+import { createInvite, inviteToToken, deriveConversationKeys, createConversation, createGroupGenesisBody,
+  createMessage, serializeEnvelope, DropboxClient } from '@corpollc/qntm';
 
 export const LONG_TIMEOUT = 300_000;
+
+/** Establish an authenticated founding roster before testing gateway delegation. */
+export async function createAuthenticatedTestGroup(h: LongHarness, name: string, hostPublicKey: Uint8Array) {
+  const ui = requireUi(h);
+  await ui.generateIdentity();
+  const browserKey = await ui.page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('aim-store')!);
+    return store.identities[store.activeProfileId].publicKey as string;
+  });
+  const saved = h.alice.readIdentity();
+  const creator = { privateKey: new Uint8Array(Buffer.from(saved.private_key, 'hex')),
+    publicKey: new Uint8Array(Buffer.from(saved.public_key, 'hex')), keyID: new Uint8Array(Buffer.from(saved.key_id, 'hex')) };
+  const invite = createInvite(creator, 'group'), token = inviteToToken(invite);
+  const conversation = createConversation(invite, deriveConversationKeys(invite));
+  const members = [hostPublicKey, new Uint8Array(Buffer.from(browserKey, 'hex')),
+    new Uint8Array(Buffer.from(h.charlie.readIdentity().public_key, 'hex'))];
+  const genesis = createMessage(creator, conversation, 'group_genesis', createGroupGenesisBody(name, '', creator, members));
+  await new DropboxClient(h.relayUrl).postMessage(conversation.id, serializeEnvelope(genesis));
+  const joined = await h.alice.run(['group', 'join', '--', token]);
+  if (!joined.ok) throw new Error(joined.error);
+  const convId = Buffer.from(conversation.id).toString('hex');
+  await waitForCliHistory(h.alice, convId, entry => entry.body_type === 'group_genesis', 'authenticated founding roster');
+  return { convId, token };
+}
 
 export function parseUnsafeBody(entry: Record<string, unknown>): Record<string, unknown> {
   const raw = entry.unsafe_body;
