@@ -74,6 +74,7 @@ production validation remain separate.
 | Terminal | 27 passed; build passed |
 | OpenClaw | 84 passed, typecheck/manifest and real native-host smoke passed |
 | Cross-client acceptance | 24 long-running browser, CLI, terminal and native OpenClaw journeys; 4 README and 2 relay/Vite runtime journeys passed |
+| 0.6.x message smoke | 16 bidirectional Python direct/group exchanges with v0.6.0–v0.6.3 archived sources, using invitations from either version; excludes mixed-version governance and old runtime/dependency environments |
 | Claude channel | 5 passed; typecheck passed |
 | Dependencies | Nine maintained npm graphs and locked Python runtime/MCP: zero reported advisories; Go 1.27.3 scan clean |
 | Package/release | SemVer/PEP 440 metadata, seven release-tool tests, sdist/wheel validation, installed-wheel runtime, npm tarball and workflow checks passed |
