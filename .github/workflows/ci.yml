@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -e python-dist/ pytest
+      - run: python -m pip install -e python-dist/
       - uses: actions/setup-go@v7
         with:
           go-version-file: charter-registry/go.mod
@@ -65,10 +65,6 @@ jobs:
           cache-dependency-path: client/package-lock.json
       - run: go test -race ./... && go vet ./... && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
         working-directory: charter-registry
-      - name: Verify charter pilot recovery and parent ancestry
-        run: |
-          (cd charter-registry && go build -o "$RUNNER_TEMP/qntm-charter-test" ./cmd/charter-registry)
-          QNTM_CHARTER_TEST_BINARY="$RUNNER_TEMP/qntm-charter-test" python -m pytest python-dist/tests/test_grok_charter_bot.py python-dist/tests/test_charter_lab.py -q
       - run: npm ci && npm run build && npm run test:charter-server
         working-directory: client
       - name: Verify deterministic charter vectors

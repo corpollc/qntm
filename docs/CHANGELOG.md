@@ -8,7 +8,7 @@
 
 [Full release notes](releases/v0.9.0-beta.1.md)
 
-- Add optional, receiver-generated charter discovery and signed parent/subagent assessment scenarios.
+- Add optional, receiver-generated charter discovery tied to the verified sender identity.
 - Harden gateway quorum validation, replay handling, durable membership publication and API-result recovery.
 - Bind new announcement IDs to master keys and quarantine legacy unbound ownership claims.
 - Align authenticated group controls across maintained clients and reject stale gateway acceptance.

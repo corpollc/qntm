@@ -48,6 +48,9 @@ qntm-mcp = "qntm.mcp_server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/qntm"]
 
+[tool.hatch.build.targets.sdist]
+include = ["/src/qntm", "/README.md", "/LICENSE", "/pyproject.toml"]
+
 [tool.hatch.build.targets.wheel.shared-data]
 
 [tool.qntm]

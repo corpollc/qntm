@@ -67,7 +67,7 @@ production validation remain separate.
 
 | Local gate | Result |
 | --- | --- |
-| Python 3.10 (WebSockets 13.0 minimum) and 3.12 | Full suites: 702 and 703 passed respectively, 1 optional live-network skip and 3 subtests on each; final roster regression suite also checked on 3.10 |
+| Python | Clean release suite on 3.12: 680 passed, 1 optional live-network skip, 3 subtests. Earlier 3.10 minimum-WebSockets audit: 702 passed including local pilot tests; final roster regression suite also checked on 3.10. |
 | TypeScript library | 425 passed; build passed |
 | Gateway Worker | 138 passed; typecheck passed |
 | Browser | 118 unit tests, 21 Chromium journeys; build passed |
@@ -78,6 +78,12 @@ production validation remain separate.
 | Claude channel | 5 passed; typecheck passed |
 | Dependencies | Nine maintained npm graphs and locked Python runtime/MCP: zero reported advisories; Go 1.27.3 scan clean |
 | Package/release | SemVer/PEP 440 metadata, seven release-tool tests, sdist/wheel validation, installed-wheel runtime, npm tarball and workflow checks passed |
+
+The bot runner, model-driven scenario lab, recorded pilot outputs and their
+23 tests are local experiments excluded from the release repository tree and
+artifacts. Python source archives explicitly include package source and project
+metadata; wheels and npm tarballs retain their package-only manifests. The
+release branch starts from `main` without the pilot commits in its ancestry.
 
 ## Remaining boundaries
 
@@ -98,8 +104,8 @@ still needs operator recovery; the upstream
 action will not be automatically executed again. General `did:web` resolution
 still needs caller-controlled egress when handling untrusted identifiers.
 
-The public charter registry is experimental and unwitnessed. The lab distinguishes
-signed ancestry provenance from semantic policy assessment; founding authorization
+The public charter registry is experimental and unwitnessed. Signed ancestry
+provenance is distinct from semantic policy assessment; founding authorization
 does not by itself prove perpetual parent control. These limitations are not
 changed by the locally generated charter reminder. Source metadata is prepared
 as `0.9.0-beta.1` (`0.9.0b1` for Python). No release tag, package publication or
