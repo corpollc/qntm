@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.9.0
+
+[Full release notes](releases/v0.9.0.md)
+
+- Promote the audited 0.9.0 beta to the stable Python and npm channels.
+- Include optional charter discovery and the gateway, group-authority, replay and dependency hardening described below.
+- Publish the charter registry introduction with creator-or-agent signing, complete-history proof semantics, unpinned qntm quickstarts, and live Merkle roots with checkpoint update time.
+- Fix npm tarball publishing and support gated retries for existing release tags.
 
 - Restored the browser welcome screen's Open Invites action and chat-page sidebar keyboard shortcuts by reconnecting their existing sidebar handle. Real-browser regressions cover opening the controls, creating a conversation and focusing the shortcut destinations.
 

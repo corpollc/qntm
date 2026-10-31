@@ -10,6 +10,7 @@
   <style>
     :root { color-scheme: light; --ink: #17233f; --muted: #52617c; --blue: #224ee7; --line: #d8dfeb; --paper: #f5f7fb; }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html { scroll-behavior: smooth; }
     body { margin: 0; color: var(--ink); background: var(--paper); font: 16px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     a { color: var(--blue); text-underline-offset: .2em; }
@@ -48,6 +49,18 @@
     .card p { margin: 0; color: var(--muted); font-size: 14px; }
     .card .index { display: block; margin-bottom: 16px; color: var(--blue); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
     .limits { margin: 24px 0 0; padding-left: 18px; border-left: 3px solid #b7c5ed; color: var(--muted); font-size: 14px; }
+    .checkpoint { margin-bottom: 48px; padding: 26px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .checkpoint-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .checkpoint h2 { margin: 0; font-size: 21px; }
+    .checkpoint button { padding: 7px 13px; background: white; border: 1px solid var(--line); border-radius: 6px; color: var(--blue); font: inherit; font-size: 13px; cursor: pointer; }
+    .checkpoint button:focus-visible { outline: 3px solid #9470ff; outline-offset: 3px; }
+    .checkpoint button:disabled { opacity: .6; cursor: wait; }
+    .checkpoint-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; margin: 0 0 14px; }
+    .checkpoint dt { color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+    .checkpoint dd { margin: 0; font-size: 14px; }
+    .checkpoint code { display: block; font-size: 13px; overflow-wrap: anywhere; }
+    .checkpoint p { color: var(--muted); font-size: 13px; margin-bottom: 0; }
+    .checkpoint #checkpoint-status { margin-bottom: 12px; }
     .start { margin: 58px 0; padding: 34px; background: white; border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: 1fr 1.1fr; gap: 36px; }
     .start p { color: var(--muted); font-size: 15px; }
     .start .eyebrow { color: var(--blue); font-size: 12px; margin-bottom: 12px; }
@@ -70,7 +83,7 @@
       .hero { grid-template-columns: 1fr; gap: 30px; padding: 43px 0 36px; }
       .intro { font-size: 17px; }
       .record { padding: 23px; }
-      .cards, .start, .details { grid-template-columns: 1fr; }
+      .cards, .start, .details, .checkpoint-grid { grid-template-columns: 1fr; }
       .cards { gap: 12px; }
       .card { padding: 22px; }
       .start { margin: 38px 0; padding: 24px; gap: 16px; }
@@ -106,10 +119,22 @@
         </ol>
       </aside>
     </section>
+    <section class="checkpoint" aria-labelledby="checkpoint-title">
+      <div class="checkpoint-header"><h2 id="checkpoint-title">Latest published checkpoint</h2><button id="checkpoint-refresh" type="button" hidden>Refresh</button></div>
+      <p id="checkpoint-status" role="status">Open the signed checkpoint JSON below to see the current roots.</p>
+      <dl id="checkpoint-values" class="checkpoint-grid" hidden>
+        <div><dt>Charter map Merkle root · SHA-256</dt><dd><code id="checkpoint-map"></code></dd></div>
+        <div><dt>Append-only log Merkle root · SHA-256</dt><dd><code id="checkpoint-log"></code></dd></div>
+        <div><dt>Last updated · UTC</dt><dd><time id="checkpoint-time"></time></dd></div>
+        <div><dt>Charter statements recorded</dt><dd id="checkpoint-size"></dd></div>
+      </dl>
+      <noscript><p>Enable JavaScript to show the current roots here, or open the checkpoint below.</p></noscript>
+      <p><a href="/v1/heads">View signed checkpoint JSON ↗</a> · Fetched from this registry. This display does not independently verify its signatures.</p>
+    </section>
     <section id="how-it-works" aria-labelledby="how-title">
       <h2 id="how-title">Identity, authority, and a complete history.</h2>
       <div class="cards">
-        <article class="card"><span class="index">01 / IDENTITY</span><h3>Bound to the agent’s key</h3><p>The agent signs its founding charter. Designated governors also sign to accept their role. Knowing someone’s public key is not enough to register a charter for them.</p></article>
+        <article class="card"><span class="index">01 / IDENTITY</span><h3>Bound to the agent’s key</h3><p>The creator of an agent, or the agent itself, can sign its founding charter using the agent’s private key. Designated governors also sign to accept their role. Knowing someone’s public key is not enough to register a charter for them.</p></article>
         <article class="card"><span class="index">02 / GOVERNANCE</span><h3>Humans and agents can govern</h3><p>An agent can govern itself, name other governors, or govern a child agent. Later changes require authorization under the current governance rules. Applications assess how a child’s permissions relate to its parent’s.</p></article>
         <article class="card"><span class="index">03 / HISTORY</span><h3>Verify the whole record</h3><p>Signed Merkle roots, sorted boundary proofs and linked statements let clients verify an agent’s complete history and latest recorded state within a signed registry snapshot.</p></article>
       </div>
@@ -123,8 +148,8 @@
         <p>Chartering is optional. Receiving a message provides a charter lookup reminder tied to the verified sender key; your application chooses whether to check it.</p>
       </div>
       <div>
-        <p class="command-label">Try the 0.9.0 beta with uvx</p>
-        <pre><code>uvx --from qntm==0.9.0b1 qntm --help</code></pre>
+        <p class="command-label">Get started with uvx</p>
+        <pre><code>uvx qntm --help</code></pre>
         <p class="note">Requires <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>. The command downloads the CLI and shows its quick start. The Python and TypeScript libraries also provide charter creation and verification APIs.</p>
         <div class="actions"><a class="button" href="https://github.com/corpollc/qntm">Explore qntm on GitHub ↗</a><a class="text-link" href="https://chat.corpo.llc">Open web chat ↗</a></div>
       </div>
@@ -135,5 +160,6 @@
     </div>
   </main>
   <footer><div class="wrap"><span>qntm Charter Registry · By <a href="https://corpo.llc">Corpo, LLC</a></span><span><a href="https://github.com/corpollc/qntm/blob/main/specs/working-group/charter-registry.md">Experimental v0.2 specification</a> · <a href="/healthz">Service health</a></span></div></footer>
+  <script src="/checkpoint.js" defer></script>
 </body>
 </html>

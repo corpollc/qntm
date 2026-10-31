@@ -10,6 +10,7 @@ install -d -m 0700 /var/backups/qntm-charter
 install -d -m 0755 /var/lib/qntm-charter-metrics /usr/local/lib/qntm-charter /etc/qntm-charter /opt/qntm-charter-monitoring
 install -d -m 0755 /usr/local/share/qntm-charter
 install -m 0644 index.html /usr/local/share/qntm-charter/index.html
+install -m 0644 checkpoint.js /usr/local/share/qntm-charter/checkpoint.js
 install -m 0755 qntm-charter /usr/local/bin/qntm-charter
 install -m 0755 backup.sh /usr/local/lib/qntm-charter/backup.sh
 install -m 0644 qntm-charter.service qntm-charter-backup.service qntm-charter-backup.timer /etc/systemd/system/
