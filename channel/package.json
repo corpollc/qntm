@@ -1,6 +1,6 @@
 {
   "name": "@corpollc/qntm-channel",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Claude Code channel bridge for qntm secure messaging",
   "type": "module",
   "main": "server.ts",
