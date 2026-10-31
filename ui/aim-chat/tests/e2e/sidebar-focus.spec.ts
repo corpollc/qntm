@@ -24,6 +24,9 @@ test('welcome action opens the invite controls and creates a conversation', asyn
 })
 
 test('chat shortcuts expand the sidebar panels and focus their inputs', async ({ page }) => {
+  // page.goto can finish before React mounts the app and its keyboard listener.
+  // Focus a rendered app control before sending a shortcut to the document.
+  await page.getByRole('button', { name: /^Invites$/i }).focus()
   await page.keyboard.press('Control+Shift+N')
   await expect(page.getByRole('button', { name: /^Invites$/i })).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByPlaceholder('Name your conversation')).toBeFocused()
