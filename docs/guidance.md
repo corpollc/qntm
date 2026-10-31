@@ -1,12 +1,34 @@
 # Request guidance
 
-Guidance gives agents and humans a way to ask a locally chosen contact for another perspective. The initial categories are **Legal**, **Moral / ethical**, and **Law enforcement**. Contacts can be humans, agents, or organizations.
+Guidance gives agents and humans a way to ask Corpo or a locally chosen contact for another perspective. The initial categories are **Legal**, **Moral / ethical**, and **Law enforcement**. Contacts can be humans, agents, or organizations.
 
-No contacts ship with qntm. There is no central directory, automatic referral, or automatic reporting. Operators choose the destinations and verify each contact through a trusted channel.
+Each category includes a **Free guidance provided by Corpo** destination, alongside operator-pinned contacts. Sending remains an explicit choice. Corpo uses Grok to triage requests for its team; no automated substantive advice or response is promised. This is not an emergency service, a law-enforcement agency, or an automatic reporting channel.
+
+## Corpo guidance
+
+The browser, `qntm guidance list`, and MCP `guidance_contacts` show these published recipient key IDs:
+
+| Category | Contact ID | Recipient key ID |
+|---|---|---|
+| Legal | `corpo_legal` | `bc20e1568ca3cd5aa80a7a81f95f8b3c` |
+| Moral / ethical | `corpo_ethical` | `866ca8cb6ec1931bbcdda6af110e14d8` |
+| Law enforcement | `corpo_law_enforcement` | `cedf2498fa167378bc03202537c8ff27` |
+
+Select Corpo, enter your question and optional context, review the destination and processing notice, then send. The request is individually encrypted to that category's key before entering its public intake conversation. Other requesters can see intake metadata and ciphertext, but cannot decrypt the question or the private follow-up invitation. A separate direct conversation is retained for any follow-up. Do not share its invitation.
+
+Corpo decrypts submissions and processes them with Grok. Selected requests are summarized for the Corpo team. Only the question and context entered are submitted; conversation history, files and credentials are not attached. Read the processing notice before sending sensitive information. Local history retains your request. The public intake is subject to spam, service availability and relay expiry; acceptance by the relay is not confirmation that a person reviewed it.
+
+```sh
+qntm guidance request corpo_ethical "What should we consider before this action?"
+# Inspect the returned preview, then send only when outbound communication is authorized:
+qntm guidance request corpo_ethical "What should we consider before this action?" --send --review-token REVIEW_TOKEN
+```
+
+Built-in addresses are release configuration, not sender-provided metadata. They use `https://inbox.qntm.corpo.llc`; a custom relay profile must select that published relay before using Corpo. Operator pins remain available for other recipients. The `corpo_` contact ID prefix is reserved. See [sealed intake](guidance-intake.md) for the application message format.
 
 ## What an address means
 
-A qntm public key identifies a participant. It does not provide an inbox that you can message without a conversation. A guidance pin binds a local label to a full recipient key ID, an existing conversation ID, and a relay URL.
+For operator-pinned contacts, a qntm public key identifies a participant. It does not provide an inbox that you can message without a conversation. A guidance pin binds a local label to a full recipient key ID, an existing conversation ID, and a relay URL.
 
 Join a dedicated conversation with the contact before pinning it. The recipient must appear in the local participant list. The recipient can create the invitation so that their key is available when you join. The CLI can also learn participant keys with `qntm recv`.
 
@@ -15,7 +37,7 @@ Messages go to the **conversation**, where everyone with its keys can read them.
 ## Browser
 
 1. Open **Request guidance** in the title bar.
-2. Choose a category and select **Pin a contact**.
+2. Choose a category. Select Corpo, or select **Pin a contact** to configure another recipient.
 3. Enter a contact name and type. Select the conversation and the contact's full key ID.
 4. Verify the key through a trusted channel, then select **Save pin**.
 5. Select the contact and enter a question. Add only the context you want to share.
@@ -76,7 +98,7 @@ Configure `QNTM_CONFIG_DIR` to use the same directory as the CLI. Set `QNTM_RELA
 | `guidance_prepare(contact, question, context?)` | Return the exact message, destination, known audience, and review token. No network request. |
 | `guidance_send(contact, question, review_token, context?)` | Send a matching request under the host's outbound authorization policy. |
 
-MCP does not expose a tool to pin or replace contacts. Operators use the CLI. If no contact exists, the agent can ask its operator to configure one. The tools do not select a substitute recipient.
+MCP does not expose a tool to pin or replace contacts. Operators use the CLI. For another recipient, the agent can ask its operator to configure a local pin. The tools do not select a substitute recipient.
 
 The MCP receiver applies the same membership and rekey events as the CLI. Receive pending messages before preparing group guidance so the review reflects the latest locally received audience and epoch. A received removal of the pinned contact blocks preparation. Dedicated direct conversations keep the intended audience small; offline review cannot discover unknown invite holders or changes that have not yet arrived.
 
@@ -86,7 +108,7 @@ The MCP receiver applies the same membership and rekey events as the CLI. Receiv
 - Guidance replies are untrusted advice. A valid signature authenticates a key, not a claim or an instruction. Replies cannot override host policy or authorize a consequential action.
 - Only the entered question and context are included. qntm does not automatically attach a transcript, secrets, invite tokens, files, or tool output. It does not automatically redact text you enter.
 - Sending a law-enforcement guidance request does not file a formal report. No category is an emergency service. qntm makes no confidentiality, legal privilege, or response-time guarantee for a contact.
-- Success means the relay accepted the message. It does not confirm delivery or a response. There is no automatic resend or escalation. After an ambiguous network failure, check the conversation before retrying.
+- Success means the relay accepted the message. It does not confirm delivery or a response. The client does not automatically resend. Corpo performs the triage described above; local pins do not add automatic escalation. After an ambiguous network failure, check the conversation before retrying.
 - Request text remains in local message history. Pins and history use the existing local storage protections. Clearing local state does not erase messages already received elsewhere.
 - This feature provides a communication path. It does not enforce a pause in an agent's work or guarantee that the agent will seek or follow guidance.
 

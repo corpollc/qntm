@@ -116,7 +116,7 @@ def test_mcp_guidance_and_untrusted_replies(configured, monkeypatch):
     pytest.importorskip("mcp")
     from qntm import mcp_server as server
     path, conv, recipient, network = configured
-    assert len(server.guidance_contacts("legal")["contacts"]) == 1
+    assert {c['id'] for c in server.guidance_contacts("legal")["contacts"]} == {'counsel', 'corpo_legal'}
     draft = server.guidance_prepare("counsel", "Question")
     network.assert_not_called()
     assert "error" in server.guidance_send("counsel", "Changed", draft["review_token"])

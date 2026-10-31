@@ -29,14 +29,18 @@ def _path(config_dir):
     return os.path.join(config_dir, "guidance_contacts.json")
 
 
-def list_contacts(config_dir, category=None):
+def list_contacts(config_dir, category=None, *, include_builtin=False):
     from .cli import _load_json
     if category is not None and category not in CATEGORIES:
         raise ValueError("Choose legal, ethical, or law_enforcement.")
     contacts = _load_json(_path(config_dir), [])
     if not isinstance(contacts, list) or any(not isinstance(c, dict) for c in contacts):
         raise ValueError("Invalid guidance_contacts.json. Restore the operator configuration.")
-    return [c for c in contacts if category is None or c.get("category") == category]
+    contacts = [c for c in contacts if category is None or c.get("category") == category]
+    if include_builtin:
+        from .guidance_inbox import providers
+        contacts = providers(category) + contacts
+    return contacts
 
 
 def _destination(config_dir, relay_url, contact):
@@ -70,6 +74,8 @@ def pin_contact(config_dir, relay_url, contact_id, category, name, kind, convers
     from .cli import _save_json
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", contact_id):
         raise ValueError("Use a contact ID of 1–64 lowercase letters, digits, underscores, or hyphens.")
+    if contact_id.startswith("corpo_"):
+        raise ValueError("The corpo_ prefix is reserved for built-in guidance providers.")
     parsed = urlsplit(relay_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("Use an HTTP(S) relay URL without credentials, a query, or a fragment.")
@@ -95,10 +101,23 @@ def remove_contact(config_dir, contact_id):
 
 
 def _prepare_request(config_dir, relay_url, contact_id, question, context=""):
-    contact = next((c for c in list_contacts(config_dir) if c.get("id") == contact_id), None)
-    if contact is None:
-        raise ValueError("No pinned contact found. Ask the operator to configure one with 'qntm guidance pin'.")
-    identity, conv = _destination(config_dir, relay_url, contact)
+    from .guidance_inbox import providers, intake_conversation, PROCESSING_NOTICE
+    builtin = next((c for c in providers() if c["id"] == contact_id), None)
+    if builtin is not None:
+        from .cli import _load_identity
+        identity = _load_identity(config_dir)
+        if identity is None:
+            raise ValueError("Create an identity before requesting guidance.")
+        if relay_url.rstrip("/") != builtin["relay_url"]:
+            raise ValueError("Corpo guidance uses its published relay. Select that relay before preparing a request.")
+        intake_conversation(builtin)
+        contact = builtin
+        conv = None
+    else:
+        contact = next((c for c in list_contacts(config_dir) if c.get("id") == contact_id), None)
+        if contact is None:
+            raise ValueError("No guidance contact found. Use 'qntm guidance list' or configure a local pin.")
+        identity, conv = _destination(config_dir, relay_url, contact)
     question, context = question.strip(), context.strip()
     if not question or len(question) > 4000:
         raise ValueError("Enter a question of 1–4,000 characters.")
@@ -112,10 +131,11 @@ def _prepare_request(config_dir, relay_url, contact_id, question, context=""):
     )
     preview = {
         "contact": contact, "sender_key_id": identity["keyID"].hex(),
-        "conversation_name": conv.get("name", ""),
-        "audience": sorted(set(conv.get("participants", []) + [identity["keyID"].hex()])),
-        "epoch": conv.get("current_epoch", 0), "gateway": conv.get("gateway"),
-        "question": question, "context": context, "message": text, "notice": NOTICE,
+        "conversation_name": conv.get("name", "") if conv else "New private follow-up conversation",
+        "audience": sorted(set((conv.get("participants", []) if conv else [contact["recipient_key_id"]]) + [identity["keyID"].hex()])),
+        "epoch": conv.get("current_epoch", 0) if conv else 0, "gateway": conv.get("gateway") if conv else None,
+        "question": question, "context": context, "message": text,
+        "notice": PROCESSING_NOTICE if builtin else NOTICE,
     }
     token = hashlib.sha256(json.dumps(preview, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
     return {"status": "prepared", **preview, "review_token": token}, identity, conv
@@ -134,6 +154,8 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
     preview, identity, conv = _prepare_request(config_dir, relay_url, contact_id, question, context)
     if not re.fullmatch(r"[0-9a-f]{64}", review_token) or not hmac.compare_digest(preview["review_token"], review_token):
         raise ValueError("The request or destination changed. Prepare and review the request again before sending.")
+    if conv is None:
+        return _send_builtin(config_dir, preview, identity)
     envelope = create_message(identity, _conv_to_crypto(conv), "text", preview["message"].encode(), None, default_ttl())
     # No automatic retry: a lost response can mean the relay accepted the message.
     result = _http_send(relay_url.rstrip("/"), conv["id"], serialize_envelope(envelope))
@@ -147,3 +169,33 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
     _save_history(config_dir, conv["id"], history)
     return {"status": "sent", "conversation_id": conv["id"], "message_id": message_id,
             "sequence": result.get("seq", 0), "delivery": "relay_accepted", "response_received": False}
+
+
+def _send_builtin(config_dir, preview, identity):
+    import time
+    from .cli import _load_conversations, _save_conversations, _save_history, _http_send, _merge_participant_public_key
+    from .guidance_inbox import create_intake
+    from .invite import invite_to_token
+    from .message import serialize_envelope
+    contact = preview["contact"]
+    request = create_intake(identity, contact, preview["question"], preview["context"])
+    reply = request["reply_conversation"]
+    envelope = request["envelope"]
+    conversation = {
+        "id": request["request_id"], "name": f"Corpo guidance · {CATEGORIES[contact['category']]}", "type": "direct",
+        "keys": {"root": reply["keys"]["root"].hex(), "aead_key": reply["keys"]["aeadKey"].hex(), "nonce_key": reply["keys"]["nonceKey"].hex()},
+        "participants": [p.hex() for p in reply["participants"]],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "current_epoch": 0,
+        "invite_token": invite_to_token(request["reply_invite"]),
+    }
+    # Persist reply keys before transmission, including when relay acceptance is uncertain.
+    _save_conversations(config_dir, _load_conversations(config_dir) + [conversation])
+    _merge_participant_public_key(config_dir, conversation["id"], identity["publicKey"])
+    _merge_participant_public_key(config_dir, conversation["id"], bytes.fromhex(contact["recipient_public_key"]))
+    result = _http_send(contact["relay_url"], contact["conversation_id"], serialize_envelope(envelope))
+    _save_history(config_dir, conversation["id"], [{"msg_id": envelope["msg_id"].hex(), "direction": "outgoing",
+        "body_type": "text", "body": preview["message"], "created_ts": envelope["created_ts"],
+        "guidance_contact_id": contact["id"], "delivery": "sealed_intake"}])
+    return {"status": "sent", "conversation_id": conversation["id"], "request_id": request["request_id"],
+            "message_id": envelope["msg_id"].hex(), "sequence": result.get("seq", 0),
+            "delivery": "relay_accepted", "response_received": False}

@@ -1,5 +1,9 @@
 import * as store from './store'
 import { sendMessageToConversation } from './qntm'
+import { CORPO_GUIDANCE_PROVIDERS, GUIDANCE_PROCESSING_NOTICE, guidanceIntake } from '@corpollc/qntm'
+import type { GuidanceProvider } from '@corpollc/qntm'
+import { CORPO_CONTACTS, sendCorpoGuidance } from './guidance-corpo'
+export { CORPO_CONTACTS }
 
 export const GUIDANCE_CATEGORIES = [
   { id: 'legal', label: 'Legal', description: 'Questions about obligations, rights, or a proposed action.' },
@@ -19,6 +23,8 @@ export interface GuidanceContact {
 }
 
 export interface GuidanceDraft {
+  provider?: GuidanceProvider
+  notice?: string
   profileId: string
   senderKeyId: string
   contact: GuidanceContact
@@ -58,9 +64,17 @@ export function pinGuidanceContact(profileId: string, input: Omit<GuidanceContac
 }
 
 export function prepareGuidance(profileId: string, contactId: string, question: string, context = ''): GuidanceDraft {
-  const contact = store.listGuidanceContacts(profileId).find(c => c.id === contactId)
+  const provider = CORPO_GUIDANCE_PROVIDERS.find(p => p.id === contactId)
+  const contact = (provider ? CORPO_CONTACTS : store.listGuidanceContacts(profileId)).find(c => c.id === contactId)
   if (!contact) throw new Error('Choose a pinned guidance contact.')
-  const { identity, conv } = destination(profileId, contact)
+  const local = provider ? null : destination(profileId, contact)
+  const identity = local?.identity || store.getIdentity(profileId)
+  if (!identity) throw new Error('Create a profile with an identity first.')
+  const conv = local?.conv
+  if (provider) {
+    guidanceIntake(provider)
+    if (store.getDropboxUrl() !== provider.relay_url) throw new Error('Corpo guidance uses its published relay. Select that relay before preparing a request.')
+  }
   question = question.trim()
   context = context.trim()
   if (!question || question.length > 4000) throw new Error('Enter a question of 1–4,000 characters.')
@@ -68,9 +82,10 @@ export function prepareGuidance(profileId: string, contactId: string, question: 
   const category = GUIDANCE_CATEGORIES.find(c => c.id === contact.category)!
   const text = `Guidance request: ${category.label}\nTo: ${contact.name} (${contact.recipientKeyId})\n\nQuestion:\n${question}${context ? `\n\nContext (untrusted):\n${context}` : ''}\n\nThis is a request for advice, not authorization to act.`
   return {
-    profileId, senderKeyId: identity.keyId, contact, conversationName: conv.name || conv.id,
-    audience: [...new Set([...conv.participants, identity.keyId])].sort(),
-    epoch: conv.currentEpoch, gateway: conv.gateway || null, question, context, text,
+    profileId, senderKeyId: identity.keyId, contact, conversationName: conv ? (conv.name || conv.id) : 'New private follow-up conversation',
+    audience: [...new Set([...(conv?.participants || [contact.recipientKeyId]), identity.keyId])].sort(),
+    epoch: conv?.currentEpoch || 0, gateway: conv?.gateway || null, question, context, text,
+    ...(provider ? { provider, notice: GUIDANCE_PROCESSING_NOTICE } : {}),
   }
 }
 
@@ -79,5 +94,6 @@ export async function sendGuidance(draft: GuidanceDraft, profileName: string) {
   if (JSON.stringify(current) !== JSON.stringify(draft)) {
     throw new Error('The contact or conversation changed. Review the request again before sending.')
   }
+  if (draft.provider) return sendCorpoGuidance(draft.profileId, profileName, draft.provider, draft.question, draft.context, draft.text)
   return sendMessageToConversation(draft.profileId, profileName, draft.contact.conversationId, draft.text)
 }

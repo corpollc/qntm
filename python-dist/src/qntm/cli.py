@@ -3011,7 +3011,7 @@ def cmd_guidance(args):
     config_dir, relay = _get_config_dir(args), _get_dropbox_url(args)
     try:
         if args.guidance_command == "list":
-            result = {"categories": CATEGORIES, "contacts": list_contacts(config_dir, args.category), "notice": NOTICE}
+            result = {"categories": CATEGORIES, "contacts": list_contacts(config_dir, args.category, include_builtin=True), "notice": NOTICE}
         elif args.guidance_command == "pin":
             result = pin_contact(config_dir, relay, args.contact, args.category, args.name,
                                  args.kind, args.conversation, args.recipient, args.replace)

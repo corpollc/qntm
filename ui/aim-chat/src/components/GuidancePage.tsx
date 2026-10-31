@@ -1,6 +1,6 @@
 import { FormEvent, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { GUIDANCE_CATEGORIES, pinGuidanceContact, prepareGuidance, sendGuidance } from '../guidance'
+import { GUIDANCE_CATEGORIES, CORPO_CONTACTS, pinGuidanceContact, prepareGuidance, sendGuidance } from '../guidance'
 import type { GuidanceCategory, GuidanceContact, GuidanceDraft } from '../guidance'
 import * as store from '../store'
 
@@ -26,7 +26,7 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
   const sendingRef = useRef(false)
   const reviewRef = useRef<HTMLElement>(null)
   const conversations = store.listConversations(profileId)
-  const choices = contacts.filter(c => c.category === category)
+  const choices = [...CORPO_CONTACTS, ...contacts].filter(c => c.category === category)
   const selected = choices.find(c => c.id === contactId)
   const selectedConv = conversations.find(c => c.id === conversationId)
   const self = store.getIdentity(profileId)?.keyId
@@ -61,7 +61,7 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
     setSending(true)
     try {
       const message = await sendGuidance(draft, profileName)
-      setSent({ conversationId: draft.contact.conversationId, messageId: message.id })
+      setSent({ conversationId: message.conversationId, messageId: message.id })
       setDraft(null)
       setQuestion('')
       setContext('')
@@ -79,7 +79,7 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
       </div>
       <Link className="button" to="/">Back to conversations</Link>
     </header>
-    <p className="guidance-note">Contacts are pinned locally for {profileName || 'this profile'}. A category does not verify credentials or authority. This is not an emergency service.</p>
+    <p className="guidance-note">Choose free guidance from Corpo or a contact pinned locally for {profileName || 'this profile'}. A category does not verify credentials or authority. This is not an emergency service.</p>
 
     <div className="guidance-categories" aria-label="Guidance categories">
       {GUIDANCE_CATEGORIES.map(c => <button type="button" key={c.id}
@@ -87,13 +87,15 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
         aria-pressed={category === c.id} disabled={sending}
         onClick={() => { setCategory(c.id); setContactId(''); setDraft(null); setError(''); setAdding(false); setSent(null) }}>
         <strong>{c.label}</strong><span>{c.description}</span>
+        <small>Free guidance provided by Corpo</small>
+        <code>{CORPO_CONTACTS.find(p => p.category === c.id)?.recipientKeyId}</code>
         <small>{contacts.filter(p => p.category === c.id).length} pinned {contacts.filter(p => p.category === c.id).length === 1 ? 'contact' : 'contacts'}</small>
       </button>)}
     </div>
 
     {!profileId ? <p>Create a profile in <Link to="/">conversations</Link> to pin guidance contacts.</p> : <div className="guidance-columns">
       <section className="panel guidance-panel" aria-labelledby="guidance-contacts-title">
-        <h2 id="guidance-contacts-title">Pinned contacts</h2>
+        <h2 id="guidance-contacts-title">Guidance contacts</h2>
         {choices.length === 0 && <div className="guidance-empty">
           <strong>No contact pinned yet</strong>
           <p>Join a conversation with your chosen contact, then pin their full key ID here. No requests are routed until you configure a contact.</p>
@@ -103,13 +105,17 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
           <label><input type="radio" name="guidance-contact" value={c.id} checked={contactId === c.id} disabled={sending}
             onChange={() => { setContactId(c.id); setDraft(null); setError(''); setSent(null) }} /> <strong>{c.name}</strong> · {c.kind}</label>
           <code>{c.recipientKeyId}</code>
-          <span>Conversation: {conversations.find(conv => conv.id === c.conversationId)?.name || c.conversationId}</span>
+          {CORPO_CONTACTS.some(p => p.id === c.id) ? <>
+            <strong>Free guidance provided by Corpo</strong>
+            <span>Grok triages requests for the Corpo team. No automated advice or response is promised.</span>
+            <span>Requests are encrypted to this category’s key. Other requesters cannot read them.</span>
+          </> : <><span>Conversation: {conversations.find(conv => conv.id === c.conversationId)?.name || c.conversationId}</span>
           <button className="button" type="button" disabled={sending} onClick={() => {
             store.removeGuidanceContact(profileId, c.id)
             setContacts(store.listGuidanceContacts(profileId))
             setDraft(null)
             if (contactId === c.id) setContactId('')
-          }} aria-label={`Unpin ${c.name}`}>Unpin</button>
+          }} aria-label={`Unpin ${c.name}`}>Unpin</button></>}
         </div>)}
         <button className="button" type="button" disabled={sending} onClick={() => { setAdding(!adding); setDraft(null) }}>
           {adding ? 'Cancel pin' : 'Pin a contact'}
@@ -155,11 +161,11 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
           <dl>
             <dt>Recipient</dt><dd>{draft.contact.name} · {draft.contact.kind}<code>{draft.contact.recipientKeyId}</code></dd>
             <dt>From</dt><dd>{profileName}<code>{draft.senderKeyId}</code></dd>
-            <dt>Conversation</dt><dd>{draft.conversationName}<code>{draft.contact.conversationId}</code></dd>
+            <dt>{draft.provider ? 'Follow-up' : 'Conversation'}</dt><dd>{draft.conversationName}{!draft.provider && <code>{draft.contact.conversationId}</code>}</dd>
             <dt>Relay</dt><dd>{draft.contact.relayUrl}</dd>
             <dt>Known participants ({draft.audience.length})</dt><dd>{draft.audience.map(key => <code key={key}>{key}</code>)}</dd>
           </dl>
-          <p className="guidance-note">Everyone with this conversation’s keys can read the request, including invite holders{draft.gateway ? ' and the gateway' : ''}. It is not a private message to one participant.</p>
+          {draft.provider ? <p className="guidance-note">{draft.notice} Your question and context are encrypted to the category’s key, with a separate private conversation for any follow-up.</p> : <p className="guidance-note">Everyone with this conversation’s keys can read the request, including invite holders{draft.gateway ? ' and the gateway' : ''}. It is not a private message to one participant.</p>}
           <h3>Exact message</h3><pre>{draft.text}</pre>
           <p className="guidance-note">Sending requests advice. It does not authorize an action, file a formal report, or guarantee a response.</p>
           <div className="row">

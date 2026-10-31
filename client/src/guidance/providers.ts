@@ -1,0 +1,42 @@
+// Public intake addresses only. Recipient private keys are held outside this repository.
+export const CORPO_GUIDANCE_PROVIDERS = [
+  {
+    "id": "corpo_legal",
+    "category": "legal",
+    "name": "Corpo",
+    "kind": "organization",
+    "offer": "Free guidance provided by Corpo",
+    "delivery": "sealed_intake_v1",
+    "recipient_key_id": "bc20e1568ca3cd5aa80a7a81f95f8b3c",
+    "recipient_public_key": "a2189cabe0632decacd6d16c1a63d7ef5a6adf61e6d1b24abb8539a1955f7753",
+    "conversation_id": "72c82e3426ef5e1b6502dde090e5c56e",
+    "intake_invite": "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUHLILjQm714bZQLd4JDlxW5raW52aXRlX3NhbHRYIPx_UtwirCqHPR9pyPN6ULEo9pxjDzLLb3UIQKIuBplLbWludml0ZV9zZWNyZXRYIGmEO0yO4FCeYFaf2HhbBpi6ezlSl4ZBqucgiQxFhGdfbWludml0ZXJfaWtfcGtYIKIYnKvgYy3srNbRbBpj1-9aat9h5tGySruFOaGVX3dT",
+    "relay_url": "https://inbox.qntm.corpo.llc"
+  },
+  {
+    "id": "corpo_ethical",
+    "category": "ethical",
+    "name": "Corpo",
+    "kind": "organization",
+    "offer": "Free guidance provided by Corpo",
+    "delivery": "sealed_intake_v1",
+    "recipient_key_id": "866ca8cb6ec1931bbcdda6af110e14d8",
+    "recipient_public_key": "01480909dac77b4f4d2192df8d03a5af062c2316ececafc88ca7d3d27489040e",
+    "conversation_id": "c6324365ac31f0b033e6ea8c20cd99f3",
+    "intake_invite": "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUMYyQ2WsMfCwM-bqjCDNmfNraW52aXRlX3NhbHRYIDfv0cv8ITAu0l-fn8KRr6r2k2OKnWb7rHP0d7Y__3UebWludml0ZV9zZWNyZXRYIAgRATyY9or8-9vD_tUWtm7R63Mz2DjN0Eu0Nb9mMNa7bWludml0ZXJfaWtfcGtYIAFICQnax3tPTSGS340Dpa8GLCMW7OyvyIyn09J0iQQO",
+    "relay_url": "https://inbox.qntm.corpo.llc"
+  },
+  {
+    "id": "corpo_law_enforcement",
+    "category": "law_enforcement",
+    "name": "Corpo",
+    "kind": "organization",
+    "offer": "Free guidance provided by Corpo",
+    "delivery": "sealed_intake_v1",
+    "recipient_key_id": "cedf2498fa167378bc03202537c8ff27",
+    "recipient_public_key": "de7ff1af68a3e8ccc2d8eeb78066ad322bcad5dcf0e698fc3ed78c1b97946bb3",
+    "conversation_id": "a7b7ff1b5fa0b7808850aff88e36647b",
+    "intake_invite": "p2F2AWR0eXBlZmRpcmVjdGVzdWl0ZWVRU1AtMWdjb252X2lkUKe3_xtfoLeAiFCv-I42ZHtraW52aXRlX3NhbHRYIHKWWA3tK0V16vtWLXdaEvBpjAiXYziyM7lC8pEKFDGmbWludml0ZV9zZWNyZXRYIHHihDnL0ajBeGeqeOYZecggn2Z8nfd_bX9MDQIQFXEcbWludml0ZXJfaWtfcGtYIN5_8a9oo-jMwtjut4BmrTIrytXc8OaY_D7XjBuXlGuz",
+    "relay_url": "https://inbox.qntm.corpo.llc"
+  }
+] as const;

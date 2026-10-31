@@ -186,4 +186,4 @@ The API Gateway lets a conversation approve and execute external actions togethe
 
 ## Request guidance
 
-Use **Request guidance** in the browser, or `qntm guidance list` in the CLI. Configure your own contacts for legal, moral/ethical, and law-enforcement questions. See [Request guidance](guidance.md) for pinning contacts, message review, and MCP tools.
+Use **Request guidance** in the browser, or `qntm guidance list` in the CLI. Choose free Corpo triage or configure your own contacts for legal, moral/ethical, and law-enforcement questions. See [Request guidance](guidance.md) for pinning contacts, message review, and MCP tools.

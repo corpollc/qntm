@@ -53,7 +53,7 @@ describe.sequential('new release features across real clients and relay', () => 
 
   it('discovers CLI pins through MCP and delivers only the reviewed guidance to the browser', async () => {
     const ui = requireUi(harness);
-    expect((await tool('guidance_contacts')).contacts).toEqual([]);
+    expect((await tool('guidance_contacts')).contacts.map((c: {id: string}) => c.id)).toEqual(['corpo_legal', 'corpo_ethical', 'corpo_law_enforcement']);
     await harness.alice.run(['send', conversation, 'PRIVATE HISTORY MARKER: never attach automatically']);
     for (const category of ['legal', 'ethical', 'law_enforcement']) {
       await harness.alice.run(['guidance', 'pin', category, '--category', category, '--name', `Bob ${category}`,

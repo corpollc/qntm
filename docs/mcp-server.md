@@ -80,7 +80,7 @@ Add to your `.cursor/mcp.json`:
 | `receive_messages` | Receive and decrypt new messages |
 | `conversation_history` | Get local message history |
 | `protocol_info` | Get protocol and server information |
-| `guidance_contacts` | List locally pinned legal, ethical, or law-enforcement contacts |
+| `guidance_contacts` | List free Corpo guidance providers and locally pinned legal, ethical, or law-enforcement contacts |
 | `guidance_prepare` | Prepare the exact question, recipient, and audience for review without sending |
 | `guidance_send` | Send a matching reviewed request under the host authorization policy |
 
