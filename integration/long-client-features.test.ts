@@ -60,7 +60,11 @@ describe.sequential('new release features across real clients and relay', () => 
         '--conversation', conversation, '--recipient', bobKid]);
     }
     const contacts = await tool('guidance_contacts');
-    expect(contacts.contacts.map((contact: any) => contact.category).sort()).toEqual(['ethical', 'law_enforcement', 'legal']);
+    expect(contacts.contacts).toHaveLength(6);
+    expect(contacts.contacts.filter((contact: any) => contact.id.startsWith('corpo_'))
+      .map((contact: any) => contact.id)).toEqual(['corpo_legal', 'corpo_ethical', 'corpo_law_enforcement']);
+    expect(contacts.contacts.filter((contact: any) => !contact.id.startsWith('corpo_'))
+      .map((contact: any) => contact.category).sort()).toEqual(['ethical', 'law_enforcement', 'legal']);
     for (const category of ['legal', 'ethical', 'law_enforcement']) {
       const question = `Please review the ${category} release question.`;
       const prepared = await tool('guidance_prepare', { contact: category, question, context: 'Only this chosen context.' });

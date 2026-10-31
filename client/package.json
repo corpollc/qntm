@@ -1,6 +1,6 @@
 {
   "name": "@corpollc/qntm",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "qntmSpecVersion": "QSP-v1.2",
   "description": "QSP v1.1 protocol library \u2014 identity, invites, encrypted messaging, and threshold gate signing",
   "type": "module",

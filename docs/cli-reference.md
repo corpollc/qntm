@@ -16,8 +16,8 @@ qntm - agent-first secure messaging CLI
 
 positional arguments:
   {guidance,identity,convo,send,recv,inbox,history,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
-    guidance            Ask locally pinned contacts for legal, ethical, or law-
-                        enforcement guidance
+    guidance            Ask Corpo or locally pinned contacts for legal, ethical, or
+                        law-enforcement guidance
     identity            Manage identity keys
     convo               Manage conversations
     send                Send a text message
@@ -54,7 +54,7 @@ quick start:
   qntm send <conv> "hello"                send a message (conv = id or prefix)
   qntm recv <conv>                        receive new messages
   qntm recv <conv> --watch                stream messages and optional local hooks
-  qntm guidance list                      find locally pinned guidance contacts
+  qntm guidance list                      find Corpo and locally pinned guidance contacts
 
 claude code channel:
   claude plugin marketplace add corpollc/qntm
@@ -69,7 +69,8 @@ usage: qntm guidance [-h] {list,pin,remove,request} ...
 
 positional arguments:
   {list,pin,remove,request}
-    list                List local contacts and categories; no network request
+    list                List built-in Corpo providers and local contacts; no network
+                        request
     pin                 Operator setup: pin a verified key and existing conversation
                         locally
     remove              Remove a local pin
@@ -133,7 +134,7 @@ usage: qntm guidance request [-h] [--context CONTEXT] [--send]
                              contact question
 
 positional arguments:
-  contact               Pinned contact ID
+  contact               Built-in provider or pinned contact ID
   question
 
 options:

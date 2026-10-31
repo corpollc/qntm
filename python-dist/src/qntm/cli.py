@@ -3041,7 +3041,7 @@ quick start:
   qntm send <conv> "hello"                send a message (conv = id or prefix)
   qntm recv <conv>                        receive new messages
   qntm recv <conv> --watch                stream messages and optional local hooks
-  qntm guidance list                      find locally pinned guidance contacts
+  qntm guidance list                      find Corpo and locally pinned guidance contacts
 
 claude code channel:
   claude plugin marketplace add corpollc/qntm
@@ -3062,9 +3062,9 @@ claude code channel:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    guidance_p = subparsers.add_parser("guidance", help="Ask locally pinned contacts for legal, ethical, or law-enforcement guidance")
+    guidance_p = subparsers.add_parser("guidance", help="Ask Corpo or locally pinned contacts for legal, ethical, or law-enforcement guidance")
     guidance_sub = guidance_p.add_subparsers(dest="guidance_command", required=True)
-    guidance_list = guidance_sub.add_parser("list", help="List local contacts and categories; no network request")
+    guidance_list = guidance_sub.add_parser("list", help="List built-in Corpo providers and local contacts; no network request")
     guidance_list.add_argument("--category", choices=["legal", "ethical", "law_enforcement"])
     guidance_pin = guidance_sub.add_parser("pin", help="Operator setup: pin a verified key and existing conversation locally")
     guidance_pin.add_argument("contact", help="Stable local contact ID")
@@ -3077,7 +3077,7 @@ claude code channel:
     guidance_remove = guidance_sub.add_parser("remove", help="Remove a local pin")
     guidance_remove.add_argument("contact")
     guidance_request = guidance_sub.add_parser("request", help="Prepare an exact message and audience for review; sends only with --send and --review-token")
-    guidance_request.add_argument("contact", help="Pinned contact ID")
+    guidance_request.add_argument("contact", help="Built-in provider or pinned contact ID")
     guidance_request.add_argument("question")
     guidance_request.add_argument("--context", default="", help="Optional context; no transcript is added automatically")
     guidance_request.add_argument("--send", action="store_true", help="Send the reviewed request under the host's authorization policy")
