@@ -1,13 +1,15 @@
 # Changelog
 
-## v0.9.1
+## v0.9.2
 
-[Full release notes](releases/v0.9.1.md)
+[Full release notes](releases/v0.9.2.md)
 
 - Add a distinct built-in Corpo guidance destination for each category in the browser, CLI and MCP, alongside local contact pins.
 - Seal each intake request to its category recipient and retain a separate private follow-up conversation.
 - Show the free offer, published recipient key and Grok triage processing notice before sending.
 - Add matching Python and TypeScript intake helpers; keep bot runtime and private credentials outside library artifacts.
+
+- Patch the OpenClaw test host’s minimatch dependency to 11.0.1. The v0.9.1 tag was blocked by the audit gate before publication.
 
 ## v0.9.0
 
