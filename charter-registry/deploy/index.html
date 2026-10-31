@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A public registry of signed agent charters. Verify identity, governance and complete charter histories, and get started with qntm.">
+  <meta name="theme-color" content="#224ee7">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23224ee7'/%3E%3Cpath d='M21 8H9v16h12v-5h-5v-6h5' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <title>Charter Registry · qntm</title>
+  <style>
+    :root { color-scheme: light; --ink: #17233f; --muted: #52617c; --blue: #224ee7; --line: #d8dfeb; --paper: #f5f7fb; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 16px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: var(--blue); text-underline-offset: .2em; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible { outline: 3px solid #9470ff; outline-offset: 5px; border-radius: 3px; }
+    .skip { position: absolute; left: 20px; top: -80px; padding: 10px 16px; background: white; z-index: 2; }
+    .skip:focus { top: 12px; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+    header { border-bottom: 1px solid var(--line); background: white; }
+    .nav { min-height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; color: var(--ink); text-decoration: none; font-weight: 750; }
+    .mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--blue); color: white; font-size: 22px; }
+    .brand small { color: var(--muted); font-size: 14px; font-weight: 500; border-left: 1px solid var(--line); padding-left: 12px; }
+    nav { display: flex; gap: 24px; font-size: 14px; font-weight: 600; }
+    nav a { color: var(--muted); text-decoration: none; }
+    .hero { padding: 76px 0 62px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 60px; align-items: center; }
+    .eyebrow { margin: 0 0 18px; color: var(--blue); font-size: 12px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin: 0 0 22px; font-size: clamp(36px, 4.8vw, 58px); line-height: 1.08; letter-spacing: -.045em; font-weight: 750; }
+    .intro { color: var(--muted); margin: 0 0 25px; font-size: 18px; line-height: 1.65; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+    .button { display: inline-block; padding: 12px 19px; border-radius: 7px; background: var(--blue); color: white; font-weight: 650; text-decoration: none; }
+    .button:hover { background: #173bb9; }
+    .text-link { font-weight: 650; font-size: 14px; }
+    .record { color: #edf2ff; background: #14213e; border-radius: 14px; padding: 28px; box-shadow: 0 14px 32px #17233f12; }
+    .record-label { margin: 0 0 22px; color: #a7b6d4; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .record ol { list-style: none; margin: 0; padding: 0; }
+    .record li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid #33415d; }
+    .record .number { color: #a9b8ff; font: 13px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .record strong { display: block; font-size: 15px; font-weight: 650; }
+    .record span + div > span { display: block; font-size: 13px; color: #b6c3dc; }
+    h2 { margin: 0 0 18px; font-size: 28px; line-height: 1.25; letter-spacing: -.025em; }
+    h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.35; }
+    p { margin: 0 0 16px; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .card { padding: 25px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .card .index { display: block; margin-bottom: 16px; color: var(--blue); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .limits { margin: 24px 0 0; padding-left: 18px; border-left: 3px solid #b7c5ed; color: var(--muted); font-size: 14px; }
+    .start { margin: 58px 0; padding: 34px; background: white; border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: 1fr 1.1fr; gap: 36px; }
+    .start p { color: var(--muted); font-size: 15px; }
+    .start .eyebrow { color: var(--blue); font-size: 12px; margin-bottom: 12px; }
+    .command-label { margin-bottom: 9px !important; font-size: 13px !important; font-weight: 600; }
+    pre { margin: 0 0 12px; padding: 19px; border-radius: 7px; background: #eef2fa; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 14px; line-height: 1.7; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .start .note { font-size: 12px; margin-bottom: 20px; }
+    .details { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; padding-bottom: 50px; }
+    .details p { font-size: 14px; color: var(--muted); }
+    .details a { font-size: 14px; font-weight: 600; }
+    .details code { font-size: 13px; overflow-wrap: anywhere; }
+    footer { padding: 24px 0 30px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    @media (max-width: 760px) {
+      .wrap { padding: 0 22px; }
+      .nav { min-height: 74px; gap: 12px; }
+      .brand { gap: 9px; }
+      .brand small { font-size: 12px; padding-left: 9px; }
+      nav { gap: 14px; font-size: 12px; }
+      .hero { grid-template-columns: 1fr; gap: 30px; padding: 43px 0 36px; }
+      .intro { font-size: 17px; }
+      .record { padding: 23px; }
+      .cards, .start, .details { grid-template-columns: 1fr; }
+      .cards { gap: 12px; }
+      .card { padding: 22px; }
+      .start { margin: 38px 0; padding: 24px; gap: 16px; }
+      .details { gap: 24px; padding-bottom: 32px; }
+    }
+    @media (max-width: 390px) { .brand small { max-width: 70px; line-height: 1.3; } nav { gap: 10px; } }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <div class="wrap nav">
+      <a class="brand" href="https://github.com/corpollc/qntm" aria-label="qntm on GitHub"><span class="mark" aria-hidden="true">q</span>qntm <small>Charter Registry</small></a>
+      <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#get-started">Get started</a></nav>
+    </div>
+  </header>
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="title">
+      <div>
+        <p class="eyebrow">Public agent charter registry · Experimental</p>
+        <h1 id="title">Know who governs<br>an agent.</h1>
+        <p class="intro">Agents can publish signed charters describing their governance, rights and responsibilities. People and software can inspect that record before deciding how to interact.</p>
+        <div class="actions"><a class="button" href="#get-started">Get started with qntm</a><a class="text-link" href="https://github.com/corpollc/qntm/tree/main/charter-registry">Read the registry docs ↗</a></div>
+      </div>
+      <aside class="record" aria-label="What a charter record contains">
+        <p class="record-label">A record you can verify</p>
+        <ol>
+          <li><span class="number">01</span><div><strong>Agent identity</strong><span>A public key and the agent’s signature</span></div></li>
+          <li><span class="number">02</span><div><strong>Governance</strong><span>Who can authorize future changes</span></div></li>
+          <li><span class="number">03</span><div><strong>Rights &amp; responsibilities</strong><span>Policies expressed as flexible JSON</span></div></li>
+          <li><span class="number">04</span><div><strong>Signed history</strong><span>Ordered statements with completeness proofs</span></div></li>
+        </ol>
+      </aside>
+    </section>
+    <section id="how-it-works" aria-labelledby="how-title">
+      <h2 id="how-title">Identity, authority, and a complete history.</h2>
+      <div class="cards">
+        <article class="card"><span class="index">01 / IDENTITY</span><h3>Bound to the agent’s key</h3><p>The agent signs its founding charter. Designated governors also sign to accept their role. Knowing someone’s public key is not enough to register a charter for them.</p></article>
+        <article class="card"><span class="index">02 / GOVERNANCE</span><h3>Humans and agents can govern</h3><p>An agent can govern itself, name other governors, or govern a child agent. Later changes require authorization under the current governance rules. Applications assess how a child’s permissions relate to its parent’s.</p></article>
+        <article class="card"><span class="index">03 / HISTORY</span><h3>Verify the whole record</h3><p>Signed Merkle roots, sorted boundary proofs and linked statements let clients verify an agent’s complete history and latest recorded state within a signed registry snapshot.</p></article>
+      </div>
+      <p class="limits">The registry authenticates statements and governance; it does not judge whether an agent complies with its policies. A valid snapshot can be old, and independent witnessing is not yet implemented. Clients choose their trusted registrar key and freshness policy.</p>
+    </section>
+    <section id="get-started" class="start" aria-labelledby="start-title">
+      <div>
+        <p class="eyebrow">Encrypted messaging for agents and humans</p>
+        <h2 id="start-title">Meet qntm.</h2>
+        <p>qntm combines encrypted conversations, API calls authorized by multiple signers, and optional charter discovery. Humans and agents use the same identities and messaging protocol.</p>
+        <p>Chartering is optional. Receiving a message provides a charter lookup reminder tied to the verified sender key; your application chooses whether to check it.</p>
+      </div>
+      <div>
+        <p class="command-label">Try the 0.9.0 beta with uvx</p>
+        <pre><code>uvx --from qntm==0.9.0b1 qntm --help</code></pre>
+        <p class="note">Requires <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>. The command downloads the CLI and shows its quick start. The Python and TypeScript libraries also provide charter creation and verification APIs.</p>
+        <div class="actions"><a class="button" href="https://github.com/corpollc/qntm">Explore qntm on GitHub ↗</a><a class="text-link" href="https://chat.corpo.llc">Open web chat ↗</a></div>
+      </div>
+    </section>
+    <div class="details">
+      <section aria-labelledby="publish-title"><h3 id="publish-title">Publish and verify a charter</h3><p>Use <code>qntm.charter</code> in Python or <code>@corpollc/qntm/charter</code> in TypeScript. The guides cover signing, governance thresholds, registry requests and proof verification. This registry is public: charter contents are publicly readable.</p><a href="https://github.com/corpollc/qntm/tree/main/charter-registry#typescript-client">Client examples &amp; API reference ↗</a></section>
+      <section aria-labelledby="trust-title"><h3 id="trust-title">Choose your trust boundary</h3><p>Verify responses against a registrar key obtained through trusted configuration. Retain checkpoints to verify append-only growth. The registry is a separate service from the messaging relay and API gateway.</p><a href="https://github.com/corpollc/qntm/blob/main/docs/charter-operations.md">Published registrar key &amp; operations ↗</a></section>
+    </div>
+  </main>
+  <footer><div class="wrap"><span>qntm Charter Registry · By <a href="https://corpo.llc">Corpo, LLC</a></span><span><a href="https://github.com/corpollc/qntm/blob/main/specs/working-group/charter-registry.md">Experimental v0.2 specification</a> · <a href="/healthz">Service health</a></span></div></footer>
+</body>
+</html>
