@@ -56,10 +56,19 @@ func TestCapacityIsAtomicAndPreservesHistory(t *testing.T) {
 }
 
 func TestByteCapacityAndPrivateBackupRestore(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "source.db")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.db")
 	s, err := OpenWithLimits(path, "test.registry", Limits{10, 1})
 	if err != nil {
 		t.Fatal(err)
+	}
+	snapPath := filepath.Join(dir, "snapshot.db")
+	if s.SnapshotPath() != snapPath {
+		t.Fatalf("unexpected snapshot path: %q", s.SnapshotPath())
+	}
+	info, err := os.Stat(snapPath)
+	if err != nil || info.Mode().Perm() != 0600 || info.Size() < 8192 {
+		t.Fatalf("startup snapshot missing or insecure: %v %v", info, err)
 	}
 	key := testIdentity(t)
 	genesis := testCharter(t, key)
@@ -73,17 +82,41 @@ func TestByteCapacityAndPrivateBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := NewOperations(s, 1)
-	for _, path := range []string{"/metrics", "/backup"} {
+	for _, route := range []string{"/metrics", "/backup"} {
 		w := httptest.NewRecorder()
-		ops.Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		ops.Handler().ServeHTTP(w, httptest.NewRequest("GET", route, nil))
 		if w.Code != 404 {
-			t.Fatalf("public admin route %s: %d", path, w.Code)
+			t.Fatalf("public admin route %s: %d", route, w.Code)
 		}
 	}
+	// Admin listener must NEVER expose /backup or the signing seed over TCP.
 	w := httptest.NewRecorder()
 	ops.AdminHandler().ServeHTTP(w, httptest.NewRequest("GET", "/backup", nil))
+	if w.Code != 404 {
+		t.Fatalf("admin /backup must be removed, got %d", w.Code)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".snapshot-") {
+			t.Fatalf("leaked temporary snapshot file %s", e.Name())
+		}
+	}
+	snapBytes, err := os.ReadFile(snapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(snapPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("snapshot permissions: %v %v", info, err)
+	}
+	if len(snapBytes) < 0x14 || (!bytes.Equal(snapBytes[0x10:0x14], []byte{0xed, 0xda, 0x0c, 0xed}) && !bytes.Equal(snapBytes[0x10:0x14], []byte{0xed, 0x0c, 0xda, 0xed})) {
+		t.Fatal("snapshot.db missing valid bbolt magic header")
+	}
 	copyPath := filepath.Join(t.TempDir(), "restore.db")
-	if err := os.WriteFile(copyPath, w.Body.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(copyPath, snapBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
 	restored := openTest(t, copyPath)
@@ -112,6 +145,12 @@ func TestPrivateMetricsAndBusyResponse(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 	o.slots <- struct{}{}
+	// /healthz must remain 200 even when all API concurrency slots are occupied.
+	w = httptest.NewRecorder()
+	api.ServeHTTP(w, httptest.NewRequest("GET", "/healthz", nil))
+	if w.Code != 200 {
+		t.Fatalf("expected /healthz 200 under full slots, got %d: %s", w.Code, w.Body.String())
+	}
 	w = httptest.NewRecorder()
 	api.ServeHTTP(w, httptest.NewRequest("GET", "/v1/heads", nil))
 	<-o.slots
@@ -120,9 +159,62 @@ func TestPrivateMetricsAndBusyResponse(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	o.AdminHandler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
-	for _, expected := range []string{`qntm_charter_requests_total{status="200"} 1`, `qntm_charter_requests_total{status="503"} 1`, "qntm_charter_request_duration_seconds_count 2", "qntm_charter_entries 0"} {
+	for _, expected := range []string{`qntm_charter_requests_total{status="200"} 2`, `qntm_charter_requests_total{status="503"} 1`, "qntm_charter_request_duration_seconds_count 3", "qntm_charter_entries 0"} {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatal("missing metric", expected, w.Body.String())
 		}
+	}
+}
+
+func TestSnapshotCacheAndInvalidation(t *testing.T) {
+	s := openTest(t, filepath.Join(t.TempDir(), "registry.db"))
+	defer s.Close()
+	emptyA, err := s.Snapshot(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := uint64(0)
+	emptyB, err := s.Snapshot(&zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emptyA != emptyB {
+		t.Fatal("expected latest snapshot to be served from cache")
+	}
+	key := testIdentity(t)
+	genesis := testCharter(t, key)
+	r1, err := s.Submit(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1A, err := s.Snapshot(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := uint64(1)
+	snap1B, err := s.Snapshot(&one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap1A != snap1B || len(snap1A.Entries) != 1 || snap1A.Heads != r1.Heads {
+		t.Fatal("cache did not update cleanly after Submit")
+	}
+	next := testNext(t, genesis, key, "second")
+	r2, err := s.Submit(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := s.Snapshot(nil)
+	if err != nil || len(snap2.Entries) != 2 || snap2.Heads != r2.Heads {
+		t.Fatalf("expected 2 entries in cached snapshot, got %v %v", snap2, err)
+	}
+	hist1, err := s.Snapshot(&one)
+	if err != nil || hist1.Heads != r1.Heads {
+		t.Fatal("historical snapshot checkpoint changed")
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/v1/consistency?from=2&to=2", nil))
+	if w.Code != 200 {
+		t.Fatalf("same-size consistency failed: %d %s", w.Code, w.Body.String())
 	}
 }

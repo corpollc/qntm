@@ -6,6 +6,12 @@
   const refresh = document.getElementById('checkpoint-refresh');
   const hash = /^[0-9a-f]{64}$/;
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+  const origin = window.location && window.location.origin &&
+    window.location.origin !== 'null' && !window.location.origin.startsWith('file://')
+    ? window.location.origin
+    : 'https://charter.qntm.corpo.llc';
+  const originUrl = new URL(origin);
+  const expectedRegistries = new Set([originUrl.hostname, originUrl.host, origin]);
 
   async function loadCheckpoint() {
     refresh.disabled = true;
@@ -24,7 +30,7 @@
       const epoch = heads?.epoch?.signed;
       const log = heads?.log?.signed;
       if (!epoch || !log || epoch.kind !== 'charter.epoch' || log.kind !== 'charter.log' ||
-          epoch.registry !== 'charter.qntm.corpo.llc' || log.registry !== epoch.registry ||
+          typeof epoch.registry !== 'string' || !expectedRegistries.has(epoch.registry) || log.registry !== epoch.registry ||
           typeof epoch.map_root !== 'string' || !hash.test(epoch.map_root) ||
           typeof log.root_hash !== 'string' || !hash.test(log.root_hash) ||
           epoch.log_root !== log.root_hash || !Number.isSafeInteger(log.tree_size) || log.tree_size < 0 ||

@@ -1,3 +1,6 @@
+# Host-networked monitoring stack for the dedicated exe.dev charter VM.
+# SECURITY: prometheus, node-exporter, and blackbox MUST explicitly bind
+# 127.0.0.1 (--web.listen-address=127.0.0.1:<port>), NEVER 0.0.0.0.
 services:
   prometheus:
     image: prom/prometheus:v3.14.0
@@ -11,6 +14,10 @@ services:
     mem_limit: 768m
     cpus: 0.5
     logging: {driver: json-file, options: {max-size: 10m, max-file: '3'}}
+  # SECURITY: On exe.dev, only port 8000 is publicly shared; port 3000 is
+  # gated by exe.dev's VM firewall and authenticated SSH/HTTPS proxy.
+  # For ANY non-exe.dev host, GF_SERVER_HTTP_ADDR MUST be set to 127.0.0.1
+  # and GF_AUTH_ANONYMOUS_ENABLED MUST be 'false' (with login/basic auth enabled).
   grafana:
     image: grafana/grafana:13.2.1
     network_mode: host

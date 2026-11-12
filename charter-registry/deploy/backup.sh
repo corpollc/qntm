@@ -6,8 +6,15 @@ mkdir -p "$backup_dir"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 temporary=$(mktemp "$backup_dir/.partial.XXXXXX")
 trap 'rm -f "$temporary"' EXIT HUP INT TERM
-curl --fail --silent --show-error --max-time 60 http://127.0.0.1:9085/backup -o "$temporary"
+install -m 0600 /var/lib/qntm-charter/snapshot.db "$temporary"
 test -s "$temporary"
+size=$(wc -c < "$temporary" | tr -d ' \t\n')
+test "$size" -ge 8192
+magic=$(od -An -tx1 -j 16 -N 4 "$temporary" | tr -d ' \t\n')
+case "$magic" in
+    edda0ced|ed0cdaed) ;;
+    *) echo "invalid bbolt snapshot header" >&2; exit 1 ;;
+esac
 mv "$temporary" "$backup_dir/registry-$stamp.db"
 # Keep seven daily snapshots; these contain the registrar private key.
 find "$backup_dir" -type f -name 'registry-*.db' -mtime +7 -delete

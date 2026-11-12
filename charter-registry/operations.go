@@ -101,6 +101,10 @@ func (o *Operations) Handler() http.Handler {
 				}
 			}
 		}()
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == "/healthz" {
+			api.ServeHTTP(mw, r)
+			return
+		}
 		select {
 		case o.slots <- struct{}{}:
 			defer func() { <-o.slots }()
@@ -112,18 +116,11 @@ func (o *Operations) Handler() http.Handler {
 	})
 }
 
-// AdminHandler MUST be served on a private loopback listener. It exposes a
-// signing-key-bearing backup and must never share the public reverse proxy.
+// AdminHandler MUST be served on a private loopback listener. It serves
+// Prometheus metrics only and never exposes signing keys over TCP.
 func (o *Operations) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /metrics", o.metrics)
-	mux.HandleFunc("GET /backup", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Cache-Control", "no-store")
-		if err := o.store.Backup(w); err != nil {
-			panic(http.ErrAbortHandler)
-		}
-	})
 	return mux
 }
 

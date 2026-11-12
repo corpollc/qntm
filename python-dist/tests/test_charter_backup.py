@@ -119,13 +119,32 @@ class CharterBackupTests(unittest.TestCase):
         self.assertEqual((self.directory / "status.json").stat().st_mode & 0o777, 0o600)
 
     def test_ssh_is_noninteractive_bounded_and_never_receives_encryption_key(self):
-        with patch.object(backup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=b"db")) as run:
-            self.assertEqual(backup.capture_snapshot("example.invalid"), b"db")
+        valid_bbolt = bytes(0x10) + b"\xed\xda\x0c\xed" + b"\x02\x00\x00\x00" + b"payload"
+        with patch.object(backup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=valid_bbolt)) as run:
+            self.assertEqual(backup.capture_snapshot("example.invalid"), valid_bbolt)
         argv = run.call_args.args[0]
-        self.assertIn("BatchMode=yes", argv)
-        self.assertIn("--max-filesize 67108864", argv[-1])
+        self.assertEqual(
+            argv,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+             "example.invalid", "sudo cat /var/lib/qntm-charter/snapshot.db"],
+        )
         self.assertEqual(run.call_args.kwargs["timeout"], 90)
+        self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertNotIn("9085", " ".join(argv))
+        self.assertNotIn("/backup", " ".join(argv))
         self.assertNotIn("encryption.key", " ".join(argv))
+        big_endian_bbolt = bytes(0x10) + b"\xed\x0c\xda\xed" + b"\x00\x00\x00\x02"
+        with patch.object(backup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=big_endian_bbolt)):
+            self.assertEqual(backup.capture_snapshot("example.invalid"), big_endian_bbolt)
+        for bad_payload in (
+            b"",
+            b"short",
+            bytes(0x10) + b"notbbolt",
+            bytes(0x10) + b"\xed\xda\x0c\xed" + bytes(backup.MAX_SNAPSHOT_BYTES),
+        ):
+            with patch.object(backup.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=bad_payload)):
+                with self.assertRaises(ValueError):
+                    backup.capture_snapshot("example.invalid")
         for host in ("-oProxyCommand=bad", "host;bad", "host\ncommand"):
             with self.assertRaises(ValueError):
                 backup.capture_snapshot(host)

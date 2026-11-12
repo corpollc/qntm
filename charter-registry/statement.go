@@ -2,6 +2,7 @@
 package charter
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -148,6 +151,54 @@ func StatementHash(s Statement) (string, error) {
 	return digest(b), nil
 }
 
+func checkSafeIntegers(raw []byte, value any) error {
+	for _, src := range [][]byte{raw} {
+		dec := json.NewDecoder(bytes.NewReader(src))
+		dec.UseNumber()
+		for {
+			tok, err := dec.Token()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if num, ok := tok.(json.Number); ok {
+				s := string(num)
+				if !strings.ContainsAny(s, ".eE") {
+					n, err := strconv.ParseInt(s, 10, 64)
+					if err != nil || n < -int64(MaxSafeInteger) || n > int64(MaxSafeInteger) {
+						return errors.New("JSON integer exceeds IEEE-754 safe integer range")
+					}
+				}
+			}
+		}
+	}
+	var walk func(any) error
+	walk = func(v any) error {
+		switch x := v.(type) {
+		case float64:
+			if math.Trunc(x) == x && math.Abs(x) > float64(MaxSafeInteger) {
+				return errors.New("JSON integer exceeds IEEE-754 safe integer range")
+			}
+		case []any:
+			for _, item := range x {
+				if err := walk(item); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			for _, item := range x {
+				if err := walk(item); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(value)
+}
+
 // ParseStatement checks the full JSON shape before decoding into Go structs, so
 // absent/null sequence fields cannot silently become sequence zero.
 func ParseStatement(raw []byte) (Statement, error) {
@@ -158,6 +209,9 @@ func ParseStatement(raw []byte) (Statement, error) {
 	}
 	var value any
 	if err := json.Unmarshal(canonical, &value); err != nil {
+		return s, err
+	}
+	if err := checkSafeIntegers(raw, value); err != nil {
 		return s, err
 	}
 	o, err := obj(value)

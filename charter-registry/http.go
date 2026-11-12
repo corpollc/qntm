@@ -114,10 +114,13 @@ func (s *Store) Handler() http.Handler {
 			reject(w, 400, "invalid_size", ErrSnapshot)
 			return
 		}
-		older, err := s.snapshot(newer.Entries[:from])
-		if err != nil {
-			reject(w, 500, "storage_error", err)
-			return
+		older := newer
+		if from < uint64(len(newer.Entries)) {
+			older, err = s.snapshot(newer.Entries[:from:from])
+			if err != nil {
+				reject(w, 500, "storage_error", err)
+				return
+			}
 		}
 		respond(w, 200, map[string]any{"from": older.Heads, "to": newer.Heads, "proof": newer.Consistency(int(from))})
 	})
@@ -146,7 +149,7 @@ func (s *Store) Handler() http.Handler {
 				return
 			}
 			end := min(from+limit, n)
-			respond(w, 200, map[string]any{"entries": snap.Entries[from:end], "from": from, "next": end, "heads": snap.Heads})
+			respond(w, 200, map[string]any{"entries": snap.Entries[from:end:end], "from": from, "next": end, "heads": snap.Heads})
 		}
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 HEADER = b"qntm-charter-backup-v1\n"
 SNAPSHOT_NAME = re.compile(r"registry-\d{8}T\d{12}Z\.aesgcm\Z")
 MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
+BBOLT_MAGIC_OFFSET = 0x10
+BBOLT_MAGICS = (b"\xed\xda\x0c\xed", b"\xed\x0c\xda\xed")
 
 
 def private_write(path: Path, content: bytes) -> None:
@@ -79,11 +81,14 @@ def capture_snapshot(host: str) -> bytes:
         raise ValueError("invalid SSH hostname")
     result = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host,
-         "curl --fail --silent --show-error --max-time 60 --max-filesize 67108864 http://127.0.0.1:9085/backup"],
-        check=True, capture_output=True, timeout=90,
+         "sudo cat /var/lib/qntm-charter/snapshot.db"],
+        stdin=subprocess.DEVNULL, check=True, capture_output=True, timeout=90,
     )
     if not result.stdout or len(result.stdout) > MAX_SNAPSHOT_BYTES:
         raise ValueError("empty or oversized snapshot")
+    if (len(result.stdout) < BBOLT_MAGIC_OFFSET + 4
+            or result.stdout[BBOLT_MAGIC_OFFSET:BBOLT_MAGIC_OFFSET + 4] not in BBOLT_MAGICS):
+        raise ValueError("invalid bbolt snapshot header")
     return result.stdout
 
 

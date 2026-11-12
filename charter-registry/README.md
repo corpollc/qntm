@@ -15,7 +15,7 @@ The startup JSON prints the bound address, registry audience, and registrar publ
 
 The database contains the registrar's private signing seed and all accepted statements. The server creates its directory with mode 0700 and database with mode 0600, holds an exclusive process lock, and commits/fsyncs each statement before returning a receipt. Restarting preserves its identity and historical signed heads. Startup replays the stored history and rejects corruption or a different registry audience.
 
-For a consistent backup, use the loopback-only admin listener (`--admin-listen 127.0.0.1:9085`) and fetch `/backup`, or stop the process before copying `data/registry.db`. The admin response includes the private signing key; never expose it publicly. Preserve the entire file, including metadata. Losing it loses both history and the registrar key. Do not replace a lost database with a new empty one under an existing trusted identity. Restoring an old backup can lose previously acknowledged writes; compare retained external checkpoints before serving it.
+For a consistent backup without stopping the process, copy the atomic `0600` `data/snapshot.db` file that the server refreshes on startup and after every committed append (or stop the process before copying `data/registry.db`). The loopback-only admin listener (`--admin-listen 127.0.0.1:9085`) serves Prometheus `/metrics` only and never exposes signing keys or database backups over TCP. Both `registry.db` and `snapshot.db` include the private signing key; never expose them publicly. Preserve the entire file, including metadata. Losing it loses both history and the registrar key. Do not replace a lost database with a new empty one under an existing trusted identity. Restoring an old backup can lose previously acknowledged writes; compare retained external checkpoints before serving it.
 
 ## TypeScript client
 
@@ -122,7 +122,7 @@ Inclusion paths list sibling hashes from leaf to root. A range proof carries the
 
 ## Limits and deployment
 
-This is a small reference registrar: it replays history and rebuilds trees in memory. Defaults limit accepted history to 2,000 entries and 16 MiB, with a 1 MiB request body limit and four concurrent HTTP requests. The hosted deployment adds Nginx throttling, exe.dev TLS, private Prometheus/Grafana monitoring, and daily consistent snapshots. See [operations](../docs/charter-operations.md) before changing these limits. Tree caching, multi-process replication, configurable CORS, independent witnesses, and automated registrar key rotation remain unimplemented. Keep loopback binding for local experiments. No dependency on the qntm gateway is required.
+This is a small reference registrar: it replays history on startup and caches the latest signed tree/checkpoint snapshot in memory across reads. Defaults limit accepted history to 2,000 entries and 16 MiB, with a 1 MiB request body limit and four concurrent HTTP requests (`/healthz` is exempt from the concurrency cap). The hosted deployment adds per-client Nginx throttling, exe.dev TLS, private Prometheus/Grafana monitoring, and daily consistent snapshots. See [operations](../docs/charter-operations.md) before changing these limits. Multi-process replication, configurable CORS, independent witnesses, and automated registrar key rotation remain unimplemented. Keep loopback binding for local experiments. No dependency on the qntm gateway is required.
 
 ## Verification
 

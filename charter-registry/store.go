@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -101,11 +103,17 @@ type Receipt struct {
 // Store uses one durable transaction per accepted statement. No successful receipt
 // is returned before bbolt commits and fsyncs it. The DB also holds the registrar key.
 type Store struct {
-	db        *bolt.DB
-	Registry  string
-	key       ed25519.PrivateKey
-	createdAt string
-	limits    Limits
+	db           *bolt.DB
+	snapshotPath string
+	writeMu      sync.Mutex
+	snapMu       sync.Mutex
+	cacheMu      sync.RWMutex
+	cachedLatest *Snapshot
+	closed       atomic.Bool
+	Registry     string
+	key          ed25519.PrivateKey
+	createdAt    string
+	limits       Limits
 }
 
 func Open(path, registry string) (*Store, error) {
@@ -128,7 +136,12 @@ func OpenWithLimits(path, registry string, limits Limits) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, Registry: registry, limits: limits}
+	var snapshotPath string
+	if filepath.Base(path) != "snapshot.db" {
+		snapshotPath = filepath.Join(filepath.Dir(path), "snapshot.db")
+	}
+	s := &Store{db: db, snapshotPath: snapshotPath, Registry: registry, limits: limits}
+	var initialEntries []LogEntry
 	err = db.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists(metadataBucket)
 		if err != nil {
@@ -182,16 +195,73 @@ func OpenWithLimits(path, registry string, limits Limits) (*Store, error) {
 			}
 			states[id] = next
 		}
+		initialEntries = entries
 		return nil
 	})
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
+	initialSnap, err := s.snapshot(initialEntries)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.cachedLatest = initialSnap
+	if err := s.refreshSnapshot(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
 }
-func (s *Store) Close() error   { return s.db.Close() }
-func (s *Store) PublicKey() Key { return NewKey(s.key.Public().(ed25519.PublicKey)) }
+func (s *Store) Close() error {
+	s.closed.Store(true)
+	return s.db.Close()
+}
+func (s *Store) PublicKey() Key       { return NewKey(s.key.Public().(ed25519.PublicKey)) }
+func (s *Store) SnapshotPath() string { return s.snapshotPath }
+
+func (s *Store) refreshSnapshot() error {
+	if s.snapshotPath == "" {
+		return nil
+	}
+	s.snapMu.Lock()
+	defer s.snapMu.Unlock()
+	dir := filepath.Dir(s.snapshotPath)
+	tmp, err := os.CreateTemp(dir, ".snapshot-*.db")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		return err
+	}
+	if err := s.Backup(tmp); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, s.snapshotPath); err != nil {
+		return err
+	}
+	cleanup = false
+	return os.Chmod(s.snapshotPath, 0600)
+}
+
 func indexKey(index uint64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, index)
@@ -230,6 +300,8 @@ func (s *Store) Submit(input Statement) (Receipt, error) {
 	if err != nil {
 		return receipt, &ValidationError{err}
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	var entries []LogEntry
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		var err error
@@ -276,6 +348,15 @@ func (s *Store) Submit(input Statement) (Receipt, error) {
 	}
 	snapshot, err := s.snapshot(entries)
 	if err != nil {
+		s.cacheMu.Lock()
+		s.cachedLatest = nil
+		s.cacheMu.Unlock()
+		return receipt, err
+	}
+	s.cacheMu.Lock()
+	s.cachedLatest = snapshot
+	s.cacheMu.Unlock()
+	if err := s.refreshSnapshot(); err != nil {
 		return receipt, err
 	}
 	index := len(entries) - 1
@@ -301,6 +382,20 @@ func signedHead[T any](body T, key ed25519.PrivateKey) (SignedHead[T], error) {
 	return SignedHead[T]{body, AgentID(key.Public().(ed25519.PublicKey)), base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, b))}, nil
 }
 func (s *Store) Snapshot(size *uint64) (*Snapshot, error) {
+	if !s.closed.Load() {
+		s.cacheMu.RLock()
+		cached := s.cachedLatest
+		s.cacheMu.RUnlock()
+		if cached != nil {
+			n := uint64(len(cached.Entries))
+			if size == nil || *size == n {
+				return cached, nil
+			}
+			if *size < n {
+				return s.snapshot(cached.Entries[:*size:*size])
+			}
+		}
+	}
 	var entries []LogEntry
 	err := s.db.View(func(tx *bolt.Tx) error { var err error; entries, err = readEntries(tx, size); return err })
 	if err != nil {
@@ -309,8 +404,10 @@ func (s *Store) Snapshot(size *uint64) (*Snapshot, error) {
 	return s.snapshot(entries)
 }
 func (s *Store) snapshot(entries []LogEntry) (*Snapshot, error) {
-	snap := &Snapshot{Entries: entries, Leaves: []MapLeaf{}, logHashes: []string{}, mapHashes: []string{}}
-	for _, e := range entries {
+	cloned := make([]LogEntry, len(entries))
+	copy(cloned, entries)
+	snap := &Snapshot{Entries: cloned, Leaves: []MapLeaf{}, logHashes: []string{}, mapHashes: []string{}}
+	for _, e := range cloned {
 		b, err := canonicalValue(e)
 		if err != nil {
 			return nil, err

@@ -20,9 +20,9 @@ import (
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8085", "HTTP listen address")
-	data := flag.String("data-dir", "./data", "directory for registry.db (contains registrar signing key)")
+	data := flag.String("data-dir", "./data", "directory for registry.db and snapshot.db (contains registrar signing key)")
 	id := flag.String("registry", "localhost", "canonical registry audience; immutable for an existing database")
-	admin := flag.String("admin-listen", "", "optional loopback-only metrics and private backup listener (contains signing key)")
+	admin := flag.String("admin-listen", "", "optional loopback-only Prometheus metrics listener")
 	limits := charter.DefaultLimits()
 	maxEntries := flag.Uint64("max-entries", limits.MaxEntries, "maximum accepted log entries")
 	maxBytes := flag.Uint64("max-log-bytes", limits.MaxLogBytes, "maximum encoded log bytes")

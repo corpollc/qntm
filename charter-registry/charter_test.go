@@ -288,3 +288,72 @@ func TestStartupRejectsLostMetadata(t *testing.T) {
 		t.Fatal("silently generated a new registrar identity for existing history")
 	}
 }
+
+func TestRejectOutOfRangeIntegersOnSubmission(t *testing.T) {
+	s := openTest(t, filepath.Join(t.TempDir(), "registry.db"))
+	defer s.Close()
+	handler := s.Handler()
+	buildRawStatement := func(numberLiteral string) ([]byte, Statement) {
+		key := testIdentity(t)
+		pub := key.Public().(ed25519.PublicKey)
+		gov, err := json.Marshal(Governance{[]Key{NewKey(pub)}, 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawBody := json.RawMessage(fmt.Sprintf(
+			`{"agent_pubkey":%q,"agent_rights":[],"extensions":{"test.num":{"v":%s}},"governance":%s}`,
+			NewKey(pub).PublicKey, numberLiteral, string(gov),
+		))
+		stmt := Statement{
+			Signed:     SignedBody{"test.registry", AgentID(pub), 0, GenesisHash, "charter", "2026-09-08T00:00:00Z", rawBody},
+			Signatures: []Signature{},
+		}
+		signedBytes, err := canonicalValue(stmt.Signed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stmt.Signatures = []Signature{{AgentID(pub), base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, signedBytes))}}
+		wireBytes, err := json.Marshal(stmt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wireBytes, stmt
+	}
+
+	for _, unsafeLiteral := range []string{
+		"100000000000000020000",
+		"-100000000000000020000",
+		"9007199254740992",
+		"-9007199254740992",
+		"9007199254740993",
+		"1.0000000000000002e20",
+		"1e20",
+	} {
+		wireBytes, stmt := buildRawStatement(unsafeLiteral)
+		if _, err := ParseStatement(wireBytes); err == nil {
+			t.Fatalf("ParseStatement accepted unsafe integer literal %s", unsafeLiteral)
+		}
+		if _, err := s.Submit(stmt); err == nil {
+			t.Fatalf("Store.Submit accepted unsafe integer literal %s", unsafeLiteral)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("POST", "/v1/statements", bytes.NewReader(wireBytes)))
+		if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_statement") {
+			t.Fatalf("POST /v1/statements for %s: got %d %s", unsafeLiteral, w.Code, w.Body.String())
+		}
+	}
+
+	for _, safeLiteral := range []string{
+		"9007199254740991",
+		"-9007199254740991",
+		"1e-7",
+		"333333333.33333329",
+	} {
+		wireBytes, _ := buildRawStatement(safeLiteral)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("POST", "/v1/statements", bytes.NewReader(wireBytes)))
+		if w.Code != 201 {
+			t.Fatalf("POST /v1/statements rejected valid number %s: %d %s", safeLiteral, w.Code, w.Body.String())
+		}
+	}
+}
