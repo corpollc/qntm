@@ -67,6 +67,10 @@ def _destination(config_dir, relay_url, contact):
         raise ValueError("The pinned conversation is unavailable. Join it before requesting guidance.")
     if kid not in conv.get("participants", []):
         raise ValueError("The recipient is not a known participant. Verify the conversation and recipient before pinning.")
+    if conv.get("type") == "group" and any(
+        conv.get(flag) for flag in ("excluded", "needs_rekey", "pending_control", "recovery_required")
+    ):
+        raise ValueError("Complete the pending group update or restore authorized access before requesting guidance.")
     return identity, conv
 
 
@@ -118,7 +122,11 @@ def _prepare_request(config_dir, relay_url, contact_id, question, context=""):
         if contact is None:
             raise ValueError("No guidance contact found. Use 'qntm guidance list' or configure a local pin.")
         identity, conv = _destination(config_dir, relay_url, contact)
+    if not isinstance(question, str) or not isinstance(context, str):
+        raise ValueError("Enter a question of 1–4,000 characters.")
     question, context = question.strip(), context.strip()
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in question) or any(0xD800 <= ord(ch) <= 0xDFFF for ch in context):
+        raise ValueError("Guidance text must not contain lone UTF-16 surrogates.")
     if not question or len(question) > 4000:
         raise ValueError("Enter a question of 1–4,000 characters.")
     if len(context) > 8000:
@@ -147,7 +155,7 @@ def prepare_request(config_dir, relay_url, contact_id, question, context=""):
 
 
 def send_request(config_dir, relay_url, contact_id, question, context, review_token):
-    from .cli import (_http_send, _conv_to_crypto, _load_history, _save_history)
+    from .cli import (SendDeliveryUnknown, _http_send, _conv_to_crypto, _load_history, _save_history)
     from .message import create_message, serialize_envelope, default_ttl
     # Validate and encrypt the same snapshot; do not reload different keys or
     # membership after checking the token.
@@ -157,9 +165,19 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
     if conv is None:
         return _send_builtin(config_dir, preview, identity)
     envelope = create_message(identity, _conv_to_crypto(conv), "text", preview["message"].encode(), None, default_ttl())
-    # No automatic retry: a lost response can mean the relay accepted the message.
-    result = _http_send(relay_url.rstrip("/"), conv["id"], serialize_envelope(envelope))
     message_id = envelope["msg_id"].hex()
+    # No automatic retry: a lost response can mean the relay accepted the message.
+    try:
+        result = _http_send(relay_url.rstrip("/"), conv["id"], serialize_envelope(envelope))
+    except SendDeliveryUnknown:
+        history = _load_history(config_dir, conv["id"])
+        history.append({
+            "msg_id": message_id, "direction": "outgoing", "body_type": "text",
+            "body": preview["message"], "created_ts": envelope["created_ts"],
+            "guidance_contact_id": contact_id, "delivery": "unknown",
+        })
+        _save_history(config_dir, conv["id"], history)
+        raise
     history = _load_history(config_dir, conv["id"])
     history.append({
         "msg_id": message_id, "direction": "outgoing", "body_type": "text",
@@ -173,7 +191,13 @@ def send_request(config_dir, relay_url, contact_id, question, context, review_to
 
 def _send_builtin(config_dir, preview, identity):
     import time
-    from .cli import _load_conversations, _save_conversations, _save_history, _http_send, _merge_participant_public_key
+    from .cli import (
+        SendDeliveryUnknown,
+        _http_send,
+        _merge_participant_public_key,
+        _mutate_conversations,
+        _save_history,
+    )
     from .guidance_inbox import create_intake
     from .invite import invite_to_token
     from .message import serialize_envelope
@@ -188,11 +212,21 @@ def _send_builtin(config_dir, preview, identity):
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "current_epoch": 0,
         "invite_token": invite_to_token(request["reply_invite"]),
     }
-    # Persist reply keys before transmission, including when relay acceptance is uncertain.
-    _save_conversations(config_dir, _load_conversations(config_dir) + [conversation])
+    # Persist reply keys under receive.lock before transmission so concurrent recv --watch updates are preserved.
+    def _append_reply_conversation(conversations):
+        if not any(c.get("id") == conversation["id"] for c in conversations):
+            conversations.append(conversation)
+
+    _mutate_conversations(config_dir, _append_reply_conversation)
     _merge_participant_public_key(config_dir, conversation["id"], identity["publicKey"])
     _merge_participant_public_key(config_dir, conversation["id"], bytes.fromhex(contact["recipient_public_key"]))
-    result = _http_send(contact["relay_url"], contact["conversation_id"], serialize_envelope(envelope))
+    try:
+        result = _http_send(contact["relay_url"], contact["conversation_id"], serialize_envelope(envelope))
+    except SendDeliveryUnknown:
+        _save_history(config_dir, conversation["id"], [{"msg_id": envelope["msg_id"].hex(), "direction": "outgoing",
+            "body_type": "text", "body": preview["message"], "created_ts": envelope["created_ts"],
+            "guidance_contact_id": contact["id"], "delivery": "unknown"}])
+        raise
     _save_history(config_dir, conversation["id"], [{"msg_id": envelope["msg_id"].hex(), "direction": "outgoing",
         "body_type": "text", "body": preview["message"], "created_ts": envelope["created_ts"],
         "guidance_contact_id": contact["id"], "delivery": "sealed_intake"}])

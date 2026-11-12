@@ -193,3 +193,110 @@ class TestThresholdMatching:
     def test_no_rules(self):
         rule = lookup_threshold([], "bank-api", "/v1/transfers", "POST")
         assert rule is None
+
+    def test_case_insensitive_verb_and_param_template_matching(self):
+        rules = [
+            ThresholdRule(service="github", endpoint="/repos/{owner}/{repo}/issues", verb="post", m=3),
+            ThresholdRule(service="github", endpoint="/repos/{owner}/special/issues", verb="POST", m=5),
+        ]
+        # Exact segment outranks {param} template on tie, and verb matching is case-insensitive
+        assert lookup_threshold(rules, "github", "/repos/acme/widgets/issues", "POST") is rules[0]
+        assert lookup_threshold(rules, "github", "/repos/acme/widgets/issues", "post") is rules[0]
+        assert lookup_threshold(rules, "github", "/repos/acme/special/issues", "post") is rules[1]
+        # Dot-segment traversal does not match {param}
+        assert lookup_threshold(rules, "github", "/repos/../widgets/issues", "POST") is None
+        assert lookup_threshold(rules, "github", "/repos/./widgets/issues", "POST") is None
+
+
+class TestSecretOriginResolutionAndRecipeEncoding:
+    def test_builtin_service_origins_exact_map(self):
+        from qntm.gate import BUILTIN_SERVICE_ORIGINS, resolve_service_origins
+
+        expected = {
+            "github": ["https://api.github.com"],
+            "openai": ["https://api.openai.com"],
+            "anthropic": ["https://api.anthropic.com"],
+            "gemini": ["https://generativelanguage.googleapis.com"],
+            "stripe": ["https://api.stripe.com"],
+            "hackernews": ["https://hacker-news.firebaseio.com"],
+            "httpbin": ["https://httpbin.org"],
+            "dadjokes": ["https://icanhazdadjoke.com"],
+            "trivia": ["https://opentdb.com"],
+            "dogs": ["https://dog.ceo"],
+            "fun": ["http://localhost:9090"],
+        }
+        assert BUILTIN_SERVICE_ORIGINS == expected
+        for name, origins in expected.items():
+            assert resolve_service_origins(name) == origins
+            assert resolve_service_origins(name.upper()) == origins
+
+    def test_canonicalize_and_resolve_service_origins_rules(self):
+        from qntm.gate import canonicalize_origin, resolve_service_origins
+
+        assert canonicalize_origin("HTTPS://API.Example.COM:443/") == "https://api.example.com"
+        assert canonicalize_origin("https://api.example.com:8443") == "https://api.example.com:8443"
+        assert canonicalize_origin("http://LOCALHOST:9090/") == "http://localhost:9090"
+        assert canonicalize_origin("http://127.0.0.1:80") == "http://127.0.0.1"
+        assert canonicalize_origin("http://[::1]:3000/") == "http://[::1]:3000"
+
+        assert resolve_service_origins("api.example.com") == ["https://api.example.com"]
+        assert resolve_service_origins("localhost:9090") == ["http://localhost:9090"]
+        assert resolve_service_origins("127.0.0.1:4000") == ["http://127.0.0.1:4000"]
+        assert resolve_service_origins("[::1]:5000") == ["http://[::1]:5000"]
+        assert resolve_service_origins("https://custom.example.org:443/") == ["https://custom.example.org"]
+        assert resolve_service_origins(
+            "unknown-alias",
+            explicit_origins=["https://A.example.com/", "https://a.example.com:443", "https://b.example.com:8443"],
+        ) == ["https://a.example.com", "https://b.example.com:8443"]
+
+        for bad_origin in (
+            "http://api.example.com",
+            "https://user:pass@api.example.com",
+            "https://api.example.com/v1",
+            "https://api.example.com?x=1",
+            "https://api.example.com#frag",
+            "https://127.0.0.1",
+            "https://10.0.0.1",
+            "https://169.254.169.254",
+            "https://[::1]",
+            "https://[::ffff:127.0.0.1]",
+            "ftp://api.example.com",
+        ):
+            with pytest.raises(ValueError):
+                canonicalize_origin(bad_origin)
+
+        with pytest.raises(ValueError, match="Unknown service"):
+            resolve_service_origins("mysteryservice")
+
+        with pytest.raises(ValueError, match="between 1 and 16"):
+            resolve_service_origins(
+                "stripe",
+                explicit_origins=[f"https://s{i}.example.com" for i in range(17)],
+            )
+
+    def test_resolve_recipe_url_encodes_path_and_query_params(self):
+        from qntm.gate import Recipe, RecipeParam, resolve_recipe
+
+        recipe = Recipe(
+            name="items.lookup",
+            description="Lookup item",
+            service="httpbin",
+            verb="GET",
+            endpoint="/items/{id}",
+            target_url="https://httpbin.org/items/{id}",
+            risk_tier="read",
+            threshold=1,
+            path_params=[RecipeParam(name="id", description="Item ID", type="string", required=True)],
+            query_params=[RecipeParam(name="filter", description="Filter", type="string", required=False)],
+        )
+        endpoint, url, body = resolve_recipe(
+            recipe,
+            {"id": "foo/bar?baz=1#frag", "filter": "a b&admin=true"},
+        )
+        assert body is None
+        assert endpoint == "/items/foo%2Fbar%3Fbaz%3D1%23frag"
+        assert url == "https://httpbin.org/items/foo%2Fbar%3Fbaz%3D1%23frag?filter=a%20b%26admin%3Dtrue"
+
+        for traversal in (".", "..", ""):
+            with pytest.raises(ValueError):
+                resolve_recipe(recipe, {"id": traversal})

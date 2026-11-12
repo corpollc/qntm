@@ -15,7 +15,9 @@ def accept_gateway_membership(record, invite, inviter_key_id, invitation_message
     if any(record.get(flag) for flag in ('needs_rekey', 'pending_control', 'excluded', 'recovery_required')):
         raise ValueError('Gateway invitation is stale during a group transition')
     if state.creator is None:
-        return None
+        raise ValueError('Gateway promotion requires an initialized group roster')
+    if not state.is_admin(inviter_key_id):
+        raise ValueError('Only a group administrator may promote a gateway')
     if invite.get('conv_id') != record['id'] or invite.get('conv_epoch') != record.get('current_epoch', 0):
         raise ValueError('Gateway invitation has the wrong group context')
     if invite.get('conversation_type') not in (None, 'group'):
@@ -38,13 +40,8 @@ def accept_gateway_membership(record, invite, inviter_key_id, invitation_message
     if state.creator not in keys or inviter_key_id not in keys:
         raise ValueError('Gateway roster must retain the creator and inviting participant')
     legacy = record.get('current_epoch', 0) == 0 and not record.get('group_checkpoint')
-    if not legacy and not state.is_admin(inviter_key_id):
-        # API acceptance is distinct from permission to change a strict roster.
-        return None
     if not legacy and keys != set(state.list_members()):
         raise ValueError('Gateway invitation differs from the current authenticated roster')
-    if not state.is_admin(inviter_key_id):
-        return None
     if legacy:
         # An administrator-signed invitation asserts the gateway's initial participant
         # roster. Preserve existing roles; never infer a new administrator.
@@ -102,7 +99,7 @@ def _verified_votes(record, history, before_sequence):
                     or body.get('signer_kid') != base64url_encode(message['inner']['sender_kid'])):
                 continue
             seen.add(envelope['msg_id']); events.append((body, message['inner']['sender_ik_pk']))
-        except (ValueError, KeyError, TypeError):
+        except Exception:
             continue
     return events
 
@@ -200,11 +197,8 @@ def _approved_membership(record, control, events, at):
 
 def prepare_gateway_control(record, envelope, message, history, sequence):
     """Prepare a copy of local state; caller commits it only after control validation."""
+    import cbor2
     from .cbor import unmarshal
-    import time
-    delegate = control_delegate(record)
-    if delegate is not None:
-        return delegate
     gateway = record.get('gateway') or {}
     try:
         public = base64url_decode(gateway['publicKey'])
@@ -213,6 +207,10 @@ def prepare_gateway_control(record, envelope, message, history, sequence):
                 or base64url_encode(key_id_from_public_key(public)) != gateway['keyId']):
             return None
     except (ValueError, KeyError, TypeError):
+        return None
+    # If membership_authority was stored on the gateway record, verify it matches state.creator.
+    # Even when delegated by an admin/creator, the gateway MUST still supply verified participant votes!
+    if 'membership_authority' in gateway and control_delegate(record) != public:
         return None
     epoch = record.get('current_epoch', 0)
     pending = record.get('pending_governed_membership')
@@ -226,7 +224,13 @@ def prepare_gateway_control(record, envelope, message, history, sequence):
         return None
     if kind not in ('group_add', 'group_remove') or pending or any(record.get(flag) for flag in ('needs_rekey', 'excluded', 'recovery_required')):
         return None
-    approved = _approved_membership(record, unmarshal(message['inner']['body']), _verified_votes(record, history, sequence), int(time.time()))
+    try:
+        control = unmarshal(message['inner']['body'])
+    except (cbor2.CBORDecodeError, ValueError, TypeError, AttributeError):
+        return None
+    if not isinstance(control, dict):
+        return None
+    approved = _approved_membership(record, control, _verified_votes(record, history, sequence), envelope['created_ts'])
     if approved is None:
         return None
     proposal_id, state = approved

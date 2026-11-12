@@ -85,3 +85,39 @@ def test_published_providers_are_distinct_and_valid():
     for provider in records:
         intake_conversation(provider)
         assert 'private' not in json.dumps(provider)
+
+
+def test_open_intake_normalizes_crypto_cbor_and_surrogate_errors_to_value_error(inbox):
+    from qntm.gate import seal_secret
+    from qntm.guidance_inbox import DOMAIN, INTAKE_TYPE
+    from qntm.identity import base64url_encode
+    from qntm.message import create_message
+
+    recipient, provider = inbox
+    sender = generate_identity()
+    intake = intake_conversation(provider)
+
+    # Corrupt inner sealed secret (CryptoError inside open_secret -> ValueError)
+    bad_sealed_env = create_message(sender, intake, INTAKE_TYPE, base64url_encode(b"x" * 64).encode())
+    with pytest.raises(ValueError):
+        open_intake(recipient, provider, bad_sealed_env)
+
+    # Tampered outer envelope msg_id int (ValueError)
+    with pytest.raises(ValueError):
+        open_intake(recipient, provider, {**bad_sealed_env, "msg_id": 10_000_000_000})
+
+    # Escaped lone UTF-16 surrogate inside sealed JSON payload -> rejected as ValueError
+    reply_inv = create_invite(sender)
+    surrogate_json = (
+        '{"domain":"' + DOMAIN + '",'
+        '"category":"' + provider["category"] + '",'
+        '"recipient_key_id":"' + provider["recipient_key_id"] + '",'
+        '"request_id":"' + reply_inv["conv_id"].hex() + '",'
+        '"reply_invite":"' + invite_to_token(reply_inv) + '",'
+        '"question":"hello \\ud800 world",'
+        '"context":""}'
+    ).encode("utf-8")
+    sealed_surrogate = seal_secret(sender["privateKey"], recipient["publicKey"], surrogate_json)
+    surrogate_env = create_message(sender, intake, INTAKE_TYPE, base64url_encode(sealed_surrogate).encode())
+    with pytest.raises(ValueError):
+        open_intake(recipient, provider, surrogate_env)

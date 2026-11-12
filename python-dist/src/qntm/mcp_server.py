@@ -18,6 +18,7 @@ import base64
 import json
 import os
 import sys
+import time
 
 from mcp.server.fastmcp import FastMCP
 
@@ -32,12 +33,18 @@ from . import (
     serialize_envelope,
     invite_to_token,
     invite_from_url,
+    key_id_from_public_key,
 )
 from .cli import (
     _load_identity,
     _save_identity,
     _load_conversations,
     _save_conversations,
+    _mutate_conversations,
+    _find_conversation,
+    _load_group_state,
+    _save_group_state,
+    _merge_participant_public_key,
     _load_cursors,
     _load_history,
     _save_history,
@@ -47,6 +54,7 @@ from .cli import (
     _http_send,
     _recv_once,
     _process_received_messages,
+    SendDeliveryUnknown,
     default_ttl,
     AGENT_RULES,
 )
@@ -125,6 +133,15 @@ def guidance_send(contact: str, question: str, review_token: str, context: str =
     from .guidance import send_request
     try:
         return send_request(_config_dir(), _relay_url(), contact, question, context, review_token)
+    except SendDeliveryUnknown as exc:
+        return {
+            "error": str(exc),
+            "status": "delivery_unknown",
+            "delivery": "unknown",
+            "conversation_id": exc.conversation_id,
+            "message_id": exc.message_id,
+            "cause": exc.cause_type,
+        }
     except (ValueError, OSError) as exc:
         return {"error": str(exc)}
 
@@ -216,6 +233,7 @@ def conversation_create(name: str = "") -> dict:
         return {"error": "No identity found. Call identity_generate first."}
 
     invite = create_invite(identity, conv_type="direct")
+    token = invite_to_token(invite)
     keys = derive_conversation_keys(invite)
     conv = create_conversation(invite, keys)
 
@@ -224,7 +242,7 @@ def conversation_create(name: str = "") -> dict:
     # Build record for local storage
     record = {
         "id": conv_id_hex,
-        "name": name,
+        "name": name or f"Chat {conv_id_hex[:8]}",
         "type": conv["type"],
         "keys": {
             "root": conv["keys"]["root"].hex() if isinstance(conv["keys"]["root"], (bytes, bytearray)) else conv["keys"]["root"],
@@ -232,19 +250,17 @@ def conversation_create(name: str = "") -> dict:
             "nonce_key": conv["keys"]["nonceKey"].hex() if isinstance(conv["keys"]["nonceKey"], (bytes, bytearray)) else conv["keys"]["nonceKey"],
         },
         "participants": [bytes(kid).hex() for kid in conv["participants"]],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "invite_token": token,
     }
 
-    conversations = _load_conversations(config_dir)
-    conversations.append(record)
-    _save_conversations(config_dir, conversations)
-
-    # Generate invite token
-    token = invite_to_token(invite)
+    _mutate_conversations(config_dir, lambda conversations: conversations.append(record))
+    _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     return {
         "conversation_id": conv_id_hex,
-        "name": name,
+        "name": record["name"],
         "invite_token": token,
         "relay": _relay_url(),
     }
@@ -265,7 +281,38 @@ def conversation_join(invite_token: str, name: str = "") -> dict:
     if not identity:
         return {"error": "No identity found. Call identity_generate first."}
 
+    from .group_bootstrap import is_current_epoch_invite, open_current_epoch_invite
+    from .group_session import import_current_invite, state_for_record
+
     try:
+        if is_current_epoch_invite(invite_token):
+            joined = open_current_epoch_invite(identity, invite_token)
+
+            def _apply_current_group_join(conversations):
+                existing = _find_conversation(conversations, joined["conversation"]["id"].hex())
+                if existing and not existing.get("group_state"):
+                    existing["group_state"] = _load_group_state(config_dir, existing["id"]).to_dict()
+                rec = import_current_invite(existing, identity, invite_token)
+                if not existing:
+                    conversations.append(rec)
+                if name:
+                    rec["name"] = name
+                return rec
+
+            record = _mutate_conversations(config_dir, _apply_current_group_join)
+            state = state_for_record(record)
+            _save_group_state(config_dir, record["id"], state)
+            for member in state.members.values():
+                _merge_participant_public_key(config_dir, record["id"], bytes(member["public_key"]))
+            return {
+                "conversation_id": record["id"],
+                "type": "group",
+                "name": record["name"],
+                "epoch": record["current_epoch"],
+                "participants": len(record["participants"]),
+                "status": "joined",
+            }
+
         invite = invite_from_url(invite_token)
     except Exception as e:
         return {"error": f"Invalid invite token: {e}"}
@@ -275,10 +322,11 @@ def conversation_join(invite_token: str, name: str = "") -> dict:
     add_participant(conv, identity["publicKey"])
 
     conv_id_hex = conv["id"].hex() if isinstance(conv["id"], (bytes, bytearray)) else conv["id"]
+    inviter_pk = bytes(invite["inviter_ik_pk"])
 
     record = {
         "id": conv_id_hex,
-        "name": name,
+        "name": name or f"Chat {conv_id_hex[:8]}",
         "type": conv["type"],
         "keys": {
             "root": conv["keys"]["root"].hex() if isinstance(conv["keys"]["root"], (bytes, bytearray)) else conv["keys"]["root"],
@@ -286,18 +334,30 @@ def conversation_join(invite_token: str, name: str = "") -> dict:
             "nonce_key": conv["keys"]["nonceKey"].hex() if isinstance(conv["keys"]["nonceKey"], (bytes, bytearray)) else conv["keys"]["nonceKey"],
         },
         "participants": [bytes(kid).hex() for kid in conv["participants"]],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
+        "inviter_key_id": key_id_from_public_key(inviter_pk).hex(),
+        "inviter_public_key": inviter_pk.hex(),
     }
 
-    conversations = _load_conversations(config_dir)
-    # Avoid duplicates
-    if not any(c["id"] == conv_id_hex for c in conversations):
+    def _add_joined_convo(conversations):
+        existing = _find_conversation(conversations, conv_id_hex)
+        if existing:
+            return existing
         conversations.append(record)
-        _save_conversations(config_dir, conversations)
+        return None
+
+    existing = _mutate_conversations(config_dir, _add_joined_convo)
+    target = existing if existing is not None else record
+    if existing is None:
+        _merge_participant_public_key(config_dir, conv_id_hex, inviter_pk)
+        _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     return {
         "conversation_id": conv_id_hex,
-        "name": name,
+        "type": target.get("type", "direct"),
+        "name": target.get("name", ""),
+        "participants": len(target.get("participants", [])),
         "status": "joined",
     }
 
@@ -326,20 +386,47 @@ def send_message(conversation: str, message: str) -> dict:
     if not conv_record:
         return {"error": f"Conversation '{conversation}' not found. Use conversation_list to see available conversations."}
 
+    if conv_record.get("type") == "group" and (
+        conv_record.get("needs_rekey")
+        or conv_record.get("pending_control")
+        or conv_record.get("excluded")
+        or conv_record.get("recovery_required")
+    ):
+        return {"error": "Complete the pending group update or restore authorized access before sending."}
+
     conv_id_hex = conv_record["id"]
     conv_crypto = _conv_to_crypto(conv_record)
 
     body = message.encode("utf-8")
     envelope = create_message(identity, conv_crypto, "text", body, None, default_ttl())
     envelope_bytes = serialize_envelope(envelope)
+    msg_id_hex = envelope["msg_id"].hex()
 
     try:
         result = _http_send(relay, conv_id_hex, envelope_bytes)
+    except SendDeliveryUnknown as exc:
+        history = _load_history(config_dir, conv_id_hex)
+        history.append({
+            "msg_id": msg_id_hex,
+            "direction": "outgoing",
+            "body_type": "text",
+            "body": message,
+            "created_ts": envelope["created_ts"],
+            "delivery": "unknown",
+        })
+        _save_history(config_dir, conv_id_hex, history)
+        return {
+            "error": f"Failed to send: {exc}",
+            "status": "delivery_unknown",
+            "delivery": "unknown",
+            "conversation_id": exc.conversation_id,
+            "message_id": exc.message_id or msg_id_hex,
+            "cause": exc.cause_type,
+        }
     except Exception as e:
         return {"error": f"Failed to send: {e}"}
 
     seq = result.get("seq", 0)
-    msg_id_hex = envelope["msg_id"].hex()
 
     # Save to local history
     history = _load_history(config_dir, conv_id_hex)
@@ -349,6 +436,7 @@ def send_message(conversation: str, message: str) -> dict:
         "body_type": "text",
         "body": message,
         "created_ts": envelope["created_ts"],
+        "acknowledgement": result.get("acknowledgement", "received"),
     })
     _save_history(config_dir, conv_id_hex, history)
 

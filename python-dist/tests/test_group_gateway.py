@@ -33,7 +33,10 @@ def accept_gateway(tmp_path, *, strict=False, admin_inviter=True):
                   'invitation_msg_id': mid(promotion).hex(), 'invitation_hash': hashlib.sha256(text.encode()).hexdigest()}
     accepted = wire(gateway, record, 'gate.accept', json.dumps(acceptance).encode())
     out = receive(tmp_path, owner, record, [promotion, accepted], 2)
-    assert [m['body_type'] for m in out] == ['gate.promote', 'gate.accept']
+    if admin_inviter:
+        assert [m['body_type'] for m in out] == ['gate.promote', 'gate.accept']
+    else:
+        assert out == []
     record = cli._load_conversations(str(tmp_path))[0]
     return owner, member, newcomer, gateway, record
 
@@ -49,12 +52,16 @@ def test_verified_gateway_acceptance_retains_creator_and_never_adds_gateway_as_m
 
 
 def test_delegated_membership_and_rekey_apply_without_granting_gateway_roles(tmp_path):
-    owner, _, newcomer, gateway, record = accept_gateway(tmp_path)
-    add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
-    assert receive(tmp_path, owner, record, [add], 3)[0]['body_type'] == 'group_add'
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path)
+    unvoted_add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
+    assert receive(tmp_path, owner, record, [unvoted_add], 3) == []
+    _, _, events = proposal_events(owner, member, newcomer, gateway, record)
+    voted_add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
+    out = receive(tmp_path, owner, record, [*events, voted_add], 6)
+    assert [m['body_type'] for m in out] == ['gov.propose', 'gov.approve', 'group_add']
     added = cli._load_conversations(str(tmp_path))[0]
     rotation, current = rekey(gateway, added, state_for_record(added))
-    out = receive(tmp_path, owner, added, [rotation, wire(newcomer, current, 'text', b'after voted admission')], 5)
+    out = receive(tmp_path, owner, added, [rotation, wire(newcomer, current, 'text', b'after voted admission')], 8)
     assert [m['body_type'] for m in out] == ['group_rekey', 'text']
     saved = cli._load_conversations(str(tmp_path))[0]
     assert saved['current_epoch'] == 1
@@ -83,13 +90,17 @@ def test_unpinned_gateway_admin_appointment_and_creator_removal_are_rejected(tmp
 
 def test_verified_nonadmin_current_epoch_promotion_cannot_delegate_group_control(tmp_path):
     owner, member, newcomer, gateway, record = accept_gateway(tmp_path, strict=True, admin_inviter=False)
-    assert record['gateway']['status'] == 'active'
+    assert record.get('gateway') is None
     assert control_delegate(record) is None
     before = state_for_record(record).to_dict()
     attempt = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
     assert receive(tmp_path, owner, record, [attempt], 3) == []
     assert state_for_record(cli._load_conversations(str(tmp_path))[0]).to_dict() == before
     assert not state_for_record(record).is_admin(member['keyID'])
+    # Non-admin gate.promote cannot activate gateway status or deadlock admin controls.
+    owner_add = wire(owner, record, 'group_add', create_group_add_body(owner, [newcomer['publicKey']]))
+    assert receive(tmp_path, owner, record, [owner_add], 4)[0]['body_type'] == 'group_add'
+    assert state_for_record(cli._load_conversations(str(tmp_path))[0]).is_member(newcomer['keyID'])
 
 
 def test_gateway_acceptance_cannot_restore_members_during_pending_removal(tmp_path):
@@ -121,20 +132,20 @@ def proposal_events(owner, member, newcomer, gateway, record, *, required=2):
 
 
 def test_nonadmin_tool_gateway_requires_exact_signed_quorum_for_one_membership_transition(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
-    assert control_delegate(record) is None
-    assert not state_for_record(record).is_member(member['keyID'])
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
+    assert control_delegate(record) == gateway['publicKey']
+    assert state_for_record(record).is_member(member['keyID']) and not state_for_record(record).is_admin(member['keyID'])
     _, _, events = proposal_events(owner, member, newcomer, gateway, record)
     add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
     out = receive(tmp_path, owner, record, [*events, add], 5)
     assert [event['body_type'] for event in out] == ['gov.propose', 'gov.approve', 'group_add']
     added = cli._load_conversations(str(tmp_path))[0]
-    assert added['pending_governed_membership'] and not control_delegate(added)
+    assert added['pending_governed_membership'] and control_delegate(added) == gateway['publicKey']
     rotation, current = rekey(gateway, added, state_for_record(added))
     out = receive(tmp_path, owner, added, [rotation, wire(newcomer, current, 'text', b'quorum admitted')], 7)
     assert [event['body_type'] for event in out] == ['group_rekey', 'text']
     saved = cli._load_conversations(str(tmp_path))[0]
-    assert not saved.get('pending_governed_membership') and not control_delegate(saved)
+    assert not saved.get('pending_governed_membership') and control_delegate(saved) == gateway['publicKey']
     assert state_for_record(saved).creator == owner['keyID']
     assert not state_for_record(saved).is_member(gateway['keyID'])
     unauthorized = wire(gateway, saved, 'group_add', create_group_add_body(gateway, [generate_identity()['publicKey']]))
@@ -142,7 +153,7 @@ def test_nonadmin_tool_gateway_requires_exact_signed_quorum_for_one_membership_t
 
 
 def test_tool_only_gateway_cannot_supply_its_own_quorum_or_replay_cached_verified_flags(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     proposal, _, events = proposal_events(owner, member, newcomer, gateway, record, required=1)
     add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
     # Proposer alone remains below the independently calculated roster majority.
@@ -157,7 +168,7 @@ def test_tool_only_gateway_cannot_supply_its_own_quorum_or_replay_cached_verifie
 
 
 def test_latest_signed_withdrawal_blocks_membership_even_after_two_approvals(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     proposal, _, events = proposal_events(owner, member, newcomer, gateway, record)
     withdrawal = {'type': 'gov.disapprove', 'conv_id': record['id'], 'proposal_id': proposal['proposal_id'],
                   'gateway_kid': base64url_encode(gateway['keyID']), 'signer_kid': base64url_encode(member['keyID'])}
@@ -181,7 +192,7 @@ def test_expired_transport_withdrawal_remains_authoritative(tmp_path, monkeypatc
     import base64
     import time
     from qntm.message import create_message, serialize_envelope
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     proposal, _, events = proposal_events(owner, member, newcomer, gateway, record)
     withdrawal = {'type': 'gov.disapprove', 'conv_id': record['id'], 'proposal_id': proposal['proposal_id'],
                   'gateway_kid': base64url_encode(gateway['keyID']), 'signer_kid': base64url_encode(member['keyID'])}
@@ -198,31 +209,54 @@ def test_expired_transport_withdrawal_remains_authoritative(tmp_path, monkeypatc
 
 def test_gateway_backdated_control_cannot_revive_expired_proposal(tmp_path, monkeypatch):
     import time
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     now = int(time.time())
     with monkeypatch.context() as clock:
         clock.setattr(time, 'time', lambda: now - 7200)
         _, _, events = proposal_events(owner, member, newcomer, gateway, record)
-        add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
-    # All transport envelopes remain live for 24h; the proposal expired an hour ago.
-    out = receive(tmp_path, owner, record, [*events, add], 5)
+    # Control created at `now` (after proposal expired at `now - 3600`) must be rejected.
+    late_add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
+    out = receive(tmp_path, owner, record, [*events, late_add], 5)
     assert [row['body_type'] for row in out] == ['gov.propose', 'gov.approve']
     assert not cli._load_conversations(str(tmp_path))[0].get('pending_governed_membership')
 
+    # Control created BEFORE proposal expiry (`now - 5400 < now - 3600`) must deterministically
+    # apply even when replayed by a catching-up peer at wall-clock `now` (within 24h envelope TTL).
+    second_newcomer = generate_identity()
+    with monkeypatch.context() as clock:
+        clock.setattr(time, 'time', lambda: now - 7200)
+        _, _, timely_events = proposal_events(owner, member, second_newcomer, gateway, record)
+        clock.setattr(time, 'time', lambda: now - 5400)
+        timely_add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [second_newcomer['publicKey']]))
+    saved = cli._load_conversations(str(tmp_path))[0]
+    out2 = receive(tmp_path, owner, saved, [*timely_events, timely_add], 8)
+    assert [row['body_type'] for row in out2] == ['gov.propose', 'gov.approve', 'group_add']
+    assert state_for_record(cli._load_conversations(str(tmp_path))[0]).is_member(second_newcomer['keyID'])
+
 
 def test_malformed_governance_messages_do_not_poison_later_valid_quorum(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    import base64
+    from qntm.message import create_message, serialize_envelope
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     proposal, approval, events = proposal_events(owner, member, newcomer, gateway, record)
+    direct_view = {**crypto(record), 'type': 'direct'}
+    raw_wire = lambda sender, kind, raw_body: {
+        'envelope_b64': base64.b64encode(serialize_envelope(create_message(sender, direct_view, kind, raw_body))).decode(),
+        'seq': 1,
+    }
     malformed = [wire(member, record, 'gov.propose', b'[]'),
+        wire(gateway, record, 'gate.accept', b'[]'),
+        raw_wire(gateway, 'group_add', b'\x82\x01'),
+        raw_wire(member, 'group_add', b'\x82\x01'),
         wire(owner, record, 'gov.propose', json.dumps({**proposal, 'expires_at': []}).encode()),
         wire(member, record, 'gov.approve', json.dumps({**approval, 'signature': []}).encode()),
         wire(member, record, 'gov.propose', json.dumps({**proposal, 'signer_kid': base64url_encode(member['keyID'])}).encode())]
     add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
-    out = receive(tmp_path, owner, record, [malformed[0], *events, *malformed[1:], add], 9)
+    out = receive(tmp_path, owner, record, [malformed[0], *events, *malformed[1:], add], 12)
     assert out[-1]['body_type'] == 'group_add'
     saved = cli._load_conversations(str(tmp_path))[0]
     assert state_for_record(saved).is_member(newcomer['keyID'])
-    assert not control_delegate(saved)
+    assert control_delegate(saved) == gateway['publicKey']
 
 
 def test_previous_release_separate_group_state_preserves_creator_controls(tmp_path):
@@ -238,7 +272,7 @@ def test_previous_release_separate_group_state_preserves_creator_controls(tmp_pa
 
 
 def test_previous_active_gateway_uses_learned_keys_only_with_new_signed_quorum(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path, admin_inviter=True)
     state = state_for_record(record)
     cli._save_group_state(str(tmp_path), record['id'], state)
     record.pop('group_state')
@@ -257,7 +291,7 @@ def test_previous_active_gateway_uses_learned_keys_only_with_new_signed_quorum(t
 
 
 def test_pending_gateway_authority_survives_member_first_competing_rekey(tmp_path):
-    owner, member, newcomer, gateway, record = accept_gateway(tmp_path / 'setup', admin_inviter=False)
+    owner, member, newcomer, gateway, record = accept_gateway(tmp_path / 'setup', admin_inviter=True)
     _, _, events = proposal_events(owner, member, newcomer, gateway, record)
     add = wire(gateway, record, 'group_add', create_group_add_body(gateway, [newcomer['publicKey']]))
     receive(tmp_path / 'setup', owner, record, [*events, add], 5)
@@ -276,6 +310,6 @@ def test_pending_gateway_authority_survives_member_first_competing_rekey(tmp_pat
         saved = cli._load_conversations(str(path))[0]
         assert saved['rekeys'][0]['id'] == mid(gateway_rekey).hex()
         assert saved['rekeys'][0]['control_delegate'] == gateway['publicKey'].hex()
-        assert not saved.get('pending_governed_membership') and control_delegate(saved) is None
+        assert not saved.get('pending_governed_membership') and control_delegate(saved) == gateway['publicKey']
         results.append(saved['keys'])
     assert results[0] == results[1] == winner['keys']

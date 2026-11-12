@@ -922,3 +922,134 @@ class TestFindGateRequest:
         from qntm.cli import _find_gate_request_in_history
         with pytest.raises(ValueError, match="not found"):
             _find_gate_request_in_history([], "nonexistent-id")
+
+
+class TestGateSecretOriginsAndPromoteHardening:
+    def test_secret_payload_includes_allowed_origins_and_cli_origin_flag(self, monkeypatch, tmp_path):
+        import sys
+        from qntm import cli
+        from qntm.cli import _build_secret_payload
+
+        sender = generate_identity()
+        gateway = generate_identity()
+
+        default_payload = _build_secret_payload(
+            identity=sender,
+            gateway_pubkey_wire=base64url_encode(gateway["publicKey"]),
+            service="github",
+            value="ghp_secret",
+        )
+        assert default_payload["allowed_origins"] == ["https://api.github.com"]
+
+        record = {
+            "id": "ab" * 16,
+            "type": "direct",
+            "keys": {"root": "11" * 32, "aead_key": "22" * 32, "nonce_key": "33" * 32},
+            "participants": [sender["keyID"].hex()],
+            "current_epoch": 0,
+            "gateway": {
+                "status": "active",
+                "keyId": base64url_encode(gateway["keyID"]),
+                "publicKey": base64url_encode(gateway["publicKey"]),
+            },
+        }
+        cli._save_identity(str(tmp_path), sender)
+        cli._save_conversations(str(tmp_path), [record])
+
+        captured = {}
+
+        def fake_send(identity, conv_crypto, conv_id_hex, body_type, payload_dict, dropbox_url):
+            captured["payload"] = payload_dict
+            return {"seq": 1}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr(cli, "_send_gate_message_to_conv", fake_send)
+        monkeypatch.setattr(cli, "_output", lambda *a, **kw: None)
+        monkeypatch.setattr(sys, "argv", [
+            "qntm",
+            "--config-dir", str(tmp_path),
+            "gate-secret",
+            "-c", record["id"],
+            "--service", "custom-svc",
+            "--origin", "https://API.Custom.Example:443/",
+            "--origin", "https://backup.custom.example:8443",
+            "--gateway-pubkey", base64url_encode(gateway["publicKey"]),
+            "--value", "tok_123",
+        ])
+        cli.main()
+        assert captured["payload"]["allowed_origins"] == [
+            "https://api.custom.example",
+            "https://backup.custom.example:8443",
+        ]
+
+    def test_cmd_gate_promote_rejects_non_admin_and_preserves_concurrent_conversations_under_lock(self, monkeypatch, tmp_path):
+        from qntm import cli
+        from qntm.group import GroupState, create_group_genesis_body, parse_group_genesis_body
+        from qntm.group_session import save_state
+
+        owner = generate_identity()
+        member = generate_identity()
+        gateway = generate_identity()
+        tmpdir, _ = _make_config_dir_with_identity()
+        conv_id_hex, conv_record = _make_conversation(tmpdir, owner)
+        state = GroupState()
+        state.apply_genesis(parse_group_genesis_body(create_group_genesis_body("Team", "", owner, [member["publicKey"]])))
+        save_state(conv_record, state)
+        conv_record["participants"] = [owner["keyID"].hex(), member["keyID"].hex()]
+        cli._save_conversations(tmpdir, [conv_record])
+        _write_participant_key_cache(tmpdir, conv_id_hex, [owner, member])
+
+        # Non-admin member cannot run cmd_gate_promote
+        cli._save_identity(tmpdir, member)
+        monkeypatch.setattr(cli, "_error", lambda msg, **kw: (_ for _ in ()).throw(RuntimeError(msg)))
+        monkeypatch.setattr(cli, "_output", lambda *a, **kw: None)
+        args = SimpleNamespace(
+            config_dir=tmpdir,
+            dropbox_url="http://relay.test",
+            conversation=conv_id_hex,
+            gateway_url="http://gateway.test",
+            threshold=2,
+        )
+        with pytest.raises(RuntimeError, match="only a group administrator"):
+            cli.cmd_gate_promote(args)
+
+        # Admin promotion reloads conversations.json under receive.lock before saving,
+        # preserving concurrent recv --watch updates written while network I/O is in flight.
+        cli._save_identity(tmpdir, owner)
+        concurrent_conv = {**conv_record, "id": "cd" * 16, "name": "Concurrent watch conv"}
+
+        class FakeGateClient:
+            def __init__(self, url):
+                self.url = url
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def create_invitation(self, inviter_pubkey, cid):
+                return {
+                    "invitation_id": "ef" * 16,
+                    "gateway_public_key": base64url_encode(gateway["publicKey"]),
+                    "gateway_kid": base64url_encode(gateway["keyID"]),
+                    "expires_at": int(time.time()) + 3600,
+                }
+
+            def promote(self, req):
+                return {"ok": True}
+
+        def fake_send_and_concurrent_update(*a, **kw):
+            # Simulate concurrent `recv --watch` saving a new conversation while HTTP send runs
+            existing = cli._load_conversations(tmpdir)
+            existing.append(concurrent_conv)
+            cli._save_conversations(tmpdir, existing)
+            return {"seq": 7}, {"msg_id": uuid.uuid4().bytes, "created_ts": int(time.time())}
+
+        monkeypatch.setattr(cli, "GateClient", FakeGateClient)
+        monkeypatch.setattr(cli, "_send_gate_message_to_conv", fake_send_and_concurrent_update)
+        cli.cmd_gate_promote(args)
+
+        saved = cli._load_conversations(tmpdir)
+        assert {c["id"] for c in saved} == {conv_id_hex, "cd" * 16}
+        promoted = next(c for c in saved if c["id"] == conv_id_hex)
+        assert promoted["gateway"]["status"] == "pending"

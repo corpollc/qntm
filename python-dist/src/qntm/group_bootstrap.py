@@ -13,6 +13,10 @@ _TYPE = 'qntm.group.join'
 _MAX_BYTES = 65536
 _MAX_AGE = 30*24*60*60
 
+
+class CorruptRekeyWrapError(ValueError):
+    """Raised when the selected authorized canonical rekey has an invalid wrap for this recipient."""
+
 def _bytes(value, size):
     return isinstance(value, bytes) and len(value) == size
 
@@ -183,9 +187,12 @@ def resolve_rekey_candidates(identity, source, roster, wires, *, allow_expired=F
     mine = wrapped.get(base64url_encode(identity['keyID']))
     if mine is None:
         return {'envelope':envelope,'conversation':None,'excluded':True}
-    root = _suite.unwrap_key_for_recipient(mine,identity['privateKey'],identity['keyID'],source['id'])
+    try:
+        root = _suite.unwrap_key_for_recipient(mine,identity['privateKey'],identity['keyID'],source['id'])
+    except Exception as exc:
+        raise CorruptRekeyWrapError('Canonical rekey has an invalid group key') from exc
     if len(root) != 32:
-        raise ValueError('Canonical rekey has an invalid group key')
+        raise CorruptRekeyWrapError('Canonical rekey has an invalid group key')
     conversation = copy.deepcopy(source)
     conversation['participants'] = roster.list_members()
     apply_rekey(conversation,root,source['currentEpoch']+1)

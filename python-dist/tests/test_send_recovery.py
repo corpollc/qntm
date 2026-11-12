@@ -107,3 +107,36 @@ def test_cli_boundary_returns_structured_error_without_traceback(monkeypatch, ca
     assert result['ok'] is False and result['code'] == code
     assert 'Traceback' not in captured.err and 'password' not in captured.err
     if code == 'send_delivery_unknown': assert result['data']['message_id'] == 'b'*32
+
+
+def test_find_sent_envelope_paginates_beyond_1000_frames(message, monkeypatch):
+    from unittest.mock import MagicMock
+
+    cid, _, raw = message
+    seen_urls = []
+
+    def fake_connect(url, **kwargs):
+        seen_urls.append(url)
+        socket = MagicMock()
+        if 'from_seq=0' in url:
+            page_frames = [
+                json.dumps({'type': 'message', 'seq': s, 'envelope_b64': 'eA=='})
+                for s in range(1, 1001)
+            ]
+        elif 'from_seq=1000' in url:
+            page_frames = [
+                json.dumps({'type': 'message', 'seq': s, 'envelope_b64': 'eA=='})
+                for s in range(1001, 1205)
+            ] + [
+                json.dumps({'type': 'message', 'seq': 1205, 'envelope_b64': base64.b64encode(raw).decode()}),
+            ]
+        else:
+            page_frames = [json.dumps({'type': 'ready', 'head_seq': 1205})]
+        socket.__enter__.return_value.recv.side_effect = page_frames
+        return socket
+
+    monkeypatch.setattr('websockets.sync.client.connect', fake_connect)
+    assert cli._find_sent_envelope('https://relay.example', cid, raw) == 1205
+    assert len(seen_urls) == 2
+    assert 'from_seq=0' in seen_urls[0]
+    assert 'from_seq=1000' in seen_urls[1]

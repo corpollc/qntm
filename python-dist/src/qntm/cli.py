@@ -4,6 +4,7 @@ Matches the Go CLI's JSON output format for compatibility.
 """
 
 import argparse
+import cbor2
 import hashlib
 import http.client
 import httpx
@@ -17,6 +18,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
+from nacl.exceptions import CryptoError
 from websockets.exceptions import WebSocketException
 
 from . import __version__
@@ -89,6 +91,7 @@ from .gate import (
     compute_payload_hash,
     hash_request,
     resolve_recipe,
+    resolve_service_origins,
     seal_secret,
     sign_approval,
     sign_request,
@@ -323,6 +326,16 @@ def _load_conversations(config_dir):
 
 def _save_conversations(config_dir, conversations):
     _save_json(_conversations_path(config_dir), conversations)
+
+
+def _mutate_conversations(config_dir, mutator):
+    """Serialize read-modify-write updates to conversations.json under receive.lock."""
+    _ensure_config_dir(config_dir)
+    with private_lock(os.path.join(config_dir, "receive.lock")):
+        conversations = _load_conversations(config_dir)
+        result = mutator(conversations)
+        _save_conversations(config_dir, conversations)
+        return result
 
 
 def _load_cursors(config_dir):
@@ -703,28 +716,53 @@ def _find_sent_envelope(dropbox_url, conv_id_hex, envelope_bytes):
     """
     from websockets.sync.client import connect
 
-    url = _subscribe_url(dropbox_url, conv_id_hex, 0)
     deadline = time.monotonic() + 15
-    options = {"open_timeout": 10, "close_timeout": 2, "max_size": 2 << 20,
-               "additional_headers": {"User-Agent": f"qntm-python/{__version__}"}}
-    if url.startswith("wss://"):
-        options["ssl"] = _ssl_context
-    with connect(url, **options) as websocket:
-        for _ in range(1000):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            frame = json.loads(websocket.recv(timeout=remaining))
-            if frame.get("type") == "ready":
-                break
-            if frame.get("type") != "message":
-                continue
-            try:
-                received = base64.b64decode(frame["envelope_b64"], validate=True)
-            except (KeyError, ValueError, TypeError):
-                continue
-            if received == envelope_bytes and type(frame.get("seq")) is int and frame["seq"] > 0:
-                return frame["seq"]
+    base_options = {
+        "close_timeout": 2,
+        "max_size": 2 << 20,
+        "additional_headers": {"User-Agent": f"qntm-python/{__version__}"},
+    }
+    from_seq = 0
+    max_pages = 25
+    frames_per_page = 1000
+
+    for _ in range(max_pages):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        url = _subscribe_url(dropbox_url, conv_id_hex, from_seq)
+        options = dict(base_options, open_timeout=min(10, max(0.5, remaining)))
+        if url.startswith("wss://"):
+            options["ssl"] = _ssl_context
+        advanced = 0
+        last_seq = from_seq
+        saw_ready = False
+        with connect(url, **options) as websocket:
+            for _ in range(frames_per_page):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                frame = json.loads(websocket.recv(timeout=remaining))
+                if not isinstance(frame, dict):
+                    continue
+                if frame.get("type") == "ready":
+                    saw_ready = True
+                    break
+                if frame.get("type") != "message":
+                    continue
+                seq = frame.get("seq")
+                if type(seq) is int and seq > last_seq:
+                    last_seq = seq
+                    advanced += 1
+                try:
+                    received = base64.b64decode(frame["envelope_b64"], validate=True)
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if received == envelope_bytes and type(seq) is int and seq > 0:
+                    return seq
+        if saw_ready or advanced < frames_per_page or last_seq <= from_seq:
+            break
+        from_seq = last_seq
     return None
 
 
@@ -854,8 +892,7 @@ def cmd_convo_create(args):
     conv_id_hex = conv["id"].hex()
     name = getattr(args, "name", None) or ""
 
-    # Save conversation
-    conversations = _load_conversations(config_dir)
+    # Save conversation under receive.lock
     conv_record = {
         "id": conv_id_hex,
         "name": name or f"Chat {conv_id_hex[:8]}",
@@ -870,8 +907,7 @@ def cmd_convo_create(args):
         "current_epoch": 0,
         "invite_token": token,
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    _mutate_conversations(config_dir, lambda conversations: conversations.append(conv_record))
     _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     _output("convo.create", {
@@ -901,17 +937,6 @@ def cmd_convo_join(args):
     conv_id_hex = conv["id"].hex()
     name = getattr(args, "name", None) or ""
 
-    conversations = _load_conversations(config_dir)
-    existing = _find_conversation(conversations, conv_id_hex)
-    if existing:
-        _output("convo.join", {
-            "conversation_id": conv_id_hex,
-            "type": existing.get("type", "direct"),
-            "name": existing.get("name", ""),
-            "participants": len(existing.get("participants", [])),
-        })
-        return
-
     conv_record = {
         "id": conv_id_hex,
         "name": name or f"Chat {conv_id_hex[:8]}",
@@ -927,8 +952,22 @@ def cmd_convo_join(args):
         "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
         "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    def _add_joined_convo(conversations):
+        existing = _find_conversation(conversations, conv_id_hex)
+        if existing:
+            return existing
+        conversations.append(conv_record)
+        return None
+
+    existing = _mutate_conversations(config_dir, _add_joined_convo)
+    if existing:
+        _output("convo.join", {
+            "conversation_id": conv_id_hex,
+            "type": existing.get("type", "direct"),
+            "name": existing.get("name", ""),
+            "participants": len(existing.get("participants", [])),
+        })
+        return
     _merge_participant_public_key(config_dir, conv_id_hex, bytes(invite["inviter_ik_pk"]))
     _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
@@ -944,15 +983,19 @@ def _join_current_group(args, config_dir, identity, token):
     from .group_bootstrap import open_current_epoch_invite
     from .group_session import import_current_invite, state_for_record
     joined = open_current_epoch_invite(identity,token)
-    conversations = _load_conversations(config_dir)
-    existing = _find_conversation(conversations,joined["conversation"]["id"].hex())
-    if existing and not existing.get("group_state"):
-        existing["group_state"] = _load_group_state(config_dir,existing["id"]).to_dict()
-    record = import_current_invite(existing,identity,token)
-    if not existing: conversations.append(record)
-    if getattr(args,"name",None): record["name"]=args.name
-    _save_conversations(config_dir,conversations)
-    _save_group_state(config_dir,record["id"],state_for_record(record))
+    def _apply_current_group_join(conversations):
+        existing = _find_conversation(conversations,joined["conversation"]["id"].hex())
+        if existing and not existing.get("group_state"):
+            existing["group_state"] = _load_group_state(config_dir,existing["id"]).to_dict()
+        rec = import_current_invite(existing,identity,token)
+        if not existing: conversations.append(rec)
+        if getattr(args,"name",None): rec["name"]=args.name
+        return rec
+    record = _mutate_conversations(config_dir, _apply_current_group_join)
+    state = state_for_record(record)
+    _save_group_state(config_dir,record["id"],state)
+    for member in state.members.values():
+        _merge_participant_public_key(config_dir, record["id"], bytes(member["public_key"]))
     _output("group.join", {"conversation_id":record["id"],"type":"group","name":record["name"],"epoch":record["current_epoch"],"participants":len(record["participants"])})
 
 
@@ -1117,13 +1160,15 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
     for raw_msg in queue:
         if len(attempted) >= 4096: break
         try:
+            if not isinstance(raw_msg, dict) or not isinstance(raw_msg.get("envelope_b64"), str):
+                continue
             if len(raw_msg["envelope_b64"]) > 87384: continue
-            envelope_bytes = base64.b64decode(raw_msg["envelope_b64"])
+            envelope_bytes = base64.b64decode(raw_msg["envelope_b64"], validate=True)
             envelope = deserialize_envelope(envelope_bytes)
+            msg_id_hex = bytes(envelope["msg_id"]).hex()
         except Exception:
             continue
 
-        msg_id_hex = bytes(envelope["msg_id"]).hex()
         revision = (msg_id_hex, conv_record.get("current_epoch",0), conv_record["keys"]["root"])
         if revision in attempted: continue
         attempted.add(revision)
@@ -1144,10 +1189,17 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
         body_bytes = bytes(inner["body"])
         body_type = inner["body_type"]
 
+        if conv_record.get("type") == "group" and body_type == "gate.promote":
+            group_state_now = state_for_record(conv_record, _load_group_state(config_dir, conv_id_hex))
+            if group_state_now.creator is None or not group_state_now.is_admin(bytes(inner["sender_kid"])):
+                continue
+
         gateway = conv_record.get("gateway") or {}
         if body_type == "gate.accept":
             try:
                 acceptance = json.loads(body_bytes)
+                if not isinstance(acceptance, dict):
+                    continue
                 invitation = next((item for item in history if item.get("msg_id") == acceptance.get("invitation_msg_id") and item.get("body_type") == "gate.promote"), None)
                 if acceptance.get("conv_id") != conv_id_hex or not invitation or not matches_gateway_acceptance(acceptance, kid_to_wire(inner["sender_kid"]), invitation["msg_id"], invitation["unsafe_body"]):
                     continue
@@ -1155,20 +1207,22 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
                     continue
                 from .gateway_handshake import gateway_access
                 invitation_body = json.loads(invitation["unsafe_body"])
+                if not isinstance(invitation_body, dict):
+                    continue
                 if (envelope["created_ts"] > invitation_body["expires_at"]
                         or invitation_body["keys_hash"] != hashlib.sha256(marshal_canonical(gateway_access(_conv_to_crypto(conv_record)))).hexdigest()):
                     continue
                 from .group_gateway import accept_gateway_membership
                 membership_authority = gateway.get("membership_authority") if gateway.get("invitationId") == acceptance["invitation_id"] else None
                 if membership_authority is None:
-                    membership_authority = accept_gateway_membership(conv_record, json.loads(invitation["unsafe_body"]),
+                    membership_authority = accept_gateway_membership(conv_record, invitation_body,
                         bytes.fromhex(invitation["sender_kid"]) if invitation.get("sender_kid") else identity["keyID"], invitation["msg_id"])
                 conv_record["gateway"] = {"publicKey": acceptance["gateway_public_key"], "keyId": acceptance["gateway_kid"], "status": "active",
                                           "membership_authority": membership_authority,
-                                          "membership_offer": json.loads(invitation["unsafe_body"])["participants"],
-                                          "invitationId": acceptance["invitation_id"], "floor": json.loads(invitation["unsafe_body"])["floor"],
+                                          "membership_offer": invitation_body["participants"],
+                                          "invitationId": acceptance["invitation_id"], "floor": invitation_body["floor"],
                                           "bootstrap": gateway.get("pending") or gateway.get("bootstrap")}
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, AttributeError, cbor2.CBORDecodeError, CryptoError):
                 continue
         if gateway.get("status") == "active" and body_type in NON_MEMBER_SYSTEM_BODY_TYPES - GROUP_TYPES - {"gate.promote", "gate.accept"} and kid_to_wire(inner["sender_kid"]) != gateway["keyId"]:
             continue
@@ -1176,6 +1230,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
         # Apply group membership/epoch state changes before learning senders so
         # governed membership updates can adjust the roster deterministically.
         if body_type in GROUP_TYPES:
+            candidate = {}
             try:
                 from .group_gateway import prepare_gateway_control
                 import copy
@@ -1196,7 +1251,7 @@ def _process_received_messages_locked(config_dir, identity, conversations, conv_
                     authorized_control_signer=delegate)
                 if body_type == "group_rekey": candidate.pop("pending_governed_membership", None)
                 conv_record.clear(); conv_record.update(candidate)
-            except (ValueError,TypeError,KeyError):
+            except (ValueError, TypeError, KeyError, AttributeError, cbor2.CBORDecodeError, CryptoError):
                 # Retain a detected need for recovery, but never partial roster,
                 # authority, key, or proposal mutations from a rejected control.
                 if candidate.get("recovery_required"):
@@ -1410,8 +1465,7 @@ def cmd_group_create(args):
 
     conv_id_hex = conv["id"].hex()
 
-    # Save conversation
-    conversations = _load_conversations(config_dir)
+    # Save conversation under receive.lock
     conv_record = {
         "id": conv_id_hex,
         "name": group_name,
@@ -1426,8 +1480,7 @@ def cmd_group_create(args):
         "current_epoch": 0,
         "invite_token": token,
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    _mutate_conversations(config_dir, lambda conversations: conversations.append(conv_record))
     _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
     body_bytes = create_group_genesis_body(group_name,getattr(args,"description","") or "",identity,[])
@@ -1470,17 +1523,6 @@ def cmd_group_join(args):
     conv_id_hex = conv["id"].hex()
     name = getattr(args, "name", None) or ""
 
-    conversations = _load_conversations(config_dir)
-    existing = _find_conversation(conversations, conv_id_hex)
-    if existing:
-        _output("group.join", {
-            "conversation_id": conv_id_hex,
-            "type": "group",
-            "name": existing.get("name", ""),
-            "participants": len(existing.get("participants", [])),
-        })
-        return
-
     conv_record = {
         "id": conv_id_hex,
         "name": name or f"Group {conv_id_hex[:8]}",
@@ -1496,8 +1538,22 @@ def cmd_group_join(args):
         "inviter_key_id": key_id_from_public_key(bytes(invite["inviter_ik_pk"])).hex(),
         "inviter_public_key": bytes(invite["inviter_ik_pk"]).hex(),
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    def _add_joined_group(conversations):
+        existing = _find_conversation(conversations, conv_id_hex)
+        if existing:
+            return existing
+        conversations.append(conv_record)
+        return None
+
+    existing = _mutate_conversations(config_dir, _add_joined_group)
+    if existing:
+        _output("group.join", {
+            "conversation_id": conv_id_hex,
+            "type": "group",
+            "name": existing.get("name", ""),
+            "participants": len(existing.get("participants", [])),
+        })
+        return
     _merge_participant_public_key(config_dir, conv_id_hex, bytes(invite["inviter_ik_pk"]))
     _merge_participant_public_key(config_dir, conv_id_hex, identity["publicKey"])
 
@@ -1656,8 +1712,7 @@ def cmd_announce_create(args):
     conv = channel["conversation"]
     conv_id_hex = channel["conv_id"]
 
-    # Save conversation record
-    conversations = _load_conversations(config_dir)
+    # Save conversation record under receive.lock
     conv_keys = conv["keys"]
     conv_record = {
         "id": conv_id_hex,
@@ -1674,8 +1729,7 @@ def cmd_announce_create(args):
         "inviter_key_id": identity["keyID"].hex(),
         "inviter_public_key": identity["publicKey"].hex(),
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    _mutate_conversations(config_dir, lambda conversations: conversations.append(conv_record))
 
     # Save announce store entry
     store = load_announce_store(config_dir)
@@ -1809,17 +1863,7 @@ def cmd_announce_subscribe(args):
     if not name:
         name = f"announce-{conv_id_hex[:8]}"
 
-    # Save conversation record
-    conversations = _load_conversations(config_dir)
-    existing = _find_conversation(conversations, conv_id_hex)
-    if existing:
-        _output("announce.subscribe", {
-            "conversation_id": conv_id_hex,
-            "name": existing.get("name", ""),
-            "already_subscribed": True,
-        })
-        return
-
+    # Save conversation record under receive.lock
     conv_record = {
         "id": conv_id_hex,
         "name": name,
@@ -1833,8 +1877,21 @@ def cmd_announce_subscribe(args):
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "current_epoch": 0,
     }
-    conversations.append(conv_record)
-    _save_conversations(config_dir, conversations)
+    def _subscribe_convo(conversations):
+        existing = _find_conversation(conversations, conv_id_hex)
+        if existing:
+            return existing
+        conversations.append(conv_record)
+        return None
+
+    existing = _mutate_conversations(config_dir, _subscribe_convo)
+    if existing:
+        _output("announce.subscribe", {
+            "conversation_id": conv_id_hex,
+            "name": existing.get("name", ""),
+            "already_subscribed": True,
+        })
+        return
 
     # Save announce store entry (subscriber)
     store = load_announce_store(config_dir)
@@ -1898,10 +1955,11 @@ def cmd_announce_delete(args):
         del store["channels"][conv_id_hex]
         save_announce_store(config_dir, store)
 
-    # Remove from conversations
-    conversations = _load_conversations(config_dir)
-    conversations = [c for c in conversations if c["id"] != conv_id_hex]
-    _save_conversations(config_dir, conversations)
+    # Remove from conversations under receive.lock
+    def _remove_announce_convo(conversations):
+        conversations[:] = [c for c in conversations if c["id"] != conv_id_hex]
+
+    _mutate_conversations(config_dir, _remove_announce_convo)
 
     _output("announce.delete", {
         "conversation_id": conv_id_hex,
@@ -2198,8 +2256,9 @@ def _build_promote_payload(identity, conv_id_hex, gateway_kid, threshold,
 def _build_secret_payload(identity, gateway_pubkey_wire, service, value,
                           header_name="Authorization",
                           header_template="Bearer {value}",
-                          ttl=0):
-    """Build a gate.secret payload dict with encrypted secret."""
+                          ttl=0,
+                          origins=None):
+    """Build a gate.secret payload dict with encrypted secret and allowed_origins."""
     try:
         gw_pub = _decode_gateway_public_key(gateway_pubkey_wire)
     except ValueError:
@@ -2209,6 +2268,7 @@ def _build_secret_payload(identity, gateway_pubkey_wire, service, value,
             f"gateway public key must be 32 bytes (got {len(gw_pub)})"
         )
 
+    allowed_origins = resolve_service_origins(service, origins)
     ct = seal_secret(identity["privateKey"], gw_pub, value.encode())
     secret_id = str(_uuid.uuid4())
 
@@ -2216,6 +2276,7 @@ def _build_secret_payload(identity, gateway_pubkey_wire, service, value,
         "type": GATE_MESSAGE_SECRET,
         "secret_id": secret_id,
         "service": service,
+        "allowed_origins": allowed_origins,
         "header_name": header_name,
         "header_template": header_template,
         "encrypted_blob": blob_to_wire(ct),
@@ -2519,20 +2580,48 @@ def cmd_gate_promote(args):
         missing = set(_participant_kids_from_conversation(conv_record)) - set(known_pks)
         if missing:
             _error("missing participant public keys; run 'qntm recv' before inviting the gateway")
+        group_creator_kid = None
+        if conv_record.get("type") == "group":
+            from .group_session import state_for_record
+            group_state = state_for_record(conv_record, _load_group_state(config_dir, conv_id_hex))
+            if group_state.creator is not None:
+                if not group_state.is_admin(identity["keyID"]):
+                    _error("only a group administrator may promote a gateway")
+                group_creator_kid = group_state.creator
+            else:
+                inviter_kid = conv_record.get("inviter_key_id") or (conv_record.get("participants") or [None])[0]
+                if not inviter_kid or identity["keyID"].hex() != str(inviter_kid).lower():
+                    _error("only a group administrator may promote a gateway")
+                group_creator_kid = bytes.fromhex(inviter_kid)
         with GateClient(args.gateway_url) as client:
             invitation = client.create_invitation(pubkey_to_wire(identity["publicKey"]), _uuid.uuid4().hex)
             participants = {kid_to_wire(bytes.fromhex(kid)): pubkey_to_wire(pk) for kid, pk in known_pks.items()}
-            payload = create_gateway_invite_body(invitation, conv_crypto, participants, args.threshold)
+            payload = create_gateway_invite_body(
+                invitation, conv_crypto, participants, args.threshold,
+                group_creator_kid=group_creator_kid,
+            )
             result, envelope = _send_gate_message_to_conv(identity, conv_crypto, conv_id_hex, GATE_MESSAGE_PROMOTE, payload, _get_dropbox_url(args))
             history = _load_history(config_dir, conv_id_hex)
             history.append({"msg_id": envelope["msg_id"].hex(), "direction": "outgoing", "body_type": GATE_MESSAGE_PROMOTE,
                             "unsafe_body": json.dumps(payload, separators=(",", ":")), "created_ts": envelope["created_ts"]})
             _save_history(config_dir, conv_id_hex, history)
             request = seal_gateway_bootstrap(identity, invitation, conv_crypto, envelope["msg_id"].hex(), result["seq"])
-            conv_record["gateway"] = {"publicKey": invitation["gateway_public_key"], "keyId": invitation["gateway_kid"],
-                                      "status": "pending", "invitationId": invitation["invitation_id"], "floor": args.threshold,
-                                      "pending": {"url": args.gateway_url, "request": request}}
-            _save_conversations(config_dir, conversations)
+            pending_gateway = {
+                "publicKey": invitation["gateway_public_key"],
+                "keyId": invitation["gateway_kid"],
+                "status": "pending",
+                "invitationId": invitation["invitation_id"],
+                "floor": args.threshold,
+                "pending": {"url": args.gateway_url, "request": request},
+            }
+            def _save_pending_gateway(fresh_conversations):
+                target = _resolve_conversation(fresh_conversations, conv_id_hex)
+                if target is None:
+                    raise ValueError(f"conversation {conv_id_hex} not found")
+                if (target.get("gateway") or {}).get("status") != "active":
+                    target["gateway"] = pending_gateway
+
+            _mutate_conversations(config_dir, _save_pending_gateway)
             client.promote(request)
         _output("gate.promote", {"conversation_id": conv_id_hex, "status": "waiting", "gateway_kid": invitation["gateway_kid"],
                                  "gateway_public_key": invitation["gateway_public_key"], "threshold": args.threshold})
@@ -2578,6 +2667,7 @@ def cmd_gate_secret(args):
     header_name = getattr(args, "header_name", "Authorization")
     header_template = getattr(args, "header_template", "Bearer {value}")
     ttl = getattr(args, "ttl", 0) or 0
+    origins = getattr(args, "origins", None)
 
     try:
         payload = _build_secret_payload(
@@ -2588,6 +2678,7 @@ def cmd_gate_secret(args):
             header_name=header_name,
             header_template=header_template,
             ttl=ttl,
+            origins=origins,
         )
     except ValueError as e:
         _error(str(e))
@@ -3238,6 +3329,8 @@ claude code channel:
                                help="Header value template (default: 'Bearer {value}')")
     gate_secret_p.add_argument("--ttl", type=int, default=0,
                                help="Secret TTL in seconds (0 = no expiry, default: 0)")
+    gate_secret_p.add_argument("--origin", action="append", dest="origins", default=None,
+                               help="Allowed upstream origin URL (repeatable; defaults to service allowlist)")
 
     # gov
     gov_parser = subparsers.add_parser("gov", help="Govern gateway policy and membership")

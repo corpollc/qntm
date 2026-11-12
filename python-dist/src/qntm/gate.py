@@ -5,11 +5,13 @@ recipes, secret sealing, and an HTTP client for the qntm-gate server.
 """
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 import nacl.bindings
@@ -120,6 +122,168 @@ class SecretPayload:
     encrypted_blob: str  # base64-encoded NaCl box ciphertext
     sender_kid: str
     ttl: int = 0  # seconds until expiry; 0 means no expiry
+    allowed_origins: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Service origin allowlists & canonicalization
+# ---------------------------------------------------------------------------
+
+BUILTIN_SERVICE_ORIGINS: dict[str, list[str]] = {
+    "github": ["https://api.github.com"],
+    "openai": ["https://api.openai.com"],
+    "anthropic": ["https://api.anthropic.com"],
+    "gemini": ["https://generativelanguage.googleapis.com"],
+    "stripe": ["https://api.stripe.com"],
+    "hackernews": ["https://hacker-news.firebaseio.com"],
+    "httpbin": ["https://httpbin.org"],
+    "dadjokes": ["https://icanhazdadjoke.com"],
+    "trivia": ["https://opentdb.com"],
+    "dogs": ["https://dog.ceo"],
+    "fun": ["http://localhost:9090"],
+}
+
+
+def _is_disallowed_https_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return _is_disallowed_https_ip(ip.ipv4_mapped)
+    return bool(
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+        or not ip.is_global
+    )
+
+
+def canonicalize_origin(origin: str) -> str:
+    """Validate and canonicalize an HTTP(S) origin string."""
+    if not isinstance(origin, str) or not origin:
+        raise ValueError("Origin must be a non-empty string")
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in origin):
+        raise ValueError(f"Invalid characters in origin: {origin!r}")
+    if "\\" in origin or "?" in origin or "#" in origin:
+        raise ValueError(f"Origin must not contain backslashes, query, or fragment: {origin!r}")
+
+    parsed = urlsplit(origin)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("https", "http") or not parsed.netloc:
+        raise ValueError(f"Origin must use https:// (or loopback http://): {origin!r}")
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        raise ValueError("Origin must not contain credentials")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("Origin must not contain a path, query, or fragment")
+    if parsed.netloc.endswith(":"):
+        raise ValueError("Invalid empty port in origin")
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid port in origin: {origin!r}") from exc
+    if port is not None and not (1 <= port <= 65535):
+        raise ValueError(f"Port out of range in origin: {origin!r}")
+
+    hostname = parsed.hostname
+    if not hostname or "%" in hostname or "/" in hostname:
+        raise ValueError(f"Invalid hostname in origin: {origin!r}")
+
+    ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address | None = None
+    try:
+        ip_obj = ipaddress.ip_address(hostname)
+    except ValueError:
+        labels = hostname.split(".")
+        if all(lbl.isdigit() or lbl.lower().startswith("0x") for lbl in labels if lbl):
+            raise ValueError(f"Invalid numeric IP literal in origin: {origin!r}")
+        if ":" in hostname or ".." in hostname or hostname.startswith(".") or hostname.endswith("."):
+            raise ValueError(f"Invalid hostname in origin: {origin!r}")
+
+    if ip_obj is not None:
+        if scheme == "https" and _is_disallowed_https_ip(ip_obj):
+            raise ValueError(f"Non-public IP literal not permitted for https:// origin: {origin!r}")
+        check_host = ip_obj.compressed
+        host_str = f"[{ip_obj.compressed}]" if isinstance(ip_obj, ipaddress.IPv6Address) else ip_obj.compressed
+    else:
+        check_host = hostname.lower()
+        host_str = check_host
+
+    if scheme == "http" and check_host not in ("localhost", "127.0.0.1", "::1"):
+        raise ValueError(f"Insecure http:// origin is only allowed for localhost, 127.0.0.1, or ::1: {origin!r}")
+
+    default_port = 443 if scheme == "https" else 80
+    netloc = host_str if (port is None or port == default_port) else f"{host_str}:{port}"
+    return f"{scheme}://{netloc}"
+
+
+def _lookup_recipe_catalog_origins(service_lower: str) -> Optional[list[str]]:
+    catalog_path = os.environ.get("QNTM_RECIPE_CATALOG_PATH") or os.path.join(
+        os.path.dirname(__file__), "recipes.json"
+    )
+    try:
+        with open(catalog_path, "r", encoding="utf-8") as fh:
+            catalog = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    profiles = catalog.get("profiles")
+    if not isinstance(profiles, dict):
+        return None
+    for key, prof in profiles.items():
+        if not isinstance(prof, dict):
+            continue
+        prof_service = str(prof.get("service", key)).lower()
+        if key.lower() == service_lower or prof_service == service_lower:
+            base_url = prof.get("base_url")
+            if isinstance(base_url, str) and base_url:
+                parsed = urlsplit(base_url)
+                if parsed.scheme and parsed.netloc:
+                    return [canonicalize_origin(f"{parsed.scheme}://{parsed.netloc}")]
+    return None
+
+
+def resolve_service_origins(
+    service: str,
+    explicit_origins: Optional[list[str]] = None,
+) -> list[str]:
+    """Resolve canonical allowed_origins (1..16) for a service and optional --origin overrides."""
+    if not isinstance(service, str) or not service.strip():
+        raise ValueError("Service name must be a non-empty string")
+    s = service.strip()
+
+    if explicit_origins:
+        if not isinstance(explicit_origins, (list, tuple)) or len(explicit_origins) > 16:
+            raise ValueError("allowed_origins must contain between 1 and 16 origins")
+        resolved: list[str] = []
+        for raw_origin in explicit_origins:
+            canon = canonicalize_origin(raw_origin)
+            if canon not in resolved:
+                resolved.append(canon)
+        if not (1 <= len(resolved) <= 16):
+            raise ValueError("allowed_origins must contain between 1 and 16 origins")
+        return resolved
+
+    s_lower = s.lower()
+    if s_lower.startswith(("https://", "http://")):
+        return [canonicalize_origin(s)]
+
+    if s_lower in BUILTIN_SERVICE_ORIGINS:
+        return list(BUILTIN_SERVICE_ORIGINS[s_lower])
+
+    catalog_origins = _lookup_recipe_catalog_origins(s_lower)
+    if catalog_origins:
+        return catalog_origins
+
+    is_loopback = s_lower in ("localhost", "127.0.0.1", "[::1]") or s_lower.startswith(
+        ("localhost:", "127.0.0.1:", "[::1]:")
+    )
+    if is_loopback:
+        return [canonicalize_origin(f"http://{s}")]
+    if "." in s:
+        return [canonicalize_origin(f"https://{s}")]
+
+    raise ValueError(
+        f'Unknown service "{service}": specify an API hostname (e.g. api.example.com) or pass --origin'
+    )
 
 
 @dataclass
@@ -323,6 +487,45 @@ def verify_approval(
 # Threshold matching (mirrors Go LookupThreshold)
 # ---------------------------------------------------------------------------
 
+_PLACEHOLDER_RE = re.compile(r"\{([^}/]+)\}")
+
+
+def _endpoint_matches(pattern: str, endpoint: str) -> tuple[bool, tuple[int, int]]:
+    """Return (matched, specificity_tuple) where exact > template, then literal segment count."""
+    if pattern == endpoint:
+        return True, (1, len(endpoint.split("/")))
+    if "{" not in pattern or "}" not in pattern:
+        return False, (0, 0)
+    pat_segs = pattern.split("/")
+    end_segs = endpoint.split("/")
+    if len(pat_segs) != len(end_segs):
+        return False, (0, 0)
+    literal_segs = 0
+    for p_seg, e_seg in zip(pat_segs, end_segs):
+        if e_seg in (".", ".."):
+            return False, (0, 0)
+        if p_seg == e_seg:
+            literal_segs += 1
+            continue
+        if "{" not in p_seg or not e_seg:
+            return False, (0, 0)
+        parts = _PLACEHOLDER_RE.split(p_seg)
+        # Odd indices are placeholder names; even indices are literal substrings.
+        if len(parts) < 3:
+            return False, (0, 0)
+        regex_parts = ["^"]
+        for idx, token in enumerate(parts):
+            if idx % 2 == 0:
+                regex_parts.append(re.escape(token))
+            else:
+                regex_parts.append("([^/?#]+)")
+        regex_parts.append("$")
+        m = re.match("".join(regex_parts), e_seg)
+        if not m or any(val in ("", ".", "..") for val in m.groups()):
+            return False, (0, 0)
+    return True, (0, literal_segs)
+
+
 def lookup_threshold(
     rules: list[ThresholdRule],
     service: str,
@@ -331,25 +534,29 @@ def lookup_threshold(
 ) -> Optional[ThresholdRule]:
     """Match all fields, then prefer service/endpoint/verb specificity; first tie wins."""
     best: Optional[ThresholdRule] = None
-    best_score = -1
+    best_key = (-1, (-1, -1))
+    verb_upper = verb.upper()
 
     for rule in rules:
         score = 0
+        endpoint_spec = (1, 0)
         if rule.service not in ("*", ""):
             if rule.service != service:
                 continue
             score += 4
         if rule.endpoint not in ("*", ""):
-            if rule.endpoint != endpoint:
+            matched, endpoint_spec = _endpoint_matches(rule.endpoint, endpoint)
+            if not matched:
                 continue
             score += 2
         if rule.verb not in ("*", ""):
-            if rule.verb != verb:
+            if rule.verb.upper() != verb_upper:
                 continue
             score += 1
 
-        if score > best_score:
-            best_score = score
+        candidate_key = (score, endpoint_spec)
+        if candidate_key > best_key:
+            best_key = candidate_key
             best = rule
 
     return best
@@ -359,8 +566,6 @@ def lookup_threshold(
 # Recipe resolution (mirrors Go ResolveRecipe)
 # ---------------------------------------------------------------------------
 
-_PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
-
 
 def resolve_recipe(
     recipe: Recipe,
@@ -369,7 +574,7 @@ def resolve_recipe(
     """Resolve a recipe by substituting parameters.
 
     Returns (endpoint, target_url, body_bytes_or_None).
-    Raises ValueError on missing required parameters.
+    Raises ValueError on missing or unsafe parameters.
     """
     if args is None:
         args = {}
@@ -392,26 +597,36 @@ def resolve_recipe(
             else:
                 raise ValueError(f"missing required query parameter {p.name!r}")
 
-    # Substitute {param} placeholders
+    # Substitute {param} placeholders with strict URL segment encoding
     def _sub(s: str) -> str:
         def _repl(m: re.Match) -> str:
             key = m.group(1)
-            return args.get(key, m.group(0))
+            if key not in args:
+                return m.group(0)
+            raw_val = str(args[key])
+            if not raw_val or raw_val in (".", ".."):
+                raise ValueError(f"invalid path parameter {key!r}: {raw_val!r}")
+            encoded = quote(raw_val, safe="")
+            if not encoded or encoded in (".", ".."):
+                raise ValueError(f"invalid path parameter {key!r}: {raw_val!r}")
+            return encoded
         return _PLACEHOLDER_RE.sub(_repl, s)
 
     endpoint = _sub(recipe.endpoint)
+    if any(seg in (".", "..") for seg in endpoint.split("/")):
+        raise ValueError(f"resolved endpoint contains dot segment: {endpoint!r}")
     target_url = _sub(recipe.target_url)
 
-    # Append query params to target URL
-    query_parts: list[str] = []
+    # Append URL-encoded query params to target URL
+    query_pairs: list[tuple[str, str]] = []
     for p in recipe.query_params:
         if p.name in args:
-            query_parts.append(f"{p.name}={args[p.name]}")
+            query_pairs.append((p.name, str(args[p.name])))
         elif p.default:
-            query_parts.append(f"{p.name}={p.default}")
-    if query_parts:
+            query_pairs.append((p.name, str(p.default)))
+    if query_pairs:
         sep = "&" if "?" in target_url else "?"
-        target_url = target_url + sep + "&".join(query_parts)
+        target_url = target_url + sep + urlencode(query_pairs, quote_via=quote)
 
     # Build body from body_schema + args for POST/PUT/PATCH
     body: Optional[bytes] = None

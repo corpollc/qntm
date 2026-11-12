@@ -5,9 +5,16 @@ never changes creator authority or accepts old-epoch application messages.
 """
 import base64
 import copy
+import cbor2
+from nacl.exceptions import CryptoError
 from .cbor import unmarshal
 from .group import GroupState
-from .group_bootstrap import resolve_rekey_candidates, open_current_epoch_invite, group_snapshot
+from .group_bootstrap import (
+    CorruptRekeyWrapError,
+    resolve_rekey_candidates,
+    open_current_epoch_invite,
+    group_snapshot,
+)
 from .identity import key_id_from_public_key
 from .message import decrypt_message
 
@@ -48,93 +55,123 @@ def _members(members,sender):
 
 def apply_control(record, identity, envelope, message, wire, *, fallback=None, allow_expired=False, authorized_control_signer=None):
     """Authenticate authority, mutate the local state, return whether epoch changed."""
-    if record.get('type')!='group' or message['inner']['body_type'] not in GROUP_TYPES:
-        raise ValueError('Not a group control')
-    state=state_for_record(record,fallback)
-    inner=message['inner']; kind=inner['body_type']; sender=bytes(inner['sender_kid']); body=unmarshal(inner['body'])
-    epoch=envelope['conv_epoch']; current=record.get('current_epoch',0); mid=envelope['msg_id'].hex()
-    delegated = authorized_control_signer is not None and inner['sender_ik_pk'] == authorized_control_signer
-    if (record.get('gateway') or {}).get('status') == 'active' and not delegated:
-        raise ValueError('Active gateway membership must change through governance')
-    if not isinstance(body,dict) or ('group_epoch' in body and (type(body['group_epoch']) is not int or body['group_epoch']!=epoch)) or record.get('group_checkpoint') and body.get('group_epoch')!=epoch:
-        raise ValueError('Membership update is not signed for this epoch')
-    if epoch!=current:
-        if kind!='group_rekey' or epoch>=current:
-            raise ValueError('Stale or future group control')
-        previous=next((x for x in record.get('rekeys',[]) if x['epoch']==epoch+1),None)
-        if not previous or mid>=previous['id']:
-            raise ValueError('Superseded rekey')
-        old=next((x for x in record.get('epoch_archive',[]) if x['epoch']==epoch and not x.get('fork')),None)
-        if not old or not previous.get('source_roster'):
-            record['recovery_required']='Restore a fresh current-epoch invitation from the group creator'
-            raise ValueError(record['recovery_required'])
-        source=crypto({**record,'current_epoch':epoch,'keys':old['keys']})
-        roster=GroupState.from_dict(previous['source_roster'])
-        winner=resolve_rekey_candidates(identity,source,roster,[wire],allow_expired=allow_expired,authorized_control_signer=bytes.fromhex(previous['control_delegate']) if previous.get('control_delegate') else None)
-        if not winner:
-            raise ValueError('Invalid competing rekey')
-        record.setdefault('epoch_archive',[]).append({'epoch':current,'keys':copy.deepcopy(record['keys']),'fork':True})
-        for item in record['epoch_archive']:
-            if item['epoch']>=epoch+1:item['fork']=True
-        record['control_ids']=list(previous['source_control_ids'])
-        record['rekeys']=[x for x in record['rekeys'] if x['epoch']<epoch+1]
-        record['rekeys'].append({**previous,'id':mid})
-        save_state(record,roster)
-        if winner['excluded']:
-            record['excluded']=True
+    try:
+        if record.get('type')!='group' or message['inner']['body_type'] not in GROUP_TYPES:
+            raise ValueError('Not a group control')
+        if record.get('recovery_required'):
+            raise ValueError(str(record['recovery_required']))
+        state=state_for_record(record,fallback)
+        inner=message['inner']; kind=inner['body_type']; sender=bytes(inner['sender_kid'])
+        epoch=envelope['conv_epoch']; current=record.get('current_epoch',0); mid=bytes(envelope['msg_id']).hex()
+        delegated = authorized_control_signer is not None and bytes(inner['sender_ik_pk']) == authorized_control_signer
+        if (record.get('gateway') or {}).get('status') == 'active' and not delegated:
+            raise ValueError('Active gateway membership must change through governance')
+
+        # Enforce sender authority BEFORE decoding untrusted CBOR control bodies.
+        if epoch != current:
+            if kind != 'group_rekey' or epoch >= current:
+                raise ValueError('Stale or future group control')
         else:
-            save_crypto(record,winner['conversation'])
-        record.pop('recovery_required',None);record['needs_rekey']=False
+            if mid in record.get('control_ids', []):
+                raise ValueError('Control already applied')
+            if kind == 'group_genesis':
+                inviter = record.get('inviter_key_id') or (record.get('participants') or [None])[0]
+                if current != 0 or state.member_count() or sender.hex() != inviter:
+                    raise ValueError('Untrusted or repeated genesis')
+            elif kind == 'group_add':
+                if not state.is_admin(sender) and not delegated:
+                    raise ValueError('Only a group administrator or accepted gateway may add members')
+            elif kind == 'group_remove':
+                if not state.is_admin(sender) and not delegated:
+                    raise ValueError('Only a group administrator or accepted gateway may remove members')
+            elif kind == 'group_rekey':
+                if not state.is_member(sender) and not delegated:
+                    raise ValueError('Unauthorized rekey or recipients do not match current membership')
+
+        body = unmarshal(bytes(inner['body']))
+        if not isinstance(body,dict) or ('group_epoch' in body and (type(body['group_epoch']) is not int or body['group_epoch']!=epoch)) or record.get('group_checkpoint') and body.get('group_epoch')!=epoch:
+            raise ValueError('Membership update is not signed for this epoch')
+        if epoch!=current:
+            previous=next((x for x in record.get('rekeys',[]) if x['epoch']==epoch+1),None)
+            if not previous or mid>=previous['id']:
+                raise ValueError('Superseded rekey')
+            old=next((x for x in record.get('epoch_archive',[]) if x['epoch']==epoch and not x.get('fork')),None)
+            if not old or not previous.get('source_roster'):
+                record['recovery_required']='Restore a fresh current-epoch invitation from the group creator'
+                raise ValueError(record['recovery_required'])
+            source=crypto({**record,'current_epoch':epoch,'keys':old['keys']})
+            roster=GroupState.from_dict(previous['source_roster'])
+            try:
+                winner=resolve_rekey_candidates(identity,source,roster,[wire],allow_expired=allow_expired,authorized_control_signer=bytes.fromhex(previous['control_delegate']) if previous.get('control_delegate') else None)
+            except CorruptRekeyWrapError as exc:
+                record['recovery_required']='Canonical rekey has an invalid group key; restore a fresh current-epoch invitation from the group creator'
+                raise ValueError(record['recovery_required']) from exc
+            if not winner:
+                raise ValueError('Invalid competing rekey')
+            record.setdefault('epoch_archive',[]).append({'epoch':current,'keys':copy.deepcopy(record['keys']),'fork':True})
+            for item in record['epoch_archive']:
+                if item['epoch']>=epoch+1:item['fork']=True
+            record['control_ids']=list(previous['source_control_ids'])
+            record['rekeys']=[x for x in record['rekeys'] if x['epoch']<epoch+1]
+            record['rekeys'].append({**previous,'id':mid})
+            save_state(record,roster)
+            if winner['excluded']:
+                record['excluded']=True
+            else:
+                save_crypto(record,winner['conversation'])
+            record.pop('recovery_required',None);record['needs_rekey']=False
+            record.setdefault('control_ids',[]).append(mid)
+            return True
+        if kind=='group_genesis':
+            _members(body.get('founding_members'),sender)
+            if body['founding_members'][0]['key_id']!=sender or body['founding_members'][0]['role']!='admin':
+                raise ValueError('Genesis does not match creator')
+            state.apply_genesis(body)
+        elif kind=='group_add':
+            _members(body.get('new_members'),sender)
+            if authorized_control_signer is not None and any(member['public_key'] == authorized_control_signer for member in body['new_members']):raise ValueError('A gateway cannot join its own voting roster')
+            if delegated and any(member['role'] != 'member' for member in body['new_members']):raise ValueError('A gateway cannot appoint administrators')
+            if state.member_count()+len(body['new_members'])>128 or any(state.is_member(x['key_id']) for x in body['new_members']):
+                raise ValueError('Duplicate or excessive membership')
+            state.apply_add(body);record['needs_rekey']=True
+        elif kind=='group_remove':
+            removed=body.get('removed_members')
+            if not isinstance(removed,list) or not 1<=len(removed)<=128 or any(not isinstance(kid,bytes) or not state.is_member(kid) or kid==state.creator for kid in removed) or len(set(removed)) != len(removed):
+                raise ValueError('Invalid member removal; replacing the creator requires a successor group')
+            state.apply_remove(body);record['needs_rekey']=True
+            if identity['keyID'] in removed:record['excluded']=True
+        else:
+            try:
+                winner=resolve_rekey_candidates(identity,crypto(record),state,[wire],allow_expired=allow_expired,authorized_control_signer=authorized_control_signer)
+            except CorruptRekeyWrapError as exc:
+                record['recovery_required']='Canonical rekey has an invalid group key; restore a fresh current-epoch invitation from the group creator'
+                raise ValueError(record['recovery_required']) from exc
+            if not winner:raise ValueError('Unauthorized rekey or recipients do not match current membership')
+            record.setdefault('rekeys',[]).append({'epoch':current+1,'id':mid,'source_roster':state.to_dict(),'source_control_ids':list(record.get('control_ids',[])),'control_delegate':authorized_control_signer.hex() if authorized_control_signer is not None else None})
+            if winner['excluded']:
+                record['excluded']=True
+            else:
+                record.setdefault('epoch_archive',[]).append({'epoch':current,'keys':copy.deepcopy(record['keys'])})
+                save_crypto(record,winner['conversation'])
+            record['needs_rekey']=False
+        save_state(record,state)
         record.setdefault('control_ids',[]).append(mid)
-        return True
-    if mid in record.get('control_ids',[]):
-        raise ValueError('Control already applied')
-    if kind=='group_genesis':
-        inviter=record.get('inviter_key_id') or (record.get('participants') or [None])[0]
-        if current!=0 or state.member_count() or sender.hex()!=inviter:
-            raise ValueError('Untrusted or repeated genesis')
-        _members(body.get('founding_members'),sender)
-        if body['founding_members'][0]['key_id']!=sender or body['founding_members'][0]['role']!='admin':
-            raise ValueError('Genesis does not match creator')
-        state.apply_genesis(body)
-    elif kind=='group_add':
-        if not state.is_admin(sender) and not delegated:raise ValueError('Only a group administrator or accepted gateway may add members')
-        _members(body.get('new_members'),sender)
-        if authorized_control_signer is not None and any(member['public_key'] == authorized_control_signer for member in body['new_members']):raise ValueError('A gateway cannot join its own voting roster')
-        if delegated and any(member['role'] != 'member' for member in body['new_members']):raise ValueError('A gateway cannot appoint administrators')
-        if state.member_count()+len(body['new_members'])>128 or any(state.is_member(x['key_id']) for x in body['new_members']):
-            raise ValueError('Duplicate or excessive membership')
-        state.apply_add(body);record['needs_rekey']=True
-    elif kind=='group_remove':
-        removed=body.get('removed_members')
-        if not state.is_admin(sender) and not delegated:raise ValueError('Only a group administrator or accepted gateway may remove members')
-        if not isinstance(removed,list) or not 1<=len(removed)<=128 or any(not isinstance(kid,bytes) or not state.is_member(kid) or kid==state.creator for kid in removed) or len(set(removed)) != len(removed):
-            raise ValueError('Invalid member removal; replacing the creator requires a successor group')
-        state.apply_remove(body);record['needs_rekey']=True
-        if identity['keyID'] in removed:record['excluded']=True
-    else:
-        winner=resolve_rekey_candidates(identity,crypto(record),state,[wire],allow_expired=allow_expired,authorized_control_signer=authorized_control_signer)
-        if not winner:raise ValueError('Unauthorized rekey or recipients do not match current membership')
-        record.setdefault('rekeys',[]).append({'epoch':current+1,'id':mid,'source_roster':state.to_dict(),'source_control_ids':list(record.get('control_ids',[])),'control_delegate':authorized_control_signer.hex() if authorized_control_signer is not None else None})
-        if winner['excluded']:
-            record['excluded']=True
-        else:
-            record.setdefault('epoch_archive',[]).append({'epoch':current,'keys':copy.deepcopy(record['keys'])})
-            save_crypto(record,winner['conversation'])
-        record['needs_rekey']=False
-    save_state(record,state)
-    record.setdefault('control_ids',[]).append(mid)
-    return kind=='group_rekey'
+        return kind=='group_rekey'
+    except (cbor2.CBORDecodeError, CryptoError, AttributeError) as exc:
+        raise ValueError('Invalid group control payload') from exc
 
 def decrypt_for_receive(record,envelope):
-    current=record.get('current_epoch',0)
-    if envelope['conv_epoch']==current:
-        return decrypt_message(envelope,crypto(record))
-    if envelope['conv_epoch']<current:
-        old=next((x for x in record.get('epoch_archive',[]) if x['epoch']==envelope['conv_epoch'] and not x.get('fork')),None)
-        if old:
-            message=decrypt_message(envelope,crypto({**record,'current_epoch':old['epoch'],'keys':old['keys']}))
-            if message['inner']['body_type']=='group_rekey':return message
+    try:
+        current=record.get('current_epoch',0)
+        if envelope['conv_epoch']==current:
+            return decrypt_message(envelope,crypto(record))
+        if envelope['conv_epoch']<current:
+            old=next((x for x in record.get('epoch_archive',[]) if x['epoch']==envelope['conv_epoch'] and not x.get('fork')),None)
+            if old:
+                message=decrypt_message(envelope,crypto({**record,'current_epoch':old['epoch'],'keys':old['keys']}))
+                if message['inner']['body_type']=='group_rekey':return message
+    except (cbor2.CBORDecodeError, CryptoError, AttributeError) as exc:
+        raise ValueError('Message not decryptable in current epoch') from exc
     raise ValueError('Message not decryptable in current epoch')
 
 def import_current_invite(record,identity,token,*,conversation_id=None,creator_public_key=None):

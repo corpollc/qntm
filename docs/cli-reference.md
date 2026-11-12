@@ -9,8 +9,7 @@ Global options precede the command. One-shot commands return JSON; `recv --watch
 ```text
 usage: qntm [-h] [--config-dir CONFIG_DIR] [--dropbox-url DROPBOX_URL] [--human]
             [--verbose] [-v]
-            {guidance,identity,convo,send,recv,inbox,history,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version}
-            ...
+            {guidance,identity,convo,send,recv,inbox,history,group,announce,gate-run,gate-approve,gate-disapprove,gate-pending,gate-promote,gate-secret,gov,name,ref,version} ...
 
 qntm - agent-first secure messaging CLI
 
@@ -95,8 +94,8 @@ options:
 
 ```text
 usage: qntm guidance pin [-h] --category {legal,ethical,law_enforcement} --name NAME
-                         [--kind {human,agent,organization}] --conversation
-                         CONVERSATION --recipient RECIPIENT [--replace]
+                         [--kind {human,agent,organization}]
+                         --conversation CONVERSATION --recipient RECIPIENT [--replace]
                          contact
 
 positional arguments:
@@ -507,7 +506,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --arg KEY=VALUE       Recipe argument (repeatable)
 ```
@@ -522,7 +521,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
 ```
 
@@ -536,7 +535,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
 ```
 
@@ -547,19 +546,19 @@ usage: qntm gate-pending [-h] [-c CONVERSATION]
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix (optional, scans all if omitted)
 ```
 
 ## `qntm gate-promote`
 
 ```text
-usage: qntm gate-promote [-h] -c CONVERSATION --threshold THRESHOLD --gateway-url
-                         GATEWAY_URL
+usage: qntm gate-promote [-h] -c CONVERSATION --threshold THRESHOLD
+                         --gateway-url GATEWAY_URL
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --threshold THRESHOLD
                         Approval threshold (M-of-N)
@@ -570,13 +569,15 @@ options:
 ## `qntm gate-secret`
 
 ```text
-usage: qntm gate-secret [-h] -c CONVERSATION --service SERVICE --gateway-pubkey
-                        GATEWAY_PUBKEY [--value VALUE] [--header-name HEADER_NAME]
+usage: qntm gate-secret [-h] -c CONVERSATION --service SERVICE
+                        --gateway-pubkey GATEWAY_PUBKEY [--value VALUE]
+                        [--header-name HEADER_NAME]
                         [--header-template HEADER_TEMPLATE] [--ttl TTL]
+                        [--origin ORIGINS]
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --service SERVICE     Target service name (e.g. stripe, github)
   --gateway-pubkey GATEWAY_PUBKEY
@@ -588,6 +589,8 @@ options:
   --header-template HEADER_TEMPLATE
                         Header value template (default: 'Bearer {value}')
   --ttl TTL             Secret TTL in seconds (0 = no expiry, default: 0)
+  --origin ORIGINS      Allowed upstream origin URL (repeatable; defaults to service
+                        allowlist)
 ```
 
 ## `qntm gov`
@@ -616,7 +619,7 @@ usage: qntm gov propose-floor [-h] -c CONVERSATION --floor FLOOR
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --floor FLOOR         New approval floor
   --required-approvals REQUIRED_APPROVALS
@@ -639,7 +642,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --required-approvals REQUIRED_APPROVALS
                         Approvals required for this proposal (defaults to current
@@ -661,7 +664,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
   --required-approvals REQUIRED_APPROVALS
                         Approvals required for this proposal (defaults to remaining-
@@ -680,7 +683,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
 ```
 
@@ -694,7 +697,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -c CONVERSATION, --conversation CONVERSATION
+  -c, --conversation CONVERSATION
                         Conversation ID or prefix
 ```
 

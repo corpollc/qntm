@@ -227,3 +227,62 @@ def test_removed_or_unrecovered_identity_cannot_create_controls(tmp_path, flag, 
     record[flag] = True
     with pytest.raises(ValueError, match='pending group update'):
         create_message(member, cli._conv_to_crypto(record), kind, b'{}')
+
+
+def test_byzantine_corrupt_rekey_wrap_quarantines_session_instead_of_split_brain(tmp_path):
+    from qntm.cbor import marshal_canonical, unmarshal
+    from qntm.identity import base64url_encode
+
+    owner, member, _, original, state = setup(tmp_path)
+    conv = crypto(original)
+    raw_body, _ = create_rekey(owner, conv, state, conv['id'])
+    parsed = unmarshal(raw_body)
+    member_kid_wire = base64url_encode(member['keyID'])
+    corrupted = bytearray(parsed['wrapped_keys'][member_kid_wire])
+    corrupted[-1] ^= 0xFF
+    parsed['wrapped_keys'][member_kid_wire] = bytes(corrupted)
+
+    # Ensure corrupt R1 has lower msg_id than valid R2 (so R1 would win canonical tie-break for peers)
+    r1 = wire(owner, original, 'group_rekey', marshal_canonical(parsed))
+    r2, k2_record = rekey(owner, original, state)
+    while mid(r1) >= mid(r2):
+        r1 = wire(owner, original, 'group_rekey', marshal_canonical(parsed))
+        r2, k2_record = rekey(owner, original, state)
+
+    # Case 1: Current-epoch R1 arrives before R2 -> quarantines with recovery_required, never adopting K2!
+    path1 = tmp_path / 'sequential'
+    cli._save_identity(str(path1), member)
+    cli._save_conversations(str(path1), [deepcopy(original)])
+    assert receive(path1, member, original, [r1, r2], 2) == []
+    quarantined1 = cli._load_conversations(str(path1))[0]
+    assert quarantined1.get('recovery_required')
+    assert quarantined1['current_epoch'] == 0
+    assert quarantined1['keys'] == original['keys']
+
+    # Case 2: Valid higher-msg_id R2 arrives first, then delayed lower-msg_id corrupt R1 arrives -> quarantines!
+    path2 = tmp_path / 'delayed'
+    cli._save_identity(str(path2), member)
+    cli._save_conversations(str(path2), [deepcopy(original)])
+    assert receive(path2, member, original, [r2], 1)[0]['body_type'] == 'group_rekey'
+    after_r2 = cli._load_conversations(str(path2))[0]
+    assert after_r2['keys'] == k2_record['keys']
+    assert receive(path2, member, after_r2, [r1], 2) == []
+    quarantined2 = cli._load_conversations(str(path2))[0]
+    assert quarantined2.get('recovery_required')
+    assert quarantined2['keys'] == k2_record['keys']
+
+
+def test_unauthorized_sender_rejected_before_cbor_decoding_group_control(tmp_path, monkeypatch):
+    import qntm.group_session as gs
+
+    owner, member, outsider, record, _ = setup(tmp_path)
+    direct_view = {**crypto(record), 'type': 'direct'}
+    raw_bad = {
+        'envelope_b64': base64.b64encode(serialize_envelope(create_message(outsider, direct_view, 'group_add', b'\x82\x01'))).decode(),
+        'seq': 1,
+    }
+    called = []
+    real_unmarshal = gs.unmarshal
+    monkeypatch.setattr(gs, 'unmarshal', lambda data: called.append(data) or real_unmarshal(data))
+    assert receive(tmp_path, member, record, [raw_bad], 1) == []
+    assert called == []

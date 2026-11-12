@@ -2,6 +2,8 @@
 
 import time
 
+import cbor2
+
 from .cbor import marshal_canonical, unmarshal
 from .charter_info import with_local_charter_info
 from .constants import (
@@ -130,38 +132,43 @@ def decrypt_message(envelope: dict, conversation: dict, *, allow_expired: bool =
     if allow_expired is not True and check_expiry(envelope):
         raise ValueError("message has expired")
 
-    conv_id = bytes(envelope["conv_id"])
-    expected_conv_id = bytes(conversation["id"])
+    conv_id = _require_bytes(envelope["conv_id"], "conv_id", exact_len=16)
+    expected_conv_id = _require_bytes(conversation["id"], "conversation id", exact_len=16)
     if conv_id != expected_conv_id:
         raise ValueError("conversation ID mismatch")
 
     # Reconstruct AAD
     aad_struct = {
         "conv_epoch": envelope.get("conv_epoch", 0),
-        "conv_id": envelope["conv_id"],
+        "conv_id": conv_id,
         "created_ts": envelope["created_ts"],
         "expiry_ts": envelope["expiry_ts"],
-        "msg_id": envelope["msg_id"],
+        "msg_id": _require_bytes(envelope["msg_id"], "msg_id", exact_len=16),
         "suite": envelope["suite"],
         "v": envelope["v"],
     }
 
     aad_bytes = marshal_canonical(aad_struct)
 
-    # Verify AAD hash if present
-    if envelope.get("aad_hash") and len(bytes(envelope["aad_hash"])) > 0:
+    # Verify AAD hash if present (validate_envelope already enforced 32-byte bytes)
+    aad_hash = envelope.get("aad_hash")
+    if aad_hash is not None:
         computed_aad_hash = _suite.hash(aad_bytes)
-        if bytes(envelope["aad_hash"]) != computed_aad_hash:
+        if _require_bytes(aad_hash, "aad_hash", exact_len=32) != computed_aad_hash:
             raise ValueError("AAD hash mismatch")
 
     # Decrypt
-    msg_id = bytes(envelope["msg_id"])
+    msg_id = _require_bytes(envelope["msg_id"], "msg_id", exact_len=16)
+    ciphertext = _require_bytes(envelope["ciphertext"], "ciphertext", min_len=1, max_len=65536)
     nonce = _suite.derive_nonce(conversation["keys"]["nonceKey"], msg_id)
     inner_bytes = _suite.decrypt(
-        conversation["keys"]["aeadKey"], nonce, bytes(envelope["ciphertext"]), aad_bytes
+        conversation["keys"]["aeadKey"], nonce, ciphertext, aad_bytes
     )
 
-    inner = unmarshal(inner_bytes)
+    try:
+        inner = unmarshal(inner_bytes)
+    except cbor2.CBORDecodeError as exc:
+        raise ValueError("invalid inner CBOR payload") from exc
     validate_inner_payload(inner)
 
     # Verify signature
@@ -214,21 +221,57 @@ def verify_message_signature(envelope: dict, inner_payload: dict) -> bool:
     )
 
 
+def _require_bytes(
+    value: object,
+    field_name: str,
+    *,
+    exact_len: int | None = None,
+    min_len: int | None = None,
+    max_len: int | None = None,
+) -> bytes:
+    if isinstance(value, memoryview):
+        raw = bytes(value)
+    elif isinstance(value, bytes):
+        raw = value
+    else:
+        raise ValueError(f"{field_name} must be bytes")
+    if exact_len is not None and len(raw) != exact_len:
+        raise ValueError(f"invalid {field_name} length: {len(raw)}")
+    if min_len is not None and len(raw) < min_len:
+        if min_len == 1 and len(raw) == 0:
+            raise ValueError(f"{field_name} is empty")
+        raise ValueError(f"invalid {field_name} length: {len(raw)}")
+    if max_len is not None and len(raw) > max_len:
+        raise ValueError(f"{field_name} exceeds maximum length ({max_len}): {len(raw)}")
+    return raw
+
+
 def validate_envelope(envelope: dict) -> None:
-    if envelope["v"] != PROTOCOL_VERSION:
-        raise ValueError(f"unsupported protocol version: {envelope['v']}")
-    if envelope["suite"] != DEFAULT_SUITE:
-        raise ValueError(f"unsupported crypto suite: {envelope['suite']}")
-    if not _safe_timestamp(envelope["created_ts"]) or envelope["created_ts"] <= 0:
-        raise ValueError(f"invalid created timestamp: {envelope['created_ts']}")
-    if not _safe_timestamp(envelope["expiry_ts"]) or envelope["expiry_ts"] <= envelope["created_ts"]:
+    if not isinstance(envelope, dict) or not all(isinstance(k, str) for k in envelope.keys()):
+        raise ValueError("envelope must be a string-keyed map")
+    v = envelope.get("v")
+    if type(v) is not int or v != PROTOCOL_VERSION:
+        raise ValueError(f"unsupported protocol version: {v}")
+    suite = envelope.get("suite")
+    if not isinstance(suite, str) or suite != DEFAULT_SUITE:
+        raise ValueError(f"unsupported crypto suite: {suite}")
+    created_ts = envelope.get("created_ts")
+    if not _safe_timestamp(created_ts) or created_ts <= 0:
+        raise ValueError(f"invalid created timestamp: {created_ts}")
+    expiry_ts = envelope.get("expiry_ts")
+    if not _safe_timestamp(expiry_ts) or expiry_ts <= created_ts:
         raise ValueError("expiry timestamp must be after created timestamp")
-    ct = envelope["ciphertext"]
-    if isinstance(ct, memoryview):
-        ct = bytes(ct)
-    if len(ct) == 0:
-        raise ValueError("ciphertext is empty")
-    if envelope["created_ts"] > int(time.time()) + 600:
+    conv_epoch = envelope.get("conv_epoch", 0)
+    if type(conv_epoch) is not int or conv_epoch < 0 or conv_epoch > 2**53 - 1:
+        raise ValueError(f"invalid conversation epoch: {conv_epoch}")
+    _require_bytes(envelope.get("conv_id"), "conv_id", exact_len=16)
+    _require_bytes(envelope.get("msg_id"), "msg_id", exact_len=16)
+    _require_bytes(envelope.get("ciphertext"), "ciphertext", min_len=1, max_len=65536)
+    if "aad_hash" in envelope and envelope["aad_hash"] is not None:
+        _require_bytes(envelope["aad_hash"], "aad_hash", exact_len=32)
+    if "did" in envelope and envelope["did"] is not None and not isinstance(envelope["did"], str):
+        raise ValueError("did must be a string")
+    if created_ts > int(time.time()) + 600:
         raise ValueError("message created timestamp is too far in the future")
 
 
@@ -239,29 +282,39 @@ def _safe_timestamp(value: object) -> bool:
 
 def check_expiry(envelope: dict) -> bool:
     """True once the current Unix second exceeds the signed expiry timestamp."""
+    if not isinstance(envelope, dict) or not _safe_timestamp(envelope.get("expiry_ts")):
+        raise ValueError("invalid expiry timestamp")
     return int(time.time()) > envelope["expiry_ts"]
 
 
 def validate_inner_payload(inner: dict) -> None:
-    pk = inner["sender_ik_pk"]
-    if isinstance(pk, memoryview):
-        pk = bytes(pk)
-    if len(pk) != 32:
-        raise ValueError(f"invalid sender public key length: {len(pk)}")
-    if inner["sig_alg"] != "Ed25519":
-        raise ValueError(f"unsupported signature algorithm: {inner['sig_alg']}")
-    sig = inner["signature"]
-    if isinstance(sig, memoryview):
-        sig = bytes(sig)
-    if len(sig) != 64:
-        raise ValueError(f"invalid signature length: {len(sig)}")
-    if not inner.get("body_type"):
+    if not isinstance(inner, dict) or not all(isinstance(k, str) for k in inner.keys()):
+        raise ValueError("inner payload must be a string-keyed map")
+    if "msg_id" in inner and inner["msg_id"] is not None:
+        _require_bytes(inner["msg_id"], "msg_id", exact_len=16)
+    _require_bytes(inner.get("sender_ik_pk"), "sender public key", exact_len=32)
+    _require_bytes(inner.get("sender_kid"), "sender key ID", exact_len=16)
+    sig_alg = inner.get("sig_alg")
+    if not isinstance(sig_alg, str) or sig_alg != "Ed25519":
+        raise ValueError(f"unsupported signature algorithm: {sig_alg}")
+    _require_bytes(inner.get("signature"), "signature", exact_len=64)
+    _require_bytes(inner.get("body"), "body")
+    body_type = inner.get("body_type")
+    if not isinstance(body_type, str) or not body_type:
         raise ValueError("body type is empty")
+    if "refs" in inner and inner["refs"] is not None:
+        if not isinstance(inner["refs"], list):
+            raise ValueError("refs must be a list")
+        for ref in inner["refs"]:
+            _require_bytes(ref, "ref", exact_len=16)
 
 
 def extract_did(envelope: dict) -> str | None:
     """Extract the optional DID URI from an envelope, if present."""
-    return envelope.get("did")
+    if not isinstance(envelope, dict):
+        return None
+    did = envelope.get("did")
+    return did if isinstance(did, str) else None
 
 
 def serialize_envelope(envelope: dict) -> bytes:
@@ -269,7 +322,11 @@ def serialize_envelope(envelope: dict) -> bytes:
 
 
 def deserialize_envelope(data: bytes) -> dict:
-    envelope = unmarshal(data)
+    raw = _require_bytes(data, "envelope", min_len=1)
+    try:
+        envelope = unmarshal(raw)
+    except cbor2.CBORDecodeError as exc:
+        raise ValueError("invalid CBOR envelope") from exc
     validate_envelope(envelope)
     return envelope
 

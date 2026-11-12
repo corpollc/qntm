@@ -153,3 +153,21 @@ def test_mcp_onboarding_can_create_join_and_pin_a_contact(tmp_path, monkeypatch)
     assert set(participants) == {contact_identity["key_id"], agent_identity["key_id"]}
     pin_contact(agent_path, RELAY, "advisor", "ethical", "Advisor", "agent", joined["conversation_id"], contact_identity["key_id"])
     assert server.guidance_prepare("advisor", "Question")["status"] == "prepared"
+
+
+@pytest.mark.parametrize("flag", ["excluded", "needs_rekey", "pending_control", "recovery_required"])
+def test_group_guidance_rejects_excluded_or_pending_rekey_state(configured, flag):
+    path, conv, _, _ = configured
+    conv["type"] = "group"
+    conv[flag] = True
+    cli._save_conversations(path, [conv])
+    with pytest.raises(ValueError, match="pending group update|authorized access"):
+        prepare_request(path, RELAY, "counsel", "May we proceed?")
+
+
+def test_guidance_rejects_lone_surrogates(configured):
+    path, _, _, _ = configured
+    with pytest.raises(ValueError, match="surrogates"):
+        prepare_request(path, RELAY, "counsel", "bad \ud800 question")
+    with pytest.raises(ValueError, match="surrogates"):
+        prepare_request(path, RELAY, "counsel", "Valid question", "bad \udfff context")

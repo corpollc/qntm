@@ -8,6 +8,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 
 from .cbor import marshal_canonical, unmarshal
@@ -60,8 +61,44 @@ def _hex(value, length):
         _fail()
 
 
+_WINDOWS_RESERVED_BASENAMES = frozenset({
+    'CON', 'PRN', 'AUX', 'NUL',
+    *(f'COM{i}' for i in range(1, 10)),
+    *(f'LPT{i}' for i in range(1, 10)),
+})
+
+
+def _has_forbidden_label_chars(value: str) -> bool:
+    for ch in value:
+        code = ord(ch)
+        if code <= 0x1F or code == 0x7F or 0x80 <= code <= 0x9F or 0xD800 <= code <= 0xDFFF:
+            return True
+        if unicodedata.category(ch) == 'Cf':
+            return True
+    return False
+
+
+def _is_windows_reserved_filename(name: str) -> bool:
+    stem = name.split('.', 1)[0].strip().upper()
+    return stem in _WINDOWS_RESERVED_BASENAMES
+
+
+def sanitize_attachment_filename(name: str) -> str:
+    """Strip bidi/Cf format chars, C1 controls, and ':', and prefix Windows reserved basenames with '_'."""
+    if not isinstance(name, str):
+        _fail('Invalid attachment filename')
+    cleaned = ''.join(
+        ch for ch in name
+        if unicodedata.category(ch) != 'Cf' and not (0x80 <= ord(ch) <= 0x9F) and ch != ':'
+    )
+    if _is_windows_reserved_filename(cleaned):
+        cleaned = '_' + cleaned.lstrip()
+    return cleaned
+
+
 def _label(value, maximum):
-    if not isinstance(value, str) or not value.strip() or len(value.encode('utf-8')) > maximum or re.search(r'[\x00-\x1f\x7f]', value):
+    if (not isinstance(value, str) or not value.strip()
+            or len(value.encode('utf-8')) > maximum or _has_forbidden_label_chars(value)):
         _fail()
 
 
@@ -75,7 +112,8 @@ def parse_attachment(body: bytes, context: AttachmentContext) -> dict:
         if value['type'] != ATTACHMENT_TYPE:
             _fail('Unsupported attachment format')
         _label(value['name'], 255)
-        if '/' in value['name'] or '\\' in value['name'] or value['name'] in ('.','..'):
+        if ('/' in value['name'] or '\\' in value['name'] or ':' in value['name']
+                or value['name'] in ('.','..') or _is_windows_reserved_filename(value['name'])):
             _fail('Invalid attachment filename')
         _label(value['media_type'], 120)
         if re.fullmatch(r'[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+', value['media_type']) is None:
@@ -116,6 +154,7 @@ def prepare_attachment(identity: dict, parent: dict, data: bytes, name: str,
     """Encrypt/sign offline. Persist exact returned wires before any network write."""
     if not isinstance(data, bytes) or len(data) > MAX_ATTACHMENT_BYTES:
         _fail('Attachments are limited to 8 MiB')
+    sanitized_name = sanitize_attachment_filename(name)
     invite = create_invite(identity, 'direct')
     conversation = create_conversation(invite, derive_conversation_keys(invite))
     envelopes, parts, expiries = [], [], []
@@ -126,7 +165,7 @@ def prepare_attachment(identity: dict, parent: dict, data: bytes, name: str,
         envelopes.append(wire)
         parts.append({'message_id':envelope['msg_id'].hex(),'sha256':hashlib.sha256(wire).hexdigest()})
         expiries.append(envelope['expiry_ts'])
-    descriptor = {'type':ATTACHMENT_TYPE, 'name':name,'media_type':media_type,'size':len(data),
+    descriptor = {'type':ATTACHMENT_TYPE, 'name':sanitized_name,'media_type':media_type,'size':len(data),
                   'sha256':hashlib.sha256(data).hexdigest(),'parent_conv_id':parent['id'].hex(),
                   'parent_epoch':parent['currentEpoch'],'invite_token':invite_to_token(invite),
                   'expires_ts':min(expiries),'parts':parts}

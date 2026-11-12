@@ -161,3 +161,31 @@ def test_upload_rejects_unreferenced_cached_wires_before_sending():
     _,_,_,value,context=prepared()
     with pytest.raises(AttachmentError):
         upload_attachment(replace(value,envelopes=value.envelopes+(b'junk',)),context,lambda *_:pytest.fail('unreferenced wire sent'))
+
+
+def test_p3_1_filename_sanitization_and_wire_rejection():
+    from qntm.attachment import sanitize_attachment_filename
+
+    assert sanitize_attachment_filename('invoice\u202egpj.exe') == 'invoicegpj.exe'
+    assert sanitize_attachment_filename('bad\x85control:colon.txt') == 'badcontrolcolon.txt'
+    assert sanitize_attachment_filename('CON.txt') == '_CON.txt'
+    assert sanitize_attachment_filename('lpt9.log') == '_lpt9.log'
+    assert sanitize_attachment_filename('NUL') == '_NUL'
+    assert sanitize_attachment_filename('normal-file_1.pdf') == 'normal-file_1.pdf'
+
+    identity = generate_identity()
+    invite = create_invite(identity, 'group')
+    parent = create_conversation(invite, derive_conversation_keys(invite))
+    context = AttachmentContext(parent['id'], parent['currentEpoch'], identity['publicKey'])
+
+    prepared_con = prepare_attachment(identity, parent, b'hello', 'CON.txt', 'text/plain')
+    assert prepared_con.descriptor['name'] == '_CON.txt'
+    assert parse_attachment(prepared_con.body, context)['name'] == '_CON.txt'
+
+    prepared_bidi = prepare_attachment(identity, parent, b'hello', 'report\u202egpj.exe', 'application/octet-stream')
+    assert prepared_bidi.descriptor['name'] == 'reportgpj.exe'
+
+    for raw_unsanitized in ('report\u202egpj.exe', 'CON.txt', 'LPT1', 'a:b.txt', 'bad\x85.txt'):
+        forged_body = json.dumps({**prepared_con.descriptor, 'name': raw_unsanitized}).encode()
+        with pytest.raises(AttachmentError):
+            parse_attachment(forged_body, context)
