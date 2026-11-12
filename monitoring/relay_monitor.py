@@ -95,38 +95,60 @@ def verify_probe_frame(frame, envelope, state, payload):
     return True
 
 
+MAX_REPLAY_FRAMES_PER_PASS = 4096
+MAX_REPLAY_PASSES = 4
+
+
 def probe(base, state, client):
     started = time.monotonic()
     # A ready frame establishes the live subscription before posting.
-    with open_subscription(base, state, state['cursor']) as socket:
-        deadline = time.monotonic() + 10
-        for _ in range(4096):
-            frame = next_frame(socket, state, deadline)
-            if frame.get('type') == 'ready':
-                state['cursor'] = int(frame['head_seq'])
-                break
-        else:
-            raise ValueError('probe replay exceeded bound')
-        payload = ('qntm synthetic availability probe ' + secrets.token_hex(16)).encode()
-        envelope = create_message(state['sender'], state['conversation'], 'text', payload, ttl_seconds=600)
-        response = client.post(base + '/v1/send', json={
-            'conv_id': state['conversation']['id'].hex(), 'msg_id': envelope['msg_id'].hex(),
-            'envelope_b64': base64.b64encode(serialize_envelope(envelope)).decode(),
-        })
-        if response.status_code != 201:
-            raise ValueError('relay did not accept probe')
-        sequence = response.json()['seq']
-        if type(sequence) is not int or sequence <= state['cursor']:
-            raise ValueError('invalid probe sequence')
-        deadline = time.monotonic() + 10
-        for _ in range(128):
-            frame = next_frame(socket, state, deadline)
-            if frame.get('type') == 'message' and frame.get('seq') == sequence:
-                if not verify_probe_frame(frame, envelope, state, payload):
-                    raise ValueError('unexpected probe envelope')
-                break
-        else:
-            raise ValueError('live probe delivery missing')
+    # If backlog exceeds a single 4,096-frame window (e.g. spam on a known probe ID),
+    # advance state['cursor'] across bounded passes so synthetic monitoring self-heals.
+    for _ in range(MAX_REPLAY_PASSES):
+        pass_start_cursor = state['cursor']
+        with open_subscription(base, state, state['cursor']) as socket:
+            deadline = time.monotonic() + 10
+            ready = False
+            for _ in range(MAX_REPLAY_FRAMES_PER_PASS):
+                frame = next_frame(socket, state, deadline)
+                if frame.get('type') == 'message':
+                    seq = frame.get('seq')
+                    if type(seq) is int and seq > state['cursor']:
+                        state['cursor'] = seq
+                elif frame.get('type') == 'ready':
+                    head_seq = frame.get('head_seq')
+                    if type(head_seq) is not int or head_seq < state['cursor']:
+                        raise ValueError('invalid probe head sequence')
+                    state['cursor'] = head_seq
+                    ready = True
+                    break
+            if not ready:
+                if state['cursor'] <= pass_start_cursor:
+                    raise ValueError('probe replay exceeded bound')
+                continue
+            payload = ('qntm synthetic availability probe ' + secrets.token_hex(16)).encode()
+            envelope = create_message(state['sender'], state['conversation'], 'text', payload, ttl_seconds=600)
+            response = client.post(base + '/v1/send', json={
+                'conv_id': state['conversation']['id'].hex(), 'msg_id': envelope['msg_id'].hex(),
+                'envelope_b64': base64.b64encode(serialize_envelope(envelope)).decode(),
+            })
+            if response.status_code != 201:
+                raise ValueError('relay did not accept probe')
+            sequence = response.json()['seq']
+            if type(sequence) is not int or sequence <= state['cursor']:
+                raise ValueError('invalid probe sequence')
+            deadline = time.monotonic() + 10
+            for _ in range(128):
+                frame = next_frame(socket, state, deadline)
+                if frame.get('type') == 'message' and frame.get('seq') == sequence:
+                    if not verify_probe_frame(frame, envelope, state, payload):
+                        raise ValueError('unexpected probe envelope')
+                    break
+            else:
+                raise ValueError('live probe delivery missing')
+            break
+    else:
+        raise ValueError('probe replay exceeded bound')
     # Reconnect from the preceding cursor: this must replay the stored ciphertext.
     replayed = False
     with open_subscription(base, state, sequence - 1) as socket:

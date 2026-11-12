@@ -162,8 +162,10 @@ export async function handleConversation(
   const cursorKey = `${CURSOR_KEY}${cursorKeySuffix}`;
   let cursor = await getCursor(env.ECHO_KV, cursorKey), echoed = 0;
   const originalCursor = cursor;
+  const deliveredInTick = new Set<string>();
   try {
-    const result = await receive(env.RELAY_URL, bytesToHex(conversation.id), cursor);
+    const convHex = bytesToHex(conversation.id);
+    const result = await receive(env.RELAY_URL, convHex, cursor);
     for (const item of result.messages) {
       if (echoed >= MAX_ECHO_PER_TICK) break;
       let body: Uint8Array | undefined, sourceId = '';
@@ -178,19 +180,26 @@ export async function handleConversation(
           body = new TextEncoder().encode(`🔒 echo: ${bounded}`);
         }
       } catch { /* Invalid, expired, or unsigned legacy envelopes are not echoed. */ }
-      if (body) {
-        // Unique keys avoid KV's same-key write limit. Preserve the encrypted
-        // response for replay after a failed send or interrupted cursor write.
-        const responseKey = `${cursorKey}:response:${bytesToHex(conversation.id)}:${sourceId}`;
-        const saved = await env.ECHO_KV.get(responseKey);
-        let bytes: Uint8Array;
-        if (saved) bytes = base64ToBytes(saved);
-        else {
-          bytes = serializeEnvelope(createMessage(identity, conversation, 'text/plain', body, undefined, defaultTTL()));
-          await env.ECHO_KV.put(responseKey, btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join('')), { expirationTtl: 7 * 24 * 3600 });
+      if (body && sourceId) {
+        const deliveredKey = `${cursorKey}:delivered:${convHex}:${sourceId}`;
+        const alreadyDelivered = deliveredInTick.has(sourceId) || (await env.ECHO_KV.get(deliveredKey)) !== null;
+        if (!alreadyDelivered) {
+          // Unique keys avoid KV's same-key write limit. Preserve the encrypted
+          // response for replay after a failed send, while skipping ciphertext replays
+          // once delivery for a given msg_id has succeeded.
+          const responseKey = `${cursorKey}:response:${convHex}:${sourceId}`;
+          const saved = await env.ECHO_KV.get(responseKey);
+          let bytes: Uint8Array;
+          if (saved) bytes = base64ToBytes(saved);
+          else {
+            bytes = serializeEnvelope(createMessage(identity, conversation, 'text/plain', body, undefined, defaultTTL()));
+            await env.ECHO_KV.put(responseKey, btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join('')), { expirationTtl: 7 * 24 * 3600 });
+          }
+          await dropbox.postMessage(conversation.id, bytes);
+          deliveredInTick.add(sourceId);
+          await env.ECHO_KV.put(deliveredKey, String(item.seq), { expirationTtl: 7 * 24 * 3600 });
+          echoed++;
         }
-        await dropbox.postMessage(conversation.id, bytes);
-        echoed++;
       }
       cursor = item.seq;
     }

@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import time
@@ -5,7 +6,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from relay_monitor import Monitor, load_probe, snapshot_metrics
+from relay_monitor import (
+    MAX_REPLAY_FRAMES_PER_PASS,
+    MAX_REPLAY_PASSES,
+    Monitor,
+    load_probe,
+    probe as run_probe,
+    snapshot_metrics,
+)
 
 
 def snapshot():
@@ -75,6 +83,127 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(restarted.metrics['qntm_relay_probe_success'], 0)
             stored = json.loads((Path(directory) / 'metrics.json').read_text())
             self.assertEqual(stored['qntm_relay_stats_scrape_success'], 0)
+
+    @patch('relay_monitor.open_subscription')
+    def test_probe_paginates_past_4096_frame_backlog_and_recovers(self, open_sub):
+        with tempfile.TemporaryDirectory() as directory:
+            state = load_probe(Path(directory) / 'probe.cbor')
+            posted_envelope_b64 = {}
+            observed_cursors = []
+
+            class FakeSocket:
+                def __init__(self, frames_fn):
+                    self._frames = None
+                    self._frames_fn = frames_fn
+
+                def __enter__(self):
+                    self._frames = iter(self._frames_fn())
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def send(self, _data):
+                    pass
+
+                def recv(self, timeout=None):
+                    item = next(self._frames)
+                    return json.dumps(item() if callable(item) else item)
+
+            def subscribe_side_effect(_base, _state, cursor):
+                observed_cursors.append(cursor)
+                if cursor == 0:
+                    def pass1():
+                        yield {'type': 'auth_challenge', 'challenge_hex': '11' * 32}
+                        yield {'type': 'auth_ok'}
+                        for seq in range(1, MAX_REPLAY_FRAMES_PER_PASS - 1):
+                            yield {'type': 'message', 'seq': seq, 'envelope_b64': base64.b64encode(b'spam').decode()}
+                    return FakeSocket(pass1)
+                if cursor == MAX_REPLAY_FRAMES_PER_PASS - 2:
+                    def pass2():
+                        yield {'type': 'auth_challenge', 'challenge_hex': '22' * 32}
+                        yield {'type': 'auth_ok'}
+                        for seq in range(MAX_REPLAY_FRAMES_PER_PASS - 1, 4501):
+                            yield {'type': 'message', 'seq': seq, 'envelope_b64': base64.b64encode(b'spam').decode()}
+                        yield {'type': 'ready', 'head_seq': 4500}
+                        yield lambda: {'type': 'message', 'seq': 4501, 'envelope_b64': posted_envelope_b64['val']}
+                    return FakeSocket(pass2)
+                if cursor == 4500:
+                    def replay_pass():
+                        yield {'type': 'auth_challenge', 'challenge_hex': '33' * 32}
+                        yield {'type': 'auth_ok'}
+                        yield {'type': 'message', 'seq': 4501, 'envelope_b64': posted_envelope_b64['val']}
+                        yield {'type': 'ready', 'head_seq': 4501}
+                    return FakeSocket(replay_pass)
+                raise AssertionError(f'unexpected cursor {cursor}')
+
+            open_sub.side_effect = subscribe_side_effect
+            http = MagicMock()
+
+            def post_side_effect(_url, json):
+                posted_envelope_b64['val'] = json['envelope_b64']
+                resp = MagicMock()
+                resp.status_code = 201
+                resp.json.return_value = {'seq': 4501}
+                return resp
+
+            http.post.side_effect = post_side_effect
+            duration = run_probe('https://relay.example', state, http)
+            self.assertGreaterEqual(duration, 0)
+            self.assertEqual(state['cursor'], 4501)
+            self.assertEqual(observed_cursors, [0, MAX_REPLAY_FRAMES_PER_PASS - 2, 4500])
+
+    @patch('relay_monitor.open_subscription')
+    @patch('relay_monitor.httpx.Client')
+    def test_extreme_backlog_persists_advanced_cursor_for_self_healing(self, client_cls, open_sub):
+        http = MagicMock()
+        client_cls.return_value.__enter__.return_value = http
+        http.get.return_value.json.side_effect = snapshot
+
+        class EndlessBacklogSocket:
+            def __init__(self, start_seq):
+                self._seq = start_seq
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def recv(self, timeout=None):
+                self._seq += 1
+                return json.dumps({'type': 'message', 'seq': self._seq, 'envelope_b64': 'YWJj'})
+
+        open_sub.side_effect = lambda _base, _state, cursor: EndlessBacklogSocket(cursor)
+        config = {'relay_url': 'https://relay.example', 'metrics_read_token': 'test-only-token-not-a-real-secret'}
+        with tempfile.TemporaryDirectory() as directory:
+            monitor = Monitor(config, directory)
+            with self.assertLogs(level='WARNING'):
+                monitor.collect()
+            self.assertEqual(monitor.metrics['qntm_relay_probe_success'], 0)
+            expected_cursor = MAX_REPLAY_PASSES * MAX_REPLAY_FRAMES_PER_PASS
+            self.assertEqual(monitor.state['cursor'], expected_cursor)
+            persisted = load_probe(Path(directory) / 'probe.cbor')
+            self.assertEqual(persisted['cursor'], expected_cursor)
+
+    @patch('relay_monitor.open_subscription')
+    def test_non_advancing_frame_flood_aborts_after_single_pass(self, open_sub):
+        class PongFloodSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def recv(self, timeout=None):
+                return json.dumps({'type': 'pong'})
+
+        open_sub.return_value = PongFloodSocket()
+        with tempfile.TemporaryDirectory() as directory:
+            state = load_probe(Path(directory) / 'probe.cbor')
+            with self.assertRaisesRegex(ValueError, 'probe replay exceeded bound'):
+                run_probe('https://relay.example', state, MagicMock())
+            self.assertEqual(open_sub.call_count, 1)
 
 
 if __name__ == '__main__':

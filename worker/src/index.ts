@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { isValidEd25519PublicKey, verifyEd25519Signature } from '@corpollc/qntm/crypto';
-import { envelopeTTLSeconds, expireConversationStats, RelayRetention } from "./retention.js";
+import { envelopeTTLSeconds, expireConversationStats, maxMessagesPerChannel, RelayRetention } from "./retention.js";
 import { RelayMetricsOutbox } from "./metrics.js";
 import { RelayRateLimiter } from "./rate-limit.js";
 import type { RelayMetricsStore } from "./metrics.js";
@@ -131,6 +131,24 @@ function fromBase64URL(input: string): Uint8Array {
 	return out;
 }
 
+function toBase64URL(data: Uint8Array): string {
+	let binary = "";
+	for (let i = 0; i < data.length; i++) {
+		binary += String.fromCharCode(data[i]);
+	}
+	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function canonicalSigningKeyBase64URL(value: string): string | null {
+	try {
+		const raw = fromBase64URL(value);
+		if (!isValidEd25519PublicKey(raw)) return null;
+		return toBase64URL(raw);
+	} catch {
+		return null;
+	}
+}
+
 function fromBase64(input: string): Uint8Array {
 	const raw = atob(input);
 	const out = new Uint8Array(raw.length);
@@ -138,6 +156,61 @@ function fromBase64(input: string): Uint8Array {
 		out[i] = raw.charCodeAt(i);
 	}
 	return out;
+}
+
+const MAX_CONTROL_JSON_BYTES = 16 * 1024;
+const AUTH_CHALLENGE_TTL_MS = 60_000;
+
+class PayloadTooLargeError extends Error {}
+
+async function readBoundedBytes(request: Request, maxBytes: number): Promise<Uint8Array> {
+	const contentLengthHeader = request.headers.get("Content-Length");
+	if (contentLengthHeader !== null && contentLengthHeader.trim() !== "") {
+		const contentLength = Number(contentLengthHeader);
+		if (!Number.isFinite(contentLength) || contentLength < 0) {
+			throw new SyntaxError("invalid content-length");
+		}
+		if (contentLength > maxBytes) {
+			throw new PayloadTooLargeError();
+		}
+	}
+	if (!request.body) {
+		return new Uint8Array(0);
+	}
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (value && value.byteLength > 0) {
+				total += value.byteLength;
+				if (total > maxBytes) {
+					await reader.cancel().catch(() => {});
+					throw new PayloadTooLargeError();
+				}
+				chunks.push(value);
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	if (chunks.length === 0) return new Uint8Array(0);
+	if (chunks.length === 1) return chunks[0];
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
+}
+
+async function readBoundedJson<T>(request: Request, maxBytes: number): Promise<T> {
+	const bytes = await readBoundedBytes(request, maxBytes);
+	const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+	return JSON.parse(text) as T;
 }
 
 function buildReceiptSignable(payload: ReadReceiptPayload): Uint8Array {
@@ -174,8 +247,7 @@ function isHexID(value: string, expectedLength: number): boolean {
 }
 
 function validEncodedSigningKey(value: string): boolean {
-	try { return isValidEd25519PublicKey(fromBase64URL(value)); }
-	catch { return false; }
+	return canonicalSigningKeyBase64URL(value) !== null;
 }
 
 // --- Announce channel helpers ---
@@ -184,9 +256,13 @@ function announceMetaKey(convID: string): string {
 	return `/__announce__/${convID}/meta.json`;
 }
 
-async function announceID(master: string): Promise<string> {
-	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${announceProto}|id|${master}`)));
-	return Array.from(digest.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
+export async function announceID(master: string): Promise<string | null> {
+	const canonicalMaster = canonicalSigningKeyBase64URL(master);
+	if (!canonicalMaster) return null;
+	const digest = new Uint8Array(
+		await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${announceProto}|id|${canonicalMaster}`)),
+	);
+	return Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function getAnnounceMeta(env: Env, convID: string): Promise<AnnounceChannelMeta | null> {
@@ -238,17 +314,15 @@ type SubscribeAuthFrame =
 	| { type: "auth_ok" }
 	| { type: "auth_failed"; reason: string };
 
-// Pending auth state for subscribe connections awaiting challenge-response
-type PendingAuth = {
-	challenge: Uint8Array;
-	pubKeyHex: string;
-	convID: string;
-	fromSeq: number;
+// Persisted WebSocket auth state across Durable Object hibernation
+type SocketAuthState = {
+	authenticated: boolean;
+	challengeHex?: string;
+	pubKeyHex?: string;
+	convID?: string;
+	fromSeq?: number;
+	createdAt?: number;
 };
-
-function conversationMessageKey(convID: string, seq: number): string {
-	return `/${convID}/msg/${seq}.cbor`;
-}
 
 async function publishConversationMessage(
 	env: Env,
@@ -306,24 +380,42 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 	private async manageAnnounce(request: Request, action: string): Promise<Response> {
 		const payload = await request.json<AnnounceChannelMeta>();
 		const existing = await this.announceMeta(payload.conv_id);
+		const canonicalMaster = canonicalSigningKeyBase64URL(payload.master_pk);
 		if (action === 'register') {
-			if (await announceID(payload.master_pk) !== payload.conv_id) return errorResponse('channel ID is not bound to master key', 403);
+			const canonicalPosting = canonicalSigningKeyBase64URL(payload.posting_pk);
+			if (!canonicalPosting) return errorResponse('invalid posting key', 400);
+			if (!canonicalMaster || await announceID(canonicalMaster) !== payload.conv_id) {
+				return errorResponse('channel ID is not bound to master key', 403);
+			}
 			if (existing || (await this.ctx.storage.get<number>('next_seq') ?? 0) > 0) {
 				return errorResponse('conversation already exists', 409);
 			}
-			await this.ctx.storage.put('announce_policy', { meta: payload });
+			await this.ctx.storage.put('announce_policy', {
+				meta: { ...payload, master_pk: canonicalMaster, posting_pk: canonicalPosting },
+			});
 			return jsonResponse({ registered: true, name: payload.name, conv_id: payload.conv_id }, 201);
 		}
-		if (!existing || existing.legacy_unbound || (existing.closed && action !== 'delete') || existing.master_pk !== payload.master_pk) {
+		const existingCanonicalMaster = existing ? canonicalSigningKeyBase64URL(existing.master_pk) : null;
+		if (
+			!existing ||
+			existing.legacy_unbound ||
+			(existing.closed && action !== 'delete') ||
+			!canonicalMaster ||
+			existingCanonicalMaster !== canonicalMaster
+		) {
 			return errorResponse('announce ownership conflict', 409);
 		}
 		if (action === 'rotate') {
-			await this.ctx.storage.put('announce_policy', { meta: { ...existing, posting_pk: payload.posting_pk } });
+			const canonicalPosting = canonicalSigningKeyBase64URL(payload.posting_pk);
+			if (!canonicalPosting) return errorResponse('invalid posting key', 400);
+			await this.ctx.storage.put('announce_policy', {
+				meta: { ...existing, master_pk: canonicalMaster, posting_pk: canonicalPosting },
+			});
 			return jsonResponse({ rotated: true, conv_id: payload.conv_id }, 200);
 		}
 		// Deletion closes the ID permanently. Keep next_seq and the ownership
 		// tombstone so neither replay cursors nor a later registration can reset it.
-		await this.ctx.storage.put('announce_policy', { meta: { ...existing, closed: true } });
+		await this.ctx.storage.put('announce_policy', { meta: { ...existing, master_pk: canonicalMaster, closed: true } });
 		this.retention.clear();
 		await this.ctx.storage.put('announce_cleanup', { convID: payload.conv_id });
 		await this.armMetricsRetry();
@@ -346,7 +438,11 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		this.retention = new RelayRetention(ctx.storage, envelopeTTLSeconds(env.ENVELOPE_TTL_SECONDS));
+		this.retention = new RelayRetention(
+			ctx.storage,
+			envelopeTTLSeconds(env.ENVELOPE_TTL_SECONDS),
+			maxMessagesPerChannel(env.MAX_MESSAGES_PER_CHANNEL),
+		);
 		this.metricsOutbox = new RelayMetricsOutbox(ctx.storage);
 		ctx.blockConcurrencyWhile(async () => {
 			await this.retention.maintain();
@@ -415,18 +511,25 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			}
 			payload.msg_id = payload.msg_id.toLowerCase();
 		}
-		const ttl = envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS);
+		envelopeTTLSeconds(this.env.ENVELOPE_TTL_SECONDS);
+		const parsedMaxSize = parseInt(this.env.MAX_ENVELOPE_SIZE || "65536", 10);
+		const maxSize = Number.isSafeInteger(parsedMaxSize) && parsedMaxSize > 0 ? parsedMaxSize : 65536;
+		const maxBase64Chars = Math.ceil(maxSize / 3) * 4;
+		if (payload.envelope_b64.length > maxBase64Chars + 64) {
+			return errorResponse("envelope too large", 413);
+		}
 		let envelopeBytes: Uint8Array;
 		try {
 			envelopeBytes = fromBase64(payload.envelope_b64);
 		} catch {
 			return Response.json({ error: "invalid envelope_b64" }, { status: 400 });
 		}
+		if (envelopeBytes.byteLength > maxSize) {
+			return errorResponse("envelope too large", 413);
+		}
 
 		const current = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
 		const seq = current + 1;
-		await this.ctx.storage.put("next_seq", seq);
-		await this.env.QNTM_KV.put(conversationMessageKey(convID, seq), envelopeBytes, { expirationTtl: ttl });
 		const postedAt = Date.now();
 		await this.retention.store(seq, payload.envelope_b64, payload.msg_id, postedAt, () => {
 			this.metricsOutbox.enqueue({
@@ -435,6 +538,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 				traffic: convID === this.env.MONITOR_CONVERSATION_ID ? "probe" : "application",
 			});
 		});
+		await this.ctx.storage.put("next_seq", seq);
 		await this.armMetricsRetry();
 		this.ctx.waitUntil(this.flushMetrics());
 
@@ -444,9 +548,13 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			envelope_b64: payload.envelope_b64,
 		} satisfies RelayFrame);
 		for (const webSocket of this.ctx.getWebSockets()) {
+			if (this.getSocketState(webSocket)?.authenticated !== true) {
+				continue;
+			}
 			try {
 				webSocket.send(frame);
 			} catch {
+				this.clearSocketState(webSocket);
 				try {
 					webSocket.close(1011, "relay send failed");
 				} catch {
@@ -458,8 +566,36 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 		return Response.json({ seq });
 	}
 
-	// Map from server WebSocket to pending auth state (in-memory, per DO instance)
-	private pendingAuths = new Map<WebSocket, PendingAuth>();
+	// Synchronized with WebSocket attachments so auth state survives DO hibernation.
+	private socketStates = new Map<WebSocket, SocketAuthState>();
+
+	private getSocketState(webSocket: WebSocket): SocketAuthState | null {
+		if (typeof webSocket.deserializeAttachment === "function") {
+			const attached = webSocket.deserializeAttachment() as SocketAuthState | null | undefined;
+			if (attached && typeof attached === "object" && typeof attached.authenticated === "boolean") {
+				return attached;
+			}
+		}
+		return this.socketStates.get(webSocket) ?? null;
+	}
+
+	private setSocketState(webSocket: WebSocket, state: SocketAuthState): void {
+		this.socketStates.set(webSocket, state);
+		if (typeof webSocket.serializeAttachment === "function") {
+			webSocket.serializeAttachment(state);
+		}
+	}
+
+	private clearSocketState(webSocket: WebSocket): void {
+		this.socketStates.delete(webSocket);
+		if (typeof webSocket.serializeAttachment === "function") {
+			try {
+				webSocket.serializeAttachment({ authenticated: false });
+			} catch {
+				// Ignore if socket is already closed.
+			}
+		}
+	}
 
 	private async handleSubscribe(request: Request): Promise<Response> {
 		const upgradeError = validateUpgradeRequest(request);
@@ -480,11 +616,18 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
+		this.setSocketState(server, {
+			authenticated: false,
+			convID,
+			fromSeq: fromSeqRaw,
+			createdAt: Date.now(),
+		});
 
 		// Authenticated subscribe: if pub_key is provided, issue a challenge
 		if (pubKeyHex) {
 			if (!isHexID(pubKeyHex, 64) || !isValidEd25519PublicKey(fromHex(pubKeyHex)!)) {
 				server.send(JSON.stringify({ type: "auth_failed", reason: "invalid pub_key" } satisfies SubscribeAuthFrame));
+				this.clearSocketState(server);
 				server.close(4003, "invalid pub_key");
 				return new Response(null, { status: 101, webSocket: client });
 			}
@@ -492,17 +635,20 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			// Generate 32-byte random challenge
 			const challenge = new Uint8Array(32);
 			crypto.getRandomValues(challenge);
+			const challengeHex = toHex(challenge);
 
-			this.pendingAuths.set(server, {
-				challenge,
+			this.setSocketState(server, {
+				authenticated: false,
+				challengeHex,
 				pubKeyHex,
 				convID,
 				fromSeq: fromSeqRaw,
+				createdAt: Date.now(),
 			});
 
 			server.send(JSON.stringify({
 				type: "auth_challenge",
-				challenge_hex: toHex(challenge),
+				challenge_hex: challengeHex,
 			} satisfies SubscribeAuthFrame));
 
 			return new Response(null, { status: 101, webSocket: client });
@@ -521,6 +667,7 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			);
 		}
 		server.send(JSON.stringify({ type: "ready", head_seq: headSeq } satisfies RelayFrame));
+		this.setSocketState(server, { authenticated: true, convID });
 
 		return new Response(null, {
 			status: 101,
@@ -619,83 +766,119 @@ export class ConversationSequencerDO extends DurableObject<Env> {
 			return;
 		}
 
-		// Check for pending auth challenge-response
-		const pending = this.pendingAuths.get(webSocket);
-		if (pending) {
-			let parsed: { type?: string; signature_hex?: string };
-			try {
-				parsed = JSON.parse(message) as { type?: string; signature_hex?: string };
-			} catch {
-				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid JSON" } satisfies SubscribeAuthFrame));
-				webSocket.close(4003, "invalid auth response");
-				this.pendingAuths.delete(webSocket);
-				return;
-			}
-
-			if (parsed.type !== "auth_response" || typeof parsed.signature_hex !== "string") {
-				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "expected auth_response with signature_hex" } satisfies SubscribeAuthFrame));
-				webSocket.close(4003, "invalid auth response format");
-				this.pendingAuths.delete(webSocket);
-				return;
-			}
-
-			// Verify Ed25519 signature of the challenge
-			const sigBytes = fromHex(parsed.signature_hex);
-			if (!sigBytes || sigBytes.length !== 64) {
-				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid signature format" } satisfies SubscribeAuthFrame));
-				webSocket.close(4003, "invalid signature");
-				this.pendingAuths.delete(webSocket);
-				return;
-			}
-
-			const pkBytes = fromHex(pending.pubKeyHex);
-			if (!pkBytes || pkBytes.length !== 32) {
-				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid public key" } satisfies SubscribeAuthFrame));
-				webSocket.close(4003, "invalid public key");
-				this.pendingAuths.delete(webSocket);
-				return;
-			}
-
-			let verified = false;
-			try {
-				verified = verifyEd25519Signature(pkBytes, pending.challenge, sigBytes);
-			} catch {
-				verified = false;
-			}
-
-			if (!verified) {
-				webSocket.send(JSON.stringify({ type: "auth_failed", reason: "signature verification failed" } satisfies SubscribeAuthFrame));
-				webSocket.close(4003, "auth failed");
-				this.pendingAuths.delete(webSocket);
-				return;
-			}
-
-			// Auth succeeded — send auth_ok, then replay messages
-			this.pendingAuths.delete(webSocket);
-			webSocket.send(JSON.stringify({ type: "auth_ok" } satisfies SubscribeAuthFrame));
-
-			const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
-			const replay = this.retention.replay(pending.fromSeq, headSeq);
-			for (const msg of replay) {
-				webSocket.send(
-					JSON.stringify({
-						type: "message",
-						seq: msg.seq,
-						envelope_b64: msg.envelope_b64,
-					} satisfies RelayFrame),
-				);
-			}
-			webSocket.send(JSON.stringify({ type: "ready", head_seq: headSeq } satisfies RelayFrame));
+		// Check persisted auth state (survives DO hibernation)
+		const pending = this.getSocketState(webSocket);
+		if (!pending || pending.authenticated) {
 			return;
+		}
+
+		if (!pending.challengeHex || !pending.pubKeyHex || pending.fromSeq === undefined) {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "no pending challenge" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "no pending challenge");
+			return;
+		}
+
+		if (typeof pending.createdAt === "number" && Date.now() - pending.createdAt > AUTH_CHALLENGE_TTL_MS) {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "auth challenge expired" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "auth challenge expired");
+			return;
+		}
+
+		let parsed: { type?: string; signature_hex?: string };
+		try {
+			parsed = JSON.parse(message) as { type?: string; signature_hex?: string };
+		} catch {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid JSON" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "invalid auth response");
+			return;
+		}
+
+		if (parsed.type !== "auth_response" || typeof parsed.signature_hex !== "string") {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "expected auth_response with signature_hex" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "invalid auth response format");
+			return;
+		}
+
+		// Verify Ed25519 signature of the challenge
+		const sigBytes = fromHex(parsed.signature_hex);
+		if (!sigBytes || sigBytes.length !== 64) {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid signature format" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "invalid signature");
+			return;
+		}
+
+		const pkBytes = fromHex(pending.pubKeyHex);
+		const challengeBytes = fromHex(pending.challengeHex);
+		if (!pkBytes || pkBytes.length !== 32 || !challengeBytes || challengeBytes.length !== 32) {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "invalid public key" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "invalid public key");
+			return;
+		}
+
+		let verified = false;
+		try {
+			verified = verifyEd25519Signature(pkBytes, challengeBytes, sigBytes);
+		} catch {
+			verified = false;
+		}
+
+		if (!verified) {
+			webSocket.send(JSON.stringify({ type: "auth_failed", reason: "signature verification failed" } satisfies SubscribeAuthFrame));
+			this.clearSocketState(webSocket);
+			webSocket.close(4003, "auth failed");
+			return;
+		}
+
+		// Consume challenge before awaiting storage so duplicate auth_response frames cannot replay
+		const fromSeq = pending.fromSeq;
+		const convID = pending.convID;
+		this.setSocketState(webSocket, { authenticated: false, convID });
+
+		const headSeq = ((await this.ctx.storage.get<number>("next_seq")) ?? 0) as number;
+		webSocket.send(JSON.stringify({ type: "auth_ok" } satisfies SubscribeAuthFrame));
+		const replay = this.retention.replay(fromSeq, headSeq);
+		for (const msg of replay) {
+			webSocket.send(
+				JSON.stringify({
+					type: "message",
+					seq: msg.seq,
+					envelope_b64: msg.envelope_b64,
+				} satisfies RelayFrame),
+			);
+		}
+		webSocket.send(JSON.stringify({ type: "ready", head_seq: headSeq } satisfies RelayFrame));
+		this.setSocketState(webSocket, { authenticated: true, convID });
+	}
+
+	webSocketClose(webSocket: WebSocket, code = 1000, reason = ""): void {
+		this.clearSocketState(webSocket);
+		// Our compatibility date predates automatic Close-frame replies. Finish
+		// the handshake so one-shot receives and reconnects do not time out.
+		try {
+			const validCode =
+				(code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) ||
+				(code >= 3000 && code <= 4999);
+			const replyCode = validCode ? code : 1000;
+			const safeReason = new TextEncoder().encode(reason).byteLength <= 123 ? reason : "";
+			webSocket.close(replyCode, safeReason);
+		} catch {
+			// A failed connection may already be closed.
 		}
 	}
 
-	webSocketClose(webSocket: WebSocket): void {
-		this.pendingAuths.delete(webSocket);
-	}
-
 	webSocketError(webSocket: WebSocket): void {
-		this.pendingAuths.delete(webSocket);
+		this.clearSocketState(webSocket);
+		try {
+			webSocket.close(1011, "relay connection failed");
+		} catch {
+			// Ignore best-effort close failures.
+		}
 	}
 }
 
@@ -710,17 +893,22 @@ export default {
 			return new Response(null, { status: 204, headers: corsHeaders() });
 		}
 
-		// Rate limiting
-		const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-		const maxPerMin = parseInt(env.RATE_LIMIT_PER_MIN || "500", 10);
-		if (!rateLimiter.check(ip, maxPerMin)) {
-			return errorResponse("rate limit exceeded", 429);
-		}
-
 		try {
+			const url = new URL(request.url);
+			const path = url.pathname;
 
-		const url = new URL(request.url);
-		const path = url.pathname;
+			// Health check — exempt from client IP rate limiting so synthetic liveness
+			// probes do not fail under client IP churn.
+			if (request.method === "GET" && path === "/healthz") {
+				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
+			}
+
+			// Rate limiting
+			const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+			const maxPerMin = parseInt(env.RATE_LIMIT_PER_MIN || "500", 10);
+			if (!rateLimiter.check(ip, maxPerMin)) {
+				return errorResponse("rate limit exceeded", 429);
+			}
 
 			// DID Document — serves did:web:inbox.qntm.corpo.llc
 			// The relay Worker runs on inbox.qntm.corpo.llc, so the DID identifier
@@ -778,18 +966,19 @@ export default {
 				});
 			}
 
-			// Health check — no auth or DO access; subject to the isolate rate limit above.
-			if (request.method === "GET" && path === "/healthz") {
-				return jsonResponse({ status: "ok", ts: Date.now() }, 200);
-			}
-
-			const maxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
+			const parsedMaxSize = parseInt(env.MAX_ENVELOPE_SIZE || "65536", 10);
+			const maxSize = Number.isSafeInteger(parsedMaxSize) && parsedMaxSize > 0 ? parsedMaxSize : 65536;
+			const maxBase64Chars = Math.ceil(maxSize / 3) * 4;
+			const maxSendBodyBytes = maxBase64Chars + 4096;
 
 			if (request.method === "POST" && path === "/v1/send") {
 				let payload: SendPayload;
 				try {
-					payload = (await request.json()) as SendPayload;
-				} catch {
+					payload = await readBoundedJson<SendPayload>(request, maxSendBodyBytes);
+				} catch (err) {
+					if (err instanceof PayloadTooLargeError) {
+						return errorResponse("envelope too large", 413);
+					}
 					return errorResponse("invalid send payload", 400);
 				}
 
@@ -809,6 +998,10 @@ export default {
 				}
 				if (!isHexID(payload.conv_id, 32)) {
 					return errorResponse("invalid conv_id", 400);
+				}
+
+				if (payload.envelope_b64.length > maxBase64Chars + 64) {
+					return errorResponse("envelope too large", 413);
 				}
 
 				let envelopeBytes: Uint8Array;
@@ -864,7 +1057,7 @@ export default {
 				const id = env.CONVO_SEQ_DO.idFromName(convID);
 				const stub = env.CONVO_SEQ_DO.get(id);
 				const doUrl = pubKey
-					? `https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}&pub_key=${pubKey}`
+					? `https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}&pub_key=${encodeURIComponent(pubKey)}`
 					: `https://convo-seq/subscribe?conv_id=${convID}&from_seq=${fromSeqRaw}`;
 				return stub.fetch(new Request(doUrl, request));
 			}
@@ -874,8 +1067,11 @@ export default {
 			if (request.method === "POST" && path === "/v1/announce/register") {
 				let payload: AnnounceRegisterPayload;
 				try {
-					payload = (await request.json()) as AnnounceRegisterPayload;
-				} catch {
+					payload = await readBoundedJson<AnnounceRegisterPayload>(request, MAX_CONTROL_JSON_BYTES);
+				} catch (err) {
+					if (err instanceof PayloadTooLargeError) {
+						return errorResponse("payload too large", 413);
+					}
 					return errorResponse("invalid register payload", 400);
 				}
 
@@ -896,7 +1092,8 @@ export default {
 				}
 
 				// Reject if channel already exists
-				if (!validEncodedSigningKey(payload.posting_pk)) return errorResponse("invalid posting key", 400);
+				const canonicalPosting = canonicalSigningKeyBase64URL(payload.posting_pk);
+				if (!canonicalPosting) return errorResponse("invalid posting key", 400);
 				const existing = await getAnnounceMeta(env, payload.conv_id);
 				if (existing) {
 					return errorResponse("announce channel already exists", 409);
@@ -905,15 +1102,16 @@ export default {
 				// Verify master key signature: SHA-256("qntm-announce-v1|register|{name}|{conv_id}|{posting_pk}")
 				const registerSignable = `${announceProto}|register|${payload.name}|${payload.conv_id}|${payload.posting_pk}`;
 				const registerValid = await verifyAnnounceSig(payload.master_pk, registerSignable, payload.sig);
-				if (!registerValid) {
+				const canonicalMaster = canonicalSigningKeyBase64URL(payload.master_pk);
+				if (!registerValid || !canonicalMaster) {
 					return errorResponse("invalid register signature", 403);
 				}
 
 				const meta: AnnounceChannelMeta = {
 					name: payload.name,
 					conv_id: payload.conv_id,
-					master_pk: payload.master_pk,
-					posting_pk: payload.posting_pk,
+					master_pk: canonicalMaster,
+					posting_pk: canonicalPosting,
 				};
 				const stub = env.CONVO_SEQ_DO.get(env.CONVO_SEQ_DO.idFromName(payload.conv_id));
 				return stub.fetch('https://convo-seq/announce/register', { method: 'POST', body: JSON.stringify(meta) });
@@ -922,8 +1120,11 @@ export default {
 			if (request.method === "POST" && path === "/v1/announce/rotate") {
 				let payload: AnnounceRotatePayload;
 				try {
-					payload = (await request.json()) as AnnounceRotatePayload;
-				} catch {
+					payload = await readBoundedJson<AnnounceRotatePayload>(request, MAX_CONTROL_JSON_BYTES);
+				} catch (err) {
+					if (err instanceof PayloadTooLargeError) {
+						return errorResponse("payload too large", 413);
+					}
 					return errorResponse("invalid rotate payload", 400);
 				}
 
@@ -943,13 +1144,15 @@ export default {
 				}
 
 				const rotateMeta = await getAnnounceMeta(env, payload.conv_id);
-				if (!validEncodedSigningKey(payload.new_posting_pk)) return errorResponse("invalid posting key", 400);
+				const canonicalNewPosting = canonicalSigningKeyBase64URL(payload.new_posting_pk);
+				if (!canonicalNewPosting) return errorResponse("invalid posting key", 400);
 				if (!rotateMeta) {
 					return errorResponse("announce channel not found", 404);
 				}
 
 				// Only the registered master key can rotate
-				if (payload.master_pk !== rotateMeta.master_pk) {
+				const canonicalMaster = canonicalSigningKeyBase64URL(payload.master_pk);
+				if (!canonicalMaster || canonicalMaster !== canonicalSigningKeyBase64URL(rotateMeta.master_pk)) {
 					return errorResponse("master key mismatch", 403);
 				}
 
@@ -959,7 +1162,8 @@ export default {
 					return errorResponse("invalid rotate signature", 403);
 				}
 
-				rotateMeta.posting_pk = payload.new_posting_pk;
+				rotateMeta.master_pk = canonicalMaster;
+				rotateMeta.posting_pk = canonicalNewPosting;
 				const stub = env.CONVO_SEQ_DO.get(env.CONVO_SEQ_DO.idFromName(payload.conv_id));
 				return stub.fetch('https://convo-seq/announce/rotate', { method: 'POST', body: JSON.stringify(rotateMeta) });
 			}
@@ -967,8 +1171,11 @@ export default {
 			if (request.method === "POST" && path === "/v1/announce/delete") {
 				let payload: AnnounceDeletePayload;
 				try {
-					payload = (await request.json()) as AnnounceDeletePayload;
-				} catch {
+					payload = await readBoundedJson<AnnounceDeletePayload>(request, MAX_CONTROL_JSON_BYTES);
+				} catch (err) {
+					if (err instanceof PayloadTooLargeError) {
+						return errorResponse("payload too large", 413);
+					}
 					return errorResponse("invalid delete payload", 400);
 				}
 
@@ -991,7 +1198,8 @@ export default {
 					return errorResponse("announce channel not found", 404);
 				}
 
-				if (payload.master_pk !== deleteMeta.master_pk) {
+				const canonicalMaster = canonicalSigningKeyBase64URL(payload.master_pk);
+				if (!canonicalMaster || canonicalMaster !== canonicalSigningKeyBase64URL(deleteMeta.master_pk)) {
 					return errorResponse("master key mismatch", 403);
 				}
 
@@ -1001,6 +1209,7 @@ export default {
 					return errorResponse("invalid delete signature", 403);
 				}
 
+				deleteMeta.master_pk = canonicalMaster;
 				const announceDOId = env.CONVO_SEQ_DO.idFromName(payload.conv_id);
 				const announceStub = env.CONVO_SEQ_DO.get(announceDOId);
 				return announceStub.fetch('https://convo-seq/announce/delete', { method: 'POST', body: JSON.stringify(deleteMeta) });
@@ -1013,7 +1222,7 @@ export default {
 				}
 
 				const infoMeta = await getAnnounceMeta(env, convID);
-				if (!infoMeta) {
+				if (!infoMeta || infoMeta.closed || infoMeta.legacy_unbound) {
 					return errorResponse("announce channel not found", 404);
 				}
 
@@ -1023,8 +1232,11 @@ export default {
 			if (request.method === "POST" && path === "/v1/receipt") {
 			let payload: ReadReceiptPayload;
 			try {
-				payload = (await request.json()) as ReadReceiptPayload;
-			} catch {
+				payload = await readBoundedJson<ReadReceiptPayload>(request, MAX_CONTROL_JSON_BYTES);
+			} catch (err) {
+				if (err instanceof PayloadTooLargeError) {
+					return errorResponse("payload too large", 413);
+				}
 				return errorResponse("invalid receipt payload", 400);
 			}
 

@@ -1,6 +1,7 @@
 import { MAX_RECEIPT_READERS, recordReceipt } from "./security-policy.js";
 
 const DEFAULT_TTL_SECONDS = 604800;
+export const DEFAULT_MAX_MESSAGES_PER_CHANNEL = 512;
 const MIGRATION_BATCH_SIZE = 64;
 export const STATS_KEY = "/__stats__/active_conversations";
 export const STATS_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -33,12 +34,25 @@ export function envelopeTTLSeconds(value: string): number {
 	return ttl;
 }
 
+export function maxMessagesPerChannel(value?: string): number {
+	if (!value) return DEFAULT_MAX_MESSAGES_PER_CHANNEL;
+	const limit = Number(value);
+	if (!Number.isSafeInteger(limit) || limit < 1) {
+		throw new Error("MAX_MESSAGES_PER_CHANNEL must be a positive integer");
+	}
+	return limit;
+}
+
 /** Expiry is assigned at publication, rather than extended by reads or receipts. */
 export class RelayRetention {
 	private initialized = false;
 	private migrationPending = false;
 
-	constructor(private storage: DurableObjectStorage, private ttl: number) {}
+	constructor(
+		private storage: DurableObjectStorage,
+		private ttl: number,
+		private maxMessages?: number,
+	) {}
 
 	/** Clear retained ciphertext without resetting the conversation sequence. */
 	clear(): void {
@@ -117,6 +131,26 @@ export class RelayRetention {
 		}
 	}
 
+	private pruneExcessMessages(nowSeconds: number): void {
+		if (this.maxMessages === undefined) return;
+		const count = this.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM messages").toArray()[0]?.n ?? 0;
+		if (count <= this.maxMessages) return;
+		this.storage.sql.exec("DELETE FROM messages WHERE expires_at <= ?", nowSeconds);
+		this.storage.sql.exec("DELETE FROM message_metadata WHERE expires_at <= ?", nowSeconds);
+		this.storage.sql.exec(
+			`DELETE FROM message_metadata WHERE seq IN (
+				SELECT seq FROM messages ORDER BY seq DESC LIMIT -1 OFFSET ?
+			)`,
+			this.maxMessages,
+		);
+		this.storage.sql.exec(
+			`DELETE FROM messages WHERE seq IN (
+				SELECT seq FROM messages ORDER BY seq DESC LIMIT -1 OFFSET ?
+			)`,
+			this.maxMessages,
+		);
+	}
+
 	async maintain(now = Date.now()): Promise<void> {
 		this.initialize();
 		this.migrationPending = await this.migrateLegacyMetadata();
@@ -124,6 +158,7 @@ export class RelayRetention {
 		this.storage.transactionSync(() => {
 			this.storage.sql.exec("DELETE FROM messages WHERE expires_at <= ?", nowSeconds);
 			this.storage.sql.exec("DELETE FROM message_metadata WHERE expires_at <= ?", nowSeconds);
+			this.pruneExcessMessages(nowSeconds);
 		});
 		await this.schedule(now);
 	}
@@ -136,11 +171,15 @@ export class RelayRetention {
 				"INSERT INTO messages (seq, envelope_b64, created_at, expires_at) VALUES (?, ?, ?, ?)",
 				seq, envelope, created, created + this.ttl,
 			);
-			if (msgID) this.storage.sql.exec(
-				`INSERT INTO message_metadata (msg_id, seq, expires_at) VALUES (?, ?, ?)
-				 ON CONFLICT(msg_id) DO UPDATE SET seq = excluded.seq, expires_at = excluded.expires_at`,
-				msgID, seq, created + this.ttl,
-			);
+			if (msgID) {
+				this.storage.sql.exec("DELETE FROM message_metadata WHERE msg_id = ? AND expires_at <= ?", msgID, created);
+				this.storage.sql.exec(
+					`INSERT INTO message_metadata (msg_id, seq, expires_at) VALUES (?, ?, ?)
+					 ON CONFLICT(msg_id) DO NOTHING`,
+					msgID, seq, created + this.ttl,
+				);
+			}
+			this.pruneExcessMessages(created);
 			onStored?.();
 		});
 		await this.schedule(now);
