@@ -91,9 +91,9 @@ qntm convo join <invite-link-or-token>
 
 ## Request guidance
 
-Use **Request guidance** in the web UI, `qntm guidance list` in the CLI, or the MCP `guidance_contacts` tool. Pin your own contacts for legal, moral/ethical, or law-enforcement questions. No addresses ship by default.
+Use **Request guidance** in the web UI, `qntm guidance list` in the CLI, or the MCP `guidance_contacts` tool. Each category (`legal`, `ethical`, and `law_enforcement`) includes an opt-in built-in Corpo destination (`corpo_legal`, `corpo_ethical`, `corpo_law_enforcement`) using recipient-sealed intake, alongside any contacts you pin locally.
 
-Requests show the recipient, conversation audience, and exact message before sending. Replies are advice, not authorization to act. See [Request guidance](docs/guidance.md) for local setup and the prepare/send workflow.
+Requests remain explicit and opt-in: review screens show the recipient key, conversation audience or Corpo Grok triage processing notice, and exact message before sending. Built-in Corpo requests seal your question and a dedicated follow-up invitation to the category recipient key so other public intake callers cannot read them. Replies are advice, not authorization to act. See [Request guidance](docs/guidance.md) and [sealed intake](docs/guidance-intake.md) for local setup and the prepare/send workflow.
 
 ## How It Works
 
@@ -188,7 +188,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **TypeScript lib** | ✅ | ✅ | ✅ | ✅ | Typed gateway/governance builders, authenticated-message verification, encrypted-message helpers, and history summaries. Hosts own review, persistence, subscriptions, and retries; see the [workflow guide](docs/typescript-gateway.md). |
 | **OpenClaw plugin** | ✅ | ✅ | ✅ | ✅ | Verified gateway context and optional native tools for admission, requests, votes, credentials and governance. Real OpenClaw 2026.9.3 journeys cover Python/browser/TypeScript interoperability, actual gateway execution, stale-review rejection, rekey, removal and crash recovery. |
 
-Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes qntm v0.6.2; terminal and native OpenClaw gateway actions require this release.
+Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes qntm v0.9.4; terminal and native OpenClaw gateway actions require v0.6.2 or later.
 
 ## Experimental charter registry
 
@@ -265,8 +265,10 @@ pip install 'qntm[mcp]'
 - [CLI command reference](docs/cli-reference.md)
 - [Continuous receive and agent hooks](docs/receive-hooks.md)
 - [Client/library parity](docs/client-parity.md)
-- [Request Guidance](docs/guidance.md) — locally pinned contacts, message review, and agent tools
+- [Request Guidance](docs/guidance.md) — built-in Corpo sealed-intake destinations, locally pinned contacts, message review, and agent tools
 - [Client Safety Audit](docs/audits/2026-09-07-client-safety.md) — documentation, safety boundaries, and agent UX findings
+- [Charter Release Audit](docs/audits/2026-10-30-charter-release-audit.md) — charter, gateway, relay, and client hardening review
+- [Full-Stack Audit (Nov 2026)](docs/audits/2026-11-12-full-stack-audit.md) — v0.9.4 security, correctness, and hygiene audit
 
 - [MCP Server](docs/mcp-server.md) — use qntm with Claude Desktop, Cursor, any MCP client
 - [Getting Started](docs/getting-started.md) — setup, identities, invites, messaging

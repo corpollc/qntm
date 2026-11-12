@@ -90,7 +90,7 @@ msgs = qntm(["recv", CONV_ID])["data"]["messages"]
 
 ## Experimental charter library
 
-Unreleased: the opt-in `qntm.charter` API supports the v0.2 draft independently of messaging. This example self-certifies a charter and verifies a namespaced statement offline:
+Since v0.6.2, the opt-in `qntm.charter` API supports the v0.2 draft independently of messaging. This example self-certifies a charter and verifies a namespaced statement offline:
 
 ```python
 from qntm import generate_identity

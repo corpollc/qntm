@@ -2,9 +2,9 @@
 
 This optional qntm client extension carries file bytes using existing QSP-1
 signed encrypted envelopes and the relay's `/v1/send` and `/v1/subscribe` paths.
-It requires compatible TypeScript/Python client builds; older clients may display
-the `blobref` descriptor but cannot download the file. This document and source
-implementation do not constitute a published SDK release.
+It shipped in **v0.6.3** across the TypeScript (`@corpollc/qntm`) and Python
+(`qntm`) SDKs; older clients (`< v0.6.3`) may display the `blobref` descriptor
+but cannot download the file.
 
 File parts use a fresh standard **direct** invitation and separate random relay
 channel for each attachment. Only its descriptor enters the parent conversation;
@@ -104,6 +104,6 @@ storage. If parts have expired or been pruned, ask the sender to resend the
 original file as a new attachment. Rotating group keys does not erase old files.
 
 No relay deployment is required. The TypeScript attachment export, bounded
-receive support, and equivalent Python attachment module must ship together.
-Until published versions include them, applications must pin reviewed local
-artifacts with source provenance and report that release dependency explicitly.
+receive support, and equivalent Python attachment module shipped together in
+**v0.6.3** (and remain compatible through **v0.9.4**). Applications that send or
+receive attachments must depend on `@corpollc/qntm >= 0.6.3` or `qntm >= 0.6.3`.

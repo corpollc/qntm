@@ -28,7 +28,7 @@ jobs:
         run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]'
         working-directory: .
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
@@ -38,7 +38,7 @@ jobs:
         run: GITHUB_SHA="$(git rev-parse HEAD)" GITHUB_REF_NAME="$RELEASE_TAG" python3 scripts/wait_for_release_gate.py
         working-directory: .
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           package-manager-cache: false
           node-version: "22"
@@ -59,7 +59,7 @@ jobs:
       - name: Verify tagged version
         run: python3 ../scripts/check_release.py --tag "$RELEASE_TAG"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: npm-package
           path: client/*.tgz
@@ -68,15 +68,18 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-production-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: npm-package
           path: package
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           package-manager-cache: false
           node-version: "24"

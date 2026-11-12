@@ -74,9 +74,9 @@ The gateway service processes subscription envelopes only in its current epoch. 
 
 The terminal UI and OpenClaw now provide reviewed gateway actions (see [terminal help](../ui/tui/README.md) and [native gateway tools](../openclaw-qntm/README.md#optional-gateway-tools)). These helpers do not install host-specific tools or grant an agent permission to invoke them.
 
-## Maintain a local authenticated session (unreleased)
+## Maintain a local authenticated session
 
-`createGatewaySession(conversation, knownPublicKeys)` seeds a portable state reducer from the invite and known local participants. `receiveConversationEvent(envelope, conversation, identity, state)` authenticates each envelope and returns the next conversation keys, participant roster, verified gateway event, display text, and session state. Pass envelopes in relay order. Persist its returned conversation and state together with your receive cursor before acknowledging or dispatching the event. Invalid input throws without changing the previous state; hosts must distinguish protocol rejection from persistence failure.
+Since v0.6.2, `createGatewaySession(conversation, knownPublicKeys)` seeds a portable state reducer from the invite and known local participants. `receiveConversationEvent(envelope, conversation, identity, state)` authenticates each envelope and returns the next conversation keys, participant roster, verified gateway event, display text, and session state. Pass envelopes in relay order. Persist its returned conversation and state together with your receive cursor before acknowledging or dispatching the event. Invalid input throws without changing the previous state; hosts must distinguish protocol rejection from persistence failure.
 
 The reducer verifies signed gateway invitation/acceptance, request and vote signatures, gateway-only terminal records, and gateway-authored membership/rekey controls once accepted. Before admission, ordinary signed chat can discover participants; group controls require a known participant. An exact previously verified envelope returns `duplicate: true` with no actionable event, including replay of a rekey after a crash. Conflicting message IDs and wrong epochs are rejected. Live expiry checks remain enabled.
 

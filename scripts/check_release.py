@@ -31,6 +31,10 @@ def main():
             check(f'{package}/{name}', data['version'])
             if 'packages' in data:
                 check(f'{package} lock root', data['packages']['']['version'])
+    check(
+        'channel/.claude-plugin/plugin.json',
+        json.loads((ROOT / 'channel/.claude-plugin/plugin.json').read_text())['version'],
+    )
     for path in ROOT.glob('**/package-lock.json'):
         if any(part in ['node_modules', 'tmp', '.venv'] for part in path.parts):
             continue

@@ -9,6 +9,7 @@ This document describes the boundaries of the current implementation. Encryption
 | Relay | Cloudflare Worker, KV, and Durable Object SQLite | Encrypted envelopes, sequence state, receipt and network metadata |
 | Gateway | Cloudflare Worker and Durable Object | Conversation keys, API credentials, approval state |
 | Clients | Local machine or browser | Identity private keys, conversation keys, plaintext history, invite tokens, local guidance pins |
+| Corpo guidance intake (opt-in) | Public intake relay channel + Corpo listener / Grok triage | Outer sender identity, timing, and size on the public intake channel; decrypted question, context, and private follow-up invite inside Corpo's operator and Grok triage boundary |
 | Invite links | Wherever shared | Bearer secrets that derive initial conversation keys |
 
 ## Relay visibility
@@ -71,7 +72,11 @@ An invite token or retained old key can continue to expose earlier ciphertext. C
 
 ## Guidance and agent instructions
 
-Guidance contacts are local operator choices. Pins bind a recipient key to a conversation and relay; they do not certify credentials, jurisdiction, independence, or institutional authority. The entire conversation audience can read a request, including unknown invite holders and any gateway.
+Guidance supports two distinct destination models, both requiring explicit prepare/review/send action:
+
+- **Operator-pinned contacts (`guidance_contacts.json`):** Local operator choices binding a label and category to a recipient key ID, an existing conversation, and a relay URL. Pins do not certify credentials, jurisdiction, independence, or institutional authority. Requests are sent as ordinary conversation messages: the entire conversation audience can read them, including unknown invite holders and any promoted gateway.
+- **Built-in Corpo intake providers (`guidance_providers.json` / `CORPO_GUIDANCE_PROVIDERS`):** Shipped since v0.9.4 for `corpo_legal`, `corpo_ethical`, and `corpo_law_enforcement` on `https://inbox.qntm.corpo.llc`. Each request generates and locally retains a dedicated per-request direct reply conversation (`reply_invite`, bound to the requester's signing key), then seals `{domain, category, recipient_key_id, request_id, reply_invite, question, context}` to the category recipient's pinned public key via qntm's authenticated NaCl box (`guidance.sealed.v1`) before posting to that category's public intake conversation. Because the outer intake invitation is public, any holder of the public intake invite can decrypt the outer QSP envelope and observe the requester's `sender_ik_pk` / `sender_kid`, `guidance.sealed.v1` body type, submission timing, and approximate payload size, while they cannot decrypt the inner NaCl-boxed question, context, or private follow-up invitation. Static-key NaCl box encryption does not provide forward secrecy if either identity private key is later compromised.
+- **Downstream Corpo operator and automated triage boundary:** Corpo's intake listener decrypts `guidance.sealed.v1` submissions and sends the submitted `question` and `context` to **Grok** for automated triage and summarization for the Corpo team; any follow-up occurs in the dedicated per-request direct conversation rather than the public intake channel. Selecting a built-in `corpo_*` destination places the submitted text, sender identity, and follow-up channel inside Corpo's operator custody and Grok's external model-processing trust boundary, with no legal privilege, confidentiality guarantee, emergency handling, or response SLA. See [sealed intake](guidance-intake.md).
 
 Preparation does not send a message or attach history. The send path checks that the reviewed content and locally known destination state still match. That check is not a live membership refresh. A review token is a content binding, not proof of human approval or a single-use permission. The host must enforce outbound authorization and protect local configuration.
 
