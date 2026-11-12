@@ -3,10 +3,11 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   keyIDFromPublicKey, base64UrlEncode, base64UrlDecode as decodeBase64Url,
   DropboxClient, deserializeEnvelope, decryptMessage,
-  createMessage, serializeEnvelope, defaultTTL, lookupThreshold,
+  createMessage, serializeEnvelope, defaultTTL, lookupThresholdForTarget,
   verifyRequest, verifyApproval, hashRequest, computePayloadHash,
   verifyProposal, hashProposal, verifyGovApproval,
   createGroupAddBody, createGroupRemoveBody, createGroupRekeyBody, QSP1Suite, isValidEd25519PublicKey,
+  GatewayValidationError, parseGatewayBody,
 } from '@corpollc/qntm';
 import type { Conversation, ConversationKeys, DropboxSubscription, Identity, GovProposalSignable } from '@corpollc/qntm';
 import type {
@@ -20,7 +21,6 @@ import { scanRequestApprovals, findExecutableRequests } from './scan.js';
 import { processSecret, importVaultKey, isExpired } from './vault.js';
 import { executeRequest } from './execute.js';
 
-class GatewayValidationError extends Error {}
 function base64UrlDecode(value: string): Uint8Array {
   try { return decodeBase64Url(value); } catch { throw new GatewayValidationError('Invalid base64url field'); }
 }
@@ -270,7 +270,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       if (active?.gate_promoted) {
         await this.recover();
         this.ensureRelaySubscription(active);
-        await this.storage.setAlarm(Date.now() + this.pollIntervalMs());
+        await this.scheduleNextMaintenance();
       }
       return response;
     });
@@ -287,8 +287,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
     await finishAcceptance(this.storage, this.env.DROPBOX_URL);
     await this.recover();
     const initialState = await this.storage.get<ConversationState>('conv_state');
-    if (!initialState) return;
+    if (!initialState) {
+      await this.scheduleNextMaintenance();
+      return;
+    }
 
+    let maintenanceFailed = false;
     try {
       this.ensureRelaySubscription(initialState);
       await this.flushPublications();
@@ -299,15 +303,83 @@ export class GatewayConversationDO extends DurableObject<Env> {
       const currentState = await this.storage.get<ConversationState>('conv_state');
       if (!currentState) return;
 
-      // Sweep expired secrets every poll cycle
+      // Sweep expired secrets when scheduled
       if (currentState.gate_promoted) {
         await this.sweepExpiredSecrets(currentState);
         // Delivery recovery may unblock an already approved request even when
         // no further conversation traffic arrives.
         await this.checkAndExecute(currentState);
       }
+    } catch (error) {
+      maintenanceFailed = true;
+      throw error;
     } finally {
-      await this.storage.setAlarm(Date.now() + this.pollIntervalMs());
+      if (maintenanceFailed) {
+        await this.storage.setAlarm(Date.now() + this.pollIntervalMs());
+      } else {
+        await this.scheduleNextMaintenance();
+      }
+    }
+  }
+
+  private async scheduleNextMaintenance(): Promise<void> {
+    const now = Date.now();
+    const active = await this.storage.get<ConversationState>('conv_state');
+    if (!active?.gate_promoted) {
+      const handshake = await this.storage.get<{
+        invitation: { expires_at: number };
+        state?: unknown;
+        acceptance?: string;
+      }>('handshake');
+      if (handshake?.state && handshake?.acceptance) {
+        await this.storage.setAlarm(now + this.pollIntervalMs());
+      } else if (handshake && handshake.invitation.expires_at * 1000 > now) {
+        await this.storage.setAlarm(handshake.invitation.expires_at * 1000);
+      }
+      return;
+    }
+
+    let nextAlarm: number | undefined;
+    const consider = (ts: number) => {
+      if (Number.isFinite(ts) && (nextAlarm === undefined || ts < nextAlarm)) {
+        nextAlarm = ts;
+      }
+    };
+
+    if (!this.relaySubscription) {
+      consider(now + this.pollIntervalMs());
+    }
+
+    const outbox = await this.storage.get<unknown[]>('publication_outbox');
+    if (outbox && outbox.length > 0) {
+      consider(now + this.pollIntervalMs());
+    }
+
+    const vaultEntries = await this.storage.list<VaultEntry>({ prefix: 'vault:' });
+    for (const [, entry] of vaultEntries) {
+      if (entry.expires_at) {
+        const exp = Date.parse(entry.expires_at);
+        if (Number.isFinite(exp)) {
+          consider(Math.max(now + 1000, exp));
+        }
+      }
+    }
+
+    const messages = await this.loadGateMessages();
+    const executable = findExecutableRequests(messages, active.kid, active.rules, active.conv_id);
+    for (const scan of executable) {
+      if (!scan.request) continue;
+      if (await this.storage.get(`wal:${scan.request_id}`)) continue;
+      const vaultEntry = vaultEntries.get(`vault:${scan.request.target_service}`);
+      if (vaultEntry && !isExpired(vaultEntry, now)) {
+        consider(now + this.pollIntervalMs());
+      }
+    }
+
+    if (nextAlarm !== undefined) {
+      await this.storage.setAlarm(nextAlarm);
+    } else if (typeof (this.storage as { deleteAlarm?: () => Promise<void> }).deleteAlarm === 'function') {
+      await this.storage.deleteAlarm();
     }
   }
 
@@ -371,6 +443,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     await this.flushPublications();
     const latest = await this.storage.get<ConversationState>('conv_state');
     if (processed && latest?.gate_promoted) await this.checkAndExecute(latest);
+    await this.scheduleNextMaintenance();
   }
 
   /**
@@ -507,6 +580,15 @@ export class GatewayConversationDO extends DurableObject<Env> {
       throw new GatewayValidationError('gate.request rejected: sender is not a participant');
     }
 
+    // Validate canonical gate.request wire shape, uppercase verb, non-SSRF target_url, and endpoint binding
+    parseGatewayBody('gate.request', bodyStr);
+
+    // Reject duplicate request_id so workflow state is never ambiguous
+    const existingMessages = await this.loadGateMessages();
+    if (existingMessages.some(m => m.type === 'gate.request' && m.request_id === msg.request_id)) {
+      throw new GatewayValidationError('gate.request rejected: duplicate request_id');
+    }
+
     // qntm-3gde: Verify the Ed25519 request signature against the authenticated sender's public key
     const signable = {
       ...(msg.gateway_kid ? { gateway_kid: msg.gateway_kid } : {}),
@@ -531,8 +613,8 @@ export class GatewayConversationDO extends DurableObject<Env> {
       throw new GatewayValidationError(`gate.request rejected: required_approvals ${msg.required_approvals} below promotion floor ${convState.promotion_floor}`);
     }
 
-    // Check required_approvals >= applicable rule threshold
-    const rule = lookupThreshold(convState.rules, msg.target_service, msg.target_endpoint, msg.verb);
+    // Check required_approvals >= applicable rule threshold (evaluated across both endpoint and URL pathname)
+    const rule = lookupThresholdForTarget(convState.rules, msg.target_service, msg.target_endpoint, msg.verb, msg.target_url);
     if (rule && msg.required_approvals < rule.m) {
       throw new GatewayValidationError(`gate.request rejected: required_approvals ${msg.required_approvals} below rule threshold ${rule.m}`);
     }
@@ -641,6 +723,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
       throw new GatewayValidationError('gate.disapproval rejected: sender is not a participant');
     }
 
+    const messages = await this.loadGateMessages();
+    const reqStored = messages.find(m => m.type === 'gate.request' && m.request_id === msg.request_id && m.body);
+    if (!reqStored?.body) {
+      throw new GatewayValidationError('gate.disapproval rejected: referenced request not found');
+    }
+
     await this.storeGateMessage({
       seq: ++this.messageSeq,
       type: 'gate.disapproval',
@@ -688,6 +776,10 @@ export class GatewayConversationDO extends DurableObject<Env> {
         typeof msg.header_name !== 'string' || typeof msg.header_template !== 'string' || typeof msg.encrypted_blob !== 'string') {
       throw new GatewayValidationError('Invalid secret fields');
     }
+    const parsedSecret = parseGatewayBody('gate.secret', bodyStr) as GateSecretMessage;
+    if (parsedSecret.sender_kid !== senderKidStr) {
+      throw new GatewayValidationError('gate.secret rejected: sender_kid does not match authenticated sender');
+    }
 
     const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
     const gatewayPrivateKey = base64UrlDecode(convState.private_key);
@@ -695,7 +787,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
     // senderPublicKey is the sender's 32-byte Ed25519 public key (sender_ik_pk)
     // The openSecret function handles Ed25519→X25519 conversion internally
     let entry: VaultEntry;
-    try { entry = await processSecret(msg, gatewayPrivateKey, senderPublicKey, vaultKey, createdAt); }
+    try { entry = await processSecret({ ...msg, allowed_origins: parsedSecret.allowed_origins }, gatewayPrivateKey, senderPublicKey, vaultKey, createdAt); }
     catch { throw new GatewayValidationError('Invalid sealed credential'); }
 
     // Store in vault (keyed by service for lookup)
@@ -759,7 +851,7 @@ export class GatewayConversationDO extends DurableObject<Env> {
       if (!scan.request) continue;
       if (JSON.stringify([...scan.request.eligible_signer_kids].sort()) !== JSON.stringify(Object.keys(convState.participants).sort())) continue;
       if (await this.storage.get(`wal:${scan.request_id}`)) continue;
-      const rule = lookupThreshold(convState.rules, scan.request.target_service, scan.request.target_endpoint, scan.request.verb);
+      const rule = lookupThresholdForTarget(convState.rules, scan.request.target_service, scan.request.target_endpoint, scan.request.verb, scan.request.target_url);
       requirePositiveInteger(convState.promotion_floor, 'stored promotion floor');
       if (rule) requirePositiveInteger(rule.m, 'stored rule threshold');
       if (scan.approvals < Math.max(scan.threshold, convState.promotion_floor, rule?.m ?? 1)) continue;
@@ -784,9 +876,34 @@ export class GatewayConversationDO extends DurableObject<Env> {
         started_at: new Date().toISOString(),
       });
 
-      // Execute the HTTP request
+      // Execute the HTTP request (catching unexpected fetch/redirect/origin throws so relay WS never crashes)
       const vaultKey = await importVaultKey(this.env.GATE_VAULT_KEY);
-      const result = await executeRequest(scan.request, vaultEntry, vaultKey);
+      let result: Awaited<ReturnType<typeof executeRequest>>;
+      try {
+        result = await executeRequest(scan.request, vaultEntry, vaultKey);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Gateway request execution failed';
+        await this.atomic(async () => {
+          const convIdBytes = hexToBytes(convState.conv_id);
+          const conv = this.buildConversation(convState, convIdBytes);
+          const identity = this.buildIdentity(convState);
+          const resultBody = JSON.stringify({
+            type: 'gate.result',
+            gateway_kid: convState.kid,
+            request_id: scan.request_id,
+            status_code: 502,
+            content_type: 'text/plain',
+            body: errorMessage.slice(0, 1024),
+          });
+          const resultEnv = createMessage(
+            identity, conv, 'gate.result',
+            new TextEncoder().encode(resultBody), undefined, defaultTTL(),
+          );
+          await this.queuePublication(convState.conv_id, serializeEnvelope(resultEnv));
+        });
+        await this.flushPublications();
+        continue;
+      }
 
       // Commit known completion and exact result envelopes together. A retry
       // publishes this outbox only; it never repeats the external operation.
@@ -887,6 +1004,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
       );
     }
 
+    // Reject duplicate proposal_id so workflow state is never ambiguous
+    const existingProposals = await this.loadGovProposals();
+    if (existingProposals.some(p => p.type === 'gov.propose' && p.proposal_id === msg.proposal_id)) {
+      throw new GatewayValidationError('gov.propose rejected: duplicate proposal_id');
+    }
+
     // Store the proposal
     await this.storeGovProposal({
       seq: ++this.messageSeq,
@@ -896,6 +1019,9 @@ export class GatewayConversationDO extends DurableObject<Env> {
       signature: msg.signature,
       body: bodyStr,
     });
+
+    // Check if threshold is already met (e.g. N=1 conversations where proposer quorum = 1)
+    await this.checkAndApplyProposal(convState, msg.proposal_id);
   }
 
   private async handleGovApprove(bodyStr: string, authenticatedKid: string, senderPublicKey: Uint8Array): Promise<void> {
@@ -969,6 +1095,12 @@ export class GatewayConversationDO extends DurableObject<Env> {
     assertConversationID('gov.disapprove', msg.conv_id, convState);
     if (!convState.participants[authenticatedKid]) {
       throw new GatewayValidationError('gov.disapprove rejected: sender is not a participant');
+    }
+
+    const proposals = await this.loadGovProposals();
+    const proposalStored = proposals.find(p => p.type === 'gov.propose' && p.proposal_id === msg.proposal_id && p.body);
+    if (!proposalStored?.body) {
+      throw new GatewayValidationError('gov.disapprove rejected: referenced proposal not found');
     }
 
     await this.storeGovProposal({

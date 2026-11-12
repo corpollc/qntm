@@ -13,6 +13,7 @@ export interface GroupControlState {
   roster?: string; // base64url canonical CBOR snapshot
   needsRekey: boolean;
   removed: boolean;
+  recoveryRequired?: boolean;
 }
 const requireControl = (ok: unknown, error: string): void => { if (!ok) throw new Error(error); };
 
@@ -20,9 +21,11 @@ export function applyAuthenticatedGroupControl(
   envelope: OuterEnvelope, message: Message, conversation: Conversation, identity: Identity,
   previous: GroupControlState, knownKeys: Record<string, string>, gatewayPublicKey?: Uint8Array,
 ): { conversation: Conversation; state: GroupControlState; participants: Record<string, string> } {
+  requireControl(!previous.recoveryRequired, 'Conversation rekey failed authentication; recovery required');
   const delegated = gatewayPublicKey && uint8ArrayEquals(message.inner.sender_ik_pk, gatewayPublicKey);
   requireControl(message.verified && (conversation.type === 'group' || delegated), 'Not an authorized group control');
   requireControl(envelope.conv_epoch === conversation.currentEpoch, 'Group control epoch differs from current conversation');
+  requireControl(message.inner.body instanceof Uint8Array, 'Invalid group control body');
   const sender = message.inner.sender_kid, senderId = base64UrlEncode(sender), type = message.inner.body_type;
   const state = { ...previous }, roster = new GroupState();
   if (state.roster) roster.applyGenesis(parseGroupGenesisBody(base64UrlDecode(state.roster)));

@@ -3,8 +3,43 @@ import type { CharterStatement, CharterRecord } from './core.js';
 import { verifyCharterHeads, verifyCharterChainResponse, verifyCharterReceipt, verifyCharterConsistency } from './proofs.js';
 import type { CharterHeads, CharterTrust, CharterChainResponse, CharterReceipt, CharterLogEntry } from './proofs.js';
 
+export const MAX_CHARTER_RESPONSE_BYTES = 32 * 1024 * 1024;
+
 export class CharterRegistryError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name='CharterRegistryError'; }
+}
+
+async function readBoundedResponseText(response: Response, maxBytes = MAX_CHARTER_RESPONSE_BYTES): Promise<string> {
+  const declaredLength = response.headers.get('Content-Length');
+  if (declaredLength !== null && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error('Charter response exceeds 32 MiB limit');
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error('Charter response exceeds 32 MiB limit');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
 /** Transport for the reference Go registrar. Pins are caller-supplied, never silently learned from /info. */
@@ -19,7 +54,7 @@ export class CharterRegistryClient {
   }
   private async request<T>(path: string, method='GET', body?: unknown): Promise<T> {
     const response=await fetch(this.base+path,{method,headers:body===undefined ? {} : {'Content-Type':'application/json'},...(body===undefined?{}:{body:canonicalizeCharterJson(body)}),redirect:'error',signal:AbortSignal.timeout(30_000)});
-    const raw=await response.text();
+    const raw=await readBoundedResponseText(response);
     const value=parseCharterJson(raw);
     if (!response.ok) {
       const e=value as {error?:string;message?:string};throw new CharterRegistryError(response.status,e?.error??'http_error',e?.message??`Registry HTTP ${response.status}`);

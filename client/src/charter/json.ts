@@ -99,9 +99,13 @@ export function parseCharterJson(text: string): CharterJson {
     }
     const match = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(text.slice(position));
     if (!match) return fail();
-    position += match[0].length;
-    const result = JSON.parse(match[0]) as CharterJson;
-    if (typeof result === 'number' && !Number.isFinite(result)) return fail();
+    const token = match[0];
+    position += token.length;
+    const result = JSON.parse(token) as CharterJson;
+    if (typeof result === 'number') {
+      if (!Number.isFinite(result)) return fail();
+      if (/^-?(?:0|[1-9][0-9]*)$/.test(token) && !Number.isSafeInteger(result)) return fail();
+    }
     return result;
   };
   const result = value(0); ws();

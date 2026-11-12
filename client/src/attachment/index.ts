@@ -47,6 +47,18 @@ export interface AttachmentTransport {
   receiveMessages(conversationId: Uint8Array, fromSequence?: number, maxMessages?: number, timeoutMs?: number): Promise<{messages: Uint8Array[]}>;
 }
 
+const UNSAFE_FILENAME_CHARS_RE = /[\u0080-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069:]/g;
+const WINDOWS_RESERVED_DEVICE_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+
+/** Strip bidi overrides, C1 controls, and ':', and prefix Windows reserved device basenames with '_'. */
+export function sanitizeAttachmentFilename(name: string): string {
+  if (typeof name !== 'string') fail('Invalid attachment filename');
+  let sanitized = name.replace(UNSAFE_FILENAME_CHARS_RE, '');
+  if (!sanitized || sanitized === '.' || sanitized === '..') fail('Invalid attachment filename');
+  if (WINDOWS_RESERVED_DEVICE_RE.test(sanitized)) sanitized = `_${sanitized}`;
+  return sanitized;
+}
+
 /** Context MUST come from the authenticated parent QSP envelope and verified sender. */
 export function parseAttachment(body: Uint8Array, context: AttachmentContext): AttachmentDescriptor {
   if (!(body instanceof Uint8Array) || body.length > MAX_ATTACHMENT_DESCRIPTOR_BYTES) fail();
@@ -54,6 +66,8 @@ export function parseAttachment(body: Uint8Array, context: AttachmentContext): A
   try { value = JSON.parse(decoder.decode(body)); } catch { return fail(); }
   record(value, ['type','name','media_type','size','sha256','parent_conv_id','parent_epoch','invite_token','expires_ts','parts']);
   if (value.type !== ATTACHMENT_TYPE) fail('Unsupported attachment format');
+  label(value.name,255); if (/[\\/]/.test(value.name) || value.name === '.' || value.name === '..') fail('Invalid attachment filename');
+  value.name = sanitizeAttachmentFilename(value.name);
   label(value.name,255); if (/[\\/]/.test(value.name) || value.name === '.' || value.name === '..') fail('Invalid attachment filename');
   label(value.media_type,120); if (!/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(value.media_type)) fail('Invalid attachment media type');
   integer(value.size,0,MAX_ATTACHMENT_BYTES); hexString(value.sha256,64); hexString(value.parent_conv_id,32);
@@ -74,6 +88,10 @@ export function parseAttachment(body: Uint8Array, context: AttachmentContext): A
 /** Encrypt/sign all bytes offline. Persist the exact result before the first network write. */
 export function prepareAttachment(identity: Identity, parent: Conversation, bytes: Uint8Array, name: string, mediaType = 'application/octet-stream'): PreparedAttachment {
   if (!(bytes instanceof Uint8Array) || bytes.length > MAX_ATTACHMENT_BYTES) fail('Attachments are limited to 8 MiB');
+  if (typeof name !== 'string' || /[\\/]/.test(name) || name === '.' || name === '..') fail('Invalid attachment filename');
+  const safeName = sanitizeAttachmentFilename(name);
+  label(safeName, 255);
+  if (/[\\/]/.test(safeName) || safeName === '.' || safeName === '..') fail('Invalid attachment filename');
   const invite = createInvite(identity,'direct');
   const conversation = createConversation(invite,deriveConversationKeys(invite));
   const envelopes: Uint8Array[] = [];
@@ -86,7 +104,7 @@ export function prepareAttachment(identity: Identity, parent: Conversation, byte
     envelopes.push(wire); parts.push({message_id:hex(envelope.msg_id),sha256:hex(suite.hash(wire))});
     expiry = Math.min(expiry,envelope.expiry_ts);
   }
-  const descriptor: AttachmentDescriptor = {type:ATTACHMENT_TYPE,name,media_type:mediaType,size:bytes.length,sha256:hex(suite.hash(bytes)),parent_conv_id:hex(parent.id),parent_epoch:parent.currentEpoch,invite_token:inviteToToken(invite),expires_ts:expiry,parts};
+  const descriptor: AttachmentDescriptor = {type:ATTACHMENT_TYPE,name:safeName,media_type:mediaType,size:bytes.length,sha256:hex(suite.hash(bytes)),parent_conv_id:hex(parent.id),parent_epoch:parent.currentEpoch,invite_token:inviteToToken(invite),expires_ts:expiry,parts};
   const body = encoder.encode(JSON.stringify(descriptor));
   parseAttachment(body,{conversationId:parent.id,epoch:parent.currentEpoch,senderPublicKey:identity.publicKey});
   return {descriptor,body,envelopes};

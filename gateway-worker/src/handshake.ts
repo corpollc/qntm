@@ -77,7 +77,7 @@ export async function acceptInvitation(storage: DurableObjectStorage, relayUrl: 
     let invitationText: string;
     let invite: GatewayInviteBody;
     try {
-      const replay = await new DropboxClient(relayUrl).receiveMessages(conv.id, material.invitation_seq - 1);
+      const replay = await new DropboxClient(relayUrl).receiveMessages(conv.id, material.invitation_seq - 1, 1000, 15_000);
       const envelope = replay.messages.map(deserializeEnvelope).find(e => hex(e.msg_id) === material.invitation_msg_id);
       if (!envelope || envelope.conv_epoch !== material.conv_epoch) throw new Error('invitation not found');
       const message = decryptMessage(envelope, conv);
@@ -95,7 +95,11 @@ export async function acceptInvitation(storage: DurableObjectStorage, relayUrl: 
         invite.rules.some(r => typeof r.service !== 'string' || typeof r.endpoint !== 'string' || typeof r.verb !== 'string' || !Number.isSafeInteger(r.m) || r.m < invite.floor || r.m > entries.length)) throw new Error('invalid invitation policy');
       // Check again after relay IO. An unverified candidate never becomes conversation state.
       if (invite.conversation_type !== undefined && invite.conversation_type !== 'group' && invite.conversation_type !== 'direct') throw new Error('invalid conversation type');
-      if (invite.conversation_type === 'group' && (!invite.group_creator_kid || !Object.prototype.hasOwnProperty.call(invite.participants, invite.group_creator_kid))) throw new Error('missing group creator');
+      if (invite.group_creator_kid !== undefined && invite.conversation_type !== 'group') throw new Error('unexpected group creator');
+      if (invite.conversation_type === 'group') {
+        if (!invite.group_creator_kid || !Object.prototype.hasOwnProperty.call(invite.participants, invite.group_creator_kid)) throw new Error('missing group creator');
+        if (invite.group_creator_kid !== inviterKid) throw new Error('group promotion requires group creator');
+      }
       state.conversation_type = invite.conversation_type;
       state.group_creator_kid = invite.group_creator_kid;
       state.membership_authority = invite.conversation_type === 'direct' ||

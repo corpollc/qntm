@@ -4,6 +4,7 @@ import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import { marshalCanonical } from '../crypto/cbor.js';
 import { sealSecret } from '../crypto/naclbox.js';
 import { base64UrlDecode, base64UrlEncode, keyIDFromPublicKey } from '../identity/index.js';
+import { GroupState } from '../group/index.js';
 import type { Conversation, Identity } from '../types.js';
 
 export const GATE_INVITATION_TTL = 600;
@@ -69,13 +70,56 @@ export function validateGatewayIdentity(publicKey: string, kid: string): boolean
     return isValidEd25519PublicKey(pk) && base64UrlEncode(pk) === publicKey && base64UrlEncode(keyIDFromPublicKey(pk)) === kid;
   } catch { return false; }
 }
-export function createGatewayInviteBody(invite: GatewayInvitation, conv: Conversation, participants: Record<string, string>, floor: number): GatewayInviteBody {
+export interface CreateGatewayInviteOptions {
+  groupCreatorKid?: string | Uint8Array;
+  groupState?: GroupState;
+}
+function resolveGroupCreatorKid(
+  conv: Conversation,
+  participants: Record<string, string>,
+  options?: CreateGatewayInviteOptions | GroupState | string | Uint8Array,
+): string {
+  let raw: string | Uint8Array | null | undefined;
+  if (options instanceof GroupState) {
+    raw = options.creatorKeyID();
+  } else if (options instanceof Uint8Array || typeof options === 'string') {
+    raw = options;
+  } else if (options && typeof options === 'object') {
+    raw = options.groupCreatorKid ?? options.groupState?.creatorKeyID();
+  } else {
+    raw = conv.participants[0];
+  }
+  let creatorKid: string;
+  if (raw instanceof Uint8Array) {
+    if (raw.length !== 16) throw new Error('Invalid group creator key ID');
+    creatorKid = base64UrlEncode(raw);
+  } else if (typeof raw === 'string') {
+    let decoded: Uint8Array;
+    try { decoded = base64UrlDecode(raw); } catch { throw new Error('Invalid group creator key ID'); }
+    if (decoded.length !== 16 || base64UrlEncode(decoded) !== raw) throw new Error('Invalid group creator key ID');
+    creatorKid = raw;
+  } else {
+    throw new Error('Missing group creator key ID');
+  }
+  if (!Object.prototype.hasOwnProperty.call(participants, creatorKid)) {
+    throw new Error('Group creator must be a current participant');
+  }
+  return creatorKid;
+}
+export function createGatewayInviteBody(
+  invite: GatewayInvitation,
+  conv: Conversation,
+  participants: Record<string, string>,
+  floor: number,
+  options?: CreateGatewayInviteOptions | GroupState | string | Uint8Array,
+): GatewayInviteBody {
   if (conv.type !== 'group' && conv.type !== 'direct') throw new Error('Gateway requires a direct or group conversation');
   if (!validateGatewayIdentity(invite.gateway_public_key, invite.gateway_kid)) throw new Error('Invalid gateway identity');
   if (!Number.isSafeInteger(floor) || floor < 1 || floor > Object.keys(participants).length) throw new Error('Invalid gateway approval threshold');
+  const groupCreatorKid = conv.type === 'group' ? resolveGroupCreatorKid(conv, participants, options) : undefined;
   return { type: 'gate.promote', invitation_id: invite.invitation_id, conv_id: hex(conv.id),
     conversation_type: conv.type,
-    ...(conv.type === 'group' ? { group_creator_kid: base64UrlEncode(conv.participants[0]) } : {}),
+    ...(groupCreatorKid ? { group_creator_kid: groupCreatorKid } : {}),
     conv_epoch: conv.currentEpoch, gateway_kid: invite.gateway_kid, gateway_public_key: invite.gateway_public_key,
     expires_at: invite.expires_at, keys_hash: gatewayAccessHash(gatewayAccess(conv)), participants,
     rules: [{ service: '*', endpoint: '*', verb: '*', m: floor }], floor };

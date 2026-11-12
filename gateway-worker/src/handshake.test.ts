@@ -55,7 +55,7 @@ describe('signed gateway invitation and acceptance', () => {
     });
     expect((await acceptInvitation(f.storage, 'https://relay.test', f.request)).status).toBe(200);
     expect(await f.storage.get('conv_state')).toMatchObject({ gate_promoted: true, invitation_id: f.invitation.invitation_id, conv_epoch: 3, promotion_floor: 2 });
-    expect(f.receive).toHaveBeenCalledWith(f.conv.id, 6);
+    expect(f.receive).toHaveBeenCalledWith(f.conv.id, 6, 1000, 15_000);
   });
   it('persists one acceptance for retries after relay failure or process eviction', async () => {
     const f = await setup();
@@ -110,5 +110,39 @@ describe('signed gateway invitation and acceptance', () => {
     await finishAcceptance(f.storage, 'https://relay.test');
     expect(await f.storage.get('handshake')).toBeUndefined();
     expect(await f.storage.get('conv_state')).toBeUndefined();
+  });
+
+  it('P1-1: rejects group gateway promotion signed by a non-creator member', async () => {
+    const memory = new MemoryStorage();
+    const storage = memory as unknown as DurableObjectStorage;
+    const alice = generateIdentity();
+    const bob = generateIdentity();
+    const challenge = { invitation_id: 'c'.repeat(32), inviter_public_key: base64UrlEncode(bob.publicKey) };
+    const invitation = await (await createInvitation(storage, challenge)).json() as GatewayInvitation;
+    const conv: Conversation = {
+      id: new Uint8Array(16).fill(9),
+      type: 'group',
+      keys: { root: new Uint8Array(32), aeadKey: new Uint8Array(32).fill(1), nonceKey: new Uint8Array(32).fill(2) },
+      participants: [alice.keyID, bob.keyID],
+      currentEpoch: 0,
+      createdAt: new Date(),
+    };
+    const body = createGatewayInviteBody(
+      invitation,
+      conv,
+      {
+        [base64UrlEncode(alice.keyID)]: base64UrlEncode(alice.publicKey),
+        [base64UrlEncode(bob.keyID)]: base64UrlEncode(bob.publicKey),
+      },
+      2,
+      { groupCreatorKid: alice.keyID },
+    );
+    const envelope = createMessage(bob, conv, 'gate.promote', new TextEncoder().encode(JSON.stringify(body)), undefined, 3600);
+    vi.spyOn(DropboxClient.prototype, 'receiveMessages').mockResolvedValue({ messages: [serializeEnvelope(envelope)], sequence: 4 });
+    const post = vi.spyOn(DropboxClient.prototype, 'postMessage').mockResolvedValue(5);
+    const request = sealGatewayBootstrap(bob, invitation, conv, hex(envelope.msg_id), 4);
+    expect((await acceptInvitation(storage, 'https://relay.test', request)).status).toBe(403);
+    expect(await storage.get('conv_state')).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
   });
 });

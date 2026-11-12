@@ -3,7 +3,8 @@ import { sealSecret } from '../crypto/naclbox.js';
 import { createProposalBody, hashProposal, signGovApproval, verifyProposal } from '../governance/index.js';
 import type { GovProposalSignable, CreateProposalOptions } from '../governance/index.js';
 import type { Identity, GateSignable } from '../types.js';
-import { computePayloadHash, hashRequest, lookupThreshold, signApproval, signRequest, verifyRequest } from './index.js';
+import { computePayloadHash, hashRequest, lookupThresholdForTarget, signApproval, signRequest, verifyRequest } from './index.js';
+import { resolveServiceOrigins } from './origins.js';
 import {
   gatewayInteger, gatewayTime, parseGatewayBody, requireGateway, validateGatewayContext,
 } from './workflow-parse.js';
@@ -47,8 +48,14 @@ export function assertGatewayRoster(roster: string[], context: GatewayContext): 
   const current = Object.keys(context.participants);
   requireGateway(roster.length === current.length && new Set(roster).size === current.length && current.every(kid => roster.includes(kid)), 'Signer roster differs from current participants');
 }
-export function gatewayRequestThreshold(context: GatewayContext, request: Pick<GateRequestBody, 'target_service' | 'target_endpoint' | 'verb'>): number {
-  return Math.max(context.floor, lookupThreshold(context.rules, request.target_service, request.target_endpoint, request.verb)?.m ?? 1);
+export function gatewayRequestThreshold(
+  context: GatewayContext,
+  request: Pick<GateRequestBody, 'target_service' | 'target_endpoint' | 'verb'> & { target_url?: string },
+): number {
+  return Math.max(
+    context.floor,
+    lookupThresholdForTarget(context.rules, request.target_service, request.target_endpoint, request.verb, request.target_url)?.m ?? 1,
+  );
 }
 export function gatewayGovernanceQuorum(context: GatewayContext): number {
   validateGatewayContext(context);
@@ -130,6 +137,7 @@ export function createGateDisapprovalBody(identity: Identity, context: GatewayCo
 export interface CreateGateSecretOptions {
   service: string;
   value: string | Uint8Array;
+  allowedOrigins?: string[];
   headerName?: string;
   headerTemplate?: string;
   secretId?: string;
@@ -137,11 +145,13 @@ export interface CreateGateSecretOptions {
 }
 export function createGateSecretBody(identity: Identity, context: GatewayContext, options: CreateGateSecretOptions): GateSecretBody {
   const kid = gatewaySigner(identity, context);
+  const allowedOrigins = resolveServiceOrigins(options.service, options.allowedOrigins);
   const plaintext = typeof options.value === 'string' ? new TextEncoder().encode(options.value) : new Uint8Array(options.value);
   try {
     const sealed = sealSecret(identity.privateKey, base64UrlDecode(context.gateway.publicKey), plaintext);
     return validated({ type: 'gate.secret', gateway_kid: context.gateway.kid,
       secret_id: options.secretId ?? crypto.randomUUID(), service: options.service,
+      allowed_origins: allowedOrigins,
       header_name: options.headerName ?? 'Authorization', header_template: options.headerTemplate ?? 'Bearer {value}',
       encrypted_blob: base64UrlEncode(sealed), sender_kid: kid, ttl: options.ttl });
   } finally { plaintext.fill(0); }

@@ -157,6 +157,59 @@ export class GateError extends Error {
   }
 }
 
+function matchRuleEndpoint(pattern: string, endpoint: string): 'wildcard' | 'template' | 'exact' | null {
+  if (pattern === '' || pattern === '*') return 'wildcard';
+  if (pattern === endpoint) return 'exact';
+  if (!pattern.includes('{')) return null;
+
+  const parts = pattern.split(/(\{[^{}/]+\})/);
+  let hasTemplateParam = false;
+  let regexSource = '^';
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.startsWith('{') && part.endsWith('}') && part.length > 2 && !part.slice(1, -1).includes('/')) {
+      hasTemplateParam = true;
+      regexSource += '[^/]+';
+    } else {
+      if (part.includes('{') || part.includes('}')) return null;
+      regexSource += part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  if (!hasTemplateParam) return null;
+  regexSource += '$';
+  return new RegExp(regexSource).test(endpoint) ? 'template' : null;
+}
+
+function lookupThresholdScored(
+  rules: ThresholdRule[],
+  service: string,
+  endpoint: string,
+  verb: string,
+): { rule: ThresholdRule; score: number } | undefined {
+  // All specified fields must match. Specificity is service, exact endpoint,
+  // template endpoint, then verb (case-insensitive); the first rule wins ties.
+  let bestMatch: ThresholdRule | undefined;
+  let bestScore = -1;
+  const wildcard = (value: string) => value === '' || value === '*';
+  const normalizedVerb = verb.toUpperCase();
+  for (const rule of rules) {
+    if (!wildcard(rule.service) && rule.service !== service) continue;
+    const endpointMatch = matchRuleEndpoint(rule.endpoint, endpoint);
+    if (!endpointMatch) continue;
+    if (!wildcard(rule.verb) && rule.verb.toUpperCase() !== normalizedVerb) continue;
+    const endpointWeight = endpointMatch === 'wildcard' ? 0 : endpointMatch === 'template' ? 3 : 5;
+    const score = (wildcard(rule.service) ? 0 : 8) +
+      endpointWeight +
+      (wildcard(rule.verb) ? 0 : 1);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = rule;
+    }
+  }
+
+  return bestMatch ? { rule: bestMatch, score: bestScore } : undefined;
+}
+
 // Threshold matching (mirrors Go LookupThreshold)
 export function lookupThreshold(
   rules: ThresholdRule[],
@@ -164,28 +217,62 @@ export function lookupThreshold(
   endpoint: string,
   verb: string,
 ): ThresholdRule | undefined {
-  // All specified fields must match. Specificity is service, endpoint, then
-  // verb; the first rule wins ties. Empty strings are legacy wildcards.
-  let bestMatch: ThresholdRule | undefined;
-  let bestScore = -1;
-  const wildcard = (value: string) => value === '' || value === '*';
-  for (const rule of rules) {
-    if ((!wildcard(rule.service) && rule.service !== service) ||
-        (!wildcard(rule.endpoint) && rule.endpoint !== endpoint) ||
-        (!wildcard(rule.verb) && rule.verb !== verb)) continue;
-    const score = (wildcard(rule.service) ? 0 : 4) +
-      (wildcard(rule.endpoint) ? 0 : 2) + (wildcard(rule.verb) ? 0 : 1);
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = rule;
-    }
-  }
+  return lookupThresholdScored(rules, service, endpoint, verb)?.rule;
+}
 
-  return bestMatch;
+/**
+ * Evaluate threshold rules against both target_endpoint and target_url pathname
+ * so prefix-stripped target_endpoint values cannot evade full-pathname rules.
+ */
+export function lookupThresholdForTarget(
+  rules: ThresholdRule[],
+  service: string,
+  endpoint: string,
+  verb: string,
+  targetUrl?: string,
+): ThresholdRule | undefined {
+  const endpointMatch = lookupThresholdScored(rules, service, endpoint, verb);
+  if (!targetUrl) return endpointMatch?.rule;
+  let pathname: string | undefined;
+  try {
+    pathname = new URL(targetUrl).pathname;
+  } catch {
+    pathname = undefined;
+  }
+  if (!pathname || pathname === endpoint) return endpointMatch?.rule;
+  const pathnameMatch = lookupThresholdScored(rules, service, pathname, verb);
+  if (!pathnameMatch) return endpointMatch?.rule;
+  if (!endpointMatch) return pathnameMatch.rule;
+  if (pathnameMatch.score > endpointMatch.score) return pathnameMatch.rule;
+  if (endpointMatch.score > pathnameMatch.score) return endpointMatch.rule;
+  return pathnameMatch.rule.m > endpointMatch.rule.m ? pathnameMatch.rule : endpointMatch.rule;
 }
 
 // Placeholder regex matching {param}
 const placeholderRe = /\{([^}]+)\}/g;
+
+function encodeRecipePathSegment(key: string, val: string): string {
+  let decoded = val;
+  try {
+    decoded = decodeURIComponent(val);
+  } catch {
+    // Keep raw value if it contains literal '%' that is not percent-encoding
+  }
+  if (
+    val === '' ||
+    val === '.' ||
+    val === '..' ||
+    decoded === '.' ||
+    decoded === '..' ||
+    val.includes('\u0000') ||
+    decoded.includes('\u0000') ||
+    decoded.split('/').some(seg => seg === '.' || seg === '..') ||
+    decoded.split('\\').some(seg => seg === '.' || seg === '..')
+  ) {
+    throw new Error(`invalid path parameter "${key}"`);
+  }
+  return encodeURIComponent(val);
+}
 
 /**
  * resolveRecipe substitutes parameter placeholders in a recipe's endpoint and
@@ -226,24 +313,24 @@ export function resolveRecipe(
     }
   }
 
-  // Substitute {param} placeholders
+  // Substitute {param} placeholders with URL-encoded path segments
   const substitute = (s: string): string =>
     s.replace(placeholderRe, (match, key) => {
-      if (key in a) return a[key];
+      if (key in a) return encodeRecipePathSegment(key, a[key]);
       return match;
     });
 
   let endpoint = substitute(recipe.endpoint);
   let targetURL = substitute(recipe.target_url);
 
-  // Append query params to target URL
+  // Append URL-encoded query params to target URL
   const queryParts: string[] = [];
   if (recipe.query_params) {
     for (const p of recipe.query_params) {
       if (p.name in a) {
-        queryParts.push(`${p.name}=${a[p.name]}`);
+        queryParts.push(`${encodeURIComponent(p.name)}=${encodeURIComponent(a[p.name])}`);
       } else if (p.default) {
-        queryParts.push(`${p.name}=${p.default}`);
+        queryParts.push(`${encodeURIComponent(p.name)}=${encodeURIComponent(p.default)}`);
       }
     }
   }

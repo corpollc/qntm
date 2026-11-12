@@ -38,12 +38,23 @@ export type { GatewaySessionState, ConversationEvent } from './gate/session.js';
 export {
   signRequest, verifyRequest, signApproval, verifyApproval,
   hashRequest, computePayloadHash,
-  GateClient, GateError, lookupThreshold,
+  GateClient, GateError, lookupThreshold, lookupThresholdForTarget,
   GateMessageRequest, GateMessageApproval, GateMessageDisapproval,
   GateMessageExecuted, GateMessagePromote, GateMessageConfig,
   GateMessageSecret, GateMessageResult,
   resolveRecipe,
 } from './gate/index.js';
+export {
+  MAX_ALLOWED_ORIGINS,
+  KNOWN_SERVICE_ORIGINS,
+  isExplicitLoopbackHost,
+  isBlockedOrPrivateHost,
+  normalizeAllowedOrigin,
+  normalizeAllowedOriginsList,
+  resolveServiceOrigins,
+  validateGatewayTargetUrl,
+  pathnameMatchesEndpoint,
+} from './gate/origins.js';
 
 export {
   createGroupGenesisBody, parseGroupGenesisBody,
@@ -97,7 +108,7 @@ export { createReceiveEvent } from './receive/index.js';
 export type { ReceiveEvent, ReceivedMessage, ReceiveEventBody } from './receive/index.js';
 
 export { ATTACHMENT_TYPE, ATTACHMENT_PART_BYTES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_PARTS,
-  MAX_ATTACHMENT_DESCRIPTOR_BYTES, parseAttachment, prepareAttachment, assembleAttachment,
+  MAX_ATTACHMENT_DESCRIPTOR_BYTES, sanitizeAttachmentFilename, parseAttachment, prepareAttachment, assembleAttachment,
   uploadAttachment, downloadAttachment } from './attachment/index.js';
 export type { AttachmentContext, AttachmentDescriptor, PreparedAttachment, AttachmentTransport } from './attachment/index.js';
 

@@ -209,21 +209,46 @@ export function verifyMessageSignature(
   return suite.verify(innerPayload.sender_ik_pk, signableBytes, innerPayload.signature);
 }
 
+const MAX_CIPHERTEXT_BYTES = 65536;
+
 export function validateEnvelope(envelope: OuterEnvelope): void {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+    throw new Error('invalid message envelope');
+  }
   if (envelope.v !== PROTOCOL_VERSION) {
     throw new Error(`unsupported protocol version: ${envelope.v}`);
   }
   if (envelope.suite !== DEFAULT_SUITE) {
     throw new Error(`unsupported crypto suite: ${envelope.suite}`);
   }
-  if (!Number.isSafeInteger(envelope.created_ts) || envelope.created_ts <= 0) {
+  if (!(envelope.conv_id instanceof Uint8Array) || envelope.conv_id.length !== 16) {
+    throw new Error('invalid conversation ID: expected 16-byte Uint8Array');
+  }
+  if (!(envelope.msg_id instanceof Uint8Array) || envelope.msg_id.length !== 16) {
+    throw new Error('invalid message ID: expected 16-byte Uint8Array');
+  }
+  if (typeof envelope.conv_epoch !== 'number' || !Number.isSafeInteger(envelope.conv_epoch) || envelope.conv_epoch < 0) {
+    throw new Error(`invalid conversation epoch: ${envelope.conv_epoch}`);
+  }
+  if (typeof envelope.created_ts !== 'number' || !Number.isSafeInteger(envelope.created_ts) || envelope.created_ts <= 0) {
     throw new Error(`invalid created timestamp: ${envelope.created_ts}`);
   }
-  if (!Number.isSafeInteger(envelope.expiry_ts) || envelope.expiry_ts <= envelope.created_ts) {
+  if (typeof envelope.expiry_ts !== 'number' || !Number.isSafeInteger(envelope.expiry_ts) || envelope.expiry_ts <= envelope.created_ts) {
     throw new Error('expiry timestamp must be after created timestamp');
+  }
+  if (!(envelope.ciphertext instanceof Uint8Array)) {
+    throw new Error('invalid ciphertext: expected Uint8Array');
   }
   if (envelope.ciphertext.length === 0) {
     throw new Error('ciphertext is empty');
+  }
+  if (envelope.ciphertext.length > MAX_CIPHERTEXT_BYTES) {
+    throw new Error(`ciphertext exceeds maximum size (${MAX_CIPHERTEXT_BYTES} bytes)`);
+  }
+  if (envelope.aad_hash !== undefined) {
+    if (!(envelope.aad_hash instanceof Uint8Array) || envelope.aad_hash.length !== 32) {
+      throw new Error('invalid aad_hash: expected 32-byte Uint8Array');
+    }
   }
 
   const maxFutureSkew = 600; // 10 minutes
@@ -233,17 +258,39 @@ export function validateEnvelope(envelope: OuterEnvelope): void {
 }
 
 export function validateInnerPayload(inner: InnerPayload): void {
+  if (!inner || typeof inner !== 'object' || Array.isArray(inner)) {
+    throw new Error('invalid inner payload');
+  }
+  const maybeMsgId = (inner as unknown as Record<string, unknown>).msg_id;
+  if (maybeMsgId !== undefined && (!(maybeMsgId instanceof Uint8Array) || maybeMsgId.length !== 16)) {
+    throw new Error('invalid inner message ID: expected 16-byte Uint8Array');
+  }
+  if (!(inner.sender_ik_pk instanceof Uint8Array)) {
+    throw new Error('invalid sender public key: expected Uint8Array');
+  }
   if (inner.sender_ik_pk.length !== 32) {
     throw new Error(`invalid sender public key length: ${inner.sender_ik_pk.length}`);
+  }
+  if (!(inner.sender_kid instanceof Uint8Array) || inner.sender_kid.length !== 16) {
+    throw new Error('invalid sender key ID: expected 16-byte Uint8Array');
   }
   if (inner.sig_alg !== 'Ed25519') {
     throw new Error(`unsupported signature algorithm: ${inner.sig_alg}`);
   }
+  if (!(inner.signature instanceof Uint8Array)) {
+    throw new Error('invalid signature: expected Uint8Array');
+  }
   if (inner.signature.length !== 64) {
     throw new Error(`invalid signature length: ${inner.signature.length}`);
   }
-  if (!inner.body_type) {
+  if (typeof inner.body_type !== 'string' || !inner.body_type) {
     throw new Error('body type is empty');
+  }
+  if (!(inner.body instanceof Uint8Array)) {
+    throw new Error('invalid message body: expected Uint8Array');
+  }
+  if (inner.refs !== undefined && !Array.isArray(inner.refs)) {
+    throw new Error('invalid message refs: expected array');
   }
 }
 

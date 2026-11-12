@@ -52,6 +52,7 @@ export interface GateSecretBody {
   gateway_kid?: string;
   secret_id: string;
   service: string;
+  allowed_origins: string[];
   header_name: string;
   header_template: string;
   encrypted_blob: string;

@@ -22,7 +22,7 @@ function makeRequest(overrides: Partial<{
     verb: 'GET',
     target_endpoint: '/api/test',
     target_service: 'test-svc',
-    target_url: 'https://api.example.com/test',
+    target_url: 'https://api.example.com/api/test',
     expires_at: overrides.expires_at ?? '2099-01-01T00:00:00Z',
     signer_kid: overrides.signer_kid ?? signerA,
     signature: 'sig-placeholder',

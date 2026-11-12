@@ -151,7 +151,19 @@ export class QSP1Suite {
     recipientKID: Uint8Array,
     convID: Uint8Array,
   ): Uint8Array {
-    const { ek_pk: ekPK, nonce, ct } = unmarshalCanonical<{ ek_pk: Uint8Array; nonce: Uint8Array; ct: Uint8Array }>(wrappedData);
+    if (!(wrappedData instanceof Uint8Array) || wrappedData.length === 0) {
+      throw new Error('invalid wrapped recipient key payload');
+    }
+    const decoded = unmarshalCanonical<unknown>(wrappedData);
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      throw new Error('invalid wrapped recipient key structure');
+    }
+    const { ek_pk: ekPK, nonce, ct } = decoded as { ek_pk: Uint8Array; nonce: Uint8Array; ct: Uint8Array };
+    if (!(ekPK instanceof Uint8Array) || ekPK.length !== 32 ||
+        !(nonce instanceof Uint8Array) || nonce.length !== 24 ||
+        !(ct instanceof Uint8Array) || ct.length < 16) {
+      throw new Error('invalid wrapped recipient key fields');
+    }
 
     const recipientX25519SK = ed25519PrivateKeyToX25519(recipientEd25519SK);
     const shared = x25519SharedSecret(recipientX25519SK, ekPK);

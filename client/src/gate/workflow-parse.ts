@@ -1,11 +1,15 @@
 import { base64UrlDecode, base64UrlEncode, keyIDFromPublicKey } from '../identity/index.js';
 import { isValidEd25519PublicKey } from '../crypto/ed25519.js';
 import type { ThresholdRule } from '../types.js';
+import {
+  GatewayValidationError,
+  normalizeAllowedOriginsList,
+  pathnameMatchesEndpoint,
+  validateGatewayTargetUrl,
+} from './origins.js';
 import type { GatewayBody, GatewayBodyType, GatewayContext } from './workflow-types.js';
 
-export class GatewayValidationError extends Error {
-  constructor(message: string) { super(message); this.name = 'GatewayValidationError'; }
-}
+export { GatewayValidationError };
 export function requireGateway(condition: unknown, message: string): asserts condition {
   if (!condition) throw new GatewayValidationError(message);
 }
@@ -128,12 +132,11 @@ export function parseGatewayBody(bodyType: string, data: string | Uint8Array): G
       gatewayTime(body.expires_at);
       const verb = gatewayText(body.verb, 'verb');
       requireGateway(/^[A-Z]+$/.test(verb), 'Invalid verb');
-      gatewayText(body.target_endpoint, 'endpoint');
+      const endpoint = gatewayText(body.target_endpoint, 'endpoint');
       gatewayText(body.target_service, 'service');
       const target = gatewayText(body.target_url, 'target URL', 16384);
-      let url: URL;
-      try { url = new URL(target); } catch { throw new GatewayValidationError('Invalid target URL'); }
-      requireGateway(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && !url.hash, 'Invalid target URL');
+      const url = validateGatewayTargetUrl(target);
+      requireGateway(pathnameMatchesEndpoint(url.pathname, endpoint), 'Target endpoint does not match target URL path');
       if (body.recipe_name !== undefined) gatewayText(body.recipe_name, 'recipe name');
       if (body.arguments !== undefined && body.arguments !== null) {
         for (const arg of Object.values(gatewayRecord(body.arguments, 'arguments'))) requireGateway(typeof arg === 'string', 'Invalid argument');
@@ -158,6 +161,7 @@ export function parseGatewayBody(bodyType: string, data: string | Uint8Array): G
       break;
     case 'gate.secret':
       for (const key of ['secret_id', 'service', 'header_name', 'header_template']) gatewayText(body[key], key);
+      body.allowed_origins = normalizeAllowedOriginsList(body.allowed_origins);
       gatewayBytes(body.sender_kid, 'sender kid', 16);
       requireGateway(gatewayBytes(body.encrypted_blob, 'encrypted blob').length >= 40, 'Invalid sealed credential');
       requireGateway(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(String(body.header_name)), 'Invalid header name');

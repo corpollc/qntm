@@ -1,4 +1,4 @@
-import { openSecret, base64UrlDecode } from '@corpollc/qntm';
+import { openSecret, base64UrlDecode, normalizeAllowedOriginsList } from '@corpollc/qntm';
 import type { VaultEntry, GateSecretMessage } from './types.js';
 
 /**
@@ -13,6 +13,8 @@ export async function processSecret(
   vaultKey: CryptoKey,
   createdAt = Date.now(),
 ): Promise<VaultEntry> {
+  const allowedOrigins = normalizeAllowedOriginsList(msg.allowed_origins);
+
   // Decrypt the NaCl box (X25519-XSalsa20-Poly1305)
   const encryptedBlob = base64UrlDecode(msg.encrypted_blob);
   const decryptedBytes = openSecret(gatewayPrivateKey, senderPublicKey, encryptedBlob);
@@ -42,6 +44,7 @@ export async function processSecret(
   return {
     secret_id: msg.secret_id,
     service: msg.service,
+    allowed_origins: allowedOrigins,
     header_name: msg.header_name,
     header_template: msg.header_template,
     encrypted_value: uint8ToBase64(combined),

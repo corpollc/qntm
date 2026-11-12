@@ -151,9 +151,27 @@ export function createCharterStatement(previous: CharterStatement, type: Exclude
   return next;
 }
 
+function assertSafeIntegers(value: unknown): void {
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new Error('Charter JSON rejects integers outside IEEE-754 safe integer bounds');
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) assertSafeIntegers(item);
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    assertSafeIntegers((value as Record<string, unknown>)[key]);
+  }
+}
+
 function validateShape(statement: unknown): asserts statement is CharterStatement {
   // Validate JSON first, including unsupported JS values, Unicode, and data accessors.
   charterJsonBytes(statement);
+  assertSafeIntegers(statement);
   const envelope = object(statement, 'Statement');
   requireCondition(Object.keys(envelope).every(k => ['signed', 'signatures'].includes(k)), 'Unknown envelope field');
   const signed = object(envelope.signed, 'Signed body');

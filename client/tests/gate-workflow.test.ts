@@ -78,13 +78,14 @@ describe('gateway workflow payloads', () => {
   });
   it('seals credentials only to the configured key and leaves caller bytes intact', () => {
     const value = new TextEncoder().encode('demo credential');
-    const secret = createGateSecretBody(alice, context, { service: 'counter', value, ttl: 60 });
+    const secret = createGateSecretBody(alice, context, { service: 'counter', allowedOrigins: ['https://api.example.test'], value, ttl: 60 });
     expect(secret.gateway_kid).toBe(context.gateway.kid);
+    expect(secret.allowed_origins).toEqual(['https://api.example.test']);
     expect(openSecret(gateway.privateKey, alice.publicKey, bytes(secret.encrypted_blob))).toEqual(value);
     expect(new TextDecoder().decode(value)).toBe('demo credential');
     expect(() => openSecret(bob.privateKey, alice.publicKey, bytes(secret.encrypted_blob))).toThrow();
-    expect(() => createGateSecretBody(alice, context, { service: 'counter', value, headerName: 'Bad\r\nHeader' })).toThrow('header');
-    expect(() => createGateSecretBody(alice, { ...context, gateway: { ...context.gateway, publicKey: b64(bob.publicKey) } }, { service: 'counter', value })).toThrow('key ID');
+    expect(() => createGateSecretBody(alice, context, { service: 'counter', allowedOrigins: ['https://api.example.test'], value, headerName: 'Bad\r\nHeader' })).toThrow('header');
+    expect(() => createGateSecretBody(alice, { ...context, gateway: { ...context.gateway, publicKey: b64(bob.publicKey) } }, { service: 'counter', allowedOrigins: ['https://api.example.test'], value })).toThrow('key ID');
   });
   it.each(['floor_change', 'rules_change', 'member_add', 'member_remove'] as const)('builds and approves %s under current majority', proposalType => {
     const body = createGatewayProposalBody(alice, context, {

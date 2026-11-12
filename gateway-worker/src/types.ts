@@ -115,9 +115,11 @@ export interface GateExecutedMessage {
 
 /** Parsed gate.secret message body */
 export interface GateSecretMessage {
+  gateway_kid?: string;
   type: 'gate.secret';
   secret_id: string;
   service: string;
+  allowed_origins: string[];
   header_name: string;
   header_template: string;
   encrypted_blob: string; // base64url-encoded NaCl box
@@ -196,6 +198,7 @@ export interface StoredGovProposal {
 export interface VaultEntry {
   secret_id: string;
   service: string;
+  allowed_origins: string[];
   header_name: string;
   header_template: string;
   /** Encrypted credential value (AES-256-GCM with GATE_VAULT_KEY) */

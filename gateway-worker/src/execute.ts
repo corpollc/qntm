@@ -1,3 +1,4 @@
+import { pathnameMatchesEndpoint, validateGatewayTargetUrl } from '@corpollc/qntm';
 import { decryptVaultEntry } from './vault.js';
 import type { VaultEntry, GateRequestMessage } from './types.js';
 
@@ -47,14 +48,28 @@ export async function executeRequest(
   vaultEntry: VaultEntry,
   vaultKey: CryptoKey,
 ): Promise<ExecutionResult> {
+  // Validate target URL, endpoint binding, and vault allowed_origins BEFORE decrypting or sending credentials
+  const targetUrl = validateGatewayTargetUrl(request.target_url);
+  if (request.target_endpoint !== undefined && !pathnameMatchesEndpoint(targetUrl.pathname, request.target_endpoint)) {
+    throw new Error('Target endpoint does not match target URL pathname');
+  }
+  if (!Array.isArray(vaultEntry.allowed_origins) || vaultEntry.allowed_origins.length === 0 ||
+      !vaultEntry.allowed_origins.includes(targetUrl.origin)) {
+    throw new Error(`Target origin ${targetUrl.origin} is not authorized for service "${vaultEntry.service}"`);
+  }
+  const verb = request.verb.toUpperCase();
+  if (!/^[A-Z]+$/.test(verb)) {
+    throw new Error('Invalid HTTP verb');
+  }
+
   // Decrypt credential value
   const credentialValue = await decryptVaultEntry(vaultEntry, vaultKey);
 
   try {
-    // Build the header value from template
+    // Build the header value from template (using function replacer so '$' in secrets is never interpreted)
     let headerValue = vaultEntry.header_template;
     if (headerValue.includes('{value}')) {
-      headerValue = headerValue.replace('{value}', credentialValue);
+      headerValue = headerValue.replace('{value}', () => credentialValue);
     } else {
       headerValue = credentialValue;
     }
@@ -65,7 +80,6 @@ export async function executeRequest(
     };
 
     // Add content-type for requests with payloads
-    const verb = request.verb.toUpperCase();
     let body: string | undefined;
     if (request.payload !== undefined && request.payload !== null) {
       body = typeof request.payload === 'string'
@@ -79,7 +93,7 @@ export async function executeRequest(
     const timeout = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(request.target_url, {
+      const response = await fetch(targetUrl.toString(), {
         method: verb,
         headers,
         body,

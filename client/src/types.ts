@@ -231,6 +231,7 @@ export interface SecretPayload {
   type: 'gate.secret';
   secret_id: string;
   service: string;
+  allowed_origins?: string[];
   header_name: string;
   header_template: string;
   encrypted_blob: Uint8Array;

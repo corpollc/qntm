@@ -17,7 +17,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   generateIdentity, keyIDFromPublicKey, base64UrlEncode, base64UrlDecode,
   signRequest, signApproval, hashRequest, computePayloadHash,
-  createProposalBody, signGovApproval, hashProposal, createGateSecretBody,
+  createProposalBody, signProposal, signGovApproval, hashProposal, createGateSecretBody,
   deserializeEnvelope, decryptMessage, createMessage, serializeEnvelope, defaultTTL,
 } from '@corpollc/qntm';
 import { DropboxClient } from '@corpollc/qntm';
@@ -150,7 +150,7 @@ describe('idempotent bootstrap recovery', () => {
     await storage.put('conv_state', state);
     const request = buildSignedRequest(alice, { required_approvals: 1 });
     await process('gate.request', encode(request.body), alice.keyID, alice.publicKey);
-    await storage.put('vault:test-svc', { expires_at: '' });
+    await storage.put('vault:test-svc', { expires_at: '', allowed_origins: ['https://api.example.com'] });
     const priorWire = serializeEnvelope(createMessage(gateway, convFromState(state), 'text', encode('retained notification')));
     await storage.put('publication_outbox', [{ convId: state.conv_id, wire: base64UrlEncode(priorWire) }]);
     vi.spyOn(doInstance as unknown as { ensureRelaySubscription(state: ConversationState): void }, 'ensureRelaySubscription').mockImplementation(() => undefined);
@@ -207,7 +207,7 @@ function buildSignedRequest(signer: { privateKey: Uint8Array; publicKey: Uint8Ar
     verb: 'GET',
     target_endpoint: '/api/test',
     target_service: 'test-svc',
-    target_url: 'https://api.example.com/test',
+    target_url: 'https://api.example.com/api/test',
     expires_at_unix: Math.floor(new Date(expiresAt).getTime() / 1000),
     payload_hash: computePayloadHash(null),
     eligible_signer_kids: [aliceKid, bobKid],
@@ -223,7 +223,7 @@ function buildSignedRequest(signer: { privateKey: Uint8Array; publicKey: Uint8Ar
     verb: 'GET',
     target_endpoint: '/api/test',
     target_service: 'test-svc',
-    target_url: 'https://api.example.com/test',
+    target_url: 'https://api.example.com/api/test',
     expires_at: expiresAt,
     signer_kid: signerKid,
     signature: base64UrlEncode(sig),
@@ -1285,7 +1285,7 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     await storage.put('conv_state', state);
     const request = buildSignedRequest(alice, { required_approvals: 1 });
     await process('gate.request', encode(request.body), alice.keyID, alice.publicKey);
-    await storage.put('vault:test-svc', { expires_at: '' });
+    await storage.put('vault:test-svc', { expires_at: '', allowed_origins: ['https://api.example.com'] });
     const perform = vi.spyOn(execution, 'executeRequest');
     if (failure === 'execution') perform.mockRejectedValue(new Error('upstream outcome unknown'));
     else perform.mockResolvedValue({ request_id: request.requestId, status_code: 200, content_type: 'text/plain', body: 'done', executed_at: new Date().toISOString() });
@@ -1293,8 +1293,7 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
     const run = (instance: GatewayConversationDO) => (instance as unknown as {
       checkAndExecute: (state: ConversationState) => Promise<void>;
     }).checkAndExecute(state);
-    if (failure === 'execution') await expect(run(doInstance)).rejects.toThrow();
-    else await run(doInstance);
+    await run(doInstance);
     await run(doInstance);
     const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
     await (restarted as unknown as { recover(): Promise<void> }).recover();
@@ -1306,6 +1305,9 @@ describe('qntm-qtw2: write-ahead execution recovery', () => {
       await (restarted as unknown as { flushPublications(): Promise<void> }).flushPublications();
       expect(post.mock.calls.map(([, wire]) => base64UrlEncode(wire))).toEqual(outbox!.map(row => row.wire));
       expect(await storage.get('publication_outbox')).toEqual([]);
+    } else {
+      const outbox = await storage.get<Array<{ wire: string }>>('publication_outbox');
+      expect(outbox).toHaveLength(1);
     }
     expect(perform).toHaveBeenCalledTimes(1);
     const markers = [...(await storage.list<StoredGateMessage>({ prefix: 'msg:' })).values()].filter(row => row.type === 'gate.executed');
@@ -1463,8 +1465,8 @@ describe('durable relay replay and governance delivery', () => {
     await storage.put('conv_state', state);
     const context = { conversationId: state.conv_id, epoch: 0, gateway: { kid: gatewayKid, publicKey: state.public_key },
       participants: state.participants, floor: 2, rules: state.rules };
-    const first = createGateSecretBody(alice, context, { service: 'demo', value: 'first synthetic value', ttl: 300 });
-    const second = createGateSecretBody(alice, context, { service: 'demo', value: 'replacement synthetic value', ttl: 300 });
+    const first = createGateSecretBody(alice, context, { service: 'demo', allowedOrigins: ['https://api.example.com'], value: 'first synthetic value', ttl: 300 });
+    const second = createGateSecretBody(alice, context, { service: 'demo', allowedOrigins: ['https://api.example.com'], value: 'replacement synthetic value', ttl: 300 });
     const created = Math.floor(Date.now() / 1000) - 120;
     const process = (instance: GatewayConversationDO, body: unknown) =>
       (instance as unknown as { processGateMessage(type: string, bytes: Uint8Array, kid: Uint8Array, pk: Uint8Array, at: number): Promise<void> })
@@ -1542,16 +1544,16 @@ describe('durable relay replay and governance delivery', () => {
     expect(outbox).toHaveLength(3);
     expect((await storage.get<ConversationState>('conv_state'))?.conv_epoch).toBe(1);
     expect([...await storage.list<{ type: string }>({ prefix: 'gov:' })].some(([, value]) => value.type === 'gov.applied')).toBe(true);
-    post.mockResolvedValue(5);
+    post.mockClear().mockResolvedValue(5);
     const restarted = new GatewayConversationDO({ storage } as unknown as DurableObjectState, dummyEnv);
     await (restarted as unknown as { flushPublications(): Promise<void> }).flushPublications();
-    expect(post.mock.calls.slice(1).map(([, wire]) => base64UrlEncode(wire))).toEqual(outbox!.map(item => item.wire));
+    expect(post.mock.calls.map(([, wire]) => base64UrlEncode(wire))).toEqual(outbox!.map(item => item.wire));
     expect(await storage.get('publication_outbox')).toEqual([]);
     expect((await storage.get<ConversationState>('conv_state'))?.conv_epoch).toBe(1);
   });
 
   it('rolls back the new epoch if committing its applied marker fails', async () => {
-    const { doInstance, storage, process } = makeDO();
+    const { storage, process } = makeDO();
     const state = promotedState({ participants: { [aliceKid]: base64UrlEncode(alice.publicKey) }, promotion_floor: 1, rules: [] });
     await storage.put('conv_state', state);
     const put = storage.put.bind(storage);
@@ -1562,9 +1564,167 @@ describe('durable relay replay and governance delivery', () => {
     const proposal = createProposalBody(alice, { convId: state.conv_id, proposalType: 'member_add',
       proposedMembers: [{ kid: bobKid, publicKey: base64UrlEncode(bob.publicKey) }],
       eligibleSignerKids: [aliceKid], requiredApprovals: 1, expiresInSeconds: 3600 });
-    await process('gov.propose', encode(proposal), alice.keyID, alice.publicKey);
-    await expect((doInstance as unknown as { checkAndApplyProposal(s: ConversationState, id: string): Promise<void> }).checkAndApplyProposal(state, proposal.proposal_id)).rejects.toThrow('storage interrupted');
+    await expect(process('gov.propose', encode(proposal), alice.keyID, alice.publicKey)).rejects.toThrow('storage interrupted');
     expect(await storage.get('conv_state')).toEqual(state);
     expect(await storage.get('publication_outbox')).toBeUndefined();
+  });
+});
+
+describe('2026-11-12 audit remediations (P0-2, P1-6, P2-6)', () => {
+  it('P0-2, P0-2b & P0-2c: rejects lowercase verbs, SSRF URLs, unbound target_endpoint, and prefix-stripped rule bypass', async () => {
+    const { storage, process } = makeDO();
+    await storage.put('conv_state', promotedState({
+      promotion_floor: 1,
+      rules: [
+        { service: '*', endpoint: '*', verb: '*', m: 1 },
+        { service: 'stripe', endpoint: '/v1/charges', verb: 'POST', m: 2 },
+      ],
+    }));
+
+    // Lowercase verb rejected
+    const lowerVerb = buildSignedRequest(alice, {
+      target_service: 'stripe',
+      target_endpoint: '/v1/charges',
+      target_url: 'https://api.stripe.com/v1/charges',
+      verb: 'post',
+      required_approvals: 1,
+    });
+    await expect(process('gate.request', encode(lowerVerb.body), alice.keyID, alice.publicKey)).rejects.toThrow('Invalid verb');
+
+    // Unbound target_endpoint (/safe vs /v1/charges) rejected
+    const unbound = buildSignedRequest(alice, {
+      target_service: 'stripe',
+      target_endpoint: '/safe',
+      target_url: 'https://api.stripe.com/v1/charges',
+      verb: 'POST',
+      required_approvals: 1,
+    });
+    await expect(process('gate.request', encode(unbound.body), alice.keyID, alice.publicKey)).rejects.toThrow('Target endpoint does not match');
+
+    // Prefix-stripped /charges against /v1/charges still enforces m=2 rule!
+    const prefixStripped = buildSignedRequest(alice, {
+      target_service: 'stripe',
+      target_endpoint: '/charges',
+      target_url: 'https://api.stripe.com/v1/charges',
+      verb: 'POST',
+      required_approvals: 1,
+    });
+    await expect(process('gate.request', encode(prefixStripped.body), alice.keyID, alice.publicKey)).rejects.toThrow('below rule threshold 2');
+
+    // SSRF target_url rejected
+    const ssrf = buildSignedRequest(alice, {
+      target_service: 'stripe',
+      target_endpoint: '/latest/meta-data',
+      target_url: 'https://169.254.169.254/latest/meta-data',
+      verb: 'GET',
+      required_approvals: 1,
+    });
+    await expect(process('gate.request', encode(ssrf.body), alice.keyID, alice.publicKey)).rejects.toThrow();
+
+    // Missing allowed_origins on gate.secret rejected
+    const badSecret = {
+      type: 'gate.secret',
+      secret_id: 'sec-no-origins',
+      service: 'stripe',
+      header_name: 'Authorization',
+      header_template: 'Bearer {value}',
+      encrypted_blob: base64UrlEncode(new Uint8Array(64)),
+      sender_kid: aliceKid,
+    };
+    await expect(process('gate.secret', encode(badSecret), alice.keyID, alice.publicKey)).rejects.toThrow('allowed_origins');
+  });
+
+  it('P1-6: rejects duplicate request_id and duplicate proposal_id, and stops re-arming 5s alarm when idle', async () => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState();
+    await storage.put('conv_state', state);
+
+    const req1 = buildSignedRequest(alice, { request_id: 'dup-req-1' });
+    const req2 = buildSignedRequest(bob, { request_id: 'dup-req-1' });
+    await process('gate.request', encode(req1.body), alice.keyID, alice.publicKey);
+    await expect(process('gate.request', encode(req2.body), bob.keyID, bob.publicKey)).rejects.toThrow('duplicate request_id');
+
+    const prop1 = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 2,
+      eligibleSignerKids: [aliceKid, bobKid],
+      requiredApprovals: 2,
+      expiresInSeconds: 3600,
+    });
+    const prop2ExpiresUnix = Math.floor(new Date(prop1.expires_at).getTime() / 1000);
+    const prop2 = {
+      ...prop1,
+      proposed_floor: 1,
+      signer_kid: bobKid,
+      signature: base64UrlEncode(
+        signProposal(bob.privateKey, {
+          conv_id: state.conv_id,
+          proposal_id: prop1.proposal_id,
+          proposal_type: 'floor_change',
+          proposed_floor: 1,
+          proposed_rules: undefined,
+          proposed_members: undefined,
+          removed_member_kids: undefined,
+          eligible_signer_kids: [aliceKid, bobKid],
+          required_approvals: 2,
+          expires_at_unix: prop2ExpiresUnix,
+        }),
+      ),
+    };
+    await process('gov.propose', encode(prop1), alice.keyID, alice.publicKey);
+    await expect(process('gov.propose', encode(prop2), bob.keyID, bob.publicKey)).rejects.toThrow('duplicate proposal_id');
+
+    // Attach active relay subscription and run alarm(): idle DO must NOT arm a new 5s alarm
+    (doInstance as unknown as { relaySubscription: unknown }).relaySubscription = { close: () => undefined };
+    storage.alarmTimes.length = 0;
+    await doInstance.alarm();
+    expect(storage.alarmTimes).toEqual([]);
+  });
+
+  it('P2-6: publishes error gate.result on executeRequest throw and applies N=1 gov.propose immediately', async () => {
+    const { doInstance, storage, process } = makeDO();
+    const state = promotedState({
+      participants: { [aliceKid]: base64UrlEncode(alice.publicKey) },
+      promotion_floor: 1,
+      rules: [{ service: '*', endpoint: '*', verb: '*', m: 1 }],
+    });
+    await storage.put('conv_state', state);
+    const fetchMock = stubDropboxFetch();
+
+    // N=1 gov.propose applies immediately without needing gov.approve
+    const floorProposal = createProposalBody(alice, {
+      convId: state.conv_id,
+      proposalType: 'floor_change',
+      proposedFloor: 1,
+      eligibleSignerKids: [aliceKid],
+      requiredApprovals: 1,
+      expiresInSeconds: 3600,
+    });
+    await process('gov.propose', encode(floorProposal), alice.keyID, alice.publicKey);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(decodePostedBody(fetchMock, 0, state).bodyType).toBe('gov.applied');
+
+    // executeRequest throw (e.g. upstream redirect) publishes error gate.result (502) instead of crashing
+    fetchMock.mockClear();
+    const req = buildSignedRequest(alice, {
+      eligible_signer_kids: [aliceKid],
+      required_approvals: 1,
+    });
+    await process('gate.request', encode(req.body), alice.keyID, alice.publicKey);
+    await storage.put('vault:test-svc', { expires_at: '', allowed_origins: ['https://api.example.com'] });
+    vi.spyOn(execution, 'executeRequest').mockRejectedValueOnce(new Error('Gateway redirects are not allowed'));
+
+    await (doInstance as unknown as { checkAndExecute(s: ConversationState): Promise<void> }).checkAndExecute(state);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const errResult = decodePostedBody(fetchMock, 0, state);
+    expect(errResult.bodyType).toBe('gate.result');
+    const parsedErr = JSON.parse(new TextDecoder().decode(errResult.body));
+    expect(parsedErr).toMatchObject({
+      type: 'gate.result',
+      request_id: req.requestId,
+      status_code: 502,
+      body: 'Gateway redirects are not allowed',
+    });
   });
 });
