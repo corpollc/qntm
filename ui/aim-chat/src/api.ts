@@ -164,7 +164,7 @@ export const api = {
   ): Promise<{ output: string; message: ChatMessage; warning?: string }> {
     const message = await qntm.gateSecretRequest(
       profileId, profileName, conversationId,
-      service, value, headerName || 'Authorization', headerTemplate || 'Bearer {value}',
+      service, value, headerName || '', headerTemplate || '',
       gatewayPublicKey
     )
     return { output: `Secret provisioned for service ${service}`, message }

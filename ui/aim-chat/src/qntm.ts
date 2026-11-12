@@ -24,29 +24,38 @@ import {
   base64UrlDecode,
   base64UrlEncode,
   signRequest,
+  verifyRequest,
   signApproval,
+  verifyApproval,
   hashRequest,
   createProposalBody,
+  verifyProposal,
   signGovApproval,
+  verifyGovApproval,
   hashProposal,
   computePayloadHash,
   resolveRecipe,
   sealSecret,
   DropboxClient,
   buildSignedReceipt,
+  GroupState,
   parseGroupGenesisBody,
   parseGroupAddBody,
   parseGroupRemoveBody,
   parseGroupRekeyBody,
   createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
   createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
+  gateRequestSignable, gatewayProposalSignable,
   parseGatewayBody, validateGatewayContext,
 } from '@corpollc/qntm'
 import type { DropboxSubscription, GatewayContext, GateRequestBody, GatewayProposalBody } from '@corpollc/qntm'
 
 import * as store from './store'
 import { rawBackup, importBackup as importValidatedBackup } from './backup'
+import { formatRecipeUrls, getServiceHeaderDefaults, resolveServiceOrigins } from './config'
 import type { ChatMessage, Conversation, GateRecipe, IdentityInfo } from './types'
+
+export { resolveServiceOrigins }
 
 const GROUP_BODY_TYPES = new Set(['group_genesis', 'group_add', 'group_remove', 'group_rekey'])
 // Conversation creators only know themselves until another participant is learned locally.
@@ -299,9 +308,7 @@ function mergeConversationParticipants(
   })
 }
 
-const NON_MEMBER_SYSTEM_BODY_TYPES = new Set([
-  'gate.accept',
-  'gate.promote',
+const GATEWAY_ONLY_BODY_TYPES = new Set([
   'gate.executed',
   'gate.result',
   'gate.expired',
@@ -309,10 +316,47 @@ const NON_MEMBER_SYSTEM_BODY_TYPES = new Set([
   'gate.config',
   'gov.applied',
   'gov.invalidated',
+])
+
+const PARTICIPANT_WORKFLOW_BODY_TYPES = new Set([
+  'gate.request',
+  'gate.approval',
+  'gate.disapproval',
+  'gate.secret',
+  'gov.propose',
+  'gov.approve',
+  'gov.disapprove',
+])
+
+const NON_MEMBER_SYSTEM_BODY_TYPES = new Set([
+  'gate.accept',
+  'gate.promote',
+  ...GATEWAY_ONLY_BODY_TYPES,
   'group_add',
   'group_remove',
   'group_rekey',
 ])
+
+function resolveGroupCreatorKid(conv: store.StoredConversation): string {
+  return conv.groupControl?.creator
+    ?? (conv.participants[0] ? base64UrlEncode(hexToBytes(conv.participants[0])) : '')
+}
+
+function isGroupAdminOrCreator(conv: store.StoredConversation, senderKidBytes: Uint8Array): boolean {
+  const creatorKid = resolveGroupCreatorKid(conv)
+  if (!creatorKid) return false
+  const senderKid = base64UrlEncode(senderKidBytes)
+  if (conv.groupControl?.roster) {
+    try {
+      const roster = new GroupState()
+      roster.applyGenesis(parseGroupGenesisBody(base64UrlDecode(conv.groupControl.roster)))
+      return senderKid === creatorKid || roster.isAdmin(senderKidBytes)
+    } catch {
+      return false
+    }
+  }
+  return senderKid === creatorKid
+}
 
 function shouldTrackSenderAsParticipant(
   conv: store.StoredConversation | null,
@@ -449,10 +493,12 @@ export function acceptInviteForProfile(
     }
   }
 
+  const convType = (invite as { type?: string }).type || 'direct'
+  const inviterKidB64 = base64UrlEncode(keyIDFromPublicKey(invite.inviter_ik_pk))
   const convRecord: store.StoredConversation = {
     id: convIdHex,
     name: name.trim() || `Chat ${convIdHex.slice(0, 8)}`,
-    type: (invite as { type?: string }).type || 'direct',
+    type: convType,
     keys: {
       root: bytesToHex(keys.root),
       aeadKey: bytesToHex(keys.aeadKey),
@@ -463,6 +509,13 @@ export function acceptInviteForProfile(
       bytesToHex(invite.inviter_ik_pk),
       bytesToHex(identity.publicKey),
     ]),
+    ...(convType === 'group' ? {
+      groupControl: {
+        creator: inviterKidB64,
+        needsRekey: false,
+        removed: false,
+      },
+    } : {}),
     createdAt: new Date().toISOString(),
     currentEpoch: 0,
   }
@@ -510,6 +563,10 @@ async function applyReceivedEnvelope(
     return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
   }
 
+  if (envelope.conv_epoch !== activeConvCrypto.currentEpoch) {
+    return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
+  }
+
   let decrypted
   try {
     decrypted = decryptMessage(envelope, activeConvCrypto)
@@ -517,7 +574,15 @@ async function applyReceivedEnvelope(
     return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
   }
 
-  const senderKidHex = bytesToHex(new Uint8Array(decrypted.inner.sender_kid)).toLowerCase()
+  const senderPkBytes = new Uint8Array(decrypted.inner.sender_ik_pk)
+  const senderKidBytes = new Uint8Array(decrypted.inner.sender_kid)
+  const senderPkB64 = base64UrlEncode(senderPkBytes)
+  const senderKidB64 = base64UrlEncode(senderKidBytes)
+  if (!decrypted.verified || base64UrlEncode(keyIDFromPublicKey(senderPkBytes)) !== senderKidB64) {
+    return { message: null, processedMsgId: null, nextConvCrypto: activeConvCrypto }
+  }
+
+  const senderKidHex = bytesToHex(senderKidBytes).toLowerCase()
   const bodyType = decrypted.inner.body_type || 'text'
   const rawBodyBytes = new Uint8Array(decrypted.inner.body)
   const bodyText = groupBodyToJson(bodyType, rawBodyBytes) ?? new TextDecoder().decode(rawBodyBytes)
@@ -529,10 +594,12 @@ async function applyReceivedEnvelope(
       const body = parseGatewayBody(bodyType, rawBodyBytes)
       const current = store.findConversation(profileId, conversationId)!
       if (body.type !== 'gate.promote' || selectedGateway?.status === 'active' || !current.participants.includes(senderKidHex)
+        || (current.type === 'group' && !isGroupAdminOrCreator(current, senderKidBytes))
+        || (body.conv_epoch !== undefined && body.conv_epoch !== activeConvCrypto.currentEpoch)
         || body.keys_hash !== gatewayAccessHash(gatewayAccess(activeConvCrypto))) throw new Error('Untrusted gateway invitation')
       for (const kid of current.participants) if (!Object.prototype.hasOwnProperty.call(body.participants, base64UrlEncode(hexToBytes(kid)))) throw new Error('Invitation omits a known participant')
       for (const pk of current.participantPublicKeys || []) if (body.participants[base64UrlEncode(keyIDFromPublicKey(hexToBytes(pk)))] !== base64UrlEncode(hexToBytes(pk))) throw new Error('Invitation changes a known key')
-      const creator = current.groupControl?.creator ?? base64UrlEncode(hexToBytes(current.participants[0]))
+      const creator = resolveGroupCreatorKid(current)
       if ((body.conversation_type !== undefined && body.conversation_type !== current.type) ||
         (body.group_creator_kid !== undefined && body.group_creator_kid !== creator)) throw new Error('Invitation changes group context')
     } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
@@ -541,32 +608,161 @@ async function applyReceivedEnvelope(
     try {
       const acceptance = JSON.parse(bodyText)
       const invitation = store.getHistory(profileId, conversationId).find(m => m.id === acceptance.invitation_msg_id && m.bodyType === 'gate.promote')
-      if (acceptance.conv_id !== conversationId || !invitation || envelope.created_ts > JSON.parse(invitation.text).expires_at || !matchesGatewayAcceptance(acceptance, base64UrlEncode(decrypted.inner.sender_kid), invitation.id, invitation.text) ||
+      if (acceptance.conv_id !== conversationId || !invitation || envelope.created_ts > JSON.parse(invitation.text).expires_at || !matchesGatewayAcceptance(acceptance, senderKidB64, invitation.id, invitation.text) ||
         (selectedGateway?.invitationId && selectedGateway.invitationId !== acceptance.invitation_id)) {
         return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
       }
       const admitted = parseGatewayBody('gate.promote', invitation.text)
       if (admitted.type !== 'gate.promote') throw new Error('Invalid gateway invitation')
       const current = store.findConversation(profileId, conversationId)!
+      const inviterBytes = invitation.direction === 'outgoing' ? identity.keyID : hexToBytes(invitation.senderKey)
+      if (current.type === 'group' && !isGroupAdminOrCreator(current, inviterBytes)) throw new Error('Unauthorized group gateway inviter')
       if (current.groupControl?.needsRekey || current.groupControl?.removed ||
         admitted.keys_hash !== gatewayAccessHash(gatewayAccess(activeConvCrypto))) throw new Error('Gateway invitation is stale')
       for (const kid of current.participants) if (!Object.prototype.hasOwnProperty.call(admitted.participants, base64UrlEncode(hexToBytes(kid)))) throw new Error('Invitation changes current membership')
       if (current.groupControl?.roster && current.currentEpoch > 0 && current.participants.length !== Object.keys(admitted.participants).length) throw new Error('Invitation changes current membership')
-      const inviter = invitation.direction === 'outgoing' ? base64UrlEncode(identity.keyID) : base64UrlEncode(hexToBytes(invitation.senderKey))
-      const creator = current.groupControl?.creator ?? base64UrlEncode(hexToBytes(current.participants[0]))
+      const inviter = base64UrlEncode(inviterBytes)
+      const creator = resolveGroupCreatorKid(current)
       store.updateConversation(profileId, conversationId, c => ({ ...c,
         participants: Object.keys(admitted.participants).map(kid => bytesToHex(base64UrlDecode(kid))),
         participantPublicKeys: Object.values(admitted.participants).map(pk => bytesToHex(base64UrlDecode(pk))),
-        groupControl: c.groupControl ? { creator: c.groupControl.creator, needsRekey: false,
+        groupControl: (c.groupControl || c.type === 'group') ? { creator, needsRekey: false,
           removed: !Object.prototype.hasOwnProperty.call(admitted.participants, base64UrlEncode(identity.keyID)) } : undefined,
         gateway: { publicKey: acceptance.gateway_public_key, keyId: acceptance.gateway_kid,
           membershipAuthority: current.type === 'direct' || inviter === creator,
           status: 'active', invitationId: acceptance.invitation_id, floor: admitted.floor } }))
     } catch { return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto } }
   }
-  if (selectedGateway?.status === 'active' && NON_MEMBER_SYSTEM_BODY_TYPES.has(bodyType) && bodyType !== 'gate.promote' && bodyType !== 'gate.accept' &&
-      base64UrlEncode(decrypted.inner.sender_kid) !== selectedGateway.keyId) {
-    return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+  if (GATEWAY_ONLY_BODY_TYPES.has(bodyType)) {
+    if (
+      selectedGateway?.status !== 'active' ||
+      senderKidB64 !== selectedGateway.keyId ||
+      senderPkB64 !== selectedGateway.publicKey
+    ) {
+      return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+    }
+    if (bodyType === 'gov.applied') {
+      try {
+        const applied = parseGatewayBody(bodyType, rawBodyBytes)
+        if (applied.type !== 'gov.applied') throw new Error('Invalid gov.applied body')
+        const current = store.findConversation(profileId, conversationId)
+        if (!current) return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+        if (applied.proposal_type === 'floor_change' && applied.applied_floor != null) {
+          store.updateConversation(profileId, conversationId, c => ({
+            ...c,
+            gateway: c.gateway ? { ...c.gateway, floor: applied.applied_floor! } : c.gateway,
+          }))
+        } else if (
+          (applied.proposal_type === 'member_add' || applied.proposal_type === 'member_remove') &&
+          (current.type !== 'group' || Boolean(selectedGateway.membershipAuthority))
+        ) {
+          if (applied.proposal_type === 'member_add' && Array.isArray(applied.applied_members)) {
+            const addedKidsHex: string[] = []
+            const addedPksHex: string[] = []
+            for (const member of applied.applied_members) {
+              if (member.kid === selectedGateway.keyId) throw new Error('Gateway cannot join signer roster')
+              const pkBytes = base64UrlDecode(member.public_key)
+              if (pkBytes.length !== 32 || base64UrlEncode(keyIDFromPublicKey(pkBytes)) !== member.kid) {
+                throw new Error('Invalid added member key')
+              }
+              addedKidsHex.push(bytesToHex(base64UrlDecode(member.kid)))
+              addedPksHex.push(bytesToHex(pkBytes))
+            }
+            store.updateConversation(profileId, conversationId, c => ({
+              ...c,
+              participants: dedupeHex([...c.participants, ...addedKidsHex]),
+              participantPublicKeys: dedupeHex([...(c.participantPublicKeys || []), ...addedPksHex]),
+            }))
+          } else if (applied.proposal_type === 'member_remove' && Array.isArray(applied.removed_member_kids)) {
+            const creatorKid = current.type === 'group' ? resolveGroupCreatorKid(current) : ''
+            const removedHexSet = new Set<string>()
+            for (const kid of applied.removed_member_kids) {
+              if (creatorKid && kid === creatorKid) continue
+              removedHexSet.add(bytesToHex(base64UrlDecode(kid)).toLowerCase())
+            }
+            const nextParticipants = current.participants.filter(p => !removedHexSet.has(p.toLowerCase()))
+            if (nextParticipants.length === 0) throw new Error('Cannot remove all conversation participants')
+            const selfRemoved = removedHexSet.has(bytesToHex(identity.keyID).toLowerCase())
+            store.updateConversation(profileId, conversationId, c => ({
+              ...c,
+              participants: nextParticipants,
+              participantPublicKeys: (c.participantPublicKeys || []).filter(pk => {
+                const pkKidHex = bytesToHex(keyIDFromPublicKey(hexToBytes(pk))).toLowerCase()
+                return !removedHexSet.has(pkKidHex)
+              }),
+              groupControl: c.groupControl
+                ? { ...c.groupControl, removed: c.groupControl.removed || selfRemoved }
+                : (selfRemoved ? { creator: creatorKid || base64UrlEncode(hexToBytes(nextParticipants[0])), needsRekey: false, removed: true } : undefined),
+            }))
+          }
+        }
+      } catch {
+        return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+      }
+    }
+  }
+  if (PARTICIPANT_WORKFLOW_BODY_TYPES.has(bodyType)) {
+    try {
+      if (selectedGateway?.status === 'active' && senderKidB64 === selectedGateway.keyId) {
+        throw new Error('Gateway cannot author participant workflow messages')
+      }
+      const current = store.findConversation(profileId, conversationId)
+      if (!current) throw new Error('Conversation not found')
+      if ((current.groupControl?.roster || selectedGateway?.status === 'active') &&
+          !current.participants.some(p => p.toLowerCase() === senderKidHex)) {
+        throw new Error('Sender is not an authorized participant')
+      }
+      const parsed = parseGatewayBody(bodyType, rawBodyBytes)
+      if ('conv_id' in parsed && parsed.conv_id !== conversationId) throw new Error('Workflow conversation mismatch')
+      if (selectedGateway?.status === 'active' && 'gateway_kid' in parsed && parsed.gateway_kid !== undefined && parsed.gateway_kid !== selectedGateway.keyId) {
+        throw new Error('Workflow gateway ID mismatch')
+      }
+      if ('signer_kid' in parsed && parsed.signer_kid !== senderKidB64) throw new Error('Signer key ID mismatch')
+      if ('sender_kid' in parsed && parsed.sender_kid !== senderKidB64) throw new Error('Sender key ID mismatch')
+      if (parsed.type === 'gate.request') {
+        if (!parsed.eligible_signer_kids.includes(senderKidB64) ||
+            !verifyRequest(senderPkBytes, gateRequestSignable(parsed), base64UrlDecode(parsed.signature))) {
+          throw new Error('Invalid gate.request signature')
+        }
+      } else if (parsed.type === 'gate.approval' || parsed.type === 'gate.disapproval') {
+        const reqEntry = store.getHistory(profileId, conversationId).find(m => {
+          if (m.bodyType !== 'gate.request') return false
+          try { return JSON.parse(m.text).request_id === parsed.request_id } catch { return false }
+        })
+        if (!reqEntry) throw new Error('Matching gate.request not found')
+        const reqBody = parseGatewayBody('gate.request', reqEntry.text) as GateRequestBody
+        if (!reqBody.eligible_signer_kids.includes(senderKidB64)) throw new Error('Ineligible gate voter')
+        if (parsed.type === 'gate.approval' && !verifyApproval(senderPkBytes, {
+          conv_id: parsed.conv_id,
+          request_id: parsed.request_id,
+          request_hash: hashRequest(gateRequestSignable(reqBody)),
+        }, base64UrlDecode(parsed.signature))) {
+          throw new Error('Invalid gate.approval signature')
+        }
+      } else if (parsed.type === 'gov.propose') {
+        if (!parsed.eligible_signer_kids.includes(senderKidB64) ||
+            !verifyProposal(senderPkBytes, gatewayProposalSignable(parsed), base64UrlDecode(parsed.signature))) {
+          throw new Error('Invalid gov.propose signature')
+        }
+      } else if (parsed.type === 'gov.approve' || parsed.type === 'gov.disapprove') {
+        const propEntry = store.getHistory(profileId, conversationId).find(m => {
+          if (m.bodyType !== 'gov.propose') return false
+          try { return JSON.parse(m.text).proposal_id === parsed.proposal_id } catch { return false }
+        })
+        if (!propEntry) throw new Error('Matching gov.propose not found')
+        const propBody = parseGatewayBody('gov.propose', propEntry.text) as GatewayProposalBody
+        if (!propBody.eligible_signer_kids.includes(senderKidB64)) throw new Error('Ineligible governance voter')
+        if (parsed.type === 'gov.approve' && !verifyGovApproval(senderPkBytes, {
+          conv_id: parsed.conv_id,
+          proposal_id: parsed.proposal_id,
+          proposal_hash: hashProposal(gatewayProposalSignable(propBody)),
+        }, base64UrlDecode(parsed.signature))) {
+          throw new Error('Invalid gov.approve signature')
+        }
+      }
+    } catch {
+      return { message: null, processedMsgId: envelope.msg_id, nextConvCrypto: activeConvCrypto }
+    }
   }
   if (GROUP_BODY_TYPES.has(bodyType)) {
     const current = store.findConversation(profileId, conversationId)
@@ -586,7 +782,7 @@ async function applyReceivedEnvelope(
   let nextConvCrypto: ConvCrypto | null = activeConvCrypto
   // Keep the live receive loop's membership aligned with the authenticated
   // store even when an event changes only the roster, not the epoch keys.
-  if (GROUP_BODY_TYPES.has(bodyType) || bodyType === 'gate.accept') {
+  if (GROUP_BODY_TYPES.has(bodyType) || bodyType === 'gate.accept' || bodyType === 'gov.applied') {
     nextConvCrypto = getConvCrypto(profileId, conversationId)
     if (!nextConvCrypto) {
       return { message: null, processedMsgId: null, nextConvCrypto: null }
@@ -838,7 +1034,8 @@ export async function gateRunRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!convCrypto) throw new Error(`Conversation ${conversationId} not found`)
 
-  const resolved = resolveRecipe(recipe, args)
+  const baseResolved = resolveRecipe(recipe, args)
+  const resolved = { ...baseResolved, ...formatRecipeUrls(recipe, args) }
   let requestBody: unknown = null
   if (resolved.body) {
     requestBody = JSON.parse(new TextDecoder().decode(resolved.body))
@@ -1014,6 +1211,9 @@ export async function gatePromoteRequest(
   const convCrypto = getConvCrypto(profileId, conversationId)
   if (!identity || !conv || !convCrypto) throw new Error('Conversation identity is unavailable')
   if (conv.gateway?.status === 'active') throw new Error('Gateway has already joined')
+  if (conv.type === 'group' && !isGroupAdminOrCreator(conv, identity.keyID)) {
+    throw new Error('Only a group administrator or creator may invite a gateway')
+  }
   const pending = conv.gateway?.pending
   if (pending) {
     try {
@@ -1073,10 +1273,24 @@ export async function gateSecretRequest(
     throw new Error('Gateway public key does not match the configured gateway identity')
   }
 
+  const allowedOrigins = resolveServiceOrigins(service)
+  if (!allowedOrigins || allowedOrigins.length === 0) {
+    throw new Error('Service must be a known service name or valid HTTPS origin (HTTP allowed on loopback)')
+  }
+  const headerDefaults = getServiceHeaderDefaults(service)
+  const effectiveHeaderName = headerName || headerDefaults.headerName
+  const effectiveHeaderTemplate = headerTemplate || headerDefaults.headerTemplate
+
   const context = browserGatewayContext(profileId, conversationId, identity)
   if (context) {
-    const body = createGateSecretBody(identity, context, { service, value,
-      headerName: headerName || 'Authorization', headerTemplate: headerTemplate || 'Bearer {value}' })
+    const baseBody = createGateSecretBody(identity, context, {
+      service,
+      value,
+      headerName: effectiveHeaderName,
+      headerTemplate: effectiveHeaderTemplate,
+      ...({ allowedOrigins } as Record<string, unknown>),
+    })
+    const body = { ...baseBody, allowed_origins: allowedOrigins }
     return sendMessageToConversation(profileId, profileName, conversationId, JSON.stringify(body), body.type)
   }
 
@@ -1089,8 +1303,9 @@ export async function gateSecretRequest(
     type: 'gate.secret',
     secret_id: secretId,
     service,
-    header_name: headerName || 'Authorization',
-    header_template: headerTemplate || 'Bearer {value}',
+    header_name: effectiveHeaderName,
+    header_template: effectiveHeaderTemplate,
+    allowed_origins: allowedOrigins,
     encrypted_blob: encryptedBlob,
     sender_kid: selfKidB64,
   }

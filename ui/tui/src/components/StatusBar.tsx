@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
+import { terminalText } from '../lib/gateway.js';
 import { theme } from '../lib/theme.js';
 
 const SPINNER_FRAMES = ['\u25D0', '\u25D3', '\u25D1', '\u25D2'];
@@ -69,9 +70,10 @@ export default function StatusBar({
   let connLabel: string;
 
   if (connectionError) {
+    const safeError = terminalText(connectionError).replace(/[\r\n\t]+/g, ' ');
     connSymbol = '\u25CF';
     connColor = theme.error;
-    connLabel = connectionError.length > 20 ? connectionError.slice(0, 20) + '..' : connectionError;
+    connLabel = safeError.length > 20 ? safeError.slice(0, 20) + '..' : safeError;
   } else if (isPolling) {
     connSymbol = SPINNER_FRAMES[spinnerIdx];
     connColor = theme.warning;
@@ -111,7 +113,7 @@ export default function StatusBar({
         <Text dimColor>{connLabel}</Text>
         {lastMsgText ? <Text dimColor>{' | '}{lastMsgText}</Text> : null}
         {'  '}
-        <Text bold>{name || 'unnamed'}</Text>
+        <Text bold>{terminalText(name || 'unnamed').replace(/[\r\n\t]+/g, ' ')}</Text>
         {' '}
         <Text dimColor>[{kidShort}]</Text>
       </Text>

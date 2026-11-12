@@ -48,6 +48,8 @@ function destination(profileId: string, contact: GuidanceContact) {
   if (identity.keyId === contact.recipientKeyId) throw new Error('Choose a guidance contact other than yourself.')
   const conv = store.findConversation(profileId, contact.conversationId)
   if (!conv) throw new Error('The pinned conversation is unavailable. Join it before requesting guidance.')
+  if (conv.groupControl?.removed) throw new Error('You have been removed from this conversation.')
+  if (conv.groupControl?.needsRekey) throw new Error('Complete the pending group rekey before requesting guidance.')
   if (!conv.participants.includes(contact.recipientKeyId)) throw new Error('The recipient is not a known participant. Verify the conversation and recipient before pinning.')
   return { identity, conv }
 }

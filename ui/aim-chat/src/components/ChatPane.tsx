@@ -1,7 +1,9 @@
 import { FormEvent, useMemo } from 'react'
+import { base64UrlDecode } from '@corpollc/qntm'
 import type { ChatMessage, Conversation } from '../types'
 import { formatSmartTime, formatDateLabel, isSameDay, isSameGroup, senderColor, shortId, parseGateMessage } from '../utils'
-import type { GateApprovalBody, GatePromoteBody } from '../gate-types'
+import { bytesToHex } from '../qntm'
+import type { GateApprovalBody, GatePromoteBody, GateRequestBody } from '../gate-types'
 import {
   GateRequestCard,
   GateApprovalCard,
@@ -40,7 +42,30 @@ export interface ChatPaneProps {
   onCopyInviteLink?: (token: string) => void
 }
 
-function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, onGovDisapprove, isWorking, approvalCounts, disapprovalCounts, requiredApprovals, approvedByMe, govApprovalCounts, govDisapprovalCounts, govRequiredApprovals, govApprovedByMe, govDisapprovedByMe, govApplied }: {
+function decodeSignerKidHex(signerKid: unknown): string | null {
+  if (typeof signerKid !== 'string' || !signerKid.trim()) return null
+  try {
+    const decoded = base64UrlDecode(signerKid.trim())
+    if (decoded.length !== 16) return null
+    return bytesToHex(decoded).toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function isAuthenticSignerMessage(message: ChatMessage, signerKid: unknown, participantsHex?: Set<string>): signerKid is string {
+  const signerHex = decodeSignerKidHex(signerKid)
+  if (!signerHex) return false
+  if (message.direction === 'incoming' && message.senderKey && message.senderKey.toLowerCase() !== signerHex) {
+    return false
+  }
+  if (participantsHex && participantsHex.size > 0 && !participantsHex.has(signerHex)) {
+    return false
+  }
+  return true
+}
+
+function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, onGovDisapprove, isWorking, approvalCounts, disapprovalCounts, requiredApprovalsByRequest, defaultRequiredApprovals, approvedByMe, disapprovedByMe, executedRequests, govApprovalCounts, govDisapprovalCounts, govRequiredApprovals, govApprovedByMe, govDisapprovedByMe, govApplied }: {
   message: ChatMessage
   onGateApprove: (requestId: string, conversationId: string) => void
   onGateDisapprove?: (requestId: string, conversationId: string) => void
@@ -49,8 +74,11 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
   isWorking: boolean
   approvalCounts: Record<string, number>
   disapprovalCounts: Record<string, number>
-  requiredApprovals: number
+  requiredApprovalsByRequest: Record<string, number>
+  defaultRequiredApprovals: number
   approvedByMe: Set<string>
+  disapprovedByMe: Set<string>
+  executedRequests: Set<string>
   govApprovalCounts: Record<string, number>
   govDisapprovalCounts: Record<string, number>
   govRequiredApprovals: Record<string, number>
@@ -62,14 +90,16 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
   if (message.bodyType === 'gate.promote') return <GatePromoteCard message={message} />
   if (message.bodyType === 'gate.config') return <GateConfigCard message={message} />
   if (message.bodyType === 'gate.request') {
-    const parsed = parseGateMessage(message.text) as import('../gate-types').GateRequestBody | null
+    const parsed = parseGateMessage(message.text) as GateRequestBody | null
     const requestId = parsed?.request_id || ''
-    return <GateRequestCard message={message} onApprove={onGateApprove} onDisapprove={onGateDisapprove} isWorking={isWorking} alreadyApproved={approvedByMe.has(requestId)} approvalCount={approvalCounts[requestId] || 0} disapprovalCount={disapprovalCounts[requestId] || 0} requiredApprovals={requiredApprovals} />
+    const reqThreshold = requiredApprovalsByRequest[requestId] || parsed?.required_approvals || defaultRequiredApprovals
+    return <GateRequestCard message={message} onApprove={onGateApprove} onDisapprove={onGateDisapprove} isWorking={isWorking} alreadyApproved={approvedByMe.has(requestId)} alreadyDisapproved={disapprovedByMe.has(requestId)} isExecuted={executedRequests.has(requestId)} approvalCount={approvalCounts[requestId] || 0} disapprovalCount={disapprovalCounts[requestId] || 0} requiredApprovals={reqThreshold} />
   }
   if (message.bodyType === 'gate.approval') {
     const parsed = parseGateMessage(message.text) as GateApprovalBody | null
     const requestId = parsed?.request_id || ''
-    return <GateApprovalCard message={message} approvalCount={approvalCounts[requestId] || 0} requiredApprovals={requiredApprovals} />
+    const reqThreshold = requiredApprovalsByRequest[requestId] || defaultRequiredApprovals
+    return <GateApprovalCard message={message} approvalCount={approvalCounts[requestId] || 0} requiredApprovals={reqThreshold} />
   }
   if (message.bodyType === 'gate.disapproval') return <GateDisapprovalCard message={message} />
   if (message.bodyType === 'gate.executed') return <GateExecutedCard message={message} />
@@ -80,8 +110,9 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
     return <SystemEventCard message={message} />
   }
   if (message.bodyType === 'gov.propose') {
-    const parsed = parseGateMessage(message.text) as { proposal_id?: string } | null
+    const parsed = parseGateMessage(message.text) as { proposal_id?: string; required_approvals?: number } | null
     const proposalId = parsed?.proposal_id || ''
+    const propThreshold = govRequiredApprovals[proposalId] || parsed?.required_approvals || defaultRequiredApprovals
     return (
       <GovProposalCard
         message={message}
@@ -92,7 +123,7 @@ function MessageBody({ message, onGateApprove, onGateDisapprove, onGovApprove, o
         alreadyDisapproved={govDisapprovedByMe.has(proposalId)}
         approvalCount={govApprovalCounts[proposalId] || 0}
         disapprovalCount={govDisapprovalCounts[proposalId] || 0}
-        requiredApprovals={govRequiredApprovals[proposalId] || 0}
+        requiredApprovals={propThreshold}
         isApplied={govApplied.has(proposalId)}
       />
     )
@@ -131,12 +162,15 @@ export function ChatPane({
     return -1
   })()
 
-  // Count approvals per request_id and track which ones current user approved
+  // Count unique eligible approvals/disapprovals per request_id and proposal_id
   const {
     approvalCounts,
     disapprovalCounts,
-    requiredApprovals,
+    requiredApprovalsByRequest,
+    defaultRequiredApprovals,
     approvedByMe,
+    disapprovedByMe,
+    executedRequests,
     govApprovalCounts,
     govDisapprovalCounts,
     govRequiredApprovals,
@@ -144,55 +178,105 @@ export function ChatPane({
     govDisapprovedByMe,
     govApplied,
   } = useMemo(() => {
+    const gateVotes: Record<string, Record<string, 'approve' | 'disapprove'>> = {}
+    const gateEligible: Record<string, Set<string>> = {}
+    const reqRequired: Record<string, number> = {}
     const counts: Record<string, number> = {}
     const denyCounts: Record<string, number> = {}
     const myApprovals = new Set<string>()
+    const myDisapprovals = new Set<string>()
+    const executed = new Set<string>()
     const govVotes: Record<string, Record<string, 'approve' | 'disapprove'>> = {}
+    const govEligible: Record<string, Set<string>> = {}
     const govApprovals: Record<string, number> = {}
     const govDisapprovals: Record<string, number> = {}
     const govRequired: Record<string, number> = {}
     const myGovApprovals = new Set<string>()
     const myGovDisapprovals = new Set<string>()
     const appliedGov = new Set<string>()
-    let threshold = 0
+    const participantsHex = selectedConversation?.participants?.length
+      ? new Set(selectedConversation.participants.map((p) => p.toLowerCase()))
+      : undefined
+    const activeGatewayHex = selectedConversation?.gateway?.status === 'active'
+      ? decodeSignerKidHex(selectedConversation.gateway.keyId)
+      : null
+    let threshold = selectedConversation?.gateway?.floor ?? 0
+
     for (const msg of messages) {
       if (msg.bodyType === 'gate.request') {
-        const parsed = parseGateMessage(msg.text)
-        if (parsed && 'request_id' in parsed) {
-          const requestId = parsed.request_id as string
-          counts[requestId] = 1 // submission = first approval
+        const parsed = parseGateMessage(msg.text) as GateRequestBody | null
+        if (parsed?.request_id && typeof parsed.signature === 'string' && parsed.signature.length > 0 && isAuthenticSignerMessage(msg, parsed.signer_kid)) {
+          const requestId = parsed.request_id
+          if (Array.isArray(parsed.eligible_signer_kids) && parsed.eligible_signer_kids.length > 0) {
+            if (!parsed.eligible_signer_kids.includes(parsed.signer_kid)) continue
+            gateEligible[requestId] = new Set(parsed.eligible_signer_kids)
+          }
+          if (typeof parsed.required_approvals === 'number' && parsed.required_approvals >= 1) {
+            reqRequired[requestId] = parsed.required_approvals
+          }
+          gateVotes[requestId] = gateVotes[requestId] || {}
+          gateVotes[requestId][parsed.signer_kid] = 'approve'
           if (msg.direction === 'outgoing') {
             myApprovals.add(requestId)
+            myDisapprovals.delete(requestId)
           }
         }
       } else if (msg.bodyType === 'gate.approval') {
         const parsed = parseGateMessage(msg.text) as GateApprovalBody | null
-        if (parsed?.request_id) {
-          counts[parsed.request_id] = (counts[parsed.request_id] || 0) + 1
+        if (parsed?.request_id && typeof parsed.signature === 'string' && parsed.signature.length > 0) {
+          const eligibleSet = gateEligible[parsed.request_id]
+          if (!isAuthenticSignerMessage(msg, parsed.signer_kid, eligibleSet ? undefined : participantsHex)) continue
+          if (eligibleSet && !eligibleSet.has(parsed.signer_kid)) continue
+          gateVotes[parsed.request_id] = gateVotes[parsed.request_id] || {}
+          gateVotes[parsed.request_id][parsed.signer_kid] = 'approve'
           if (msg.direction === 'outgoing') {
             myApprovals.add(parsed.request_id)
+            myDisapprovals.delete(parsed.request_id)
           }
         }
       } else if (msg.bodyType === 'gate.disapproval') {
-        const parsed = parseGateMessage(msg.text) as { request_id?: string } | null
+        const parsed = parseGateMessage(msg.text) as { request_id?: string; signer_kid?: string } | null
         if (parsed?.request_id) {
-          denyCounts[parsed.request_id] = (denyCounts[parsed.request_id] || 0) + 1
+          const eligibleSet = gateEligible[parsed.request_id]
+          if (!isAuthenticSignerMessage(msg, parsed.signer_kid, eligibleSet ? undefined : participantsHex)) continue
+          if (eligibleSet && !eligibleSet.has(parsed.signer_kid)) continue
+          gateVotes[parsed.request_id] = gateVotes[parsed.request_id] || {}
+          gateVotes[parsed.request_id][parsed.signer_kid] = 'disapprove'
+          if (msg.direction === 'outgoing') {
+            myApprovals.delete(parsed.request_id)
+            myDisapprovals.add(parsed.request_id)
+          }
         }
+      } else if (msg.bodyType === 'gate.executed' || msg.bodyType === 'gate.result' || msg.bodyType === 'gate.invalidated') {
+        if (!activeGatewayHex) continue
+        if (msg.direction === 'incoming' && msg.senderKey && msg.senderKey.toLowerCase() !== activeGatewayHex) continue
+        try {
+          const parsed = JSON.parse(msg.text) as { request_id?: string }
+          if (parsed.request_id) executed.add(parsed.request_id)
+        } catch { /* ignore */ }
       } else if (msg.bodyType === 'gate.promote') {
         try {
           const body = JSON.parse(msg.text) as GatePromoteBody
-          if (body.rules?.[0]?.m) threshold = body.rules[0].m
+          const promotedFloor = body.floor ?? body.rules?.[0]?.m
+          if (typeof promotedFloor === 'number' && promotedFloor >= 1) threshold = promotedFloor
         } catch { /* ignore */ }
       } else if (msg.bodyType === 'gov.propose') {
         try {
           const parsed = JSON.parse(msg.text) as {
             proposal_id: string
             signer_kid: string
+            signature?: string
+            eligible_signer_kids?: string[]
             required_approvals: number
+          }
+          if (!parsed.proposal_id || typeof parsed.signature !== 'string' || !parsed.signature || !isAuthenticSignerMessage(msg, parsed.signer_kid)) continue
+          if (Array.isArray(parsed.eligible_signer_kids) && parsed.eligible_signer_kids.length > 0) {
+            if (!parsed.eligible_signer_kids.includes(parsed.signer_kid)) continue
+            govEligible[parsed.proposal_id] = new Set(parsed.eligible_signer_kids)
           }
           govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
           govVotes[parsed.proposal_id][parsed.signer_kid] = 'approve'
-          govRequired[parsed.proposal_id] = parsed.required_approvals || 1
+          govRequired[parsed.proposal_id] = Math.max(parsed.required_approvals || 1, 1)
           if (msg.direction === 'outgoing') {
             myGovApprovals.add(parsed.proposal_id)
             myGovDisapprovals.delete(parsed.proposal_id)
@@ -200,7 +284,11 @@ export function ChatPane({
         } catch { /* ignore */ }
       } else if (msg.bodyType === 'gov.approve') {
         try {
-          const parsed = JSON.parse(msg.text) as { proposal_id: string; signer_kid: string }
+          const parsed = JSON.parse(msg.text) as { proposal_id: string; signer_kid: string; signature?: string }
+          if (!parsed.proposal_id || typeof parsed.signature !== 'string' || !parsed.signature) continue
+          const eligibleSet = govEligible[parsed.proposal_id]
+          if (!isAuthenticSignerMessage(msg, parsed.signer_kid, eligibleSet ? undefined : participantsHex)) continue
+          if (eligibleSet && !eligibleSet.has(parsed.signer_kid)) continue
           govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
           govVotes[parsed.proposal_id][parsed.signer_kid] = 'approve'
           if (msg.direction === 'outgoing') {
@@ -211,6 +299,10 @@ export function ChatPane({
       } else if (msg.bodyType === 'gov.disapprove') {
         try {
           const parsed = JSON.parse(msg.text) as { proposal_id: string; signer_kid: string }
+          if (!parsed.proposal_id) continue
+          const eligibleSet = govEligible[parsed.proposal_id]
+          if (!isAuthenticSignerMessage(msg, parsed.signer_kid, eligibleSet ? undefined : participantsHex)) continue
+          if (eligibleSet && !eligibleSet.has(parsed.signer_kid)) continue
           govVotes[parsed.proposal_id] = govVotes[parsed.proposal_id] || {}
           govVotes[parsed.proposal_id][parsed.signer_kid] = 'disapprove'
           if (msg.direction === 'outgoing') {
@@ -219,11 +311,24 @@ export function ChatPane({
           }
         } catch { /* ignore */ }
       } else if (msg.bodyType === 'gov.applied') {
+        if (!activeGatewayHex) continue
+        if (msg.direction === 'incoming' && msg.senderKey && msg.senderKey.toLowerCase() !== activeGatewayHex) continue
         try {
-          const parsed = JSON.parse(msg.text) as { proposal_id: string }
-          appliedGov.add(parsed.proposal_id)
+          const parsed = JSON.parse(msg.text) as { proposal_id: string; proposal_type?: string; applied_floor?: number }
+          if (parsed.proposal_id) appliedGov.add(parsed.proposal_id)
+          if (parsed.proposal_type === 'floor_change' && typeof parsed.applied_floor === 'number' && parsed.applied_floor >= 1) {
+            threshold = parsed.applied_floor
+          }
         } catch { /* ignore */ }
       }
+    }
+
+    const fallbackThreshold = Math.max(threshold || selectedConversation?.gateway?.floor || 1, 1)
+    const resolvedReqRequired: Record<string, number> = {}
+    for (const [requestId, votes] of Object.entries(gateVotes)) {
+      counts[requestId] = Object.values(votes).filter((vote) => vote === 'approve').length
+      denyCounts[requestId] = Object.values(votes).filter((vote) => vote === 'disapprove').length
+      resolvedReqRequired[requestId] = Math.max(reqRequired[requestId] || fallbackThreshold, 1)
     }
     for (const [proposalId, votes] of Object.entries(govVotes)) {
       govApprovals[proposalId] = Object.values(votes).filter((vote) => vote === 'approve').length
@@ -232,8 +337,11 @@ export function ChatPane({
     return {
       approvalCounts: counts,
       disapprovalCounts: denyCounts,
-      requiredApprovals: threshold,
+      requiredApprovalsByRequest: resolvedReqRequired,
+      defaultRequiredApprovals: fallbackThreshold,
       approvedByMe: myApprovals,
+      disapprovedByMe: myDisapprovals,
+      executedRequests: executed,
       govApprovalCounts: govApprovals,
       govDisapprovalCounts: govDisapprovals,
       govRequiredApprovals: govRequired,
@@ -241,7 +349,7 @@ export function ChatPane({
       govDisapprovedByMe: myGovDisapprovals,
       govApplied: appliedGov,
     }
-  }, [messages])
+  }, [messages, selectedConversation])
 
   const showWelcome = conversationCount === 0 && messages.length === 0
   return (
@@ -324,7 +432,7 @@ export function ChatPane({
                       </span>
                     </div>
                   )}
-                  <MessageBody message={message} onGateApprove={onGateApprove} onGateDisapprove={onGateDisapprove} onGovApprove={onGovApprove} onGovDisapprove={onGovDisapprove} isWorking={isWorking} approvalCounts={approvalCounts} disapprovalCounts={disapprovalCounts} requiredApprovals={requiredApprovals} approvedByMe={approvedByMe} govApprovalCounts={govApprovalCounts} govDisapprovalCounts={govDisapprovalCounts} govRequiredApprovals={govRequiredApprovals} govApprovedByMe={govApprovedByMe} govDisapprovedByMe={govDisapprovedByMe} govApplied={govApplied} />
+                  <MessageBody message={message} onGateApprove={onGateApprove} onGateDisapprove={onGateDisapprove} onGovApprove={onGovApprove} onGovDisapprove={onGovDisapprove} isWorking={isWorking} approvalCounts={approvalCounts} disapprovalCounts={disapprovalCounts} requiredApprovalsByRequest={requiredApprovalsByRequest} defaultRequiredApprovals={defaultRequiredApprovals} approvedByMe={approvedByMe} disapprovedByMe={disapprovedByMe} executedRequests={executedRequests} govApprovalCounts={govApprovalCounts} govDisapprovalCounts={govDisapprovalCounts} govRequiredApprovals={govRequiredApprovals} govApprovedByMe={govApprovedByMe} govDisapprovedByMe={govDisapprovedByMe} govApplied={govApplied} />
                 </article>
               </div>
             </div>

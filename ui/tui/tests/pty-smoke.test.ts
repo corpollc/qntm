@@ -60,6 +60,10 @@ async function runTuiForSeconds(configDir: string, relayUrl: string, seconds: nu
     set timeout ${Math.max(seconds + 5, 10)}
     lassign $argv node entry configDir relayUrl
     spawn env TERM=xterm-256color FORCE_COLOR=0 $node $entry --config-dir $configDir --relay-url $relayUrl
+    expect {
+      -re ".+" { }
+      timeout { }
+    }
     set end [expr {[clock milliseconds] + ${ms}}]
     while {[clock milliseconds] < $end} {
       expect {

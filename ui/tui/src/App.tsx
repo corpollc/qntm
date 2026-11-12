@@ -667,7 +667,7 @@ export default function App({ configDir, dropboxUrl }: AppProps) {
         </Box>
         <Box flexGrow={1} justifyContent="center">
           <Text bold color={theme.brand}>
-            {activeConvName || 'qntm messenger'}
+            {activeConvName ? terminalText(activeConvName).replace(/[\r\n\t]+/g, ' ') : 'qntm messenger'}
           </Text>
         </Box>
         <Box width={32} justifyContent="flex-end">

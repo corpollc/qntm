@@ -132,12 +132,12 @@ Call `status` to inspect admission and paginated workflow summaries (`offset`, `
 | `invite` | `gatewayUrl`, optional `floor` (default 1). HTTPS required except loopback. |
 | `request` | `service`, `endpoint`, `verb`, `targetUrl`; optional `payload`, `recipeName`, `arguments`, `requiredApprovals`, `expiresInSeconds`. |
 | `approve`, `disapprove` | `id`: the complete verified request ID. A withdrawal removes this identity's vote; it is not a veto or execution rollback. |
-| `secret` | `service`, `value`; optional `headerName`, `headerTemplate`, `ttl`. |
+| `secret` | `service`, `value`; optional `allowedOrigins` (auto-derived for built-in services or HTTPS hostnames), `headerName`, `headerTemplate`, `ttl`. |
 | `propose` | `proposalType`; the applicable `proposedFloor`, `proposedRules`, `proposedMembers` or `removedMemberKids`; optional `requiredApprovals`, `expiresInSeconds`. |
 | `gov-approve`, `gov-disapprove` | `id`: the complete verified proposal ID. |
 | `retry-bootstrap` | No options; requires `invite` permission and a matching saved invitation. |
 
-Proposal types are `floor_change`, `rules_change`, `member_add` and `member_remove`. Rules use `{service, endpoint, verb, m}`. Proposed members use `{kid, public_key}` with base64url-encoded key IDs and public keys; `removedMemberKids` is an array of base64url key IDs. If a host truncates or summarizes a review, the agent must not commit without inspecting the complete proposed effect.
+Proposal types are `floor_change`, `rules_change`, `member_add` and `member_remove`. Rules use `{service, endpoint, verb, m}`. Proposed members use `{kid, publicKey}` (`{kid, public_key}` is also accepted) with base64url-encoded key IDs and public keys; `removedMemberKids` is an array of base64url key IDs. If a host truncates or summarizes a review, the agent must not commit without inspecting the complete proposed effect.
 
 Reviews expire within five minutes, live only in this host process and require the original native session/requester. Commit checks current configuration, membership, keys, policy, expiry and verified subject status again. A valid commit attempt consumes the token even if delivery fails; cancelled or ambiguous sends are not automatically retried. The relay subscription alone advances protocol state and its cursor, so a delayed POST acknowledgement cannot overwrite a newer rekey. `submitted` means the relay acknowledged a message, not that an API call ran. A `delivery_unknown` receipt includes its message ID for reconciliation against verified history before preparing another action.
 

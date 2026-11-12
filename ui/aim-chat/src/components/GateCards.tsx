@@ -16,18 +16,22 @@ export function GateRequestCard({
   onDisapprove,
   isWorking,
   alreadyApproved,
+  alreadyDisapproved,
   approvalCount,
   disapprovalCount,
   requiredApprovals,
+  isExecuted,
 }: {
   message: ChatMessage
   onApprove: (requestId: string, conversationId: string) => void
   onDisapprove?: (requestId: string, conversationId: string) => void
   isWorking: boolean
   alreadyApproved?: boolean
+  alreadyDisapproved?: boolean
   approvalCount?: number
   disapprovalCount?: number
   requiredApprovals?: number
+  isExecuted?: boolean
 }) {
   const parsed = parseGateMessage(message.text) as GateRequestBody | null
   if (!parsed) return <div className="message-body">{message.text}</div>
@@ -35,15 +39,18 @@ export function GateRequestCard({
   const isExpired = new Date(parsed.expires_at) < new Date()
   const hasArgs = parsed.arguments && Object.keys(parsed.arguments).length > 0
   const hasBody = parsed.payload !== undefined && parsed.payload !== null
-  const thresholdMet = approvalCount != null && requiredApprovals != null && approvalCount >= requiredApprovals
+  const effectiveRequired = requiredApprovals && requiredApprovals > 0
+    ? requiredApprovals
+    : (typeof parsed.required_approvals === 'number' && parsed.required_approvals > 0 ? parsed.required_approvals : 1)
+  const thresholdMet = approvalCount != null && approvalCount >= effectiveRequired
 
   return (
     <div className="gate-card gate-request">
       <div className="gate-card-header">
         API Request{parsed.recipe_name ? `: ${parsed.recipe_name}` : ''}
-        {approvalCount != null && requiredApprovals != null && (
+        {approvalCount != null && (
           <span style={{ fontWeight: 400, marginLeft: 8 }}>
-            ({approvalCount} of {requiredApprovals} approvals{thresholdMet ? ' — ready to execute' : ''})
+            ({approvalCount} of {effectiveRequired} approvals{thresholdMet ? ' — ready to execute' : ''})
           </span>
         )}
       </div>
@@ -79,7 +86,7 @@ export function GateRequestCard({
           </div>
         )}
       </div>
-      {!isExpired && !alreadyApproved && !thresholdMet && (
+      {!isExpired && !isExecuted && !alreadyApproved && !thresholdMet && (
         <button
           className="gate-approve-btn"
           type="button"
@@ -89,10 +96,10 @@ export function GateRequestCard({
           Approve
         </button>
       )}
-      {!isExpired && alreadyApproved && !thresholdMet && (
+      {!isExpired && !isExecuted && alreadyApproved && !thresholdMet && (
         <div style={{ marginTop: 8, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>You have already approved this request.</div>
       )}
-      {!isExpired && !thresholdMet && onDisapprove && (
+      {!isExpired && !isExecuted && !alreadyDisapproved && !thresholdMet && onDisapprove && (
         <button
           className="gate-deny-btn"
           type="button"
@@ -101,6 +108,9 @@ export function GateRequestCard({
         >
           Deny
         </button>
+      )}
+      {!isExpired && !isExecuted && alreadyDisapproved && !thresholdMet && (
+        <div style={{ marginTop: 8, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>You have denied this request.</div>
       )}
       {disapprovalCount != null && disapprovalCount > 0 && (
         <div style={{ marginTop: 4, fontSize: 'var(--text-xs)', color: 'var(--danger, #e74c3c)', fontWeight: 600 }}>

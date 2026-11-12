@@ -25,6 +25,10 @@ import {
 
 import {
   deserializeIdentity,
+  validateIdentity,
+  keyIDFromPublicKey,
+  parseGatewayBody,
+  matchesGatewayAcceptance,
   createInvite,
   inviteToToken,
   inviteFromURL,
@@ -121,10 +125,43 @@ function convIdToHex(id: number[] | string): string {
 }
 
 function decodeKey(s: string): Uint8Array {
-  if (/^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0 && s.length >= 32) {
+  if (/^[0-9a-fA-F]+$/.test(s) && (s.length === 32 || s.length === 64)) {
     return fromHex(s);
   }
   return fromBase64(s);
+}
+
+const CONTROL_OR_BIDI_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/** Sanitize untrusted conversation/peer labels before inline interpolation. */
+function sanitizeInlineLabel(value: string, maxLen = 120): string {
+  const cleaned = value
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(CONTROL_OR_BIDI_RE, '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, "'")
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .trim();
+  return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}\u2026` : cleaned;
+}
+
+/** Prevent `<channel>` / `</channel>` tag breakout and control/bidi injection in live deliveries. */
+function escapeChannelContent(value: string): string {
+  return value
+    .replace(CONTROL_OR_BIDI_RE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    .replace(/<(\/?\s*channel\b)/gi, '&lt;$1');
+}
+
+/** Escape untrusted history entries onto strictly delimited single lines. */
+function formatHistoryBody(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(CONTROL_OR_BIDI_RE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // ---------------------------------------------------------------------------
@@ -151,19 +188,23 @@ function loadIdentity(): Identity {
 
   // Try CBOR first (TS client / Go CLI format)
   try {
-    return deserializeIdentity(new Uint8Array(raw));
+    const parsed = deserializeIdentity(new Uint8Array(raw));
+    validateIdentity(parsed);
+    return parsed;
   } catch { /* fall through */ }
 
   // Try JSON (Python CLI format)
   try {
     const obj = JSON.parse(raw.toString('utf-8'));
-    return {
+    const parsed: Identity = {
       privateKey: fromHex(obj.private_key),
       publicKey: fromHex(obj.public_key),
       keyID: fromHex(obj.key_id),
     };
+    validateIdentity(parsed);
+    return parsed;
   } catch {
-    console.error(`Failed to parse identity at ${path}`);
+    console.error(`Failed to parse or validate identity at ${path}`);
     process.exit(1);
   }
 }
@@ -190,15 +231,53 @@ function saveSlot(slot: ChannelSlot): void {
 // Conversation record format (on-disk, Go/UI or Python CLI)
 // ---------------------------------------------------------------------------
 
+interface DiskGatewayInfo {
+  status?: string;
+  keyId?: string;
+  key_id?: string;
+  kid?: string;
+  publicKey?: string;
+  public_key?: string;
+  invitationId?: string;
+  invitation_id?: string;
+}
+
 interface DiskConvRecord {
   id: number[] | string;
   name?: string;
   type: string;
-  keys: { root: string; aead_key: string; nonce_key: string };
+  keys: {
+    root: string;
+    aead_key?: string;
+    aeadKey?: string;
+    nonce_key?: string;
+    nonceKey?: string;
+  };
   participants: string[];
   created_at?: string;
-  current_epoch: number;
+  createdAt?: string;
+  current_epoch?: number;
+  currentEpoch?: number;
   invite_token?: string;
+  excluded?: boolean;
+  removed?: boolean;
+  needs_rekey?: boolean;
+  needsRekey?: boolean;
+  pending_control?: unknown;
+  recovery_required?: boolean;
+  gateway?: DiskGatewayInfo | null;
+  group_control?: { removed?: boolean; needs_rekey?: boolean } | null;
+  groupControl?: { removed?: boolean; needsRekey?: boolean } | null;
+  session?: {
+    removed?: boolean;
+    needsRekey?: boolean;
+    participants?: Record<string, string>;
+    gateway?: {
+      accepted?: boolean;
+      invitation?: { body?: { invitation_id?: string; gateway_kid?: string } };
+      context?: { gateway?: { kid?: string; publicKey?: string } };
+    };
+  } | null;
 }
 
 function findConversation(idHex: string): DiskConvRecord | null {
@@ -207,19 +286,99 @@ function findConversation(idHex: string): DiskConvRecord | null {
 }
 
 function convToCrypto(rec: DiskConvRecord): Conversation {
+  const aeadRaw = rec.keys.aead_key ?? rec.keys.aeadKey;
+  const nonceRaw = rec.keys.nonce_key ?? rec.keys.nonceKey;
+  if (!rec.keys.root || !aeadRaw || !nonceRaw) {
+    throw new Error('Conversation keys are incomplete');
+  }
   return {
     id: convIdToBytes(rec.id),
     type: rec.type as 'direct' | 'group' | 'announce',
     keys: {
       root: decodeKey(rec.keys.root),
-      aeadKey: decodeKey(rec.keys.aead_key),
-      nonceKey: decodeKey(rec.keys.nonce_key),
+      aeadKey: decodeKey(aeadRaw),
+      nonceKey: decodeKey(nonceRaw),
     },
-    participants: rec.participants.map((p) => decodeKey(p)),
-    currentEpoch: rec.current_epoch,
+    participants: (rec.participants || []).map((p) => decodeKey(p)),
+    currentEpoch: rec.current_epoch ?? rec.currentEpoch ?? 0,
     createdAt: new Date(),
   };
 }
+
+function resolveActiveGateway(rec: DiskConvRecord | null): { kidHex: string; publicKeyHex?: string } | null {
+  if (!rec) return null;
+  if (rec.session?.gateway?.accepted && rec.session.gateway.context?.gateway?.kid) {
+    const kidHex = toHex(decodeKey(rec.session.gateway.context.gateway.kid));
+    const publicKeyHex = rec.session.gateway.context.gateway.publicKey
+      ? toHex(decodeKey(rec.session.gateway.context.gateway.publicKey))
+      : undefined;
+    return { kidHex, publicKeyHex };
+  }
+  const gw = rec.gateway;
+  if (gw && gw.status === 'active') {
+    const rawKid = gw.keyId ?? gw.key_id ?? gw.kid;
+    if (rawKid) {
+      const kidHex = toHex(decodeKey(rawKid));
+      const rawPk = gw.publicKey ?? gw.public_key;
+      const publicKeyHex = rawPk ? toHex(decodeKey(rawPk)) : undefined;
+      return { kidHex, publicKeyHex };
+    }
+  }
+  return null;
+}
+
+function checkSendEligibility(rec: DiskConvRecord, crypto: Conversation, localIdentity: Identity): string | null {
+  if (rec.excluded || rec.removed || rec.group_control?.removed || rec.groupControl?.removed || rec.session?.removed) {
+    return 'Cannot reply: local identity has been removed from this conversation.';
+  }
+  if (rec.recovery_required) {
+    return 'Cannot reply: group conversation requires key recovery.';
+  }
+  if (rec.needs_rekey || rec.needsRekey || rec.pending_control || rec.group_control?.needs_rekey || rec.groupControl?.needsRekey || rec.session?.needsRekey) {
+    return 'Cannot reply: complete pending group key rotation before sending.';
+  }
+  const localKidHex = toHex(localIdentity.keyID);
+  const localPkHex = toHex(localIdentity.publicKey);
+  if (rec.session?.participants && Object.keys(rec.session.participants).length > 0) {
+    const localKidB64 = base64UrlEncode(localIdentity.keyID);
+    if (!Object.prototype.hasOwnProperty.call(rec.session.participants, localKidB64)) {
+      return 'Cannot reply: local identity is not in the active session participant set.';
+    }
+  }
+  if (rec.type === 'group' && crypto.currentEpoch > 0 && crypto.participants.length > 0) {
+    const inRoster = crypto.participants.some((entry) => {
+      const hex = toHex(entry);
+      if (hex === localPkHex || hex === localKidHex) return true;
+      if (entry.length === 32 && toHex(keyIDFromPublicKey(entry)) === localKidHex) return true;
+      return false;
+    });
+    if (!inRoster) {
+      return 'Cannot reply: local identity is not in the current group epoch roster.';
+    }
+  }
+  return null;
+}
+
+const GATEWAY_ONLY_BODY_TYPES = new Set([
+  'gate.executed',
+  'gate.result',
+  'gate.expired',
+  'gate.invalidated',
+  'gate.config',
+  'gov.applied',
+  'gov.invalidated',
+]);
+
+const PARTICIPANT_GATEWAY_BODY_TYPES = new Set([
+  'gate.promote',
+  'gate.request',
+  'gate.approval',
+  'gate.disapproval',
+  'gate.secret',
+  'gov.propose',
+  'gov.approve',
+  'gov.disapprove',
+]);
 
 /** Save a new Conversation object to conversations.json in Go/UI-compatible format */
 function persistConversation(conv: Conversation, name: string, token?: string): void {
@@ -339,7 +498,7 @@ if (slot) {
   if (rec) {
     convIdHex = slot.conv_id_hex;
     convCrypto = convToCrypto(rec);
-    convName = rec.name || convIdHex;
+    convName = sanitizeInlineLabel(rec.name || convIdHex);
   } else {
     console.error(`[qntm-channel] slot points to ${slot.conv_id_hex} but conversation not found — clearing`);
     saveSlot(null as unknown as ChannelSlot);
@@ -347,6 +506,7 @@ if (slot) {
 }
 
 const paired = convIdHex !== null;
+const safeSelfName = sanitizeInlineLabel(resolveName(myKidHex, names));
 console.error(`[qntm-channel] identity: ${myKidHex.substring(0, 8)}`);
 if (paired) {
   console.error(`[qntm-channel] bridging conversation: ${convName}`);
@@ -360,7 +520,7 @@ if (paired) {
 
 const unpairedInstructions = [
   `You are a qntm peer but not yet connected to a conversation.`,
-  `Your identity on the network is "${resolveName(myKidHex, names)}" (${myKidHex.substring(0, 8)}).`,
+  `Your identity on the network is "${safeSelfName}" (${myKidHex.substring(0, 8)}).`,
   `To get started, either:`,
   `  1. Use qntm_join with an invite token/URL to join an existing conversation`,
   `  2. Use qntm_create to create a new conversation and get an invite token to share`,
@@ -368,10 +528,10 @@ const unpairedInstructions = [
 ].join('\n');
 
 const pairedInstructions = [
-  `You are connected to a qntm encrypted conversation "${convName}".`,
+  `You are connected to a qntm encrypted conversation "${convName ?? ''}".`,
   `Messages arrive as <channel source="qntm" sender="..." body_type="...">. `,
   `Reply using the qntm_reply tool. You do not need to pass a conversation ID — there is only one.`,
-  `Your identity on the network is "${resolveName(myKidHex, names)}" (${myKidHex.substring(0, 8)}).`,
+  `Your identity on the network is "${safeSelfName}" (${myKidHex.substring(0, 8)}).`,
   `Messages with body_type="text" are chat messages. Other body_types are protocol events — read them for context.`,
 ].join('\n');
 
@@ -453,14 +613,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => {
 // ---------------------------------------------------------------------------
 
 async function activateBridge(conv: Conversation, idHex: string, name: string): Promise<void> {
+  const safeName = sanitizeInlineLabel(name);
   convIdHex = idHex;
   convCrypto = conv;
-  convName = name;
+  convName = safeName;
   saveSlot({ conv_id_hex: idHex });
   startSubscription();
   // Notify Claude Code that the tool list has changed (join/create → reply)
   await mcp.sendToolListChanged();
-  console.error(`[qntm-channel] paired to: ${name} (${idHex.substring(0, 8)})`);
+  console.error(`[qntm-channel] paired to: ${safeName} (${idHex.substring(0, 8)})`);
 }
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -480,7 +641,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     addParticipant(conv, identity.publicKey);
 
     const idHex = toHex(conv.id);
-    const localName = name || `Channel ${idHex.substring(0, 8)}`;
+    const localName = sanitizeInlineLabel(name || `Channel ${idHex.substring(0, 8)}`) || `Channel ${idHex.substring(0, 8)}`;
 
     persistConversation(conv, localName, inviteStr);
     await activateBridge(conv, idHex, localName);
@@ -505,12 +666,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     const token = inviteToToken(invitePayload);
     const idHex = toHex(conv.id);
+    const safeName = sanitizeInlineLabel(name) || `Channel ${idHex.substring(0, 8)}`;
 
-    persistConversation(conv, name, token);
-    await activateBridge(conv, idHex, name);
+    persistConversation(conv, safeName, token);
+    await activateBridge(conv, idHex, safeName);
 
     return {
-      content: [{ type: 'text', text: `Created conversation "${name}". Share this invite token with the other party:\n\n${token}` }],
+      content: [{ type: 'text', text: `Created conversation "${safeName}". Share this invite token with the other party:\n\n${token}` }],
     };
   }
 
@@ -519,6 +681,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (!convIdHex || !convCrypto) {
       return { content: [{ type: 'text', text: 'Not paired to a conversation yet. Use qntm_join or qntm_create first.' }] };
     }
+
+    const record = findConversation(convIdHex);
+    if (!record) {
+      return { isError: true, content: [{ type: 'text', text: 'Conversation not found in conversations.json.' }] };
+    }
+    const freshCrypto = convToCrypto(record);
+    const blockedReason = checkSendEligibility(record, freshCrypto, identity);
+    if (blockedReason) {
+      return { isError: true, content: [{ type: 'text', text: blockedReason }] };
+    }
+    convCrypto = freshCrypto;
+    convName = sanitizeInlineLabel(record.name || convIdHex);
 
     const { text } = req.params.arguments as { text: string };
 
@@ -562,13 +736,14 @@ async function emitHistory(): Promise<void> {
   const history = loadHistory(convIdHex);
   if (history.length === 0) return;
 
+  const currentNames = loadNames();
   const recent = history.slice(-HISTORY_COUNT);
   const lines = recent.map((entry) => {
     const sender =
       entry.direction === 'outgoing'
         ? 'you'
-        : resolveName(entry.sender_kid || '???', names);
-    const body = entry.unsafe_body || entry.body || '[binary]';
+        : sanitizeInlineLabel(resolveName(entry.sender_kid || '???', currentNames));
+    const body = formatHistoryBody(entry.unsafe_body || entry.body || '[binary]');
     const time = new Date(entry.created_ts * 1000).toISOString();
     return `[${time}] ${sender}: ${body}`;
   });
@@ -584,14 +759,17 @@ async function emitHistory(): Promise<void> {
 }
 
 async function deliverEvent(event: ReceiveEvent): Promise<void> {
+  const content = event.message.unsafe_body !== undefined
+    ? escapeChannelContent(event.message.unsafe_body)
+    : `[binary base64: ${event.message.unsafe_body_b64}]`;
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
-      content: event.message.unsafe_body ?? `[binary base64: ${event.message.unsafe_body_b64}]`,
+      content,
       meta: {
-        sender: resolveName(event.message.sender_kid, loadNames()),
+        sender: sanitizeInlineLabel(resolveName(event.message.sender_kid, loadNames())),
         sender_kid: event.message.sender_kid,
-        body_type: event.message.body_type,
+        body_type: sanitizeInlineLabel(event.message.body_type, 64),
         event_id: event.event_id,
         conversation_id: event.conversation_id,
         sequence: String(event.sequence),
@@ -608,6 +786,87 @@ function drainInbox(): void {
   });
 }
 
+function verifyGatewayAuthorship(
+  bodyType: string,
+  rawBodyBytes: Uint8Array,
+  senderKidBytes: Uint8Array,
+  senderPkBytes: Uint8Array,
+  epoch: number,
+  record: DiskConvRecord | null,
+  history: HistoryEntry[],
+): void {
+  const senderKidHex = toHex(senderKidBytes);
+  const senderPkHex = toHex(senderPkBytes);
+  const senderKidB64 = base64UrlEncode(senderKidBytes);
+  const senderPkB64 = base64UrlEncode(senderPkBytes);
+  const activeGw = resolveActiveGateway(record);
+
+  if (GATEWAY_ONLY_BODY_TYPES.has(bodyType)) {
+    if (!activeGw || senderKidHex !== activeGw.kidHex || (activeGw.publicKeyHex && senderPkHex !== activeGw.publicKeyHex)) {
+      throw new Error(`untrusted gateway event ${bodyType}`);
+    }
+    parseGatewayBody(bodyType, rawBodyBytes);
+    return;
+  }
+
+  if (bodyType === 'gate.accept') {
+    const accept = parseGatewayBody('gate.accept', rawBodyBytes);
+    if (
+      accept.type !== 'gate.accept' ||
+      accept.conv_id !== convIdHex ||
+      accept.conv_epoch !== epoch ||
+      accept.gateway_kid !== senderKidB64 ||
+      accept.gateway_public_key !== senderPkB64
+    ) {
+      throw new Error('invalid gate.accept');
+    }
+    const matchedHistoryInvite = history.some(
+      (entry) =>
+        entry.body_type === 'gate.promote' &&
+        typeof entry.unsafe_body === 'string' &&
+        matchesGatewayAcceptance(accept, senderKidB64, entry.msg_id, entry.unsafe_body),
+    );
+    const pendingInviteId =
+      record?.gateway?.invitationId ??
+      record?.gateway?.invitation_id ??
+      record?.session?.gateway?.invitation?.body?.invitation_id;
+    const pendingGwKid =
+      record?.gateway?.keyId ??
+      record?.gateway?.key_id ??
+      record?.gateway?.kid ??
+      record?.session?.gateway?.invitation?.body?.gateway_kid ??
+      record?.session?.gateway?.context?.gateway?.kid;
+    const matchedDiskGateway = Boolean(
+      (pendingInviteId && pendingInviteId === accept.invitation_id) ||
+      (pendingGwKid && toHex(decodeKey(pendingGwKid)) === senderKidHex),
+    );
+    if (!matchedHistoryInvite && !matchedDiskGateway) {
+      throw new Error('unsolicited gate.accept');
+    }
+    return;
+  }
+
+  if (PARTICIPANT_GATEWAY_BODY_TYPES.has(bodyType)) {
+    if (activeGw && senderKidHex === activeGw.kidHex) {
+      throw new Error('gateway cannot author participant workflow event');
+    }
+    const parsed = parseGatewayBody(bodyType, rawBodyBytes);
+    if (bodyType !== 'gate.promote') {
+      if (!activeGw) {
+        throw new Error(`gateway workflow event ${bodyType} requires an active gateway`);
+      }
+      if ('signer_kid' in parsed && parsed.signer_kid !== senderKidB64) {
+        throw new Error('workflow signer_kid mismatch');
+      }
+    }
+    return;
+  }
+
+  if (bodyType.startsWith('gate.') || bodyType.startsWith('gov.')) {
+    throw new Error(`unsupported gateway body_type ${bodyType}`);
+  }
+}
+
 async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<void> {
   if (!convIdHex || !convCrypto || !inbox || seq <= inbox.cursor) return;
   const history = loadHistory(convIdHex);
@@ -615,16 +874,44 @@ async function handleEnvelope(rawEnvBytes: Uint8Array, seq: number): Promise<voi
   let event: ReceiveEvent;
   try {
     const envelope = deserializeEnvelope(rawEnvBytes);
+    const record = findConversation(convIdHex);
+    if (record) {
+      convCrypto = convToCrypto(record);
+      convName = sanitizeInlineLabel(record.name || convIdHex);
+    }
     // A CLI receiver may already have advanced the epoch. Its verified history
     // preserves this event, but its shared cursor never acknowledges our handoff.
     const saved = history.find(entry => entry.msg_id === toHex(envelope.msg_id));
     const previous = saved?.receive_event;
     if (saved?.envelope_sha256 === envelopeHash && previous?.message.verified && previous.conversation_id === convIdHex) {
+      if (GATEWAY_ONLY_BODY_TYPES.has(previous.message.body_type)) {
+        const activeGw = resolveActiveGateway(record);
+        if (!activeGw || previous.message.sender_kid !== activeGw.kidHex) {
+          throw new Error(`untrusted cached gateway event ${previous.message.body_type}`);
+        }
+      }
       event = { ...previous, sequence: seq, message: { ...previous.message, sequence: seq } };
     } else {
-      const record = findConversation(convIdHex);
-      if (record) convCrypto = convToCrypto(record);
-      event = createReceiveEvent(decryptMessage(envelope, convCrypto), seq);
+      if (envelope.conv_epoch !== convCrypto.currentEpoch) {
+        throw new Error(`epoch mismatch: expected ${convCrypto.currentEpoch}, got ${envelope.conv_epoch}`);
+      }
+      const decrypted = decryptMessage(envelope, convCrypto);
+      if (!decrypted.verified) {
+        throw new Error('unverified message signature');
+      }
+      if (toHex(keyIDFromPublicKey(decrypted.inner.sender_ik_pk)) !== toHex(decrypted.inner.sender_kid)) {
+        throw new Error('sender key_id mismatch');
+      }
+      verifyGatewayAuthorship(
+        decrypted.inner.body_type || 'text',
+        decrypted.inner.body,
+        decrypted.inner.sender_kid,
+        decrypted.inner.sender_ik_pk,
+        envelope.conv_epoch,
+        record,
+        history,
+      );
+      event = createReceiveEvent(decrypted, seq);
     }
   } catch (error) {
     console.error(`[qntm-channel] rejected envelope at sequence ${seq}: ${error}`);

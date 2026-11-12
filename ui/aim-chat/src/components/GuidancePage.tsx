@@ -4,10 +4,11 @@ import { GUIDANCE_CATEGORIES, CORPO_CONTACTS, pinGuidanceContact, prepareGuidanc
 import type { GuidanceCategory, GuidanceContact, GuidanceDraft } from '../guidance'
 import * as store from '../store'
 
-export function GuidancePage({ profileId, profileName, onOpenConversation }: {
+export function GuidancePage({ profileId, profileName, onOpenConversation, onConversationsChanged }: {
   profileId: string
   profileName: string
   onOpenConversation: (id: string) => void
+  onConversationsChanged?: () => void
 }) {
   const [contacts, setContacts] = useState(() => store.listGuidanceContacts(profileId))
   const [category, setCategory] = useState<GuidanceCategory>('legal')
@@ -61,6 +62,7 @@ export function GuidancePage({ profileId, profileName, onOpenConversation }: {
     setSending(true)
     try {
       const message = await sendGuidance(draft, profileName)
+      onConversationsChanged?.()
       setSent({ conversationId: message.conversationId, messageId: message.id })
       setDraft(null)
       setQuestion('')

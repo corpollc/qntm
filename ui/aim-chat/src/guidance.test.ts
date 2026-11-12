@@ -73,4 +73,20 @@ describe('local guidance', () => {
     }
     expect(() => prepareGuidance(profileId, contactId, ' ')).toThrow()
   })
+
+  it('blocks prepareGuidance when groupControl indicates removed or pending rekey', () => {
+    store.updateConversation(profileId, conversationId, c => ({
+      ...c,
+      type: 'group',
+      groupControl: { creator: 'aa'.repeat(11), needsRekey: true, removed: false },
+    }))
+    expect(() => prepareGuidance(profileId, contactId, 'Question')).toThrow('pending group rekey')
+
+    store.updateConversation(profileId, conversationId, c => ({
+      ...c,
+      type: 'group',
+      groupControl: { creator: 'aa'.repeat(11), needsRekey: false, removed: true },
+    }))
+    expect(() => prepareGuidance(profileId, contactId, 'Question')).toThrow('removed')
+  })
 })

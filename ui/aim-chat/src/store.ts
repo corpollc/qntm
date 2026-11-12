@@ -226,14 +226,12 @@ export function getIdentity(profileId: string): StoredIdentity | null {
 export function saveIdentity(profileId: string, identity: StoredIdentity): void {
   const store = loadStore()
   store.identities[profileId] = identity
-  // Auto-add self as contact in all profiles
-  for (const p of store.profiles) {
-    if (!store.contacts[p.id]) store.contacts[p.id] = {}
-    const key = identity.keyId.toLowerCase()
-    if (!store.contacts[p.id][key]) {
-      const thisProfile = store.profiles.find(pp => pp.id === profileId)
-      store.contacts[p.id][key] = thisProfile?.name || profileId
-    }
+  // Scope self display name strictly to this profile's contact book
+  if (!store.contacts[profileId]) store.contacts[profileId] = {}
+  const key = identity.keyId.toLowerCase()
+  if (!store.contacts[profileId][key]) {
+    const thisProfile = store.profiles.find(pp => pp.id === profileId)
+    store.contacts[profileId][key] = thisProfile?.name || profileId
   }
   saveStore(store)
 }
@@ -385,8 +383,22 @@ export function getDropboxUrl(): string {
 }
 
 export function setDropboxUrl(url: string): void {
+  const trimmed = url.trim()
+  let nextUrl = DEFAULT_DROPBOX_URL
+  if (trimmed) {
+    let parsed: URL
+    try {
+      parsed = new URL(trimmed)
+    } catch {
+      throw new Error('Dropbox relay URL must be a valid HTTP(S) URL')
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error('Dropbox relay URL must use HTTP(S) without credentials, query, or fragment')
+    }
+    nextUrl = trimmed.replace(/\/+$/, '') || DEFAULT_DROPBOX_URL
+  }
   const store = loadStore()
-  store.dropboxUrl = url.trim().replace(/\/+$/, '') || DEFAULT_DROPBOX_URL
+  store.dropboxUrl = nextUrl
   saveStore(store)
 }
 

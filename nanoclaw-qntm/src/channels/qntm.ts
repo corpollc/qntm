@@ -1,13 +1,22 @@
-import { DropboxClient, type Conversation, type Identity, type DropboxSubscription } from "@corpollc/qntm";
+import {
+  DropboxClient,
+  deserializeEnvelope,
+  type Identity,
+  type DropboxSubscription,
+} from "@corpollc/qntm";
 import { registerChannel, type ChannelOpts } from "./registry.js";
 import { createFileCursorStore, type ConversationCursorStore } from "../state.js";
 import {
+  QntmInboundRejectedError,
+  applyInboundGroupControl,
   decodeInboundEnvelope,
   decodeQntmBody,
-  loadQntmConversationFromDir,
+  loadQntmConversationStateFromDir,
+  persistConversationStateToDir,
   resolveQntmIdentity,
   sendQntmText,
   toHex,
+  type LoadedConversationState,
   type QntmClientLike,
 } from "../qntm.js";
 import type { Channel, NewMessage, RegisteredGroup } from "../types.js";
@@ -15,6 +24,7 @@ import type { Channel, NewMessage, RegisteredGroup } from "../types.js";
 const CHANNEL_NAME = "qntm";
 const DEFAULT_RELAY_URL = "https://inbox.qntm.corpo.llc";
 const JID_PREFIX = "qntm:";
+const GROUP_CONTROL_TYPES = new Set(["group_genesis", "group_add", "group_remove", "group_rekey"]);
 
 export type QntmChannelDeps = {
   env?: NodeJS.ProcessEnv;
@@ -42,7 +52,9 @@ function parseConversationIdFromJid(jid: string): string | null {
   return conversationId ? normalizeConversationId(conversationId) : null;
 }
 
-function resolveRegisteredQntmGroups(registeredGroups: Record<string, RegisteredGroup>): RegisteredQntmGroup[] {
+function resolveRegisteredQntmGroups(
+  registeredGroups: Record<string, RegisteredGroup>,
+): RegisteredQntmGroup[] {
   return Object.entries(registeredGroups)
     .map(([jid, group]) => {
       const conversationId = parseConversationIdFromJid(jid);
@@ -131,7 +143,7 @@ export class QntmChannel implements Channel {
 
   private connected = false;
   private identity: Identity | null = null;
-  private readonly conversations = new Map<string, Conversation>();
+  private readonly conversationStates = new Map<string, LoadedConversationState>();
   private readonly subscriptions = new Map<string, DropboxSubscription>();
 
   constructor(
@@ -163,15 +175,17 @@ export class QntmChannel implements Channel {
     return this.identity;
   }
 
-  private loadConversation(conversationId: string): Conversation {
+  private loadConversationState(conversationId: string, forceReload = false): LoadedConversationState {
     const normalized = normalizeConversationId(conversationId);
-    const cached = this.conversations.get(normalized);
-    if (cached) {
-      return cached;
+    if (!forceReload) {
+      const cached = this.conversationStates.get(normalized);
+      if (cached) {
+        return cached;
+      }
     }
-    const conversation = loadQntmConversationFromDir(this.identityDir, normalized);
-    this.conversations.set(normalized, conversation);
-    return conversation;
+    const loaded = loadQntmConversationStateFromDir(this.identityDir, normalized);
+    this.conversationStates.set(normalized, loaded);
+    return loaded;
   }
 
   private async handleInbound(params: {
@@ -181,12 +195,48 @@ export class QntmChannel implements Channel {
     envelopeBytes: Uint8Array;
   }): Promise<void> {
     const identity = this.ensureIdentity();
-    const conversation = this.loadConversation(params.conversationId);
+    let state = this.loadConversationState(params.conversationId);
+
+    let peekEpoch: number;
+    try {
+      peekEpoch = deserializeEnvelope(params.envelopeBytes).conv_epoch;
+    } catch (error) {
+      throw new QntmInboundRejectedError(
+        `malformed envelope: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (peekEpoch !== state.conversation.currentEpoch) {
+      state = this.loadConversationState(params.conversationId, true);
+    }
+
+    if (state.excluded || state.recoveryRequired) {
+      throw new QntmInboundRejectedError("conversation is excluded or requires recovery");
+    }
+
     const message = decodeInboundEnvelope({
       identity,
-      conversation,
+      conversation: state.conversation,
       envelopeBytes: params.envelopeBytes,
     });
+
+    if (GROUP_CONTROL_TYPES.has(message.inner.body_type)) {
+      const nextState = applyInboundGroupControl({
+        envelope: message.envelope,
+        message,
+        identity,
+        state,
+      });
+      persistConversationStateToDir(this.identityDir, params.conversationId, nextState);
+      this.conversationStates.set(normalizeConversationId(params.conversationId), nextState);
+      state = nextState;
+      if (nextState.recoveryRequired) {
+        throw new QntmInboundRejectedError("group_rekey failed recipient unwrap; recovery required");
+      }
+      if (nextState.excluded) {
+        return;
+      }
+    }
 
     if (isSelfAuthoredMessage(message, identity)) {
       return;
@@ -207,14 +257,16 @@ export class QntmChannel implements Channel {
       is_bot_message: false,
     };
 
-    this.opts.onChatMetadata(
-      params.jid,
-      timestamp,
-      conversation.name ?? params.group.name,
-      CHANNEL_NAME,
-      conversation.type === "group",
+    await Promise.resolve(
+      this.opts.onChatMetadata(
+        params.jid,
+        timestamp,
+        state.conversation.name ?? params.group.name,
+        CHANNEL_NAME,
+        state.conversation.type === "group",
+      ),
     );
-    this.opts.onMessage(params.jid, outbound);
+    await Promise.resolve(this.opts.onMessage(params.jid, outbound));
   }
 
   async connect(): Promise<void> {
@@ -228,11 +280,11 @@ export class QntmChannel implements Channel {
       if (this.subscriptions.has(entry.conversationId)) {
         continue;
       }
-      const conversation = this.loadConversation(entry.conversationId);
+      const state = this.loadConversationState(entry.conversationId);
       const initialCursor = await this.cursorStore.getCursor({
         conversationId: entry.conversationId,
       });
-      const subscription = this.client.subscribeMessages(conversation.id, initialCursor, {
+      const subscription = this.client.subscribeMessages(state.conversation.id, initialCursor, {
         getCursor: () =>
           this.cursorStore.getCursor({
             conversationId: entry.conversationId,
@@ -245,15 +297,24 @@ export class QntmChannel implements Channel {
               group: entry.group,
               envelopeBytes: envelope,
             });
-          } catch (error) {
-            this.log.warn(
-              `qntm: failed to process inbound message for ${entry.conversationId}: ${String(error)}`,
-            );
-          } finally {
             await this.cursorStore.setCursor({
               conversationId: entry.conversationId,
               sequence: seq,
             });
+          } catch (error) {
+            if (error instanceof QntmInboundRejectedError) {
+              this.log.warn(
+                `qntm: rejected invalid inbound envelope for ${entry.conversationId} at seq ${seq}: ${error.message}`,
+              );
+              await this.cursorStore.setCursor({
+                conversationId: entry.conversationId,
+                sequence: seq,
+              });
+              return;
+            }
+            this.log.warn(
+              `qntm: failed to process inbound message for ${entry.conversationId}: ${String(error)}`,
+            );
           }
         },
         onError: (error) => {
@@ -276,11 +337,20 @@ export class QntmChannel implements Channel {
       return;
     }
     const identity = this.ensureIdentity();
-    const conversation = this.loadConversation(conversationId);
+    const state = this.loadConversationState(conversationId, true);
+    if (state.excluded) {
+      throw new Error("cannot send qntm message: local identity was removed from this conversation");
+    }
+    if (state.recoveryRequired) {
+      throw new Error("cannot send qntm message: group conversation requires key recovery");
+    }
+    if (state.needsRekey) {
+      throw new Error("cannot send qntm message: complete pending group key rotation before sending");
+    }
     await sendQntmText({
       client: this.client,
       identity,
-      conversation,
+      conversation: state.conversation,
       text: trimmed,
     });
   }

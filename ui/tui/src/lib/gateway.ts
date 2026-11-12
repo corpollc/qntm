@@ -30,6 +30,56 @@ export function terminalText(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
     c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
+const BUILTIN_SERVICE_ORIGINS: Record<string, string> = {
+  github: 'https://api.github.com',
+  openai: 'https://api.openai.com',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
+  stripe: 'https://api.stripe.com',
+  hackernews: 'https://hacker-news.firebaseio.com',
+  httpbin: 'https://httpbin.org',
+  dadjokes: 'https://icanhazdadjoke.com',
+  trivia: 'https://opentdb.com',
+  dogs: 'https://dog.ceo',
+  fun: 'http://localhost:9090',
+};
+function parseAllowedOrigin(rawInput: string): string | null {
+  const raw = rawInput.trim();
+  if (!raw || raw.includes('?') || raw.includes('#') || raw.includes('@')) return null;
+  const hasScheme = /^https?:\/\//i.test(raw);
+  const isBareLoopback = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(raw);
+  if (!hasScheme && !isBareLoopback && !raw.includes('.')) return null;
+  let parsed: URL;
+  try { parsed = new URL(hasScheme ? raw : `${isBareLoopback ? 'http' : 'https'}://${raw}`); }
+  catch { return null; }
+  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) return null;
+  if (!loopback && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(parsed.hostname)) return null;
+  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+  return parsed.origin;
+}
+export function resolveSecretAllowedOrigins(service: unknown, explicitOrigins?: unknown): string[] {
+  if (explicitOrigins !== undefined) {
+    if (!Array.isArray(explicitOrigins) || explicitOrigins.length === 0 || explicitOrigins.length > 16) {
+      throw new Error('allowedOrigins must be a non-empty array of origins');
+    }
+    const resolved: string[] = explicitOrigins.map((item: unknown) => {
+      if (typeof item !== 'string') throw new Error('Each allowed origin must be a string');
+      const origin = parseAllowedOrigin(item);
+      if (!origin) throw new Error(`Invalid allowed origin: ${item}`);
+      return origin;
+    });
+    return [...new Set(resolved)];
+  }
+  if (typeof service !== 'string' || service.trim().length === 0) {
+    throw new Error('Secret service must be a nonempty string');
+  }
+  const lower = service.trim().toLowerCase();
+  if (Object.hasOwn(BUILTIN_SERVICE_ORIGINS, lower)) return [BUILTIN_SERVICE_ORIGINS[lower]];
+  const derived = parseAllowedOrigin(service);
+  if (!derived) throw new Error('Supply allowedOrigins or use a built-in service / HTTPS hostname');
+  return [derived];
+}
 function gatewayURL(input: string): string {
   const url = new URL(input);
   invariant(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)), 'Gateway URL must use HTTPS (HTTP allowed on loopback)');
@@ -135,11 +185,16 @@ export class GatewayActions {
           break;
         }
         case 'secret': {
-          const options = readOptions(args, ['service', 'value', 'headerName', 'headerTemplate', 'ttl']);
+          const options = readOptions(args, ['service', 'value', 'headerName', 'headerTemplate', 'ttl', 'allowedOrigins', 'allowed_origins']);
+          invariant(!(options.allowedOrigins !== undefined && options.allowed_origins !== undefined), 'Specify only one of allowedOrigins or allowed_origins');
+          const allowedOrigins = resolveSecretAllowedOrigins(options.service, options.allowedOrigins ?? options.allowed_origins);
           invariant(typeof options.value === 'string' && options.value.length > 0, 'Secret value must be a nonempty string');
           const bytes = Buffer.from(options.value as string, 'utf8');
-          subject = { secret_bytes: bytes.length, secret_sha256: createHash('sha256').update(bytes).digest('hex') };
-          try { body = createGateSecretBody(this.identity, context, { ...options, value: bytes } as unknown as CreateGateSecretOptions); }
+          subject = { secret_bytes: bytes.length, secret_sha256: createHash('sha256').update(bytes).digest('hex'), allowed_origins: allowedOrigins };
+          try {
+            const created = createGateSecretBody(this.identity, context, { ...options, allowedOrigins, value: bytes } as unknown as CreateGateSecretOptions);
+            body = { ...created, allowed_origins: allowedOrigins } as GatewayBody;
+          }
           finally { bytes.fill(0); delete options.value; }
           break;
         }

@@ -154,13 +154,26 @@ describe('reviewed native gateway actions', () => {
     await expect(f.prepare('approve', { id: 'untrusted-message-claim' })).rejects.toMatchObject({ code: 'subject_unavailable' });
     expect(f.posts).toHaveLength(0);
   });
-  test('seals credentials to the accepted gateway and excludes plaintext from the review', async () => {
+  test('seals credentials to the accepted gateway with bound allowed_origins and excludes plaintext from the review', async () => {
     const f = fixture(), secret = 'sample-test-only-secret';
-    const review = await f.prepare('secret', { service: 'demo', value: secret });
+    await expect(f.prepare('secret', { service: 'demo', value: secret })).rejects.toMatchObject({ code: 'invalid_secret' });
+    const hostReview = await f.prepare('secret', { service: 'api.example.test', value: secret });
+    expect(hostReview.review.subject.allowedOrigins).toEqual(['https://api.example.test']);
+    f.service.cancel(f.scope, hostReview.reviewToken);
+    const explicitReview = await f.prepare('secret', { service: 'demo', value: secret, allowedOrigins: ['https://custom.example.test'] });
+    expect(explicitReview.review.subject.allowedOrigins).toEqual(['https://custom.example.test']);
+    f.service.cancel(f.scope, explicitReview.reviewToken);
+    const review = await f.prepare('secret', { service: 'github', value: secret });
     expect(JSON.stringify(review)).not.toContain(secret);
-    expect(review.review.subject).toMatchObject({ secretBytes: Buffer.byteLength(secret), secretSha256: expect.any(String) });
+    expect(review.review.subject).toMatchObject({
+      secretBytes: Buffer.byteLength(secret),
+      secretSha256: expect.any(String),
+      allowedOrigins: ['https://api.github.com'],
+    });
     expect(review.review.body.encrypted_blob).toBeUndefined();
+    expect(review.review.body.allowed_origins).toEqual(['https://api.github.com']);
     await f.commit(review); const body = f.decodePosted();
+    expect(body.allowed_origins).toEqual(['https://api.github.com']);
     expect(new TextDecoder().decode(openSecret(f.gateway.privateKey, f.identity.publicKey, base64UrlDecode(body.encrypted_blob)))).toBe(secret);
     expect(() => openSecret(f.group.inviter.privateKey, f.identity.publicKey, base64UrlDecode(body.encrypted_blob))).toThrow();
     expect(f.receivePosted()).toBe('accepted');
@@ -169,6 +182,35 @@ describe('reviewed native gateway actions', () => {
     const f = fixture(), review = await f.prepare('propose', { proposalType: 'floor_change', proposedFloor: 1 });
     expect(review.review.body).toMatchObject({ proposed_floor: 1, required_approvals: 2 });
     await f.commit(review); expect(f.receivePosted()).toBe('accepted');
+  });
+  test('normalizes member_add proposedMembers from both publicKey and public_key shapes', async () => {
+    const f = fixture(), newcomerA = generateIdentity(), newcomerB = generateIdentity();
+    const kidA = base64UrlEncode(newcomerA.keyID), pkA = base64UrlEncode(newcomerA.publicKey);
+    const kidB = base64UrlEncode(newcomerB.keyID), pkB = base64UrlEncode(newcomerB.publicKey);
+    await expect(f.prepare('propose', {
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: kidA, publicKey: pkA, public_key: pkB }],
+    })).rejects.toMatchObject({ code: 'invalid_options' });
+    const camelReview = await f.prepare('propose', {
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: kidA, publicKey: pkA }],
+    });
+    expect(camelReview.review.body).toMatchObject({
+      proposal_type: 'member_add',
+      proposed_members: [{ kid: kidA, public_key: pkA }],
+    });
+    await f.commit(camelReview);
+    expect(f.receivePosted()).toBe('accepted');
+    const snakeReview = await f.prepare('propose', {
+      proposalType: 'member_add',
+      proposedMembers: [{ kid: kidB, public_key: pkB }],
+    });
+    expect(snakeReview.review.body).toMatchObject({
+      proposal_type: 'member_add',
+      proposed_members: [{ kid: kidB, public_key: pkB }],
+    });
+    await f.commit(snakeReview);
+    expect(f.receivePosted()).toBe('accepted');
   });
   test('bounds pending reviews and rejects unsupported or oversized options before sending', async () => {
     const f = fixture();

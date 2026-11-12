@@ -113,17 +113,32 @@ describe('terminal gateway actions and durable receive state', () => {
     const filename = join(f.dir, 'action.json');
     writeFileSync(filename, JSON.stringify(requestOptions), { mode: 0o600 });
     await f.actions.prepare(f.convId, 'request', filename); await f.actions.confirm(f.convId);
-    writeFileSync(filename, JSON.stringify({ service: 'demo', value: 'disposable-credential-value', ttl: 60 }));
+    writeFileSync(filename, JSON.stringify({ service: 'github', value: 'disposable-credential-value', ttl: 60 }));
     const review = await f.actions.prepare(f.convId, 'secret', filename);
     expect(review.details).not.toContain('disposable-credential-value');
     expect(review.details).toContain('secret_sha256'); expect(review.details).toContain('Authorization');
+    expect(review.details).toContain('https://api.github.com');
     await f.actions.confirm(f.convId);
+    writeFileSync(filename, JSON.stringify({ service: 'api.example.test', value: 'disposable-credential-value', ttl: 60 }));
+    const hostReview = await f.actions.prepare(f.convId, 'secret', filename);
+    expect(hostReview.details).toContain('https://api.example.test');
+    f.actions.cancel();
+    writeFileSync(filename, JSON.stringify({ service: 'custom', value: 'disposable-credential-value', allowedOrigins: ['https://custom.example.test'] }));
+    const explicitReview = await f.actions.prepare(f.convId, 'secret', filename);
+    expect(explicitReview.details).toContain('https://custom.example.test');
+    f.actions.cancel();
+    writeFileSync(filename, JSON.stringify({ service: 'demo', value: 'disposable-credential-value', ttl: 60 }));
+    await expect(f.actions.prepare(f.convId, 'secret', filename)).rejects.toThrow('allowedOrigins');
     writeFileSync(filename, JSON.stringify({ proposalType: 'floor_change', proposedFloor: 1 }));
     const proposalReview = await f.actions.prepare(f.convId, 'propose', filename);
     expect(proposalReview.details).toContain('"proposed_floor": 1'); await f.actions.confirm(f.convId);
     for (const [, bytes] of vi.mocked(f.dropbox.postMessage).mock.calls) {
-      const event = decryptGatewayMessage(deserializeEnvelope(bytes), f.store.getConversationCrypto(f.convId)!, f.context());
+      const decrypted = deserializeEnvelope(bytes);
+      const event = decryptGatewayMessage(decrypted, f.store.getConversationCrypto(f.convId)!, f.context());
       expect(['gate.request', 'gate.secret', 'gov.propose']).toContain(event.body.type);
+      if (event.body.type === 'gate.secret') {
+        expect((event.body as unknown as { allowed_origins?: string[] }).allowed_origins).toEqual(['https://api.github.com']);
+      }
     }
     writeFileSync(filename, '{"value":"disposable-credential-value",INVALID');
     await expect(f.actions.prepare(f.convId, 'secret', filename)).rejects.toThrow('Options file is not valid JSON');

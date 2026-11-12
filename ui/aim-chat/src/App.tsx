@@ -22,6 +22,7 @@ import {
   type RelayConnectionState,
 } from './relayStatus'
 import { parseInviteConvId } from './qntm'
+import { formatRecipeUrls, resolveServiceOrigins } from './config'
 
 const EMPTY_IDENTITY: IdentityInfo = {
   exists: false,
@@ -117,17 +118,11 @@ export default function App() {
 
   const resolvedGateUrl = useMemo(() => {
     if (!activeRecipe) return ''
-    let url = activeRecipe.target_url
-    url = url.replace(/\{(\w+)\}/g, (match, key) => gateArgs[key] || match)
-    // Append query params
-    const qp = activeRecipe.query_params || []
-    const queryParts: string[] = []
-    for (const param of qp) {
-      const val = gateArgs[param.name] || param.default || ''
-      if (val) queryParts.push(`${encodeURIComponent(param.name)}=${encodeURIComponent(val)}`)
+    try {
+      return formatRecipeUrls(activeRecipe, gateArgs, { allowUnfilled: true }).target_url
+    } catch {
+      return ''
     }
-    if (queryParts.length > 0) url += (url.includes('?') ? '&' : '?') + queryParts.join('&')
-    return url
   }, [activeRecipe, gateArgs])
 
   // Derive gate status from message history
@@ -958,6 +953,12 @@ export default function App() {
       addToast('Enter a service name and API key', 'error')
       return
     }
+    if (!resolveServiceOrigins(secretService)) {
+      const msg = 'Enter a known service (e.g. github, openai) or an HTTPS API hostname'
+      setError(msg)
+      addToast(msg, 'error')
+      return
+    }
 
     setIsWorking(true)
     try {
@@ -1210,7 +1211,27 @@ export default function App() {
 
         <div className="aim-body">
           <Routes>
-          <Route path="/guidance" element={<GuidancePage key={activeProfileId} profileId={activeProfileId} profileName={activeProfile?.name || ''} onOpenConversation={(id) => { selectConversation(id); navigate('/') }} />} />
+          <Route
+            path="/guidance"
+            element={
+              <GuidancePage
+                key={activeProfileId}
+                profileId={activeProfileId}
+                profileName={activeProfile?.name || ''}
+                onConversationsChanged={() => {
+                  if (activeProfileId) {
+                    setConversations(api.listConversations(activeProfileId).conversations)
+                  }
+                }}
+                onOpenConversation={(id) => {
+                  if (activeProfileId) {
+                    setConversations(api.listConversations(activeProfileId).conversations)
+                  }
+                  selectConversation(id)
+                }}
+              />
+            }
+          />
           <Route path="/help" element={<HelpPanel />} />
           <Route path="/settings" element={
             <SettingsPage

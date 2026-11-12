@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { StoredConversation, StoredMessage } from '../lib/store.js';
+import { terminalText } from '../lib/gateway.js';
 import { theme } from '../lib/theme.js';
 
 interface SidebarProps {
@@ -74,7 +75,7 @@ export default function Sidebar({
         const isFocused = focusIndex === idx;
         const unreadCount = unread[conv.id] || 0;
         const hasUnread = unreadCount > 0;
-        const rawLabel = conv.name || conv.id.slice(0, 12);
+        const rawLabel = terminalText(conv.name || conv.id.slice(0, 12)).replace(/[\r\n\t]+/g, ' ');
         const label = truncate(rawLabel, MAX_NAME_LEN);
         const num = idx + 1;
         const icon = typeIcon(conv.type);
@@ -107,7 +108,7 @@ export default function Sidebar({
             </Box>
             {lastMsg && (
               <Box marginLeft={3}>
-                <Text dimColor>{truncate(lastMsg.text, MAX_PREVIEW_LEN)}</Text>
+                <Text dimColor>{truncate(terminalText(lastMsg.text).replace(/[\r\n\t]+/g, ' '), MAX_PREVIEW_LEN)}</Text>
               </Box>
             )}
           </Box>

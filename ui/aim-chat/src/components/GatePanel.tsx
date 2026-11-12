@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GateRecipe } from '../types'
-import { getDefaultGatewayUrl, HOSTED_GATEWAY_URL, LEGACY_LOCAL_GATEWAY_URL } from '../config'
+import {
+  getDefaultGatewayUrl,
+  getServiceHeaderDefaults,
+  HOSTED_GATEWAY_URL,
+  LEGACY_LOCAL_GATEWAY_URL,
+  resolveServiceOrigins,
+} from '../config'
 import { CollapsiblePanel } from './CollapsiblePanel'
 import { GateWalkthrough, isDismissed } from './GateWalkthrough'
 import { Spinner } from './Spinner'
@@ -75,6 +81,8 @@ export function GatePanel({
   const [memberPublicKey, setMemberPublicKey] = useState('')
   const [memberRemovalKid, setMemberRemovalKid] = useState(participantKids[0] || '')
   const defaultGatewaySeeded = useRef(false)
+  const headerCustomizedRef = useRef(false)
+  const resolvedSecretOrigins = useMemo(() => resolveServiceOrigins(secretService), [secretService])
 
   useEffect(() => {
     if (defaultGatewaySeeded.current) return
@@ -306,7 +314,7 @@ export function GatePanel({
           <button
             className="button full"
             type="button"
-            disabled={isWorking || !selectedRecipe || !requiredParamsFilled}
+            disabled={isWorking || !selectedRecipe || !requiredParamsFilled || !resolvedGateUrl}
             onClick={() => void onGateRun()}
           >
             {isWorking ? <Spinner /> : 'Submit API request'}
@@ -321,21 +329,39 @@ export function GatePanel({
         onToggle={() => setApiKeysExpanded((v) => !v)}
         trailing={<Tooltip text="Credentials stored securely and used automatically when API calls execute." />}
       >
-        <label className="label" htmlFor="secret-service">Service</label>
+        <label className="label" htmlFor="secret-service">Service or API host</label>
         <input
           id="secret-service"
           className="input"
-          placeholder="e.g. stripe, github"
+          placeholder="e.g. github, openai, or api.example.com"
           value={secretService}
-          onChange={(event) => setSecretService(event.target.value)}
+          onChange={(event) => {
+            const nextService = event.target.value
+            setSecretService(nextService)
+            if (!headerCustomizedRef.current) {
+              const defaults = getServiceHeaderDefaults(nextService)
+              setSecretHeaderName(defaults.headerName)
+              setSecretHeaderTemplate(defaults.headerTemplate)
+            }
+          }}
         />
+        {secretService.trim() && (
+          <div className="gate-hint" style={{ marginTop: 4, marginBottom: 8 }}>
+            {resolvedSecretOrigins
+              ? `Sends key only to ${resolvedSecretOrigins.join(', ')}`
+              : 'Enter a known service (e.g. github, openai) or an HTTPS API hostname.'}
+          </div>
+        )}
         <label className="label" htmlFor="secret-header-name">Header name</label>
         <input
           id="secret-header-name"
           className="input"
           placeholder="Authorization"
           value={secretHeaderName}
-          onChange={(event) => setSecretHeaderName(event.target.value)}
+          onChange={(event) => {
+            headerCustomizedRef.current = true
+            setSecretHeaderName(event.target.value)
+          }}
         />
         <label className="label" htmlFor="secret-header-template">Header template</label>
         <input
@@ -343,7 +369,10 @@ export function GatePanel({
           className="input"
           placeholder="Bearer {value}"
           value={secretHeaderTemplate}
-          onChange={(event) => setSecretHeaderTemplate(event.target.value)}
+          onChange={(event) => {
+            headerCustomizedRef.current = true
+            setSecretHeaderTemplate(event.target.value)
+          }}
         />
         <label className="label" htmlFor="secret-value">Secret value</label>
         <input
@@ -357,7 +386,7 @@ export function GatePanel({
         <button
           className="button full"
           type="button"
-          disabled={isWorking || !secretService.trim() || !secretValue}
+          disabled={isWorking || !secretService.trim() || !secretValue || !resolvedSecretOrigins}
           onClick={() => void onGateSecret()}
         >
           {isWorking ? <Spinner /> : 'Add API key'}

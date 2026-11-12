@@ -68,3 +68,50 @@ describe('store.deleteConversation', () => {
     expect(store.listConversations(profileId)).toHaveLength(1)
   })
 })
+
+describe('store URL validation and profile contact isolation', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', new MemoryStorage())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('validates http/https URLs without credentials, query, or hash in setDropboxUrl', () => {
+    store.setDropboxUrl('https://inbox.qntm.corpo.llc/')
+    expect(store.getDropboxUrl()).toBe('https://inbox.qntm.corpo.llc')
+
+    store.setDropboxUrl('http://localhost:8787')
+    expect(store.getDropboxUrl()).toBe('http://localhost:8787')
+
+    store.setDropboxUrl('')
+    expect(store.getDropboxUrl()).toBe(store.DEFAULT_DROPBOX_URL)
+
+    for (const invalid of [
+      'not-a-url',
+      'javascript:alert(1)',
+      'ftp://relay.example.com',
+      'https://user:pass@relay.example.com',
+      'https://relay.example.com?leak=1',
+      'https://relay.example.com#frag',
+    ]) {
+      expect(() => store.setDropboxUrl(invalid)).toThrow()
+    }
+  })
+
+  it('scopes saveIdentity display name contacts strictly to the owning profile', () => {
+    const profileA = store.createProfile('Alice Secret Persona')
+    const profileB = store.createProfile('Bob')
+    const sharedKeyId = 'aa'.repeat(16)
+
+    store.saveIdentity(profileA.id, {
+      privateKey: '11'.repeat(32),
+      publicKey: '22'.repeat(32),
+      keyId: sharedKeyId,
+    })
+
+    expect(store.resolveContactAlias(profileA.id, sharedKeyId)).toBe('Alice Secret Persona')
+    expect(store.resolveContactAlias(profileB.id, sharedKeyId)).toBe('')
+    expect(store.listContacts(profileB.id)).toEqual([])
+  })
+})

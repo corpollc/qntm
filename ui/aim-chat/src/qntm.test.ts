@@ -2,6 +2,8 @@ import {
   generateIdentity, base64UrlEncode, createMessage, serializeEnvelope, gatewayInvitationHash,
   base64UrlDecode,
   computePayloadHash,
+  createInvite,
+  inviteToToken,
   hashProposal,
   hashRequest,
   openSecret,
@@ -666,5 +668,353 @@ describe('browser qntm adapter', () => {
     expect(result.messages.map(m => m.bodyType)).toContain('group_remove')
     expect(result.messages.at(-1)?.text).toBe('after rekey')
     expect(store.findConversation(bob.id, conversationId)!.participants).not.toContain(Array.from(removed.keyID, b => b.toString(16).padStart(2, '0')).join(''))
+  })
+
+  it('populates allowed_origins on gate.secret, applies service header defaults, and rejects unresolvable services', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    await sendMessageToConversation(bob.id, bob.name, conversationId, 'hi')
+    await receiveMessages(alice.id, alice.name, conversationId)
+    const promo = await gatePromoteRequest(alice.id, alice.name, conversationId, 'http://gateway.test', 1)
+    const inv = JSON.parse(promo.text)
+    const stored = store.findConversation(alice.id, conversationId)!
+    const conv = {
+      id: hexToBytes(conversationId),
+      type: 'direct' as const,
+      keys: {
+        root: hexToBytes(stored.keys.root),
+        aeadKey: hexToBytes(stored.keys.aeadKey),
+        nonceKey: hexToBytes(stored.keys.nonceKey),
+      },
+      participants: [],
+      currentEpoch: 0,
+      createdAt: new Date(),
+    }
+    const acceptWire = serializeEnvelope(
+      createMessage(
+        relay.gateway,
+        conv,
+        'gate.accept',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gate.accept',
+            invitation_id: inv.invitation_id,
+            invitation_msg_id: promo.id,
+            invitation_hash: gatewayInvitationHash(promo.text),
+            conv_id: conversationId,
+            conv_epoch: 0,
+            gateway_kid: inv.gateway_kid,
+            gateway_public_key: inv.gateway_public_key,
+          }),
+        ),
+        undefined,
+        3600,
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...acceptWire)) }),
+    })
+    await receiveMessages(alice.id, alice.name, conversationId)
+
+    const secretMsg = await gateSecretRequest(alice.id, alice.name, conversationId, 'anthropic', 'sk-ant-test', '', '')
+    const parsed = JSON.parse(secretMsg.text) as {
+      allowed_origins: string[]
+      header_name: string
+      header_template: string
+    }
+    expect(parsed.allowed_origins).toEqual(['https://api.anthropic.com'])
+    expect(parsed.header_name).toBe('x-api-key')
+    expect(parsed.header_template).toBe('{value}')
+
+    const hostSecretMsg = await gateSecretRequest(
+      alice.id,
+      alice.name,
+      conversationId,
+      'api.partner.example.com',
+      'sk-partner',
+      'Authorization',
+      'Bearer {value}',
+    )
+    expect((JSON.parse(hostSecretMsg.text) as { allowed_origins: string[] }).allowed_origins).toEqual([
+      'https://api.partner.example.com',
+    ])
+
+    await expect(
+      gateSecretRequest(alice.id, alice.name, conversationId, 'unknownservice', 'sk-bad', 'Authorization', 'Bearer {value}'),
+    ).rejects.toThrow('known service name')
+  })
+
+  it('pins groupControl.creator on group invite import and blocks pre-genesis gate.promote from non-creators', async () => {
+    const creatorIdentity = generateIdentity()
+    const bob = createProfile('Bob')
+    const mallory = createProfile('Mallory')
+    const groupInvite = createInvite(creatorIdentity, 'group')
+    const token = inviteToToken(groupInvite)
+    const { conversationId } = acceptInviteForProfile(bob.id, token, 'Pinned Group')
+    acceptInviteForProfile(mallory.id, token, 'Pinned Group')
+
+    const bobConv = store.findConversation(bob.id, conversationId)!
+    expect(bobConv.groupControl).toEqual({
+      creator: base64UrlEncode(creatorIdentity.keyID),
+      needsRekey: false,
+      removed: false,
+    })
+
+    // Mallory (a non-creator member) attempts to promote a rogue gateway before group_genesis
+    store.updateConversation(mallory.id, conversationId, (c) => ({
+      ...c,
+      groupControl: {
+        creator: base64UrlEncode(hexToBytes(identityFor(mallory.id).keyId)),
+        needsRekey: false,
+        removed: false,
+      },
+    }))
+    const malloryPromote = await gatePromoteRequest(mallory.id, mallory.name, conversationId, 'http://gateway.test', 1)
+    const inv = JSON.parse(malloryPromote.text)
+
+    // Even if gateway posts gate.accept, Bob rejects both Mallory's gate.promote and gate.accept!
+    const conv = {
+      id: hexToBytes(conversationId),
+      type: 'group' as const,
+      keys: {
+        root: hexToBytes(bobConv.keys.root),
+        aeadKey: hexToBytes(bobConv.keys.aeadKey),
+        nonceKey: hexToBytes(bobConv.keys.nonceKey),
+      },
+      participants: [],
+      currentEpoch: 0,
+      createdAt: new Date(),
+    }
+    const acceptWire = serializeEnvelope(
+      createMessage(
+        relay.gateway,
+        conv,
+        'gate.accept',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gate.accept',
+            invitation_id: inv.invitation_id,
+            invitation_msg_id: malloryPromote.id,
+            invitation_hash: gatewayInvitationHash(malloryPromote.text),
+            conv_id: conversationId,
+            conv_epoch: 0,
+            gateway_kid: inv.gateway_kid,
+            gateway_public_key: inv.gateway_public_key,
+          }),
+        ),
+        undefined,
+        3600,
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...acceptWire)) }),
+    })
+
+    const received = await receiveMessages(bob.id, bob.name, conversationId)
+    expect(received.messages).toEqual([])
+    expect(store.findConversation(bob.id, conversationId)!.gateway).toBeFalsy()
+    expect(store.findConversation(bob.id, conversationId)!.groupControl?.creator).toBe(
+      base64UrlEncode(creatorIdentity.keyID),
+    )
+  })
+
+  it('rejects wrong conv_epoch, forged peer gateway events, and forged vote signatures while applying valid gov.applied membership updates', async () => {
+    const { alice, bob, conversationId } = await createConversationPair()
+    await sendMessageToConversation(bob.id, bob.name, conversationId, 'hello')
+    await receiveMessages(alice.id, alice.name, conversationId)
+
+    const stored = store.findConversation(alice.id, conversationId)!
+    const conv = {
+      id: hexToBytes(conversationId),
+      type: 'direct' as const,
+      keys: {
+        root: hexToBytes(stored.keys.root),
+        aeadKey: hexToBytes(stored.keys.aeadKey),
+        nonceKey: hexToBytes(stored.keys.nonceKey),
+      },
+      participants: [],
+      currentEpoch: 0,
+      createdAt: new Date(),
+    }
+    const bobId = {
+      privateKey: hexToBytes(identityFor(bob.id).privateKey),
+      publicKey: hexToBytes(identityFor(bob.id).publicKey),
+      keyID: hexToBytes(identityFor(bob.id).keyId),
+    }
+
+    // 1. Wrong conv_epoch on direct chat is rejected
+    const wrongEpochWire = serializeEnvelope(
+      createMessage(bobId, { ...conv, currentEpoch: 1 }, 'text', new TextEncoder().encode('wrong epoch')),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...wrongEpochWire)) }),
+    })
+
+    // 2. Peer-forged gate.executed before gateway activation is rejected
+    const forgedBeforeActive = serializeEnvelope(
+      createMessage(
+        bobId,
+        conv,
+        'gate.executed',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gate.executed',
+            request_id: 'req-forged',
+            executed_at: new Date().toISOString(),
+            execution_status_code: 200,
+          }),
+        ),
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...forgedBeforeActive)) }),
+    })
+
+    const beforeRes = await receiveMessages(alice.id, alice.name, conversationId)
+    expect(beforeRes.messages).toEqual([])
+
+    // Activate gateway
+    const promo = await gatePromoteRequest(alice.id, alice.name, conversationId, 'http://gateway.test', 2)
+    const inv = JSON.parse(promo.text)
+    const acceptWire = serializeEnvelope(
+      createMessage(
+        relay.gateway,
+        conv,
+        'gate.accept',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gate.accept',
+            invitation_id: inv.invitation_id,
+            invitation_msg_id: promo.id,
+            invitation_hash: gatewayInvitationHash(promo.text),
+            conv_id: conversationId,
+            conv_epoch: 0,
+            gateway_kid: inv.gateway_kid,
+            gateway_public_key: inv.gateway_public_key,
+          }),
+        ),
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...acceptWire)) }),
+    })
+    await receiveMessages(alice.id, alice.name, conversationId)
+    await receiveMessages(bob.id, bob.name, conversationId)
+
+    // 3. Forged gate.approval signature from Bob is rejected
+    const recipe = {
+      name: 'repo_info',
+      description: 'Repo info',
+      service: 'github',
+      verb: 'GET' as const,
+      endpoint: '/repos/{owner}',
+      target_url: 'https://api.github.com/repos/{owner}',
+      risk_tier: 'read',
+      threshold: 2,
+      path_params: [{ name: 'owner', type: 'string', description: 'owner', required: true }],
+    }
+    const reqMsg = await gateRunRequest(
+      alice.id,
+      alice.name,
+      conversationId,
+      recipe,
+      'repo_info',
+      'http://gateway.test',
+      { owner: 'acme/sub' },
+    )
+    const reqBody = JSON.parse(reqMsg.text) as {
+      gateway_kid?: string
+      request_id: string
+      target_endpoint: string
+      target_url: string
+      expires_at: string
+      eligible_signer_kids: string[]
+      required_approvals: number
+    }
+    expect(reqBody.target_endpoint).toBe('/repos/acme%2Fsub')
+    expect(reqBody.target_url).toBe('https://api.github.com/repos/acme%2Fsub')
+
+    await expect(
+      gateRunRequest(
+        alice.id,
+        alice.name,
+        conversationId,
+        recipe,
+        'repo_info',
+        'http://gateway.test',
+        { owner: '..' },
+      ),
+    ).rejects.toThrow('dot segments')
+
+    const reqSignable = {
+      ...(reqBody.gateway_kid ? { gateway_kid: reqBody.gateway_kid } : {}),
+      conv_id: conversationId,
+      request_id: reqBody.request_id,
+      verb: 'GET',
+      target_endpoint: reqBody.target_endpoint,
+      target_service: 'github',
+      target_url: reqBody.target_url,
+      expires_at_unix: Math.floor(new Date(reqBody.expires_at).getTime() / 1000),
+      payload_hash: computePayloadHash(null),
+      eligible_signer_kids: reqBody.eligible_signer_kids,
+      required_approvals: reqBody.required_approvals,
+    }
+    const forgedApprovalWire = serializeEnvelope(
+      createMessage(
+        bobId,
+        conv,
+        'gate.approval',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gate.approval',
+            request_id: reqBody.request_id,
+            request_hash: hashRequest(reqSignable),
+            conv_id: conversationId,
+            conv_epoch: 0,
+            gateway_kid: inv.gateway_kid,
+            gateway_public_key: inv.gateway_public_key,
+            approved_at: new Date().toISOString(),
+            signer_kid: base64UrlEncode(bobId.keyID),
+            signature: base64UrlEncode(new Uint8Array(64)),
+          }),
+        ),
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...forgedApprovalWire)) }),
+    })
+
+    // 4. Valid gateway gov.applied member_add updates participants & public keys
+    const newcomer = generateIdentity()
+    const govAppliedWire = serializeEnvelope(
+      createMessage(
+        relay.gateway,
+        conv,
+        'gov.applied',
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: 'gov.applied',
+            proposal_id: 'prop-add-1',
+            proposal_type: 'member_add',
+            applied_at: new Date().toISOString(),
+            applied_members: [
+              {
+                kid: base64UrlEncode(newcomer.keyID),
+                public_key: base64UrlEncode(newcomer.publicKey),
+              },
+            ],
+          }),
+        ),
+      ),
+    )
+    await relay.handleFetch('http://relay.test/v1/send', {
+      body: JSON.stringify({ conv_id: conversationId, envelope_b64: btoa(String.fromCharCode(...govAppliedWire)) }),
+    })
+
+    const afterRes = await receiveMessages(alice.id, alice.name, conversationId)
+    expect(afterRes.messages.some((m) => m.bodyType === 'gate.approval')).toBe(false)
+    expect(afterRes.messages.some((m) => m.bodyType === 'gov.applied')).toBe(true)
+    const updatedAliceConv = store.findConversation(alice.id, conversationId)!
+    const newcomerKidHex = Array.from(newcomer.keyID, (b) => b.toString(16).padStart(2, '0')).join('')
+    expect(updatedAliceConv.participants).toContain(newcomerKidHex)
   })
 })

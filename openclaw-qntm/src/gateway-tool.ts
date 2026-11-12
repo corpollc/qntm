@@ -57,9 +57,9 @@ export function createQntmGatewayTool(ctx: OpenClawPluginToolContext, fallback: 
       + 'Use status to inspect verified gateway/request/proposal state (offset/limit paginate). Prepare returns the COMPLETE proposed effect, reviewToken and reviewHash. '
       + 'Assess that review against your instructions before commit with both exact values; commit can authorize an external API call or governance change. No automatic approval or retry. '
       + 'Options: invite {gatewayUrl,floor?}; request {service,endpoint,verb,targetUrl,payload?,recipeName?,arguments?,requiredApprovals?,expiresInSeconds?}; '
-      + 'approve/disapprove/gov-approve/gov-disapprove {id:completeRequestOrProposalId}; secret {service,value,headerName?,headerTemplate?,ttl?}; '
+      + 'approve/disapprove/gov-approve/gov-disapprove {id:completeRequestOrProposalId}; secret {service,value,allowedOrigins?,headerName?,headerTemplate?,ttl?}; '
       + 'propose {proposalType,proposedFloor?,proposedRules?,proposedMembers?,removedMemberKids?,requiredApprovals?,expiresInSeconds?}; retry-bootstrap {}. '
-      + 'Proposal types: floor_change, rules_change, member_add, member_remove. Rules are {service,endpoint,verb,m}; members are {kid,public_key} using base64url keys/IDs; removedMemberKids are base64url IDs. '
+      + 'Proposal types: floor_change, rules_change, member_add, member_remove. Rules are {service,endpoint,verb,m}; members are {kid,publicKey} (or {kid,public_key}) using base64url keys/IDs; removedMemberKids are base64url IDs. '
       + 'Never commit if the host truncates a review or you cannot inspect its complete proposed effect. '
       + 'Secret plaintext in tool arguments may remain in host transcripts; reviewed output omits it. Invite shares current keys with the reviewed gateway; signed chat acceptance closes admission. '
       + 'Cancel takes reviewToken. Reviews expire within five minutes and after host restart, session reset, membership/policy/configuration changes. A submitted message is not proof of execution.',

@@ -67,6 +67,68 @@ function fingerprint(scope: GatewayScope, checkpoint: QntmCheckpoint): string {
     removed: checkpoint.session.removed, gateway: checkpoint.session.gateway,
   });
 }
+const BUILTIN_SERVICE_ORIGINS: Record<string, string> = {
+  github: 'https://api.github.com',
+  openai: 'https://api.openai.com',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
+  stripe: 'https://api.stripe.com',
+  hackernews: 'https://hacker-news.firebaseio.com',
+  httpbin: 'https://httpbin.org',
+  dadjokes: 'https://icanhazdadjoke.com',
+  trivia: 'https://opentdb.com',
+  dogs: 'https://dog.ceo',
+  fun: 'http://localhost:9090',
+};
+function parseAllowedOrigin(rawInput: string): string | null {
+  const raw = rawInput.trim();
+  if (!raw || raw.includes('?') || raw.includes('#') || raw.includes('@')) return null;
+  const hasScheme = /^https?:\/\//i.test(raw);
+  const isBareLoopback = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(raw);
+  if (!hasScheme && !isBareLoopback && !raw.includes('.')) return null;
+  let parsed: URL;
+  try { parsed = new URL(hasScheme ? raw : `${isBareLoopback ? 'http' : 'https'}://${raw}`); }
+  catch { return null; }
+  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) return null;
+  if (!loopback && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(parsed.hostname)) return null;
+  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+  return parsed.origin;
+}
+function resolveSecretAllowedOrigins(service: unknown, explicitOrigins?: unknown): string[] {
+  if (explicitOrigins !== undefined) {
+    requireState(Array.isArray(explicitOrigins) && explicitOrigins.length > 0 && explicitOrigins.length <= 16,
+      'invalid_secret', 'allowedOrigins must be a non-empty array of origins');
+    const resolved = explicitOrigins.map(item => {
+      requireState(typeof item === 'string', 'invalid_secret', 'Each allowed origin must be a string');
+      const origin = parseAllowedOrigin(item);
+      requireState(origin, 'invalid_secret', `Invalid allowed origin: ${item}`);
+      return origin;
+    });
+    return [...new Set(resolved)];
+  }
+  requireState(typeof service === 'string' && service.trim().length > 0, 'invalid_secret', 'Supply a nonempty service name');
+  const lower = service.trim().toLowerCase();
+  if (Object.hasOwn(BUILTIN_SERVICE_ORIGINS, lower)) return [BUILTIN_SERVICE_ORIGINS[lower]];
+  const derived = parseAllowedOrigin(service);
+  requireState(derived, 'invalid_secret', 'Supply allowedOrigins or use a built-in service / HTTPS hostname');
+  return [derived];
+}
+function normalizeProposedMembers(rawMembers: unknown): Array<{ kid: string; publicKey: string }> | undefined {
+  if (rawMembers === undefined || rawMembers === null) return undefined;
+  requireState(Array.isArray(rawMembers), 'invalid_options', 'proposedMembers must be an array');
+  return rawMembers.map(entry => {
+    requireState(entry && typeof entry === 'object' && !Array.isArray(entry), 'invalid_options', 'Each proposed member must be an object');
+    const rec = entry as Record<string, unknown>;
+    optionsOnly(rec, ['kid', 'publicKey', 'public_key']);
+    if (rec.publicKey !== undefined && rec.public_key !== undefined) {
+      requireState(rec.publicKey === rec.public_key, 'invalid_options', 'Conflicting publicKey and public_key on proposed member');
+    }
+    const publicKey = rec.publicKey ?? rec.public_key;
+    requireState(typeof rec.kid === 'string' && typeof publicKey === 'string', 'invalid_options', 'Proposed members require base64url kid and publicKey');
+    return { kid: rec.kid, publicKey };
+  });
+}
 function validURL(value: unknown): string {
   requireState(typeof value === 'string', 'invalid_gateway_url', 'Supply a gateway URL');
   let url: URL;
@@ -205,15 +267,25 @@ export class QntmGatewayActions {
         optionsOnly(options, ['service', 'endpoint', 'verb', 'targetUrl', 'payload', 'recipeName', 'arguments', 'requiredApprovals', 'expiresInSeconds']);
         body = createGateRequestBody(identity, context, options as unknown as CreateGateRequestOptions);
       } else if (action === 'secret') {
-        optionsOnly(options, ['service', 'value', 'headerName', 'headerTemplate', 'ttl']);
+        optionsOnly(options, ['service', 'value', 'headerName', 'headerTemplate', 'ttl', 'allowedOrigins', 'allowed_origins']);
+        requireState(!(options.allowedOrigins !== undefined && options.allowed_origins !== undefined),
+          'invalid_options', 'Specify only one of allowedOrigins or allowed_origins');
+        const allowedOrigins = resolveSecretAllowedOrigins(options.service, options.allowedOrigins ?? options.allowed_origins);
         requireState(typeof options.value === 'string' && options.value.length > 0, 'invalid_secret', 'Supply a nonempty credential value');
         const bytes = Buffer.from(options.value, 'utf8');
-        subject = { secretBytes: bytes.length, secretSha256: createHash('sha256').update(bytes).digest('hex') };
-        try { body = createGateSecretBody(identity, context, { ...options, value: bytes } as unknown as CreateGateSecretOptions); }
+        subject = { secretBytes: bytes.length, secretSha256: createHash('sha256').update(bytes).digest('hex'), allowedOrigins };
+        try {
+          const created = createGateSecretBody(identity, context, { ...options, allowedOrigins, value: bytes } as unknown as CreateGateSecretOptions);
+          body = { ...created, allowed_origins: allowedOrigins } as GatewayBody;
+        }
         finally { bytes.fill(0); }
       } else if (action === 'propose') {
         optionsOnly(options, ['proposalType', 'proposedFloor', 'proposedRules', 'proposedMembers', 'removedMemberKids', 'requiredApprovals', 'expiresInSeconds']);
-        body = createGatewayProposalBody(identity, context, options as unknown as CreateGatewayProposalOptions);
+        const normalizedOptions = {
+          ...options,
+          ...(options.proposedMembers !== undefined ? { proposedMembers: normalizeProposedMembers(options.proposedMembers) } : {}),
+        };
+        body = createGatewayProposalBody(identity, context, normalizedOptions as unknown as CreateGatewayProposalOptions);
       } else {
         optionsOnly(options, ['id']);
         requireState(typeof options.id === 'string' && options.id.length > 0 && options.id.length <= 256, 'invalid_subject', 'Use the complete verified request or proposal ID');
