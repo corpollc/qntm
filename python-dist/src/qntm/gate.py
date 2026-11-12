@@ -266,12 +266,12 @@ def resolve_service_origins(
     if s_lower.startswith(("https://", "http://")):
         return [canonicalize_origin(s)]
 
-    if s_lower in BUILTIN_SERVICE_ORIGINS:
-        return list(BUILTIN_SERVICE_ORIGINS[s_lower])
-
     catalog_origins = _lookup_recipe_catalog_origins(s_lower)
     if catalog_origins:
         return catalog_origins
+
+    if s_lower in BUILTIN_SERVICE_ORIGINS:
+        return list(BUILTIN_SERVICE_ORIGINS[s_lower])
 
     is_loopback = s_lower in ("localhost", "127.0.0.1", "[::1]") or s_lower.startswith(
         ("localhost:", "127.0.0.1:", "[::1]:")

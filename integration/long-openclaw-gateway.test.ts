@@ -48,7 +48,7 @@ describe.sequential('native OpenClaw gateway tools with Python, TypeScript and b
   }, LONG_TIMEOUT);
 
   it('provisions a sealed credential and approves a Python request that executes exactly once', async () => {
-    await action('secret', 'secret', { service: 'fun', value: 'test-key' }); await receiveHost('gate.secret');
+    await action('secret', 'secret', { service: 'fun', value: 'test-key', allowedOrigins: [h.fixture.baseUrl] }); await receiveHost('gate.secret');
     const requested = await h.alice.run(['gate-run', 'counter.bump', '-c', convId]);
     expect(requested.ok).toBe(true); const id = String(requested.data!.request_id); await receiveHost('gate.request', id);
     const result = await action('approve-python', 'approve', { id }); expect(result.status).toBe('submitted');

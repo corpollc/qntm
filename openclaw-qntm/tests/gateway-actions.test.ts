@@ -23,9 +23,9 @@ const directories: string[] = [];
 afterEach(() => { vi.useRealTimers(); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 const requestOptions = { service: 'demo', endpoint: '/records', verb: 'POST', targetUrl: 'https://example.test/records', payload: { text: 'review me' } };
 type Review = { status: string; reviewToken: string; reviewHash: string; review: any };
-export function fixture(accepted = true) {
+export function fixture(accepted = true, type: 'direct' | 'group' = 'group') {
   const stateDir = mkdtempSync(join(tmpdir(), 'qntm-gateway-actions-')); directories.push(stateDir);
-  const identity = createIdentityFixture(), group = createConversationFixture('group'), gateway = generateIdentity();
+  const identity = createIdentityFixture(), group = createConversationFixture(type), gateway = generateIdentity();
   const cfg = createConfig({ identity: identity.serialized, conversations: { group: { invite: group.token, gatewayActions: [...allActions] } } });
   const account = resolveQntmAccount({ cfg }), binding = account.bindings[0];
   const store = new QntmCheckpointStore(account, { stateDir });
@@ -225,8 +225,14 @@ describe('reviewed native gateway actions', () => {
 });
 
 describe('participant initiated gateway admission', () => {
+  test('rejects group gateway invitation preparation from a non-administrator member', async () => {
+    const f = fixture(false, 'group');
+    await expect(f.prepare('invite', { gatewayUrl: 'https://gateway.example.test' })).rejects.toMatchObject({ code: 'action_denied' });
+    expect(f.createInvitation).not.toHaveBeenCalled();
+    expect(f.posts).toHaveLength(0);
+  });
   test('bounds concurrent invitation preparation before awaiting the gateway', async () => {
-    const f = fixture(false), abort = new AbortController();
+    const f = fixture(false, 'direct'), abort = new AbortController();
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
     const original = f.createInvitation.getMockImplementation()!;
@@ -240,7 +246,7 @@ describe('participant initiated gateway admission', () => {
     expect(f.posts).toHaveLength(0);
   });
   test('persists only sealed bootstrap, requires chat acceptance, and retries after process restart without another POST', async () => {
-    const f = fixture(false); f.promote.mockRejectedValueOnce(new Error('HTTP response lost'));
+    const f = fixture(false, 'direct'); f.promote.mockRejectedValueOnce(new Error('HTTP response lost'));
     const review = await f.prepare('invite', { gatewayUrl: 'https://gateway.example.test', floor: 2 });
     expect(f.posts).toHaveLength(0); expect(f.promote).not.toHaveBeenCalled();
     expect(review.review.context.gateway.publicKey).toBe(base64UrlEncode(f.gateway.publicKey));
@@ -264,13 +270,13 @@ describe('participant initiated gateway admission', () => {
     expect(existsSync(f.bootstrapPath)).toBe(false);
   });
   test('does not deliver bootstrap when private persistence fails', async () => {
-    const f = fixture(false), service = new QntmGatewayActions({ ...f.deps, saveBootstrap: () => { throw new Error('disk full'); } });
+    const f = fixture(false, 'direct'), service = new QntmGatewayActions({ ...f.deps, saveBootstrap: () => { throw new Error('disk full'); } });
     const review = await service.prepare(f.scope, 'invite', { gatewayUrl: 'https://gateway.example.test' }) as Review;
     expect(await service.commit(f.scope, review.reviewToken, review.reviewHash)).toMatchObject({ status: 'invitation_posted_bootstrap_not_saved' });
     expect(f.posts).toHaveLength(1); expect(f.promote).not.toHaveBeenCalled();
   });
   test('rejects changed saved bootstrap, mismatched invitations and insecure gateway URLs', async () => {
-    const f = fixture(false);
+    const f = fixture(false, 'direct');
     for (const gatewayUrl of ['http://public.example.test', 'https://user:password@example.test', 'https://example.test/?secret=1']) {
       await expect(f.prepare('invite', { gatewayUrl })).rejects.toMatchObject({ code: 'invalid_gateway_url' });
     }
@@ -331,7 +337,7 @@ describe('native tool permissions and routing', () => {
     expect(scope.key).not.toContain(toHex(f.group.inviter.keyID));
   });
   test('honors cancellation before sending and during asynchronous invitation preparation', async () => {
-    const f = fixture(false), ctx = native(f), tool = createQntmGatewayTool(ctx, f.cfg, f.service, { stateDir: f.stateDir })!;
+    const f = fixture(false, 'direct'), ctx = native(f), tool = createQntmGatewayTool(ctx, f.cfg, f.service, { stateDir: f.stateDir })!;
     const abort = new AbortController(); abort.abort();
     expect((await tool.execute('a', { operation: 'prepare', action: 'invite', options: { gatewayUrl: 'https://gateway.example.test' } }, abort.signal)).details)
       .toMatchObject({ code: 'cancelled' });

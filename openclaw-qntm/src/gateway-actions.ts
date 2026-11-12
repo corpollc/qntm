@@ -3,11 +3,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 import { z } from 'zod';
 import {
-  GateClient, DropboxClient, base64UrlEncode, createGatewayInviteBody, sealGatewayBootstrap,
+  GateClient, DropboxClient, base64UrlDecode, base64UrlEncode, createGatewayInviteBody, sealGatewayBootstrap,
   sessionGatewayContext, createGatewayMessage, serializeEnvelope, receiveConversationEvent,
   createGateRequestBody, createGateApprovalBody, createGateDisapprovalBody, createGateSecretBody,
   createGatewayProposalBody, createGatewayProposalApprovalBody, createGatewayProposalDisapprovalBody,
-  scanGateRequest, scanGatewayProposal,
+  scanGateRequest, scanGatewayProposal, GroupState, parseGroupGenesisBody,
   type GatewayBody, type GatewayContext, type GatewayReferences, type GatewayInvitation,
   type CreateGateRequestOptions, type CreateGatewayProposalOptions, type CreateGateSecretOptions,
 } from '@corpollc/qntm';
@@ -251,8 +251,19 @@ export class QntmGatewayActions {
       optionsOnly(options, ['gatewayUrl', 'floor']);
       requireState(!state.gateway?.accepted, 'already_accepted', 'This conversation already has an accepted gateway');
       requireState(!state.gateway || state.gateway.invitation.body.expires_at * 1000 <= this.now(), 'invitation_pending', 'A gateway invitation is still pending');
+      if (conversation.type === 'group' || state.groupControl) {
+        const myKid = base64UrlEncode(identity.keyID);
+        let isGroupAdmin = Boolean(state.groupControl?.creator && myKid === state.groupControl.creator);
+        if (!isGroupAdmin && state.groupControl?.roster) {
+          const roster = new GroupState();
+          roster.applyGenesis(parseGroupGenesisBody(base64UrlDecode(state.groupControl.roster)));
+          isGroupAdmin = roster.isAdmin(identity.keyID);
+        }
+        requireState(isGroupAdmin, 'action_denied', 'Only a group administrator may promote a gateway');
+      }
       const url = validURL(options.gatewayUrl), invitationId = randomUUID().replaceAll('-', '');
       const value = await this.gate(url, signal).createInvitation(base64UrlEncode(identity.publicKey), invitationId);
+      requireState(!signal?.aborted, 'cancelled', 'Gateway action was cancelled during preparation');
       requireState(value.invitation_id === invitationId && value.inviter_public_key === base64UrlEncode(identity.publicKey)
         && Number.isSafeInteger(value.expires_at) && value.expires_at * 1000 > this.now() && value.expires_at * 1000 <= this.now() + 600_000,
         'invalid_invitation', 'Gateway returned an invalid or mismatched invitation');

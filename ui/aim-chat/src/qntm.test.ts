@@ -943,7 +943,7 @@ describe('browser qntm adapter', () => {
         'http://gateway.test',
         { owner: '..' },
       ),
-    ).rejects.toThrow('dot segments')
+    ).rejects.toThrow(/dot segments|invalid path parameter/)
 
     const reqSignable = {
       ...(reqBody.gateway_kid ? { gateway_kid: reqBody.gateway_kid } : {}),

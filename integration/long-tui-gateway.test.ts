@@ -51,7 +51,7 @@ describe.sequential('real terminal gateway actions with Python, TypeScript and b
   }, LONG_TIMEOUT);
 
   it('sends a sealed credential, then approves a Python request and observes real execution in browser and TypeScript', async () => {
-    const secret = file('terminal-secret.json', { service: 'fun', value: 'test-key' });
+    const secret = file('terminal-secret.json', { service: 'fun', value: 'test-key', allowedOrigins: [h.fixture.baseUrl] });
     const review = await tui.review(`/secret ${secret}`);
     expect(review).not.toContain('test-key'); expect(review).toContain('secret_sha256');
     await receiveTui('gate.secret');

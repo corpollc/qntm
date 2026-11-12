@@ -49,8 +49,9 @@ const SessionSchema = z.object({
   }).strict()).max(4096),
   seen: z.record(hex16, digest),
   needsRekey: z.boolean().optional(),
+  recoveryRequired: z.boolean().optional(),
   groupControl: z.object({ creator: z.string().max(24), roster: z.string().max(65536).optional(),
-    needsRekey: z.boolean(), removed: z.boolean() }).strict().optional(),
+    needsRekey: z.boolean(), removed: z.boolean(), recoveryRequired: z.boolean().optional() }).strict().optional(),
 }).strict();
 const CheckpointSchema = z.object({
   version: z.literal(1), seedHash: digest, identityKid: hex16, cursor: sequence, suppressThrough: sequence,

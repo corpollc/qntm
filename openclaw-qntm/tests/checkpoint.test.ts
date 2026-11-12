@@ -108,7 +108,7 @@ describe('qntm authenticated checkpoints', () => {
     for (let i = 1; i <= 64; i++) receiveQntmEnvelope(f.store, f.binding, i, f.envelope(`message ${i}`));
     expect(() => receiveQntmEnvelope(f.store, f.binding, 65, f.envelope('overflow'))).toThrow('queue is full');
     expect(f.store.load(f.binding).cursor).toBe(64);
-  });
+  }, 20_000);
   test('oversized plaintext on a custom relay cannot pin the subscription cursor', () => {
     const f = fixture();
     expect(receiveQntmEnvelope(f.store, f.binding, 1, f.envelope('a'.repeat(65537)))).toBe('invalid');

@@ -105,7 +105,7 @@ describe.sequential('real long-running gateway integration CLI policy flow', () 
     try {
       harness.resetCounterExecutions();
       await harness.charlie.run(['recv', convId]);
-      await harness.charlie.sendGatewaySecret(convId, { service: 'fun', value: 'typescript-fixture-credential', headerName: 'X-Test', headerTemplate: '{value}' });
+      await harness.charlie.sendGatewaySecret(convId, { service: 'fun', value: 'typescript-fixture-credential', headerName: 'X-Test', headerTemplate: '{value}', allowedOrigins: [harness.fixture.baseUrl] });
       const requestId = await harness.charlie.sendGatewayRequest(convId, { service: 'fun', endpoint: '/counter', verb: 'POST',
         targetUrl: `${harness.fixture.baseUrl}/counter` });
       await waitForCliHistory(harness.alice, convId, historyMatchesRequest('gate.request', requestId), 'TypeScript request at Python');

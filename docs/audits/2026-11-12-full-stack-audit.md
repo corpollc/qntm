@@ -2,14 +2,14 @@
 
 **Date:** November 12, 2026  
 **Audited Baseline:** `main` @ `1905a11` (`v0.9.4`, synced with `origin/main`)  
-**Archived Working-Tree Snapshot:** `archive/wip-client-parity-2026-09-09` @ `9e6439a` (preserves the Sep 9 `0.6.1` attachment/group-bootstrap draft prior to fast-forwarding `main`; verified 100% superseded by `41d651a` / `v0.9.4`)  
-**Mode:** Read-only code & configuration audit (zero tracked repository edits, zero Beads writes, zero live production probes)
+**Remediation Status:** All 24 findings (`P0-1..3`, `P1-1..7`, `P2-1..10`, `P3-1..4`) remediated and regression-tested in this branch (`fix/nov-12-audit-remediation`, tracked under Beads epic `qntm-liq8`).
 
-> [!CAUTION]
-> **Three net-new `P0` issues** cross core trust boundaries at `v0.9.4`:
-> 1. **Unauthenticated Python OOM & permanent receive-cursor DoS** via unvalidated CBOR field types (`"msg_id": 10_000_000_000` or `"msg_id": "x"`) on `POST /v1/send`.
-> 2. **Gateway vault credential exfiltration, rule-threshold bypass, and SSRF** due to unbound `target_url` / `target_endpoint` and a case-sensitive `verb` mismatch between `lookupThreshold` and `executeRequest`.
-> 3. **Unauthenticated `GET http://127.0.0.1:9085/backup` on Charter Registry** streaming the unencrypted registrar Ed25519 private key (`seed`) across a host-networked Docker stack (where Grafana also binds `0.0.0.0:3000` with anonymous access enabled).
+> [!TIP]
+> **All findings below have been remediated in this branch:**
+> 1. **`P0-1` Fixed:** Strict CBOR byte-field type/length checks (`_require_bytes`), 64 KiB pre-decode ceiling, and malformed-envelope skip handling in Python SDK/CLI/MCP + cross-language regression tests.
+> 2. **`P0-2` Fixed:** Mandatory `allowed_origins` on `gate.secret` (auto-derived from built-in services or typed hostnames/origins), strict `target_endpoint === pathname` binding, uppercase verb normalization across threshold lookup and execution, and SSRF private/metadata IP blocking.
+> 3. **`P0-3` Fixed:** Removed HTTP `GET /backup` from `charter-registry`; backups now read an atomic `0600` local `snapshot.db` inside the `0700` data directory, with Grafana bound to `127.0.0.1` and anonymous access disabled.
+> 4. **`P1`–`P3` Fixed:** Group-admin gateway promotion, epoch-bound votes & sender key pinning, WebSocket hibernation auth & IPv6 `/64` rate limiting, Nginx per-IP rate limiting, bounded gateway HTTP deadlines, recovery-required rekey handling, adapter epoch/cursor hardening, and 40-hex SHA-pinned GitHub Actions.
 
 ---
 
