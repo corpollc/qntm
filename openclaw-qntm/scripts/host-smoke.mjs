@@ -208,7 +208,7 @@ try {
   await postManaged(peer, peerRequest.type, peerRequest);
   await toolJourney('approve', 'approve', { id: peerRequest.request_id });
   await toolJourney('disapprove', 'disapprove', { id: peerRequest.request_id });
-  await toolJourney('secret', 'secret', { service: 'demo', value: 'disposable-host-fixture-secret' });
+  await toolJourney('secret', 'secret', { service: 'demo', value: 'disposable-host-fixture-secret', allowedOrigins: ['https://example.test'] });
   await toolJourney('propose', 'propose', { proposalType: 'floor_change', proposedFloor: 1 });
   const peerProposal = createGatewayProposalBody(peer, sessionGatewayContext(managedSession), { proposalType: 'floor_change', proposedFloor: 1 });
   await postManaged(peer, peerProposal.type, peerProposal);
