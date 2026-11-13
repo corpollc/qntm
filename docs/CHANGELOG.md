@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.5
+
+[Full release notes](releases/v0.9.5.md)
+
+- Enforce strict CBOR byte-field type/length checks, 64 KiB pre-decode limits, and malformed-envelope skip handling across Python and TypeScript (`P0-1`, `P1-2`).
+- Bind `gate.secret` vault entries to explicit `allowed_origins`, enforce `target_endpoint` path agreement and uppercase HTTP verbs, safely encode recipe parameters, and block SSRF private/metadata targets (`P0-2`, `P1-6`).
+- Remove HTTP `GET /backup` from the Charter Registry TCP listener in favor of atomic `0600` local snapshots, bind Grafana to loopback with anonymous auth disabled, enforce JCS integer bounds, and bump Go to 1.27.4 (`P0-3`, `P1-5e`, `P2-4`, `P2-8`, `GO-2026-6859`).
+- Require group-admin authority for `gate.promote`, verify vote proofs on delegated gateway controls, protect group creators across `gov.applied` and invite import, and lock concurrent Python `conversations.json` writes (`P1-1`, `P1-3`).
+- Persist Relay WebSocket auth across Durable Object hibernation, gate live broadcasts on `auth_ok`, normalize IPv6 `/64` rate-limit buckets, exempt `/healthz`, and harden D1 metadata and monitor cursor recovery (`P1-5`, `P2-7`).
+- Route browser UI receive handling through verified gateway/group helpers, sanitize TUI sidebar strings, harden OpenClaw/Channel/NanoClaw adapter state, pin CI workflows to commit SHAs, and update Hono and Playwright dependencies (`P1-4`, `P1-7`, `P2`, `P3`).
+
 ## v0.9.4
 
 [Full release notes](releases/v0.9.4.md)

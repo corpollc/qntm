@@ -188,7 +188,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **TypeScript lib** | ✅ | ✅ | ✅ | ✅ | Typed gateway/governance builders, authenticated-message verification, encrypted-message helpers, and history summaries. Hosts own review, persistence, subscriptions, and retries; see the [workflow guide](docs/typescript-gateway.md). |
 | **OpenClaw plugin** | ✅ | ✅ | ✅ | ✅ | Verified gateway context and optional native tools for admission, requests, votes, credentials and governance. Real OpenClaw 2026.9.3 journeys cover Python/browser/TypeScript interoperability, actual gateway execution, stale-review rejection, rekey, removal and crash recovery. |
 
-Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes qntm v0.9.4; terminal and native OpenClaw gateway actions require v0.6.2 or later.
+Terminal and native OpenClaw gateway actions are covered by real host journeys with Python, TypeScript and browser peers, including execution, governance, removal and restart after rekeying. OpenClaw requires local opt-in and a complete prepare/commit review; see its [configuration and privacy notes](openclaw-qntm/README.md#optional-gateway-tools). The table describes qntm v0.9.5; terminal and native OpenClaw gateway actions require v0.6.2 or later.
 
 ## Experimental charter registry
 
