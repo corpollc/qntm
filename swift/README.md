@@ -77,7 +77,11 @@ try await client.watch(id) { event in
 
 `ProfileStore` permits application-owned persistence. Its `save` must atomically commit a complete profile or throw. `FileProfileStore` holds an exclusive process lock, writes private files with atomic rename and sync, and protects the profile directory with mode 0700. Files contain private keys and plaintext history; they are not encrypted at rest. An iOS host can implement `ProfileStore` using its own Keychain and protected storage policy.
 
-A failed send remains in `pendingOutbound` with the same message ID. `flush(conversationID:)` retries it. Expired or obsolete-epoch envelopes must be reviewed rather than silently replaced and resent. A failed disk commit does not advance the receive cursor. Persisted delivery events are removed only by acknowledgment or a successful watch callback. Future-epoch ciphertext is retained in a bounded recovery queue; saturation stops cursor advancement. Invalid messages are recorded separately and do not authorize state changes.
+A transport failure leaves the original message ID in `pendingOutbound`. Use `flush(conversationID:)` or `retry ID` to retry it. Each retry checks the current keys and membership. Expired, obsolete, and unauthorized messages move to `failedOutbound` with their original encrypted envelopes and failure reasons. The CLI includes these records in the `failed` field of its retry result. A simultaneous send that reports “already in progress” has not been queued.
+
+A failed disk commit leaves the receive cursor in place. Acknowledgment or a successful watch callback removes a pending delivery. The client buffers up to 2,048 future-epoch envelopes, ignores duplicate ciphertext, and releases expired entries. When the buffer is full it records the rejected delivery and continues to look for the next rekey. A competing rekey that conflicts with later group controls preserves the latest roster and pauses sending until the group recovers.
+
+Attachment downloads use the epoch of the verified parent message. On the first download from an older profile, the client verifies the original relay envelope and saves its epoch. If that envelope or its key is unavailable, ask the sender to resend the attachment.
 
 ## CLI example
 

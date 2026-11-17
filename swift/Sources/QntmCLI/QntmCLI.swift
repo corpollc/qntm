@@ -183,6 +183,11 @@ private enum Output {
         let recipient = try args.option("--recipient")
         let saved = try await client.conversation(args.take("conversation"))
         try args.finish()
+        guard saved.group?.needsRekey != true, saved.group?.recoveryRequired != true,
+          saved.group?.removed != true
+        else {
+          throw QntmError.invalid("Complete group recovery or rekey before issuing an invitation")
+        }
         let token: String
         if saved.conversation.currentEpoch > 0 {
           guard let recipient, let roster = saved.group?.roster, let rekeyID = saved.lastRekeyID
@@ -231,7 +236,14 @@ private enum Output {
     case "retry":
       let cid = try args.take("conversation")
       try args.finish()
-      try Output.result(["sequences": await client.flush(conversationID: cid)])
+      let sequences = try await client.flush(conversationID: cid)
+      let failures = try await client.conversation(cid).failedOutbound ?? []
+      try Output.result([
+        "sequences": sequences,
+        "failed": failures.map {
+          ["message_id": $0.messageID, "reason": $0.reason]
+        },
+      ])
     case "group":
       let operation = try args.take("group operation")
       let cid = try args.take("conversation")
@@ -302,25 +314,7 @@ private enum Output {
       let messageID = try args.take("message ID")
       let path = try args.take("output file")
       try args.finish()
-      let saved = try await client.conversation(cid)
-      let profile = await client.snapshot()
-      let event = try require(
-        saved.history.first {
-          $0.message.messageID == messageID && $0.message.bodyType == Attachment.bodyType
-        }, "Attachment message not found")
-      let senderID = try Data(hex: event.message.senderKeyID)
-      let gatewayKey = saved.gateway.context?.gatewayPublicKey
-      let sender = try require(
-        saved.historyKeys[senderID.base64URL] ?? saved.members[senderID.base64URL]
-          ?? gatewayKey.flatMap { QSPCrypto.hash($0).prefix(16) == senderID ? $0 : nil },
-        "Attachment sender key unavailable")
-      let body = Data(try require(event.message.unsafeBody, "Invalid attachment body").utf8)
-      let descriptor = try JSONDecoder().decode(AttachmentDescriptor.self, from: body)
-      let context = try AttachmentContext(
-        conversationID: saved.conversation.id, epoch: descriptor.parentEpoch,
-        senderPublicKey: sender)
-      let data = try await Attachment.download(
-        body, context: context, relay: DropboxClient(baseURL: profile.relayURL))
+      let data = try await client.downloadAttachment(cid, messageID: messageID)
       guard !FileManager.default.fileExists(atPath: path) else {
         throw QntmError.invalid("Output already exists")
       }

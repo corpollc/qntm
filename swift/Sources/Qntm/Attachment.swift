@@ -13,7 +13,7 @@ public struct AttachmentContext: Sendable, Equatable {
     self.senderPublicKey = senderPublicKey
   }
   public init(message: Message) throws {
-    guard message.bodyType == "blobref" else {
+    guard message.bodyType == Attachment.bodyType || message.bodyType == "blobref" else {
       throw QntmError.invalid("Attachment requires a verified blobref parent")
     }
     try self.init(

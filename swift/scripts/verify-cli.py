@@ -43,11 +43,27 @@ def main():
         gid = group['conversation_id']
         cli('bob', 'convo', 'join', group['invite_token'])
         cli('bob', 'recv', gid)
+        original = cli('alice', 'file', 'send', gid, str(source))
+        cli('bob', 'recv', gid)
         charlie = cli('charlie', 'identity', 'generate')
         welcomes = cli('alice', 'group', 'add', gid, charlie['public_key'])['invitations']
         cli('charlie', 'convo', 'join', welcomes[charlie['public_key']])
         cli('bob', 'recv', gid)
         cli('charlie', 'recv', gid)
+        # Downloads use the original epoch even after rotation and process restart.
+        rotated_output = root / 'rotated.bin'
+        cli('bob', 'file', 'get', gid, original['message_id'], str(rotated_output))
+        assert rotated_output.read_bytes() == source.read_bytes()
+        # A pre-upgrade profile recovers the binding from its authenticated relay envelope.
+        profile_path = root / 'bob' / 'profile.json'
+        profile = json.loads(profile_path.read_text())
+        del profile['conversations'][gid]['attachmentEpochs']
+        profile_path.write_text(json.dumps(profile))
+        legacy_output = root / 'legacy.bin'
+        cli('bob', 'file', 'get', gid, original['message_id'], str(legacy_output))
+        assert legacy_output.read_bytes() == source.read_bytes()
+        restored = json.loads(profile_path.read_text())['conversations'][gid]
+        assert restored['attachmentEpochs'][original['message_id']] == original['epoch']
         cli('charlie', 'send', gid, 'New member after restart')
         assert any(m['unsafe_body'] == 'New member after restart' for m in cli('bob', 'recv', gid)['messages'])
         cli('alice', 'group', 'remove', gid, bob['key_id'])

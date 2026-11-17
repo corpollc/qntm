@@ -15,6 +15,8 @@ public struct SavedConversation: Codable, Sendable {
   public var pendingDelivery: [ReceiveEvent] = []
   public var receivedIDs: Set<String> = []
   public var pendingOutbound: [Data] = []
+  public private(set) var attachmentEpochs: [String: UInt32]?
+  public internal(set) var failedOutbound: [FailedOutbound]?
   public var pendingInbound: [SavedEnvelope] = []
   public var rejected: [RejectedEnvelope] = []
   public var lastRekeyID: Data?
@@ -29,10 +31,69 @@ public struct SavedConversation: Codable, Sendable {
     self.historyKeys = members
     gateway = try GatewaySession(participants: members)
   }
+  mutating func retainFuture(
+    _ envelope: Envelope, entry: SubscriptionMessage,
+    limit: Int = 2048, now: UInt64 = unixSeconds()
+  ) throws {
+    pendingInbound.removeAll { $0.expiresAt < now }
+    guard envelope.expiresAt >= now else { throw QntmError.invalid("Message expired") }
+    // Until decryption, an ID alone cannot distinguish two different ciphertexts.
+    guard !pendingInbound.contains(where: { $0.wire == entry.envelope }) else { return }
+    guard pendingInbound.count < limit else {
+      throw QntmError.invalid("Future epoch queue is full; delivery discarded")
+    }
+    pendingInbound.append(
+      SavedEnvelope(sequence: entry.sequence, wire: entry.envelope, envelope: envelope))
+  }
+
+  mutating func recordHistory(_ message: Message, sequence: UInt64, deliver: Bool) throws {
+    let event = try ReceiveEvent(message: message, sequence: sequence)
+    history.append(event)
+    if deliver { pendingDelivery.append(event) }
+    if message.bodyType == Attachment.bodyType || message.bodyType == "blobref" {
+      rememberAttachment(message)
+    }
+  }
+
+  mutating func rememberAttachment(_ message: Message) {
+    if attachmentEpochs == nil { attachmentEpochs = [:] }
+    attachmentEpochs?[message.envelope.messageID.hex] = message.envelope.epoch
+    historyKeys[message.senderKeyID.base64URL] = message.senderPublicKey
+  }
+
+  mutating func rejectFirstOutbound(_ failure: FailedOutbound) {
+    pendingOutbound.removeFirst()
+    if failedOutbound == nil { failedOutbound = [] }
+    failedOutbound?.append(failure)
+  }
 }
+
+public struct FailedOutbound: Codable, Sendable {
+  public let messageID: String
+  public let wire: Data
+  public let reason: String
+}
+
 public struct SavedEnvelope: Codable, Sendable {
   public let sequence: UInt64
   public let wire: Data
+  let expiresAt: UInt64
+
+  enum CodingKeys: String, CodingKey { case sequence, wire }
+
+  init(sequence: UInt64, wire: Data, envelope: Envelope) {
+    self.sequence = sequence
+    self.wire = wire
+    expiresAt = envelope.expiresAt
+  }
+
+  public init(from decoder: Decoder) throws {
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    let wire = try fields.decode(Data.self, forKey: .wire)
+    try self.init(
+      sequence: fields.decode(UInt64.self, forKey: .sequence), wire: wire,
+      envelope: Envelope(serialized: wire, now: .max))
+  }
 }
 public struct RejectedEnvelope: Codable, Sendable {
   public let sequence: UInt64

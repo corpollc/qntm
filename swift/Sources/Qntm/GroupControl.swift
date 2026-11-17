@@ -36,6 +36,10 @@ public struct GroupControlState: Equatable, Codable, Sendable {
       roster: GroupState(gatewayParticipants: gatewayParticipants, anchorKeyID: anchorKeyID))
   }
 
+  func historicalSource(epoch: UInt32) -> Conversation? {
+    rekeys.first { $0.source.currentEpoch == epoch }?.source
+  }
+
   public mutating func quarantine() { recoveryRequired = true }
   public mutating func markNeedsRekey() { needsRekey = true }
   fileprivate mutating func setRoster(_ value: GroupState) { roster = value }
@@ -254,15 +258,19 @@ public enum GroupControls {
       throw QntmError.invalid("Unauthorized competing rekey")
     }
     var next = state
-    next.rekeys.removeAll { $0.source.currentEpoch >= checkpoint.source.currentEpoch }
-    var replacement = checkpoint
-    replacement.winnerID = result.envelope.messageID
-    next.rekeys.append(replacement)
-    next.appliedIDs = checkpoint.appliedIDs
+    // Replacing a branch after a later membership decision would roll back that decision
+    // without replaying its relay sequence. Keep the committed branch until recovery.
+    guard state.rekeys.last == checkpoint,
+      state.appliedIDs == checkpoint.appliedIDs.union([checkpoint.winnerID]),
+      !state.needsRekey, !state.removed, state.roster == checkpoint.roster
+    else {
+      next.quarantine()
+      return GroupTransition(conversation: conversation, state: next)
+    }
+    next.rekeys[next.rekeys.count - 1].winnerID = result.envelope.messageID
+    next.appliedIDs.remove(checkpoint.winnerID)
     next.appliedIDs.insert(result.envelope.messageID)
-    next.setRoster(checkpoint.roster)
     next.removed = result.excluded
-    next.needsRekey = false
     var nextConversation = result.conversation ?? conversation
     nextConversation.type = conversation.type
     return GroupTransition(conversation: nextConversation, state: next)

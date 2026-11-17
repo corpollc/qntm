@@ -150,6 +150,32 @@ final class GroupTests: XCTestCase {
       message: lower, conversation: lateFirst.conversation, identity: member,
       state: lateFirst.state, now: now)
     XCTAssertEqual(converged.conversation.keys, expected.conversation?.keys)
+    let removal = try Messaging.create(
+      identity: creator, conversation: lateFirst.conversation, bodyType: "group_remove",
+      body: GroupBodies.remove(keyIDs: [member.keyID]), now: now)
+    let afterRemoval = try GroupControls.apply(
+      message: Messaging.decrypt(removal, conversation: lateFirst.conversation, now: now),
+      conversation: lateFirst.conversation, identity: creator, state: lateFirst.state, now: now)
+    let rotation = try Messaging.create(
+      identity: creator, conversation: afterRemoval.conversation,
+      bodyType: "group_rekey",
+      body: GroupBodies.rekey(
+        conversation: afterRemoval.conversation,
+        roster: XCTUnwrap(afterRemoval.state.roster)
+      ).body, now: now)
+    let afterRotation = try GroupControls.apply(
+      message: Messaging.decrypt(rotation, conversation: afterRemoval.conversation, now: now),
+      conversation: afterRemoval.conversation, identity: creator, state: afterRemoval.state,
+      now: now)
+    for latest in [afterRemoval, afterRotation] {
+      let conflict = try GroupControls.apply(
+        message: lower, conversation: latest.conversation,
+        identity: creator, state: latest.state, now: now)
+      XCTAssertTrue(conflict.state.recoveryRequired)
+      XCTAssertEqual(conflict.conversation, latest.conversation)
+      XCTAssertEqual(conflict.state.roster, latest.state.roster)
+      XCTAssertEqual(conflict.state.needsRekey, latest.state.needsRekey)
+    }
     let oldText = try Messaging.create(
       identity: creator, conversation: conversation, bodyType: "text", body: Data("late".utf8),
       now: now)

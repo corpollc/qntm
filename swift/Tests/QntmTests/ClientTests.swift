@@ -145,3 +145,102 @@ extension ClientTests {
     XCTAssertEqual(after.history.count, 1)
   }
 }
+
+extension ClientTests {
+  func testOutboxRecordsFailuresAndDeliversRekeyAndCurrentMessage() async throws {
+    guard let address = ProcessInfo.processInfo.environment["QNTM_SWIFT_TEST_RELAY"],
+      let relay = URL(string: address)
+    else { throw XCTSkip("Set QNTM_SWIFT_TEST_RELAY") }
+    let store = FailingProfileStore()
+    let client = try QntmClient(store: store, relayURL: relay)
+    let identity = try await client.identity()
+    let group = try await client.createConversation(type: .group)
+    let cid = group.conversation.id.hex
+    let draft = try Messaging.create(
+      identity: identity, conversation: group.conversation,
+      bodyType: "text", body: Data("queued".utf8))
+    let expired = try Messaging.create(
+      identity: identity, conversation: group.conversation,
+      bodyType: "text", body: Data(), ttl: 1, now: unixSeconds() - 10)
+    var profile = try XCTUnwrap(store.load())
+    profile.conversations[cid]?.pendingOutbound = try [expired.serialize(), draft.serialize()]
+    profile.conversations[cid]?.group?.markNeedsRekey()
+    try store.save(profile)
+    let restarted = try QntmClient(store: store)
+    let rekey = try await restarted.rekey(cid)
+    // Restore an old-epoch draft after rotation, as when an offline profile resumes.
+    let lateDraft = try Messaging.create(
+      identity: identity, conversation: group.conversation,
+      bodyType: "text", body: Data("older epoch".utf8))
+    var rotated = try XCTUnwrap(store.load())
+    rotated.conversations[cid]?.pendingOutbound = [try lateDraft.serialize()]
+    try store.save(rotated)
+    let resumed = try QntmClient(store: store)
+    let current = try await resumed.send(cid, body: Data("current".utf8))
+    let saved = try XCTUnwrap(store.load()?.conversations[cid])
+    XCTAssertEqual(
+      saved.failedOutbound?.map(\.messageID),
+      [expired.messageID.hex, draft.messageID.hex, lateDraft.messageID.hex])
+    XCTAssertEqual(saved.failedOutbound?.last?.wire, try lateDraft.serialize())
+    XCTAssertTrue(saved.pendingOutbound.isEmpty)
+    let replay = try await DropboxClient(baseURL: relay).receiveMessages(
+      conversationID: group.conversation.id, identity: identity)
+    let ids = try replay.entries.map { try Envelope(serialized: $0.envelope).messageID }
+    XCTAssertEqual(ids.suffix(2), [rekey.messageID, current.messageID])
+    XCTAssertEqual(ids.count, 3)
+  }
+
+  func testConcurrentSendOutcomesMatchRelay() async throws {
+    guard let address = ProcessInfo.processInfo.environment["QNTM_SWIFT_TEST_RELAY"],
+      let relay = URL(string: address)
+    else { throw XCTSkip("Set QNTM_SWIFT_TEST_RELAY") }
+    let client = try QntmClient(store: FailingProfileStore(), relayURL: relay)
+    let conversation = try await client.createConversation().conversation
+    let delivered = try await withThrowingTaskGroup(of: Data?.self) { group in
+      for n in 0..<8 {
+        group.addTask {
+          do {
+            return try await client.send(conversation.id.hex, body: Data("message \(n)".utf8))
+              .messageID
+          } catch QntmError.invalid(let reason) where reason.contains("already in progress") {
+            return nil
+          }
+        }
+      }
+      var ids: [Data] = []
+      for try await id in group { if let id { ids.append(id) } }
+      return ids
+    }
+    let replay = try await DropboxClient(baseURL: relay).receiveMessages(
+      conversationID: conversation.id, identity: client.identity())
+    XCTAssertFalse(delivered.isEmpty)
+    XCTAssertEqual(replay.entries.count, delivered.count)
+    XCTAssertEqual(
+      try Set(replay.entries.map { try Envelope(serialized: $0.envelope).messageID }),
+      Set(delivered))
+  }
+
+  func testFutureQueueDeduplicatesAndReclaimsExpiredEntriesAcrossRestart() throws {
+    let owner = try Identity()
+    let conversation = try Invite(creator: owner, type: .group).conversation()
+    var future = conversation
+    future.currentEpoch = 1
+    future.keys = try ConversationKeys(
+      root: QSPCrypto.random(32), conversationID: conversation.id, epoch: 1)
+    let now = unixSeconds()
+    let first = try Messaging.create(
+      identity: owner, conversation: future, bodyType: "text", body: Data(), ttl: 2, now: now)
+    let second = try Messaging.create(
+      identity: owner, conversation: future, bodyType: "text", body: Data(), ttl: 20, now: now)
+    var saved = try SavedConversation(conversation: conversation)
+    let entry = try SubscriptionMessage(sequence: 1, envelope: first.serialize())
+    try saved.retainFuture(first, entry: entry, limit: 1, now: now)
+    try saved.retainFuture(first, entry: entry, limit: 1, now: now)
+    XCTAssertEqual(saved.pendingInbound.count, 1)
+    saved = try JSONDecoder().decode(SavedConversation.self, from: JSONEncoder().encode(saved))
+    let next = try SubscriptionMessage(sequence: 2, envelope: second.serialize())
+    XCTAssertThrowsError(try saved.retainFuture(second, entry: next, limit: 1, now: now))
+    try saved.retainFuture(second, entry: next, limit: 1, now: now + 3)
+    XCTAssertEqual(saved.pendingInbound.map(\.sequence), [2])
+  }
+}

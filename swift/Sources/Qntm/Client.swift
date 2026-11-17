@@ -1,7 +1,5 @@
 import Foundation
 
-private struct ReceiveCapacityError: Error {}
-
 /// Owns profile transactions, authenticated receive state and durable outbound retries.
 public actor QntmClient {
   private var profile: Profile
@@ -100,14 +98,14 @@ public actor QntmClient {
           "Invitation cannot replace this conversation authority or roll back its epoch")
       }
       if saved.conversation.currentEpoch == existing.conversation.currentEpoch {
-        let sameState =
-          saved.conversation.keys == existing.conversation.keys
-          && saved.group?.roster == existing.group?.roster
+        let sameKeys = saved.conversation.keys == existing.conversation.keys
         let lowerRekey =
           saved.lastRekeyID.map { new in
             existing.lastRekeyID.map { new.lexicographicallyPrecedes($0) } ?? false
           } ?? false
-        guard sameState || lowerRekey else {
+        guard existing.group?.needsRekey != true, existing.group?.roster == saved.group?.roster,
+          sameKeys || lowerRekey
+        else {
           throw QntmError.invalid("Conflicting current-epoch invitation")
         }
       }
@@ -135,6 +133,32 @@ public actor QntmClient {
     async throws -> Envelope
   {
     var saved = try conversation(id)
+    let cid = saved.conversation.id.hex
+    try beginSending(cid)
+    defer { sending.remove(cid) }
+    try authorizeSend(bodyType: bodyType, saved: saved)
+    let envelope = try Messaging.create(
+      identity: identity(), conversation: saved.conversation, bodyType: bodyType, body: body,
+      ttl: ttl)
+    if bodyType.hasPrefix("gate.") || bodyType.hasPrefix("gov.")
+      || GroupControls.bodyTypes.contains(bodyType)
+    {
+      // Validate against a copy before putting a control on the relay.
+      var preview = saved
+      try apply(try Messaging.decrypt(envelope, conversation: saved.conversation), to: &preview)
+    }
+    saved.pendingOutbound.append(try envelope.serialize())
+    try save(saved)
+    _ = try await drain(cid)
+    if let failure = try conversation(cid).failedOutbound?.last(where: {
+      $0.messageID == envelope.messageID.hex
+    }) {
+      throw QntmError.invalid(failure.reason)
+    }
+    return envelope
+  }
+
+  private func authorizeSend(bodyType: String, saved: SavedConversation) throws {
     guard saved.group?.removed != true, saved.group?.recoveryRequired != true,
       saved.group?.needsRekey != true || bodyType == "group_rekey"
     else { throw QntmError.invalid("Group requires recovery or rekey before sending") }
@@ -148,34 +172,58 @@ public actor QntmClient {
         throw QntmError.invalid("Local identity is not a group member")
       }
     }
-    let envelope = try Messaging.create(
-      identity: identity(), conversation: saved.conversation, bodyType: bodyType, body: body,
-      ttl: ttl)
-    if bodyType.hasPrefix("gate.") || bodyType.hasPrefix("gov.")
-      || GroupControls.bodyTypes.contains(bodyType)
-    {
-      // Validate against a copy before putting a control on the relay.
-      var preview = saved
-      try apply(try Messaging.decrypt(envelope, conversation: saved.conversation), to: &preview)
-    }
-    saved.pendingOutbound.append(try envelope.serialize())
-    try save(saved)
-    _ = try await flush(conversationID: saved.conversation.id.hex)
-    return envelope
   }
-  @discardableResult public func flush(conversationID: String) async throws -> [UInt64] {
-    let cid = try conversation(conversationID).conversation.id.hex
+
+  private func beginSending(_ cid: String) throws {
     guard sending.insert(cid).inserted else {
       throw QntmError.invalid("A send is already in progress for this conversation")
     }
+  }
+
+  @discardableResult public func flush(conversationID: String) async throws -> [UInt64] {
+    let cid = try conversation(conversationID).conversation.id.hex
+    try beginSending(cid)
     defer { sending.remove(cid) }
+    return try await drain(cid)
+  }
+
+  private func drain(_ cid: String) async throws -> [UInt64] {
+    let relay = try DropboxClient(baseURL: profile.relayURL)
+    let localSenderID = try identity().keyID.hex
     var sequences: [UInt64] = []
-    while let wire = try conversation(cid).pendingOutbound.first {
-      let beforeSend = try conversation(cid)
+    while true {
+      var beforeSend = try conversation(cid)
+      guard let wire = beforeSend.pendingOutbound.first else { break }
       let envelope = try Envelope(serialized: wire)
-      let sentMessage = try decrypt(envelope, saved: beforeSend)
-      let relay = try DropboxClient(baseURL: profile.relayURL)
-      let sequence = try await relay.postMessage(conversationID: Data(hex: cid), envelope: wire)
+      if beforeSend.receivedIDs.contains(envelope.messageID.hex),
+        let event = beforeSend.history.first(where: {
+          $0.message.messageID == envelope.messageID.hex && $0.message.senderKeyID == localSenderID
+        })
+      {
+        // A previous POST reached the relay and its echo was committed before retry.
+        beforeSend.pendingOutbound.removeFirst()
+        try save(beforeSend)
+        sequences.append(event.sequence)
+        continue
+      }
+      guard beforeSend.group?.recoveryRequired != true else {
+        throw QntmError.invalid("Recover the group before retrying pending sends")
+      }
+      let sentMessage: Message
+      do {
+        sentMessage = try Messaging.decrypt(envelope, conversation: beforeSend.conversation)
+        try authorizeSend(bodyType: sentMessage.bodyType, saved: beforeSend)
+        var preview = beforeSend
+        try applyTransition(sentMessage, to: &preview)
+      } catch {
+        let failure = FailedOutbound(
+          messageID: envelope.messageID.hex, wire: wire, reason: String(describing: error))
+        beforeSend.rejectFirstOutbound(failure)
+        try save(beforeSend)
+        continue
+      }
+      let sequence = try await relay.postMessage(
+        conversationID: beforeSend.conversation.id, envelope: wire)
       // Receiving can run during the HTTP request. Re-read the committed state.
       var saved = try conversation(cid)
       var controlError: String?
@@ -192,7 +240,7 @@ public actor QntmClient {
               reason: "Sent message state update failed: " + String(describing: error)))
         }
         saved.receivedIDs.insert(envelope.messageID.hex)
-        saved.history.append(try ReceiveEvent(message: sentMessage, sequence: sequence))
+        try saved.recordHistory(sentMessage, sequence: sequence, deliver: false)
       }
       saved.pendingOutbound.removeAll { $0 == wire }
       try save(saved)
@@ -273,6 +321,9 @@ public actor QntmClient {
   private func applyTransition(_ message: Message, to saved: inout SavedConversation) throws {
     let bodyType = message.bodyType
     saved.historyKeys[message.senderKeyID.base64URL] = message.senderPublicKey
+    if bodyType == Attachment.bodyType {
+      _ = try Attachment.parse(message.body, context: AttachmentContext(message: message))
+    }
     if GroupControls.bodyTypes.contains(bodyType) {
       guard let state = saved.group else {
         throw QntmError.invalid("Group control outside a group")
@@ -290,7 +341,9 @@ public actor QntmClient {
         })
       try saved.gateway.updateMembership(
         participants: saved.members, epoch: saved.conversation.currentEpoch)
-      if bodyType == "group_rekey" { saved.lastRekeyID = message.envelope.messageID }
+      if bodyType == "group_rekey", !result.state.recoveryRequired {
+        saved.lastRekeyID = message.envelope.messageID
+      }
     } else if bodyType.hasPrefix("gate.") || bodyType.hasPrefix("gov.") {
       let previousMembers = saved.gateway.participants
       _ = try saved.gateway.receive(
@@ -343,20 +396,15 @@ public actor QntmClient {
       }
       if !saved.receivedIDs.contains(envelope.messageID.hex) {
         if envelope.epoch > saved.conversation.currentEpoch {
-          guard saved.pendingInbound.count < 2048 else { throw ReceiveCapacityError() }
-          saved.pendingInbound.append(SavedEnvelope(sequence: entry.sequence, wire: entry.envelope))
+          try saved.retainFuture(envelope, entry: entry)
         } else {
           let message = try decrypt(envelope, saved: saved)
           try apply(message, to: &saved)
-          let event = try ReceiveEvent(message: message, sequence: entry.sequence)
-          saved.history.append(event)
-          saved.pendingDelivery.append(event)
+          try saved.recordHistory(message, sequence: entry.sequence, deliver: true)
           saved.receivedIDs.insert(envelope.messageID.hex)
           try replayPending(&saved)
         }
       }
-    } catch is ReceiveCapacityError {
-      throw QntmError.invalid("Future epoch queue is full; cursor was not advanced")
     } catch is RekeyUnwrapError {
       saved.group?.quarantine()
       saved.rejected.append(
@@ -372,8 +420,9 @@ public actor QntmClient {
   }
   private func replayPending(_ saved: inout SavedConversation) throws {
     var waiting: [SavedEnvelope] = []
-    for entry in saved.pendingInbound {
-      if saved.pendingDelivery.count >= 10_000 {
+    let now = unixSeconds()
+    for entry in saved.pendingInbound where entry.expiresAt >= now {
+      if saved.pendingDelivery.count >= 10_000 || saved.group?.recoveryRequired == true {
         waiting.append(entry)
         continue
       }
@@ -386,13 +435,12 @@ public actor QntmClient {
         let message = try decrypt(envelope, saved: saved)
         if saved.receivedIDs.contains(envelope.messageID.hex) { continue }
         try apply(message, to: &saved)
-        let event = try ReceiveEvent(message: message, sequence: entry.sequence)
-        saved.history.append(event)
-        saved.pendingDelivery.append(event)
+        try saved.recordHistory(message, sequence: entry.sequence, deliver: true)
         saved.receivedIDs.insert(envelope.messageID.hex)
       } catch is RekeyUnwrapError {
         saved.group?.quarantine()
-        throw RekeyUnwrapError()
+        saved.rejected.append(
+          RejectedEnvelope(sequence: entry.sequence, reason: "Rekey requires recovery"))
       } catch {
         saved.rejected.append(
           RejectedEnvelope(sequence: entry.sequence, reason: String(describing: error)))
@@ -432,10 +480,53 @@ public actor QntmClient {
       id, bodyType: "group_remove", body: GroupBodies.remove(keyIDs: keyIDs, reason: reason))
     _ = try await rekey(id)
   }
+  public func downloadAttachment(_ id: String, messageID: String) async throws -> Data {
+    let saved = try conversation(id)
+    guard let event = saved.history.first(where: { $0.message.messageID == messageID }),
+      [Attachment.bodyType, "blobref"].contains(event.message.bodyType),
+      let text = event.message.unsafeBody
+    else { throw QntmError.invalid("Attachment message not found") }
+    let body = Data(text.utf8)
+    let relay = try DropboxClient(baseURL: profile.relayURL)
+    let context: AttachmentContext
+    if let epoch = saved.attachmentEpochs?[messageID] {
+      let senderID = try Data(hex: event.message.senderKeyID).base64URL
+      guard let sender = saved.historyKeys[senderID] ?? saved.members[senderID] else {
+        throw QntmError.invalid("Attachment sender key unavailable")
+      }
+      context = try AttachmentContext(
+        conversationID: saved.conversation.id, epoch: epoch, senderPublicKey: sender)
+    } else {
+      // Older profiles kept the accepted body and sequence, but omitted the envelope epoch.
+      guard event.sequence > 0 else { throw QntmError.invalid("Invalid attachment sequence") }
+      let batch = try await relay.receiveMessages(
+        conversationID: saved.conversation.id,
+        fromSequence: event.sequence - 1, identity: identity())
+      guard let entry = batch.entries.first(where: { $0.sequence == event.sequence }) else {
+        throw QntmError.invalid(
+          "Original attachment envelope unavailable; ask the sender to resend")
+      }
+      let envelope = try Envelope(serialized: entry.envelope)
+      let source =
+        envelope.epoch == saved.conversation.currentEpoch
+        ? saved.conversation : saved.group?.historicalSource(epoch: envelope.epoch)
+      guard let source else { throw QntmError.invalid("Original attachment epoch key unavailable") }
+      let message = try Messaging.decrypt(envelope, conversation: source, allowExpired: true)
+      guard try ReceiveEvent(message: message, sequence: entry.sequence) == event else {
+        throw QntmError.invalid("Original attachment envelope differs from saved history")
+      }
+      context = try AttachmentContext(message: message)
+      var latest = try conversation(saved.conversation.id.hex)
+      latest.rememberAttachment(message)
+      try save(latest)
+    }
+    return try await Attachment.download(body, context: context, relay: relay)
+  }
   public func sendAttachment(
     _ id: String, data: Data, name: String, mediaType: String = "application/octet-stream"
   ) async throws -> Envelope {
     let saved = try conversation(id)
+    try authorizeSend(bodyType: Attachment.bodyType, saved: saved)
     let identity = try identity()
     let prepared = try Attachment.prepare(
       identity: identity, parent: saved.conversation, data: data, name: name, mediaType: mediaType)
