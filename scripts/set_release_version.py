@@ -88,6 +88,11 @@ def main() -> None:
         f'__version__ = "{py_version}"',
     )
     update_json_version(REPO_ROOT / "channel/.claude-plugin/plugin.json", version)
+    replace_in_file(
+        REPO_ROOT / "swift/Sources/Qntm/Version.swift",
+        r'^(  public static let version = ").*(")$',
+        rf'\g<1>{version}\2',
+    )
 
     print(f"updated release version to {version}")
 

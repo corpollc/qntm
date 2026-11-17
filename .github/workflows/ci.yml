@@ -11,6 +11,9 @@ permissions:
   contents: read
 
 jobs:
+  test-swift:
+    uses: ./.github/workflows/swift.yml
+
   test-client:
     runs-on: ubuntu-latest
     defaults:

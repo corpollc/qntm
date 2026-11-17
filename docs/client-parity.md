@@ -22,3 +22,11 @@ Tests cover shared encrypted receive fixtures, Python 3.10/3.12, TypeScript cryp
 Both maintained libraries accept a message through its signed `expiry_ts` Unix second and reject it once `floor(now / 1000) > expiry_ts` (Python uses `int(time.time())`). Creation timestamps more than 600 seconds in the future are rejected. Timestamps must be safe integers, expiry must follow creation, and message creation requires a positive integer TTL. TypeScript now defaults to the same TTL as Python when omitted.
 
 Normal CLI, browser, subscriptions, hooks and gateway processing use the default expiry check. For offline inspection of saved ciphertext, use `decryptMessage(envelope, conversation, { allowExpired: true })` or `decrypt_message(envelope, conversation, allow_expired=True)`. This only relaxes expiry; conversation binding, ciphertext authentication, signed metadata and sender signatures are still verified. Do not submit historical results as new receive events or use them to authorize actions. Relay retention is a separate storage policy and cannot erase copies retained by clients.
+
+## Native Swift
+
+The [Swift SDK and macOS CLI](../swift/README.md) implement the maintained messaging, group, gateway, governance, attachment and guidance protocol surfaces. The SDK also includes the experimental charter library, announcement lifecycle and DID/entity verification. A root SwiftPM manifest exposes `Qntm` for macOS 13/iOS 16 and `qntm-swift` for macOS.
+
+`QntmClient` owns private atomic profile transactions, receive cursors, pending deliveries and outbound retries. Applications can instead use the pure protocol APIs and provide their own persistence. Swift watch callbacks replace host-specific hook runners; Python executable/webhook hooks and MCP/OpenClaw adapters are not ported. Announcement owner state and charter registry state remain application-owned.
+
+Swift tests consume shared vectors and encrypted Python/TypeScript fixtures, exchange fresh messages and signatures in both directions, and exercise local relay/gateway Workers and the Go registrar. The Swift CI workflow additionally builds the iOS Simulator library and release CLI. See the Swift guide for the exact API/CLI coverage and reproducible checks.

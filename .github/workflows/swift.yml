@@ -1,0 +1,46 @@
+name: Swift client
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: charter-registry/go.mod
+          cache-dependency-path: charter-registry/go.sum
+      - name: Install peer clients and local services
+        run: |
+          python -m pip install -e python-dist
+          npm ci --prefix client
+          npm run build --prefix client
+          npm ci --prefix worker
+          npm ci --prefix gateway-worker
+          (cd charter-registry && go build -o "$RUNNER_TEMP/qntm-swift-charter" ./cmd/charter-registry)
+      - name: Test protocol and local service journeys
+        env:
+          QNTM_CHARTER_BINARY: ${{ runner.temp }}/qntm-swift-charter
+          QNTM_PYTHON: python3
+        run: bash swift/scripts/test-integration.sh
+      - name: Verify fresh Python and TypeScript interoperability
+        run: python3 swift/scripts/verify-interop.py
+      - name: Build release CLI
+        run: swift build -c release
+      - name: Build iOS Simulator library
+        run: xcodebuild -scheme Qntm -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/qntm-ios" CODE_SIGNING_ALLOWED=NO build
+      - name: Check bundled catalog stays in sync
+        run: cmp gate/recipes/starter.json swift/Sources/Qntm/Resources/starter.json

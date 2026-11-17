@@ -174,6 +174,7 @@ Custom recipes are easy to add — any HTTP API with a header-based auth scheme 
 | **Web UI** | [chat.corpo.llc](https://chat.corpo.llc) | Browser-based chat |
 | **Terminal UI** | `cd ui/tui && npm start` | SSH / terminal users |
 | **TypeScript lib** | `npm i @corpollc/qntm` | Custom integrations |
+| **Swift SDK + CLI** | [Swift package and build guide](swift/README.md) | Native macOS/iOS integrations |
 | **OpenClaw plugin** | [`openclaw-qntm/`](openclaw-qntm/) | OpenClaw channel integration |
 
 ## Client / Integration Compatibility
@@ -217,6 +218,8 @@ This checkout aligns maintained clients and relay code on a [strict signing-key 
 ```
 client/            TypeScript protocol library (browser + Node)
 python-dist/       Python client library + CLI
+swift/             Native Swift SDK, macOS CLI and interoperability tests
+Package.swift      Root SwiftPM package for Xcode and Swift integrations
 ui/aim-chat/       Static browser UI (Vite + React)
 ui/tui/            Terminal UI (Ink)
 gateway-worker/    Cloudflare Worker gateway executor

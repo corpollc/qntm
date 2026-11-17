@@ -3,6 +3,7 @@
 import argparse
 import ast
 import json
+import re
 from pathlib import Path
 import tomllib
 from set_release_version import python_version
@@ -48,6 +49,8 @@ def main():
     for node in ast.parse((ROOT / 'python-dist/src/qntm/__init__.py').read_text()).body:
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == '__version__' for target in node.targets):
             check('Python runtime', ast.literal_eval(node.value), python_version(version))
+    swift_version = re.search(r'public static let version = "([^"]+)"', (ROOT / 'swift/Sources/Qntm/Version.swift').read_text())
+    check('Swift runtime', swift_version.group(1) if swift_version else None)
     if not (ROOT / f'docs/releases/v{version}.md').is_file():
         errors.append(f'Missing curated release notes for v{version}')
     if f'## v{version}' not in (ROOT / 'docs/CHANGELOG.md').read_text():
